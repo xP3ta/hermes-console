@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Launcher (home-screen) widgets: Ahora, Chat rápido, Cron, Chats, Bots,
-     Salas, Tareas. One look for all of them, the same vocabulary as the
-     in-app Home board: a rounded dark card, the gold accent, bot faces, the
-     system font. Every size below is read by tool/qa/widget_shots.py and by
+<!-- Launcher (home-screen) widgets: Ahora, Chat rápido, Cron, Chats,
+     Tareas. The app draws them as pictures in its own theme; these are the
+     native layouts they fall back to. One look for all of them: a rounded
+     dark card, the gold accent, bot faces, the system font. Every size below is read by tool/qa/widget_shots.py and by
      test/launcher_widget_layout_test.dart: change them here, not in a layout. -->
 <resources>
     <color name="lw_card">#FF272834</color>
@@ -56,8 +56,8 @@
     <dimen name="lw_head_chip">21dp</dimen>
     <dimen name="lw_head_gap">3dp</dimen>
     <dimen name="lw_row_min">48dp</dimen>
-    <!-- Bots in one row: four faces fit a two-cell card (4 x 35 - 7 = 133 of
-         its 143 dp). A room's members overlap. -->
+    <!-- A face in a row of faces, and a member face (kept for the gallery
+         and the layout tests; the Bots and Salas widgets are retired). -->
     <dimen name="lw_face">28dp</dimen>
     <dimen name="lw_face_gap">7dp</dimen>
     <dimen name="lw_room_face">22dp</dimen>

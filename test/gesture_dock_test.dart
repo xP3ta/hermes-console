@@ -14,23 +14,35 @@
 // | scrolling the screen          | nothing: the dock never hides itself  |
 // | keyboard open                 | the dock steps aside                  |
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show BackdropFilterLayer, ClipPathLayer;
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/config/feature_flags.dart';
 import 'package:hermes_android/core/design/tokens.dart';
+import 'package:hermes_android/core/design/glass_strip.dart';
+import 'package:hermes_android/core/design/smoked_glass.dart';
+import 'package:hermes_android/core/models/dock_config.dart' show DockStyle;
+import 'package:hermes_android/core/services/ssh_profile_presence.dart';
 import 'package:hermes_android/core/shell/dock_geometry.dart';
 import 'package:hermes_android/core/shell/gesture_dock.dart';
 import 'package:hermes_android/core/shell/gesture_dock_state.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/theme_contrast.dart';
+import 'package:hermes_android/core/widgets/dock_style.dart'
+    show resolveDockVisual;
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // 360 x 780 dp phone, 24 dp gesture-navigation inset, 30 dp back-gesture
-// edges. The bar spans x 14..346 and y 682..742; items are 80 dp wide from
-// x = 20, so their centres are at 60, 140, 220 and 300.
-const _barCenter = Offset(180, 712);
-Offset _tab(int i) => Offset(60 + 80.0 * i, 712);
+// edges. QA 9709 (dock-final): the places in one pill (x 47..247, items 64
+// dp wide from x = 51) and «Nuevo chat» apart, round (x 257..313), both on
+// y 686..742. A test taps an item where it is drawn.
+const _barCenter = Offset(147, 714);
+
+/// Where the [i]th item of the dock's layout is drawn.
+Offset _tab(WidgetTester tester, int i) => tester.getCenter(
+  find.byKey(ValueKey('gesture-dock-tab-${_c.value.tabs[i].name}')),
+);
 
 GestureDockController get _c => GestureDockController.instance;
 
@@ -181,19 +193,23 @@ void main() {
     );
     DockGeometry.instance.resetForTesting();
     FeatureFlags.instance.resetForTesting();
+    // An SSH profile: every item, Agentes included, can be on the bar.
+    SshProfilePresence.instance.value = true;
   });
+
+  tearDown(() => SshProfilePresence.instance.value = false);
 
   group('taps', () {
     testWidgets('a tap on an item runs it, every time', (tester) async {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls));
-      await tester.tapAt(_tab(2));
+      await tester.tapAt(_tab(tester, 2));
       await tester.pump();
       expect(calls.log, ['projects']);
-      await tester.tapAt(_tab(1));
-      await tester.tapAt(_tab(3));
-      await tester.tapAt(_tab(2));
+      await tester.tapAt(_tab(tester, 1));
+      await tester.tapAt(_tab(tester, 3));
+      await tester.tapAt(_tab(tester, 2));
       expect(calls.log, ['projects', 'new', 'settings', 'projects']);
       await _finish(tester);
     });
@@ -204,10 +220,10 @@ void main() {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls, current: GestureDockTab.projects));
-      await tester.tapAt(_tab(2));
+      await tester.tapAt(_tab(tester, 2));
       await tester.pump();
       expect(calls.log, isEmpty);
-      await tester.tapAt(_tab(0));
+      await tester.tapAt(_tab(tester, 0));
       expect(calls.log, ['home']);
       await _finish(tester);
     });
@@ -218,15 +234,13 @@ void main() {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls, direction: TextDirection.rtl));
-      // Mirrored row: Ajustes is drawn first from the left.
-      expect(
-        tester
-            .getCenter(find.byKey(const ValueKey('gesture-dock-tab-settings')))
-            .dx,
-        _tab(0).dx,
-      );
-      await tester.tapAt(_tab(0));
-      await tester.tapAt(_tab(2));
+      // Mirrored: «Nuevo chat» on the left, then Ajustes, Proyectos, Inicio.
+      final x = [for (var i = 0; i < 4; i++) _tab(tester, i).dx];
+      expect(x[1], lessThan(x[3]), reason: '«+» left of Ajustes');
+      expect(x[3], lessThan(x[2]), reason: 'Ajustes left of Proyectos');
+      expect(x[2], lessThan(x[0]), reason: 'Proyectos left of Inicio');
+      await tester.tapAt(_tab(tester, 3));
+      await tester.tapAt(_tab(tester, 1));
       expect(calls.log, ['settings', 'new']);
       await _finish(tester);
     });
@@ -279,10 +293,13 @@ void main() {
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls));
       // From Proyectos to Ajustes and up there: neither runs.
-      await _drag(tester, _tab(2), const [Offset(40, 0), Offset(40, 0)]);
+      await _drag(tester, _tab(tester, 2), const [
+        Offset(40, 0),
+        Offset(40, 0),
+      ]);
       expect(calls.log, isEmpty);
       // A finger that only trembles (under the touch slop) still taps.
-      await _drag(tester, _tab(2), const [Offset(6, 3)]);
+      await _drag(tester, _tab(tester, 2), const [Offset(6, 3)]);
       expect(calls.log, ['projects']);
       await _finish(tester);
     });
@@ -326,12 +343,12 @@ void main() {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls));
-      final gesture = await tester.startGesture(_tab(2));
+      final gesture = await tester.startGesture(_tab(tester, 2));
       await tester.pump(const Duration(milliseconds: 50));
       await gesture.cancel();
       await tester.pump();
       expect(calls.log, isEmpty);
-      await tester.tapAt(_tab(2));
+      await tester.tapAt(_tab(tester, 2));
       expect(calls.log, ['projects'], reason: 'the next tap works');
       await _finish(tester);
     });
@@ -344,7 +361,7 @@ void main() {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls));
-      final gesture = await tester.startGesture(_tab(3));
+      final gesture = await tester.startGesture(_tab(tester, 3));
       await tester.pump(const Duration(milliseconds: 470));
       expect(find.byKey(_popover), findsNothing);
       await tester.pump(const Duration(milliseconds: 20));
@@ -366,7 +383,7 @@ void main() {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls));
-      final gesture = await tester.startGesture(_tab(3));
+      final gesture = await tester.startGesture(_tab(tester, 3));
       await tester.pump(const Duration(milliseconds: 500));
       await gesture.up();
       await tester.pump();
@@ -384,7 +401,7 @@ void main() {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls));
-      final gesture = await tester.startGesture(_tab(3));
+      final gesture = await tester.startGesture(_tab(tester, 3));
       await tester.pump(const Duration(milliseconds: 200));
       await gesture.moveBy(const Offset(0, -24));
       await tester.pump(const Duration(milliseconds: 400));
@@ -401,7 +418,7 @@ void main() {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls, withShortcuts: false));
-      final gesture = await tester.startGesture(_tab(2));
+      final gesture = await tester.startGesture(_tab(tester, 2));
       await tester.pump(const Duration(milliseconds: 500));
       await gesture.up();
       await tester.pump();
@@ -474,19 +491,20 @@ void main() {
       _phone(tester);
       final calls = _Calls();
       await tester.pumpWidget(_dock(calls));
+      final projects = _tab(tester, 2);
       tester.view.viewInsets = const FakeViewPadding(bottom: 900);
       await tester.pump(const Duration(milliseconds: 200));
       final gate = tester.widget<IgnorePointer>(
         find.byKey(const ValueKey('gesture-dock-keyboard-gate')),
       );
       expect(gate.ignoring, isTrue);
-      await tester.tapAt(_tab(2));
+      await tester.tapAt(projects);
       expect(calls.log, isEmpty);
       await tester.pump();
       expect(DockGeometry.instance.rect.value, isNull);
       tester.view.viewInsets = FakeViewPadding.zero;
       await tester.pump(const Duration(milliseconds: 200));
-      await tester.tapAt(_tab(2));
+      await tester.tapAt(_tab(tester, 2));
       expect(calls.log, ['projects']);
       await _finish(tester);
     });
@@ -596,7 +614,14 @@ void main() {
             : (widget as Container).decoration;
         if (decoration is BoxDecoration) {
           expect(decoration.boxShadow ?? const <BoxShadow>[], isEmpty);
-          expect(decoration.gradient, isNull);
+          // The active item's glow (a radial gradient from its bottom edge,
+          // no solid fill) is the one gradient a tab may carry.
+          if (widget.key == const ValueKey('gesture-dock-active')) {
+            expect(decoration.color, isNull);
+            expect(decoration.gradient, isA<RadialGradient>());
+          } else {
+            expect(decoration.gradient, isNull);
+          }
         }
       }
     }
@@ -616,15 +641,25 @@ void main() {
           isNot(gestureDockTabIcon(tab)),
           reason: 'the filled form is another glyph than the outlined one',
         );
-        expect(selected.color, colors.accentText);
+        final hue = HSLColor.fromColor(selected.color!).hue;
+        final accentHue = HSLColor.fromColor(colors.accentText).hue;
+        final delta = (hue - accentHue).abs();
+        expect(
+          delta < 10 || delta > 350,
+          isTrue,
+          reason: 'contrast repair retains the selected accent hue',
+        );
+        expect(selected.color, isNot(colors.textPrimary));
         expectMatte(tester, tab);
         expect(find.byKey(const ValueKey('gesture-dock-glow')), findsNothing);
         expect(tester.widget<Semantics>(item(tab)).properties.selected, isTrue);
-        // Every other item: outlined and muted.
+        // Every other item: outlined, in the colour of the text (QA 9709,
+        // dock-final: line icons the colour of the text, the selected one
+        // on a faint accent pill).
         for (final other in _c.value.tabs.where((t) => t != tab)) {
           final icon = iconOf(tester, other);
           expect(icon.icon, gestureDockTabIcon(other), reason: other.name);
-          expect(icon.color, colors.textSecondary, reason: other.name);
+          expect(icon.color, colors.textPrimary, reason: other.name);
           expectMatte(tester, other);
           expect(
             tester.widget<Semantics>(item(other)).properties.selected,
@@ -712,7 +747,7 @@ void main() {
     testWidgets('hiding closes an open menu', (tester) async {
       _phone(tester);
       await tester.pumpWidget(_dock(_Calls()));
-      final gesture = await tester.startGesture(_tab(3));
+      final gesture = await tester.startGesture(_tab(tester, 3));
       await tester.pump(const Duration(milliseconds: 500));
       await gesture.up();
       await tester.pump();
@@ -733,7 +768,7 @@ void main() {
         await tester.pump();
         expect(
           DockGeometry.instance.rect.value,
-          const Rect.fromLTWH(14, 682, 332, 60),
+          const Rect.fromLTWH(47, 686, 266, 56),
         );
         expect(DockGeometry.instance.hidden.value, isFalse);
         _c.setHidden(true);
@@ -753,7 +788,7 @@ void main() {
       _phone(tester);
       await tester.pumpWidget(_dock(_Calls()));
       await tester.pump();
-      const bar = Rect.fromLTWH(14, 682, 332, 60);
+      const bar = Rect.fromLTWH(47, 686, 266, 56);
       expect(DockGeometry.instance.rect.value, bar);
       DockGeometry.instance.publish(
         Object(),
@@ -777,7 +812,7 @@ void main() {
       _phone(tester);
       await tester.pumpWidget(_dock(_Calls()));
       expect(DockGeometry.instance.menuOpen.value, isFalse);
-      final gesture = await tester.startGesture(_tab(3));
+      final gesture = await tester.startGesture(_tab(tester, 3));
       await tester.pump(const Duration(milliseconds: 500));
       await gesture.up();
       await tester.pump();
@@ -787,7 +822,7 @@ void main() {
       await tester.pump();
       expect(DockGeometry.instance.menuOpen.value, isFalse);
       // Gone with its menu open, it does not leave the flag behind.
-      final again = await tester.startGesture(_tab(3));
+      final again = await tester.startGesture(_tab(tester, 3));
       await tester.pump(const Duration(milliseconds: 500));
       await again.up();
       await tester.pump();
@@ -797,27 +832,78 @@ void main() {
       await _finish(tester);
     });
 
-    testWidgets('the bar is the floating chrome and never blurs; opaque when '
-        'asked to', (tester) async {
+    // QA 9709 (the owner): the dock is real glass by default, with the costs of
+    // glass kept as rules: one blur for the whole dock (BOTH visible pieces), a moderate sigma, in its own repaint boundary,
+    // and an opaque dock when asked to.
+    testWidgets('the pill and «+» share the dock\'s one glass layer; '
+        'opaque when asked to', (tester) async {
       _phone(tester);
       await tester.pumpWidget(_dock(_Calls()));
       final context = tester.element(find.byType(GestureDock));
+      final colors = Theme.of(context).hermes;
       final chrome = HermesChrome.ofContext(context);
+      final visual = resolveDockVisual(colors, const DockStyle());
       Color? fillOf(String key) =>
           (tester.widget<DecoratedBox>(find.byKey(ValueKey(key))).decoration
                   as BoxDecoration)
               .color;
-      // Nothing scrolls behind the dock, so a blur would be pure cost.
-      expect(find.byType(BackdropFilter), findsNothing);
-      expect(fillOf('gesture-dock-glass'), chrome.fill);
+      final band = find.descendant(
+        of: find.byType(GestureDock),
+        matching: find.byType(HermesGlassStrip),
+      );
+      expect(band, findsOneWidget, reason: 'one shared material band');
+      // The shared band declares its paint model. A toned band uses its
+      // chrome veil; a legacy band keeps the original DockVisual tint.
+      final tone = tester.widget<HermesGlassStrip>(band).tone;
+      final materialFill = tone?.veilOf(chrome) ?? visual.background;
+      if (tone != null) {
+        expect(
+          tone,
+          HermesSmokedGlass.dockOf(chrome).withVeilFloor(visual.background.a),
+        );
+        expect(tone.veil, greaterThanOrEqualTo(visual.background.a));
+      }
+      expect(tester.renderObject(band).isRepaintBoundary, isTrue);
+      final filters = tester.layers.whereType<BackdropFilterLayer>().toList();
+      expect(
+        filters,
+        hasLength(1),
+        reason: 'one actual filter for BOTH pieces',
+      );
+      final path = tester.layers
+          .whereType<ClipPathLayer>()
+          .singleWhere((layer) => layer.firstChild is BackdropFilterLayer)
+          .clipPath!;
+      final origin = tester.getTopLeft(band);
+      expect(visual.blurSigma, inInclusiveRange(16, 20));
+      for (final key in ['gesture-dock-glass', 'gesture-dock-create-glass']) {
+        expect(
+          find.ancestor(of: find.byKey(ValueKey(key)), matching: band),
+          findsOneWidget,
+        );
+        final fill = fillOf(key)!;
+        expect(fill.withValues(alpha: 1), materialFill.withValues(alpha: 1));
+        expect(fill.a, greaterThanOrEqualTo(visual.background.a));
+        expect(
+          path.contains(tester.getCenter(find.byKey(ValueKey(key))) - origin),
+          isTrue,
+          reason: '$key lies inside the actual shared filter',
+        );
+      }
+      expect(fillOf('gesture-dock-glass'), fillOf('gesture-dock-create-glass'));
       expect(
         tester.getRect(find.byKey(const ValueKey('gesture-dock-glass'))),
-        const Rect.fromLTWH(14, 682, 332, 60),
+        const Rect.fromLTWH(47, 686, 200, 56),
+      );
+      expect(
+        tester.getRect(find.byKey(const ValueKey('gesture-dock-create-glass'))),
+        const Rect.fromLTWH(257, 686, 56, 56),
       );
       await _c.setOpaque(true);
       await tester.pump();
-      expect(find.byType(BackdropFilter), findsNothing);
+      expect(tester.layers.whereType<BackdropFilterLayer>(), isEmpty);
       expect(fillOf('gesture-dock-opaque'), chrome.opaque);
+      expect(fillOf('gesture-dock-create-opaque'), chrome.opaque);
       await _finish(tester);
     });
 

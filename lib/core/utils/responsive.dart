@@ -25,6 +25,11 @@ class Responsive {
   /// Widest a run of text should get (about 80–90 characters).
   static const double maxLineWidth = 760;
 
+  /// Widest the chat's transcript and composer get on a wide screen, the
+  /// chat alone: on an open Fold (933 dp) about 150 dp of reading margin
+  /// each side (mock 134 state B). Narrower chats are not touched.
+  static const double chatReadingWidth = 640;
+
   /// Width of the list pane in a list-detail layout.
   static const double listPaneWidth = 360;
 

@@ -36,14 +36,23 @@ import java.util.Date
  * - Ahora: who needs you (with Permitir / Rechazar), what runs now, calm.
  * - Chat rápido: a new chat, the camera, the microphone.
  * - Cron: the next scheduled job; larger, all of them by next run.
+ * - Tareas, Chats: the board and the recent conversations.
  *
- * They are plain RemoteViews over the XML in `res/layout/lw_*.xml`, so every
- * size, padding and line box is in a resource a test can read and the
- * widget picker shows the very same layouts. Widgets only read the snapshots
- * Dart publishes (see [LauncherWidgetData]); they never talk to a server and
- * never wake anything up.
+ * The app draws each of them as a picture in its own theme
+ * ([LauncherWidgetImages]); while no current picture exists they are plain
+ * RemoteViews over the XML in `res/layout/lw_*.xml`, so every size, padding
+ * and line box is in a resource a test can read and the widget picker shows
+ * the very same layouts. Widgets only read the snapshots Dart publishes (see
+ * [LauncherWidgetData]); they never talk to a server and never wake anything
+ * up.
  */
-enum class LauncherWidgetSubject { AHORA, QUICK, CRON, BOTS, ROOMS, TASKS, CHATS }
+enum class LauncherWidgetSubject(val key: String) {
+    AHORA("ahora"),
+    QUICK("new"),
+    CRON("cron"),
+    TASKS("tasks"),
+    CHATS("chats"),
+}
 
 /**
  * Base of every launcher widget receiver. The three receivers shipped since
@@ -79,8 +88,6 @@ internal fun launcherWidgetReceivers(): List<Class<out AppWidgetProvider>> =
         HermesCompactWidgetProvider::class.java,
         HermesControlWidgetProvider::class.java,
         HermesCronWidgetProvider::class.java,
-        HermesBotsWidgetProvider::class.java,
-        HermesRoomWidgetProvider::class.java,
         HermesTasksWidgetProvider::class.java,
         HermesChatsWidgetProvider::class.java,
     )
@@ -101,21 +108,31 @@ internal object LauncherWidgets {
         if (ids.isEmpty()) return
         val now = System.currentTimeMillis()
         val data = LauncherWidgetData.load(context, now)
+        // The app draws the pictures at the sizes recorded here.
+        try {
+            LauncherWidgetSizes.record(context, manager)
+        } catch (_: Exception) {
+        }
+        val images = LauncherWidgetImageManifest.load(context)
         for (id in ids) {
             // A widget that cannot be drawn keeps its last drawing; it never
             // takes the receiver (or the other widgets) down with it.
             try {
-                manager.updateAppWidget(id, views(context, manager, subject, data, id))
+                manager.updateAppWidget(id, views(context, manager, subject, data, id, images))
             } catch (_: Exception) {
             }
         }
-        LauncherWidgetExpiry.schedule(
-            context,
+        // The same one-shot redraw also retires a picture the moment it stops
+        // being true (its own clock: data turning old, a day changing).
+        val nativeDue =
             data.nextChangeAtMs(
                 withCron = placed(context, manager, HermesCronWidgetProvider::class.java),
                 withTasks = placed(context, manager, HermesTasksWidgetProvider::class.java),
                 withChats = placed(context, manager, HermesChatsWidgetProvider::class.java),
-            ),
+            )
+        LauncherWidgetExpiry.schedule(
+            context,
+            listOfNotNull(nativeDue, images?.nextExpiryMs(now)).minOrNull(),
         )
     }
 
@@ -133,6 +150,7 @@ internal object LauncherWidgets {
         subject: LauncherWidgetSubject,
         data: LauncherWidgetData,
         id: Int,
+        images: LauncherWidgetImageManifest?,
     ): RemoteViews {
         val options = manager.getAppWidgetOptions(id)
         val category =
@@ -142,8 +160,18 @@ internal object LauncherWidgets {
             )
         val onLockScreen = category == AppWidgetProviderInfo.WIDGET_CATEGORY_KEYGUARD
         val sizes = LauncherWidgetSize.of(context, options)
-        fun build(size: LauncherWidgetSize) =
-            LauncherWidgetRenderer(context, data, size, onLockScreen).build(subject)
+        // Every picture of this update shares one bitmap budget; a size that
+        // no longer fits in it draws natively.
+        val budget = LauncherWidgetImageBudget.of(context)
+        fun build(size: LauncherWidgetSize): RemoteViews {
+            val renderer = LauncherWidgetRenderer(context, data, size, onLockScreen)
+            // The lock screen keeps the native, redacted drawing: a picture
+            // may carry titles and requests.
+            if (!onLockScreen) {
+                LauncherWidgetImages.views(context, images, data, subject, size, renderer, budget)?.let { return it }
+            }
+            return renderer.build(subject)
+        }
         if (Build.VERSION.SDK_INT >= 31 && sizes.size > 1) {
             // One drawing per orientation; the launcher picks.
             return RemoteViews(sizes.associate { SizeF(it.width, it.height) to build(it) })
@@ -165,35 +193,6 @@ internal object LauncherWidgets {
                 )
             } catch (_: Exception) {
             }
-        }
-    }
-}
-
-/**
- * The background listener publishes the Bot Mode snapshot and redraws only
- * the Bot Mode receivers. Ahora shows the same approvals and the same working
- * bots, so it is redrawn when that snapshot changes. In-process only: the
- * listener's service runs in this process, and nothing is woken for it.
- */
-internal object LauncherWidgetRefresh {
-    private var listener: SharedPreferences.OnSharedPreferenceChangeListener? = null
-
-    fun watch(context: Context) {
-        if (listener != null) return
-        val app = context.applicationContext
-        val created =
-            SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-                if (key == BOT_MODE_SNAPSHOT_KEY) {
-                    // Bots and Salas are redrawn by the listener itself.
-                    LauncherWidgets.requestUpdate(app, listOf(NewSessionWidgetProvider::class.java))
-                }
-            }
-        try {
-            HomeWidgetPlugin.getData(app).registerOnSharedPreferenceChangeListener(created)
-            // SharedPreferences keeps listeners weakly: this field is what
-            // keeps it alive.
-            listener = created
-        } catch (_: Exception) {
         }
     }
 }
@@ -241,10 +240,9 @@ internal data class LauncherWidgetSize(val width: Float, val height: Float) {
  * Everything the widgets read, taken once per redraw:
  * - [chat]: the conversation the app last showed (published by the app while
  *   it is alive; older than [STALE_AFTER_MS] it is not trusted).
- * - [bots]: bots, rooms and their pending approvals (published by the
- *   background listener, at most every 5 min; untrusted after 12 min).
- * - [cron]: the scheduled jobs, as last listed by the Cron screen or by the
- *   listener's own cron pass.
+ * - [bots]: a leftover Bot Mode snapshot, read only for agent names and faces
+ *   (never live: see [botsFresh]).
+ * - [cron]: the scheduled jobs, as last listed by the Cron screen.
  */
 internal class LauncherWidgetData(
     val nowMs: Long,
@@ -255,7 +253,13 @@ internal class LauncherWidgetData(
     val chats: ChatsWidgetState = ChatsWidgetState(),
 ) {
     val chatFresh: Boolean get() = chat.configured && chat.instanceId != null && !chat.isStale(nowMs)
-    val botsFresh: Boolean get() = bots.present && !bots.isStale(nowMs)
+    /**
+     * Nothing writes the Bot Mode snapshot any more (its publisher went with
+     * the permanent background listener), so whatever is stored is a leftover:
+     * it must never count as live (approvals, "working" bots, "configured").
+     * Its names and faces still identify the agent, which is all it is read for.
+     */
+    val botsFresh: Boolean get() = false
 
     /** The app can reach its server right now, as far as it told us. */
     val chatOnline: Boolean
@@ -266,6 +270,10 @@ internal class LauncherWidgetData(
                         chat.connectionState == HermesWidgetConnectionState.CONNECTING
                     )
     val botsOnline: Boolean get() = botsFresh && bots.connected
+
+    /** When the newest of the stored snapshots was written: a picture must be at least as new. */
+    val latestSourceMs: Long
+        get() = maxOf(chat.updatedAtMs, maxOf(cron.updatedAtMs, maxOf(tasks.updatedAtMs, chats.updatedAtMs)))
 
     /** Face of the agent that answers ordinary chats, once a listener drew it. */
     fun agentFace(): String? = botFace(DEFAULT_PROFILE)
@@ -285,7 +293,6 @@ internal class LauncherWidgetData(
     fun nextChangeAtMs(withCron: Boolean, withTasks: Boolean, withChats: Boolean): Long? =
         listOfNotNull(
             chat.staleAtMs().takeIf { chat.configured },
-            bots.nextExpiryMs(nowMs),
             tasks.nextChangeAtMs(nowMs).takeIf { withTasks },
             chats.nextChangeAtMs(nowMs).takeIf { withChats },
             cron.nextChangeAtMs(nowMs).takeIf { withCron },
@@ -389,9 +396,13 @@ internal data class AhoraModel(
         fun from(context: Context, data: LauncherWidgetData): AhoraModel {
             val chat = data.chat
             val bots = data.bots.trusted(data.nowMs)
-            val configured = (chat.configured && chat.instanceId != null) || bots.present
+            val configured = chat.configured && chat.instanceId != null
             if (!configured) return AhoraModel(AhoraMode.SETUP)
-            val agent = context.getString(R.string.lw_agent)
+            val agent = data.botName(null)?.takeIf { it.isNotBlank() } ?: context.getString(R.string.lw_agent)
+            // Same setting as `AppLockService` (key `app_lock_enabled`).
+            val appLocked =
+                context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+                    .getBoolean("flutter.app_lock_enabled", false)
             val chatOpen: LauncherWidgetOpen =
                 chat.sessionId?.let { LauncherWidgetOpen.Session(chat.instanceId, it) }
                     ?: LauncherWidgetOpen.App
@@ -417,7 +428,7 @@ internal data class AhoraModel(
                 return AhoraModel(
                     mode = AhoraMode.OFFLINE,
                     recent = listOfNotNull(lastChat),
-                    sinceMs = maxOf(chat.updatedAtMs, data.bots.updatedAtMs),
+                    sinceMs = chat.updatedAtMs,
                 )
             }
             val needs = mutableListOf<AhoraNeed>()
@@ -445,7 +456,9 @@ internal data class AhoraModel(
                                         else -> AhoraNeedKind.PERMISSION
                                     },
                                 facePath = face,
-                                answerPayload = need?.actionPayload,
+                                // App Lock on: the receiver refuses widget answers while
+                                // locked and says nothing, so only "Abrir" is offered.
+                                answerPayload = need?.actionPayload.takeIf { !appLocked },
                                 open = open,
                             )
                     } else {
@@ -589,8 +602,6 @@ internal class LauncherWidgetRenderer(
             LauncherWidgetSubject.AHORA -> ahora()
             LauncherWidgetSubject.QUICK -> quick()
             LauncherWidgetSubject.CRON -> if (size.board) cronBoard() else cronStrip()
-            LauncherWidgetSubject.BOTS -> bots()
-            LauncherWidgetSubject.ROOMS -> rooms()
             LauncherWidgetSubject.TASKS -> tasks()
             LauncherWidgetSubject.CHATS -> chats()
         }
@@ -612,6 +623,14 @@ internal class LauncherWidgetRenderer(
                 pending(if (ready) LauncherWidgetOpen.App else LauncherWidgetOpen.Setup),
             )
             face(views, R.id.lw_quick_face, R.id.lw_quick_glyph, data.agentFace(), 38f)
+            // The hint names the agent as the app does (the main profile's
+            // title); the generic text stays until the roster is known.
+            data.botName(null)?.takeIf { it.isNotBlank() }?.let { name ->
+                views.setTextViewText(
+                    R.id.lw_quick_hint,
+                    context.getString(R.string.lw_ask_hint_named, name),
+                )
+            }
         } else {
             // The label stays only while it fits with the same room on both
             // sides; a pill too narrow for it keeps the "+" alone, centred.
@@ -1075,7 +1094,7 @@ internal class LauncherWidgetRenderer(
         return context.getString(if (one) R.string.lw_day_at_time_one else R.string.lw_day_at_time, day, time)
     }
 
-    // ---------------------------------------------------------------- Bots
+    // ---------------------------------------------------------------- empty states
 
     /** A subject the app has never published: what it is, and where to look. */
     private fun unknown(icon: Int, label: Int, hint: Int, hintShort: Int): RemoteViews {
@@ -1114,152 +1133,6 @@ internal class LauncherWidgetRenderer(
         addRows(views, emptyList(), bodyHeight() - dp(R.dimen.lw_touch))
     }
 
-    private fun bots(): RemoteViews {
-        if (!data.bots.present) {
-            return unknown(R.drawable.lw_ic_team, R.string.lw_bots, R.string.lw_bots_unknown, R.string.lw_bots_unknown_short)
-        }
-        // Without recent news nobody is shown as working or waiting.
-        val offline = !data.botsOnline
-        val bots = data.bots.trusted(data.nowMs).bots.sortedBy { if (offline) 0 else it.state.priority }
-        return if (size.board) botsBoard(bots, offline) else botsStrip(bots, offline)
-    }
-
-    private fun WidgetBot.working(): Boolean = state == WidgetBotState.WORKING || state == WidgetBotState.THINKING
-
-    /** One row: the faces of the team and, under them, who waits for you. */
-    private fun botsStrip(bots: List<WidgetBot>, offline: Boolean): RemoteViews {
-        val views = RemoteViews(pkg, R.layout.lw_faces)
-        views.removeAllViews(R.id.lw_faces)
-        views.setInt(
-            android.R.id.background,
-            "setBackgroundResource",
-            if (offline) R.drawable.lw_card_stale else R.drawable.lw_card,
-        )
-        val side = dp(R.dimen.lw_face)
-        val gap = dp(R.dimen.lw_face_gap)
-        val fit = ((size.width - 2 * dp(R.dimen.lw_pad_h) + gap) / (side + gap)).toInt().coerceIn(1, MAX_FACES)
-        for (bot in bots.take(fit)) {
-            val face = RemoteViews(pkg, R.layout.lw_face)
-            val bitmap = LauncherWidgetFaces.load(bot.idleFacePath ?: bot.facePath, (side * density).toInt())
-            if (bitmap != null) {
-                face.setImageViewBitmap(R.id.lw_face_image, bitmap)
-                face.setViewVisibility(R.id.lw_face_image, View.VISIBLE)
-                face.setViewVisibility(R.id.lw_face_glyph, View.GONE)
-            }
-            if (offline) {
-                face.setInt(R.id.lw_face_image, "setImageAlpha", DIM_ALPHA)
-                face.setInt(R.id.lw_face_glyph, "setImageAlpha", DIM_ALPHA)
-            } else if (bot.state == WidgetBotState.NEEDS_YOU || bot.working()) {
-                face.setImageViewResource(
-                    R.id.lw_face_mark,
-                    if (bot.state == WidgetBotState.NEEDS_YOU) R.drawable.lw_mark_waits else R.drawable.lw_mark_works,
-                )
-                face.setViewVisibility(R.id.lw_face_mark, View.VISIBLE)
-            }
-            views.addView(R.id.lw_faces, face)
-        }
-        val waiting = bots.firstOrNull { !offline && it.state == WidgetBotState.NEEDS_YOU }
-        val working = bots.filter { !offline && it.working() }
-        val line =
-            when {
-                offline ->
-                    listOfNotNull(
-                        context.getString(R.string.lw_no_connection),
-                        since(data.bots.updatedAtMs).takeIf { size.wide },
-                    ).joinToString(" · ")
-                waiting != null -> context.getString(R.string.lw_bot_waits, waiting.name)
-                working.size == 1 -> context.getString(R.string.lw_bot_works, working.first().name)
-                working.size > 1 -> plural(R.plurals.lw_bots_working, working.size)
-                bots.isEmpty() -> context.getString(R.string.lw_bots_empty)
-                else -> context.getString(R.string.lw_bots_calm)
-            }
-        views.setTextViewText(R.id.lw_faces_title, line)
-        views.setTextColor(R.id.lw_faces_title, color(if (offline) R.color.lw_amber else R.color.lw_ink))
-        views.setOnClickPendingIntent(
-            android.R.id.background,
-            pending(waiting?.let { LauncherWidgetOpen.Payload(it.openPayload) } ?: LauncherWidgetOpen.App),
-        )
-        return views
-    }
-
-    /** Two rows or more: one row per bot with what it does or did. */
-    private fun botsBoard(bots: List<WidgetBot>, offline: Boolean): RemoteViews {
-        val working = bots.count { !offline && it.working() }
-        val waiting = bots.count { !offline && it.state == WidgetBotState.NEEDS_YOU }
-        val counts =
-            listOfNotNull(
-                plural(R.plurals.lw_bots_working, working).takeIf { working > 0 },
-                plural(R.plurals.lw_bots_waiting, waiting).takeIf { waiting > 0 },
-            ).joinToString(" · ")
-        val views =
-            board(
-                card = if (offline) R.drawable.lw_card_stale else R.drawable.lw_card,
-                icon = R.drawable.lw_ic_team,
-                gold = false,
-                label = context.getString(R.string.lw_bots),
-                right =
-                    when {
-                        offline -> moment(data.bots.updatedAtMs).takeIf { data.bots.updatedAtMs > 0 }
-                        size.wide -> counts.takeIf { it.isNotEmpty() }
-                        else -> null
-                    },
-                rightColor = if (offline) R.color.lw_amber else null,
-                rightIcon = offline,
-            )
-        if (bots.isEmpty()) {
-            emptyLine(views, R.drawable.lw_ic_team, context.getString(R.string.lw_bots_empty))
-        } else {
-            val room = bodyHeight()
-            val fit = (room / rowHeight()).toInt().coerceIn(0, MAX_ROWS)
-            addRows(views, bots.take(fit).map { botRow(it, offline) }, room)
-        }
-        views.setOnClickPendingIntent(android.R.id.background, pending(LauncherWidgetOpen.App))
-        return views
-    }
-
-    private fun botRow(bot: WidgetBot, offline: Boolean): RemoteViews {
-        val row = RemoteViews(pkg, R.layout.lw_row)
-        face(row, R.id.lw_row_face, R.id.lw_row_glyph, bot.idleFacePath ?: bot.facePath, LEAD)
-        row.setTextViewText(R.id.lw_row_title, bot.name)
-        // What it is about is only said where there is room for it.
-        val about = (bot.roomName ?: bot.steps.lastOrNull() ?: bot.line).takeIf { size.wide }
-        when (if (offline) WidgetBotState.IDLE else bot.state) {
-            WidgetBotState.NEEDS_YOU -> {
-                val lead = context.getString(R.string.lw_bot_needs_you)
-                val line = SpannableString(listOfNotNull(lead, about).joinToString(" · "))
-                line.setSpan(ForegroundColorSpan(color(R.color.lw_gold)), 0, lead.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                row.setTextViewText(R.id.lw_row_sub, line)
-            }
-            WidgetBotState.WORKING, WidgetBotState.THINKING -> {
-                val word = context.getString(if (bot.roomName != null) R.string.lw_responding else R.string.lw_working)
-                row.setTextViewText(R.id.lw_row_sub, listOfNotNull(word, about).joinToString(" · "))
-                row.setImageViewResource(R.id.lw_row_mark, R.drawable.lw_dot)
-                row.setViewVisibility(R.id.lw_row_mark, View.VISIBLE)
-                timer(row, R.id.lw_row_timer, bot.sinceMs)
-            }
-            WidgetBotState.DONE -> {
-                row.setTextViewText(R.id.lw_row_sub, about ?: context.getString(R.string.lw_finished))
-                row.setImageViewResource(R.id.lw_row_mark, R.drawable.lw_ic_check)
-                row.setInt(R.id.lw_row_mark, "setColorFilter", color(R.color.lw_green))
-                row.setViewVisibility(R.id.lw_row_mark, View.VISIBLE)
-                rowTime(row, bot.sinceMs)
-            }
-            WidgetBotState.FAILED -> {
-                row.setTextViewText(
-                    R.id.lw_row_sub,
-                    listOfNotNull(context.getString(R.string.lw_failed), about).joinToString(" · "),
-                )
-                row.setTextColor(R.id.lw_row_sub, color(R.color.lw_red))
-                rowTime(row, bot.sinceMs)
-            }
-            WidgetBotState.IDLE ->
-                row.setTextViewText(R.id.lw_row_sub, bot.role ?: context.getString(R.string.lw_bot_free))
-        }
-        if (offline) dim(row)
-        row.setOnClickPendingIntent(R.id.lw_row, pending(LauncherWidgetOpen.Payload(bot.openPayload)))
-        return row
-    }
-
     private fun rowTime(row: RemoteViews, atMs: Long) {
         if (atMs <= 0) return
         row.setTextViewText(R.id.lw_row_time, moment(atMs))
@@ -1273,153 +1146,6 @@ internal class LauncherWidgetRenderer(
         row.setInt(R.id.lw_row_face, "setImageAlpha", DIM_ALPHA)
         row.setInt(R.id.lw_row_glyph, "setImageAlpha", DIM_ALPHA)
         row.setInt(R.id.lw_row_mark, "setImageAlpha", DIM_ALPHA)
-    }
-
-    // ---------------------------------------------------------------- Salas
-
-    private fun rooms(): RemoteViews {
-        if (!data.bots.present) {
-            return unknown(R.drawable.lw_ic_rooms, R.string.lw_rooms, R.string.lw_bots_unknown, R.string.lw_bots_unknown_short)
-        }
-        val offline = !data.botsOnline
-        // Already by relevance: the one that needs you, then the one that works.
-        val rooms = data.bots.trusted(data.nowMs).rooms
-        return if (size.board) roomsBoard(rooms, offline) else roomsStrip(rooms, offline)
-    }
-
-    /**
-     * What happens in a room, in a line: who needs you, who answers (and who
-     * is next), else the last thing said. True when it is happening now.
-     */
-    private fun roomLine(room: WidgetRoom, offline: Boolean): Pair<String, Boolean> {
-        val asking = room.members.firstOrNull { !offline && it.state == "needs_you" }
-        val answering = room.members.firstOrNull { !offline && it.state == "working" }
-        val next = room.members.firstOrNull { !offline && it.state == "queued" }
-        val message = room.lastMessage
-        return when {
-            asking != null -> context.getString(R.string.lw_room_needs_you, asking.name) to true
-            answering != null ->
-                listOfNotNull(
-                    context.getString(R.string.lw_room_answers, answering.name),
-                    next?.takeIf { size.wide }?.let { context.getString(R.string.lw_room_then, it.name) },
-                ).joinToString(" · ") to true
-            message != null ->
-                (room.lastSpeaker?.let { context.getString(R.string.lw_room_said, it, message) } ?: message) to false
-            else -> context.getString(R.string.lw_room_quiet) to false
-        }
-    }
-
-    /** One row: the live room and who answers. */
-    private fun roomsStrip(rooms: List<WidgetRoom>, offline: Boolean): RemoteViews {
-        val views = stripViews()
-        if (offline) {
-            views.setInt(android.R.id.background, "setBackgroundResource", R.drawable.lw_card_stale)
-            glyph(views, R.id.lw_lead_glyph, R.drawable.lw_icb, R.drawable.lw_ic_cloud_off, R.color.lw_amber)
-        } else {
-            glyph(views, R.id.lw_lead_glyph, R.drawable.lw_icb, R.drawable.lw_ic_rooms, R.color.lw_muted)
-        }
-        val room = rooms.firstOrNull()
-        if (room == null) {
-            text(views, title = context.getString(R.string.lw_rooms), sub = context.getString(R.string.lw_rooms_empty))
-        } else {
-            val (line, live) = roomLine(room, offline)
-            text(
-                views,
-                title = room.name,
-                sub = if (offline) since(data.bots.updatedAtMs) ?: line else line,
-                subColor =
-                    when {
-                        offline -> R.color.lw_amber
-                        live -> R.color.lw_gold
-                        else -> null
-                    },
-            )
-        }
-        views.setOnClickPendingIntent(
-            android.R.id.background,
-            pending(room?.let { LauncherWidgetOpen.Payload(it.openPayload) } ?: LauncherWidgetOpen.App),
-        )
-        return views
-    }
-
-    /** Two rows or more: more rooms, each with its members and its last line. */
-    private fun roomsBoard(rooms: List<WidgetRoom>, offline: Boolean): RemoteViews {
-        val answering = rooms.count { !offline && it.state == WidgetBotState.WORKING }
-        val waiting = rooms.count { !offline && it.state == WidgetBotState.NEEDS_YOU }
-        val counts =
-            listOfNotNull(
-                plural(R.plurals.lw_rooms_waiting, waiting).takeIf { waiting > 0 },
-                plural(R.plurals.lw_rooms_answering, answering).takeIf { answering > 0 },
-            ).joinToString(" · ")
-        val views =
-            board(
-                card = if (offline) R.drawable.lw_card_stale else R.drawable.lw_card,
-                icon = R.drawable.lw_ic_rooms,
-                gold = false,
-                label = context.getString(R.string.lw_rooms),
-                right =
-                    when {
-                        offline -> moment(data.bots.updatedAtMs).takeIf { data.bots.updatedAtMs > 0 }
-                        size.wide -> counts.takeIf { it.isNotEmpty() }
-                        else -> null
-                    },
-                rightColor = if (offline) R.color.lw_amber else null,
-                rightIcon = offline,
-            )
-        if (rooms.isEmpty()) {
-            emptyLine(views, R.drawable.lw_ic_rooms, context.getString(R.string.lw_rooms_empty))
-        } else {
-            val room = bodyHeight()
-            val fit = (room / rowHeight()).toInt().coerceIn(0, MAX_ROWS)
-            addRows(views, rooms.take(fit).map { roomRow(it, offline) }, room)
-        }
-        views.setOnClickPendingIntent(
-            android.R.id.background,
-            pending(rooms.firstOrNull()?.let { LauncherWidgetOpen.Payload(it.openPayload) } ?: LauncherWidgetOpen.App),
-        )
-        return views
-    }
-
-    private fun roomRow(room: WidgetRoom, offline: Boolean): RemoteViews {
-        val row = RemoteViews(pkg, R.layout.lw_row_room)
-        val side = (dp(R.dimen.lw_room_face) * density).toInt()
-        val shown = room.members.take(if (size.wide) MAX_ROOM_FACES else MAX_ROOM_FACES - 1)
-        shown.forEachIndexed { index, member ->
-            val face = RemoteViews(pkg, if (index == 0) R.layout.lw_room_face else R.layout.lw_room_face_next)
-            val bitmap = LauncherWidgetFaces.load(member.facePath, side)
-            if (bitmap != null) {
-                face.setImageViewBitmap(R.id.lw_room_face, bitmap)
-            } else {
-                face.setInt(R.id.lw_room_face, "setBackgroundResource", R.drawable.lw_okc_chip)
-                face.setImageViewResource(R.id.lw_room_face, R.drawable.ic_console_mark)
-                val inset = (side * 0.27f).toInt()
-                face.setViewPadding(R.id.lw_room_face, inset, inset, inset, inset)
-            }
-            if (offline) face.setInt(R.id.lw_room_face, "setImageAlpha", DIM_ALPHA)
-            row.addView(R.id.lw_room_faces, face)
-        }
-        // A narrow card keeps the room's name readable: the faces, the name
-        // and its line, without "+2" and without the timer beside them.
-        val more = room.members.size - shown.size
-        if (more > 0 && size.wide) {
-            row.setTextViewText(R.id.lw_room_more, "+$more")
-            row.setViewVisibility(R.id.lw_room_more, View.VISIBLE)
-        }
-        row.setTextViewText(R.id.lw_row_title, room.name)
-        val (line, live) = roomLine(room, offline)
-        row.setTextViewText(R.id.lw_row_sub, line)
-        if (live && room.state == WidgetBotState.NEEDS_YOU) {
-            row.setTextColor(R.id.lw_row_sub, color(R.color.lw_gold))
-        } else if (live) {
-            row.setViewVisibility(R.id.lw_row_mark, View.VISIBLE)
-            if (size.wide) timer(row, R.id.lw_row_timer, room.sinceMs)
-        }
-        if (offline) {
-            row.setTextColor(R.id.lw_row_title, color(R.color.lw_faint))
-            row.setTextColor(R.id.lw_row_sub, color(R.color.lw_faint))
-        }
-        row.setOnClickPendingIntent(R.id.lw_row, pending(LauncherWidgetOpen.Payload(room.openPayload)))
-        return row
     }
 
     // ---------------------------------------------------------------- Tareas
@@ -1552,7 +1278,12 @@ internal class LauncherWidgetRenderer(
         }
         // What runs or waits right now is only known from a fresh snapshot
         // of the app; without one every conversation is just a conversation.
-        val active = if (data.chatOnline && data.chat.listsActivity) data.chat.active else emptyList()
+        // What runs is the chat's instance; the list is another instance's when
+        // the owner switched: a row from one opened under the other is a
+        // chat that does not exist there.
+        val sameInstance = data.chat.instanceId != null && data.chat.instanceId == data.chats.connectionId
+        val active =
+            if (data.chatOnline && data.chat.listsActivity && sameInstance) data.chat.active else emptyList()
         val rows = list.rows(active)
         return if (size.board) chatsBoard(list, rows) else chatsStrip(list, rows)
     }
@@ -1832,6 +1563,20 @@ internal class LauncherWidgetRenderer(
         views.setViewVisibility(id, View.VISIBLE)
     }
 
+    /** The intent of a zone of a picture drawn by the app; null for one that is not understood. */
+    fun intentFor(zone: LauncherWidgetZone): PendingIntent? =
+        when (zone.kind) {
+            "app" -> pending(LauncherWidgetOpen.App)
+            "setup" -> pending(LauncherWidgetOpen.Setup)
+            "session" -> zone.sessionId?.let { pending(LauncherWidgetOpen.Session(zone.instanceId, it)) }
+            "payload" -> zone.payload?.let { pending(LauncherWidgetOpen.Payload(it)) }
+            "approve" -> zone.payload?.let { answer("approve", it) }
+            "deny" -> zone.payload?.let { answer("deny", it) }
+            "newChat" ->
+                parseNewSessionLaunchTarget(zone.target)?.let { pending(LauncherWidgetOpen.NewChat(zone.instanceId, it)) }
+            else -> null
+        }
+
     private fun pending(open: LauncherWidgetOpen): PendingIntent {
         val intent: Intent
         val key: String
@@ -1952,9 +1697,6 @@ internal class LauncherWidgetRenderer(
 
         const val MAX_ROWS = 8
 
-        /** Faces in the one-row Bots card, and member faces of a room row. */
-        const val MAX_FACES = 8
-        const val MAX_ROOM_FACES = 3
 
         /** Three lines of text (19 + 17 + 17 sp) with a little air, in dp at font scale 1. */
         const val THREE_LINES_MIN_HEIGHT = 60f

@@ -457,10 +457,25 @@ final class HomeBoardSlot {
   String toString() => 'HomeBoardSlot($col,$row ${cols}x$rows)';
 }
 
-/// The board is a grid of whole rows that never scrolls: two columns and
-/// as many rows as fit between the header and the dock.
+/// The board is a grid of whole rows that never scrolls: two columns (four
+/// on a wide screen) and as many rows as fit between the header and the
+/// dock.
 abstract final class HomeBoardGridRule {
+  /// Columns of a phone's board.
   static const columns = 2;
+
+  /// Columns of a wide board (an unfolded foldable, a tablet).
+  static const wideColumns = 4;
+
+  /// The least width (dp) of a board that gets [wideColumns].
+  static const wideBreakpoint = 840.0;
+
+  /// Columns of a board [width] dp wide. The stored layout knows nothing
+  /// of columns: the same list of widgets is laid out in two or in four,
+  /// so a board arranged on a phone opens unchanged on a wide screen and
+  /// back, with nothing written.
+  static int columnsFor(double width) =>
+      width >= wideBreakpoint ? wideColumns : columns;
 
   /// Space between cells.
   static const gap = 11.0;
@@ -520,6 +535,10 @@ abstract final class HomeBoardGridRule {
 final class HomeBoardPlan {
   final int rows;
 
+  /// Columns of the board this plan is for ([HomeBoardGridRule.columns]
+  /// on a phone, [HomeBoardGridRule.wideColumns] on a wide screen).
+  final int columns;
+
   /// Widgets on the board, in board order, as the layout stores them, and
   /// where each one sits ([shown] has them at the size of their place).
   final List<HomeWidgetInstance> placed;
@@ -533,14 +552,18 @@ final class HomeBoardPlan {
 
   const HomeBoardPlan._({
     required this.rows,
+    required this.columns,
     required this.placed,
     required this.slots,
     required this.hidden,
     required this.holes,
   });
 
-  factory HomeBoardPlan.of(List<HomeWidgetInstance> items, int rows) {
-    const columns = HomeBoardGridRule.columns;
+  factory HomeBoardPlan.of(
+    List<HomeWidgetInstance> items,
+    int rows, {
+    int columns = HomeBoardGridRule.columns,
+  }) {
     final taken = [for (var r = 0; r < rows; r++) List.filled(columns, false)];
     final placed = <HomeWidgetInstance>[];
     final slots = <HomeBoardSlot>[];
@@ -595,6 +618,7 @@ final class HomeBoardPlan {
     }
     return HomeBoardPlan._(
       rows: rows,
+      columns: columns,
       placed: List.unmodifiable(placed),
       slots: List.unmodifiable(slots),
       hidden: List.unmodifiable(hidden),
@@ -607,7 +631,7 @@ final class HomeBoardPlan {
   }
 
   /// Slots of the board.
-  int get capacity => rows * HomeBoardGridRule.columns;
+  int get capacity => rows * columns;
 
   /// Slots without a widget.
   int get free => holes.length;
@@ -645,7 +669,6 @@ final class HomeBoardPlan {
 
   /// Whether one more widget of [size], added last, gets a place.
   bool fits(HomeWidgetSize size) {
-    const columns = HomeBoardGridRule.columns;
     final free = {for (final h in holes) (h.col, h.row)};
     for (var row = 0; row + size.rows <= rows; row++) {
       for (var col = 0; col + size.cols <= columns; col++) {
@@ -671,12 +694,15 @@ final class HomeBoardPlan {
     List<HomeWidgetInstance> items,
     int rows,
     String id,
-    HomeWidgetSize size,
-  ) {
-    final before = HomeBoardPlan.of(items, rows);
-    final after = HomeBoardPlan.of([
-      for (final i in items) i.id == id ? i.copyWith(size: size) : i,
-    ], rows);
+    HomeWidgetSize size, {
+    int columns = HomeBoardGridRule.columns,
+  }) {
+    final before = HomeBoardPlan.of(items, rows, columns: columns);
+    final after = HomeBoardPlan.of(
+      [for (final i in items) i.id == id ? i.copyWith(size: size) : i],
+      rows,
+      columns: columns,
+    );
     if (after.shownSize(id) != size) return false;
     for (final item in before.placed) {
       if (item.id == id) continue;

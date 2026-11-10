@@ -22,8 +22,12 @@ import '../theme/theme_profile_validator.dart';
 import '../theme/theme_tagline.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
+import '../widgets/hermes_theme_reveal.dart';
 import '../widgets/hermes_ui.dart';
 import 'theme_studio_screen.dart';
+import '../design/ambient_backdrop.dart' show HermesGlassLook;
+import '../design/box_edge.dart' show HermesBoxEdges;
+import '../design/tokens.dart' show HermesGel;
 import '../design/hermes_design.dart'
     show
         HermesAction,
@@ -127,7 +131,10 @@ class _ThemesScreenState extends State<ThemesScreen> {
     if (root == null || _busy) return;
     setState(() => _busy = true);
     try {
-      await root.setThemeId(id, followSystem: followSystem);
+      await HermesThemeReveal.run(
+        context,
+        () => root.setThemeId(id, followSystem: followSystem),
+      );
     } on ThemeProfileStoreException catch (error) {
       if (!mounted) return;
       _message(themeErrorCopy(Strings.of(context), error.code));
@@ -227,9 +234,7 @@ class _ThemesScreenState extends State<ThemesScreen> {
       ]);
     } on Object {
       if (mounted) {
-        _message(
-          Strings.of(context).i18n131ThemeExportFailed,
-        );
+        _message(Strings.of(context).i18n131ThemeExportFailed);
       }
     }
   }
@@ -296,7 +301,9 @@ class _ThemesScreenState extends State<ThemesScreen> {
       }
     } on ThemeProfileCodecException catch (error) {
       if (mounted) {
-        _message(themeErrorCopy(Strings.of(context), error.code, field: error.field));
+        _message(
+          themeErrorCopy(Strings.of(context), error.code, field: error.field),
+        );
       }
     } on ThemeProfileStoreException catch (error) {
       if (mounted) _message(themeErrorCopy(Strings.of(context), error.code));
@@ -352,13 +359,26 @@ class _ThemesScreenState extends State<ThemesScreen> {
       activeComponentProfileId: ComponentProfiles.minimal.id,
     );
     if (root == null) return _buildScreen(fallback);
-    return ValueListenableBuilder<ThemeProfileStoreSnapshot>(
-      valueListenable: root.themeProfiles,
-      builder: (_, snapshot, child) => _buildScreen(snapshot),
+    return ListenableBuilder(
+      listenable: root.lookFeel,
+      builder: (_, child) => ValueListenableBuilder<ThemeProfileStoreSnapshot>(
+        valueListenable: root.themeProfiles,
+        builder: (_, snapshot, child) => _buildScreen(snapshot),
+      ),
     );
   }
 
-  Widget _buildScreen(ThemeProfileStoreSnapshot snapshot) {
+  Widget _buildScreen(ThemeProfileStoreSnapshot stored) {
+    // With Look & Feel in force no theme of the list is the active one: the
+    // list shows no check until one is chosen («Más temas» from Look & Feel).
+    final lookInForce = _root?.lookFeel.settings.derived ?? false;
+    final snapshot = lookInForce
+        ? ThemeProfileStoreSnapshot(
+            customProfiles: stored.customProfiles,
+            activeProfileId: '',
+            activeComponentProfileId: stored.activeComponentProfileId,
+          )
+        : stored;
     // One row per family (light + dark variant behind a mode selector):
     // Console's own families first, then the Hermes Desktop catalogue.
     Map<String, List<HermesThemePreset>> families({required bool desktop}) {
@@ -373,9 +393,10 @@ class _ThemesScreenState extends State<ThemesScreen> {
     final consoleFamilies = families(desktop: false);
     final desktopFamilies = families(desktop: true);
     final activeCustom = snapshot.customById(snapshot.activeProfileId);
-    final activeName =
-        activeCustom?.name ??
-        AppTheme.presetById(snapshot.activeProfileId).name;
+    final activeName = lookInForce
+        ? Strings.of(context).lflTitle
+        : activeCustom?.name ??
+              AppTheme.presetById(snapshot.activeProfileId).name;
     return Scaffold(
       appBar: HermesAppBar(
         title: Text(Strings.of(context).themesTitle),
@@ -399,7 +420,7 @@ class _ThemesScreenState extends State<ThemesScreen> {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
           _Intro(activeName: activeName),
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
           _SectionLabel(
             '${Strings.of(context).themesMyThemes} · '
             '${snapshot.customProfiles.length}',
@@ -704,49 +725,70 @@ class _ThemeModeButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final glass = HermesGlassLook.of(context);
+    final radius = BorderRadius.circular(9);
+    const padding = EdgeInsets.symmetric(horizontal: 9, vertical: 7);
+    final box = Container(
+      constraints: const BoxConstraints(minWidth: 48, minHeight: 42),
+      // On glass the body leaves the pixel of the contour, which
+      // [HermesBoxEdges] paints.
+      padding: glass == null
+          ? padding
+          : padding.add(const EdgeInsets.all(HermesGel.rimWidth)),
+      decoration: glass != null
+          ? HermesGlassLook.choice(glass, radius, selected: selected)
+          : BoxDecoration(
+              color: selected
+                  ? colors.accent.withValues(alpha: 0.10)
+                  : Colors.transparent,
+              borderRadius: radius,
+              border: Border.all(
+                color: selected
+                    ? colors.accent.withValues(alpha: 0.55)
+                    : colors.divider.withValues(alpha: 0.65),
+              ),
+            ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 16,
+            color: selected ? colors.accent : colors.textSecondary,
+          ),
+          if (showLabel) ...[
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? colors.textPrimary : colors.textSecondary,
+                fontSize: 11,
+                fontWeight: selected
+                    ? (glass == null ? FontWeight.w600 : FontWeight.w700)
+                    : FontWeight.w500,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
     return Semantics(
       button: true,
       selected: selected,
       label: label,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(9),
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 48, minHeight: 42),
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-          decoration: BoxDecoration(
-            color: selected
-                ? colors.accent.withValues(alpha: 0.10)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(
-              color: selected
-                  ? colors.accent.withValues(alpha: 0.55)
-                  : colors.divider.withValues(alpha: 0.65),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 16,
-                color: selected ? colors.accent : colors.textSecondary,
+        borderRadius: radius,
+        child: glass == null
+            ? box
+            : HermesBoxEdges(
+                glass: glass,
+                radius: radius,
+                lifted: true,
+                compact: true,
+                line: selected ? glass.selectedLine : null,
+                child: box,
               ),
-              if (showLabel) ...[
-                const SizedBox(width: 5),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: selected ? colors.textPrimary : colors.textSecondary,
-                    fontSize: 11,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
     );
   }

@@ -85,7 +85,13 @@ void main() {
     expect(bands.darkPage.$1, closeTo(0.238, 0.01));
   });
 
+  // The two Indigo glass presets carry the approved mock-up palette verbatim
+  // (near-black #08090F page, saturated #5B6CFF accent), which is outside the
+  // soft Claude bands by design; indigo_glass_preset_test pins them instead.
+  const mockupPalettes = {'indigo-glass', 'indigo-glass-light'};
+
   for (final preset in AppTheme.presets) {
+    if (mockupPalettes.contains(preset.id)) continue;
     test('${preset.id} sits in the Claude bands', () {
       final c = preset.colors;
       final fails = <String>[];

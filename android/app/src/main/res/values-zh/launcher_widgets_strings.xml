@@ -9,6 +9,7 @@
     <string name="lw_cron_description">下一个定时任务；大尺寸显示全部任务，并突出失败的任务</string>
     <string name="lw_new">新建</string>
     <string name="lw_ask_hint">问问Hermes…</string>
+    <string name="lw_ask_hint_named">问问%1$s…</string>
     <string name="lw_new_description">新建聊天</string>
     <string name="lw_voice_description">新建语音聊天</string>
     <string name="lw_camera_description">使用相机新建聊天</string>
@@ -139,4 +140,9 @@
     <string name="lw_sample_room_line">Builder正在回复</string>
     <string name="lw_sample_run_title">Hermes · 终端</string>
     <string name="lw_sample_run_about">每周报告</string>
+
+    <!-- Quick Settings tiles -->
+    <string name="widgets_qs_new_chat_label">新建聊天</string>
+    <string name="widgets_qs_voice_chat_label">语音聊天</string>
+    <string name="widgets_qs_camera_chat_label">相机聊天</string>
 </resources>

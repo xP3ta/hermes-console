@@ -86,12 +86,13 @@ void main() {
       await tester.pumpWidget(_host());
       await tester.pumpAndSettle();
 
-      // Estado inicial (perfil "Bots" por defecto): borde "Soft", plano
-      // "Elevated" — ambos distintos de los que se van a tocar, para que
-      // el test detecte de verdad un cambio real en cada dimensión.
+      // Estado inicial (perfil "Bots" por defecto): borde "Rounded" (la
+      // píldora, por defecto desde QA 9709), plano "Elevated" — ambos
+      // distintos de los que se van a tocar, para que el test detecte de
+      // verdad un cambio real en cada dimensión.
       expect(
         controller.value.bots.style.borderShape,
-        DockBorderShape.soft,
+        DockBorderShape.rounded,
       );
       expect(controller.value.bots.style.depth, DockDepth.elevated);
 
@@ -99,12 +100,12 @@ void main() {
       // build (ya obsoleto tras el primer toque) en vez de `p.style`, así
       // que el segundo toque (Profundidad) revertía el primero (Bordes) al
       // reconstruir sobre el estado viejo.
-      await tester.tap(find.text('Rounded'));
+      await tester.tap(find.text('Square'));
       await tester.pump();
       await tester.tap(find.text('Flat'));
       await tester.pumpAndSettle();
 
-      expect(controller.value.bots.style.borderShape, DockBorderShape.rounded);
+      expect(controller.value.bots.style.borderShape, DockBorderShape.square);
       expect(controller.value.bots.style.depth, DockDepth.flat);
     },
   );
@@ -127,6 +128,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.value.bots.style.transparency, greaterThan(0));
+      // The glass is on by default (QA 9709): the drag is a choice now.
+      expect(controller.value.bots.style.transparencyChosen, isTrue);
       expect(controller.value.bots.style.depth, DockDepth.floating);
     },
   );

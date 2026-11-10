@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../utils/theme_error_copy.dart';
 import '../../l10n/app_localizations.dart';
+import '../../main.dart' show HermesAppState;
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
 import '../theme/component_profile.dart';
 import '../theme/theme_profile.dart';
 import '../theme/theme_profile_codec.dart';
@@ -176,7 +178,12 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
         builder: (context, setSheetState) => SizedBox(
           height: MediaQuery.sizeOf(context).height * 0.68,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            padding: const EdgeInsets.fromLTRB(
+              HermesSpace.x4,
+              HermesSpace.x4,
+              HermesSpace.x4,
+              HermesSpace.x3,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -187,7 +194,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
                         Strings.of(context).themesBaseColors,
                         style: TextStyle(
                           color: Theme.of(context).hermes.textPrimary,
-                          fontSize: 17,
+                          fontSize: HermesType.titleSize,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0,
                         ),
@@ -291,6 +298,14 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
       final saved = await widget.store.save(candidate);
       if (activate) {
         await widget.store.activate(saved.id);
+        // A custom theme chosen here is a theme of the list: it takes over
+        // from Look & Feel, like one chosen in «Más temas».
+        if (mounted) {
+          await context
+              .findAncestorStateOfType<HermesAppState>()
+              ?.lookFeel
+              .useList();
+        }
       }
       await widget.onChanged?.call();
       if (!mounted) return;
@@ -304,7 +319,9 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
         );
       }
     } on ThemeProfileStoreException catch (error) {
-      if (mounted) _showMessage(themeErrorCopy(Strings.of(context), error.code));
+      if (mounted) {
+        _showMessage(themeErrorCopy(Strings.of(context), error.code));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -325,10 +342,12 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
     );
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): its list starts below it, faded at its end.
+        glass: false,
         title: Text(strings.themesStudioTitle),
         titleTextStyle: TextStyle(
           color: Theme.of(context).hermes.textPrimary,
-          fontSize: 17,
+          fontSize: HermesType.titleSize,
           fontWeight: FontWeight.w600,
           letterSpacing: 0,
         ),
@@ -337,7 +356,12 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
         child: CustomScrollView(
           slivers: [
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+              padding: const EdgeInsets.fromLTRB(
+                HermesSpace.x4,
+                HermesSpace.x2,
+                HermesSpace.x4,
+                2,
+              ),
               sliver: SliverToBoxAdapter(
                 child: _StudioCard(
                   padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -346,7 +370,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
                     controller: _name,
                     maxLength: 48,
                     style: const TextStyle(
-                      fontSize: 14,
+                      fontSize: HermesType.textSize,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 0,
                     ),
@@ -374,7 +398,12 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
               ),
             ),
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+              padding: const EdgeInsets.fromLTRB(
+                HermesSpace.x4,
+                HermesSpace.x2,
+                HermesSpace.x4,
+                28,
+              ),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
                   _PaletteSummary(
@@ -508,7 +537,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
         icon: const Icon(Icons.unfold_more_rounded, size: 17),
         style: TextStyle(
           color: colors.textPrimary,
-          fontSize: 13,
+          fontSize: HermesType.valueSize,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
         ),
@@ -533,7 +562,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
       s.themesTypography,
       style: TextStyle(
         color: colors.textPrimary,
-        fontSize: 13,
+        fontSize: HermesType.valueSize,
         fontWeight: FontWeight.w500,
         letterSpacing: 0,
       ),
@@ -554,7 +583,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
               Padding(
                 padding: EdgeInsets.symmetric(
                   horizontal: 14,
-                  vertical: stackFont ? 8 : 0,
+                  vertical: stackFont ? HermesSpace.x2 : 0,
                 ),
                 child: stackFont
                     ? Column(
@@ -621,9 +650,14 @@ class _PaletteSummary extends StatelessWidget {
         child: InkWell(
           key: const Key('theme_studio_palette'),
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(HermesRadius.row),
           child: _StudioCard(
-            padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+            padding: const EdgeInsets.fromLTRB(
+              14,
+              HermesSpace.x3,
+              10,
+              HermesSpace.x3,
+            ),
             child: Row(
               children: [
                 Expanded(
@@ -636,7 +670,7 @@ class _PaletteSummary extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: themeColors.textPrimary,
-                          fontSize: 13,
+                          fontSize: HermesType.valueSize,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0,
                         ),
@@ -726,7 +760,7 @@ class _StudioSectionTitle extends StatelessWidget {
           subtitle,
           style: TextStyle(
             color: colors.textSecondary,
-            fontSize: 11.5,
+            fontSize: HermesType.captionSize,
             height: 1.35,
             letterSpacing: 0,
           ),
@@ -752,7 +786,7 @@ class _StudioCard extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: colors.surface.withValues(alpha: 0.74),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(HermesRadius.row),
         border: Border.all(color: colors.divider.withValues(alpha: 0.48)),
       ),
       child: child,
@@ -822,11 +856,11 @@ class _ColorTile extends StatelessWidget {
       value: ThemeProfileCodec.colorToCanonical(entry.color),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(HermesRadius.row),
         child: InkWell(
           key: Key('theme_color_${entry.token}'),
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(HermesRadius.row),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: Row(
@@ -839,7 +873,7 @@ class _ColorTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: colors.textPrimary,
-                      fontSize: 12.5,
+                      fontSize: HermesType.supportSize,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 0,
                     ),
@@ -1021,7 +1055,7 @@ class _ContrastPanel extends StatelessWidget {
     final ready = validation.contrastFailures.isEmpty;
     final tone = ready ? colors.success : colors.warning;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 9, 8, 9),
+      padding: const EdgeInsets.fromLTRB(HermesSpace.x3, 9, HermesSpace.x2, 9),
       decoration: BoxDecoration(
         color: tone.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(14),
@@ -1044,7 +1078,7 @@ class _ContrastPanel extends StatelessWidget {
                     ),
               style: TextStyle(
                 color: colors.textPrimary,
-                fontSize: 11.5,
+                fontSize: HermesType.captionSize,
                 height: 1.3,
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0,
@@ -1061,7 +1095,10 @@ class _ContrastPanel extends StatelessWidget {
               ),
               child: Text(
                 strings.themesProposeRepair,
-                style: const TextStyle(fontSize: 11.5, letterSpacing: 0),
+                style: const TextStyle(
+                  fontSize: HermesType.captionSize,
+                  letterSpacing: 0,
+                ),
               ),
             ),
         ],
@@ -1096,7 +1133,10 @@ class _StudioSaveBar extends StatelessWidget {
       child: Text(
         Strings.of(context).themesSaveDraft,
         textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 13, letterSpacing: 0),
+        style: const TextStyle(
+          fontSize: HermesType.valueSize,
+          letterSpacing: 0,
+        ),
       ),
     );
     final activate = FilledButton(
@@ -1105,12 +1145,15 @@ class _StudioSaveBar extends StatelessWidget {
       style: FilledButton.styleFrom(
         minimumSize: const Size(0, 44),
         padding: const EdgeInsets.symmetric(horizontal: 18),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: const StadiumBorder(),
       ),
       child: Text(
         Strings.of(context).themesSaveActivate,
         textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 13, letterSpacing: 0),
+        style: const TextStyle(
+          fontSize: HermesType.valueSize,
+          letterSpacing: 0,
+        ),
       ),
     );
     // No band and no line: the two buttons sit on the page, and the editor
@@ -1120,7 +1163,12 @@ class _StudioSaveBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 7, 16, 9),
+          padding: const EdgeInsets.fromLTRB(
+            HermesSpace.x4,
+            7,
+            HermesSpace.x4,
+            9,
+          ),
           child: stack
               ? Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1164,9 +1212,14 @@ class _ThemePreviewHeaderDelegate extends SliverPersistentHeaderDelegate {
   ) {
     final compact = shrinkOffset > 34;
     return ColoredBox(
-      color: Theme.of(context).scaffoldBackgroundColor,
+      color: Theme.of(context).hermes.background,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(16, compact ? 5 : 7, 16, 7),
+        padding: EdgeInsets.fromLTRB(
+          HermesSpace.x4,
+          compact ? 5 : 7,
+          HermesSpace.x4,
+          7,
+        ),
         child: _ThemePreview(
           theme: theme,
           name: name,
@@ -1325,7 +1378,7 @@ class _FullPreview extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: colors.textPrimary,
-                  fontSize: 11.5,
+                  fontSize: HermesType.captionSize,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0,
                 ),
@@ -1348,7 +1401,7 @@ class _FullPreview extends StatelessWidget {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: colors.surfaceVariant,
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(HermesRadius.chip),
               ),
               child: Icon(
                 Icons.arrow_forward_rounded,
@@ -1372,7 +1425,10 @@ class _FullPreview extends StatelessWidget {
             const SizedBox(width: 7),
             Container(
               constraints: const BoxConstraints(maxWidth: 120),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              padding: const EdgeInsets.symmetric(
+                horizontal: HermesSpace.x2,
+                vertical: 5,
+              ),
               decoration: BoxDecoration(
                 color: colors.surfaceVariant,
                 borderRadius: BorderRadius.circular(9),

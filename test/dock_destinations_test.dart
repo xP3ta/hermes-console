@@ -10,7 +10,7 @@
 // | Chats         | conversation list / General  | conversation list / Bots   |
 // | Proyectos     | Proyectos / General          | Proyectos / Bots           |
 // | Ajustes       | Ajustes / General            | Ajustes / Bots             |
-// | Herramientas  | Herramientas / General       | Herramientas / Bots        |
+// | Agentes       | Agentes / General            | Agentes / Bots             |
 // | Cron, Tareas  | their screen / General       | their screen / Bots        |
 // | Nuevo         | a new chat                   | a new chat                 |
 // | Actividad     | its sheet                    | its sheet                  |
@@ -35,12 +35,12 @@ import 'package:hermes_android/core/screens/gesture_dock_settings_screen.dart';
 import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
-import 'package:hermes_android/core/screens/settings_screen.dart';
+import 'package:hermes_android/core/screens/app_settings_screen.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
-import 'package:hermes_android/core/screens/tools_hub_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/dock_preferences_store.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
+import 'package:hermes_android/core/services/ssh_profile_presence.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/shell/dock_activity_sheet.dart';
 import 'package:hermes_android/core/shell/dock_geometry.dart';
@@ -103,7 +103,7 @@ const _places = [
   GestureDockTab.search,
   GestureDockTab.cron,
   GestureDockTab.tasks,
-  GestureDockTab.tools,
+  GestureDockTab.agents,
 ];
 
 late ConnectionManager _manager;
@@ -128,7 +128,7 @@ Widget _shellScreen(GestureDockTab? tab) => Scaffold(
     currentDestination: switch (tab) {
       GestureDockTab.cron => DockItemId.cron,
       GestureDockTab.tasks => DockItemId.tasks,
-      GestureDockTab.tools => DockItemId.tools,
+      GestureDockTab.agents => DockItemId.agents,
       _ => null,
     },
     gestureTab: tab == GestureDockTab.projects ? GestureDockTab.projects : null,
@@ -182,8 +182,8 @@ class _GeneralHome extends StatelessWidget {
               DockItemId.sessions: DockItemAction(
                 onTap: () => open(GestureDockTab.search),
               ),
-              DockItemId.tools: DockItemAction(
-                onTap: () => open(GestureDockTab.tools),
+              DockItemId.agents: DockItemAction(
+                onTap: () => open(GestureDockTab.agents),
               ),
             },
           ),
@@ -327,9 +327,12 @@ void main() {
     GestureDockHost.debugNewChat = () => _log.add('new-chat');
     GestureDockHost.debugFeed = DockActivityFeed();
     GestureDockHost.debugActivity = null;
+    // An SSH profile: Agentes is on the bar.
+    SshProfilePresence.instance.value = true;
   });
 
   tearDown(() async {
+    SshProfilePresence.instance.value = false;
     FeatureFlags.instance.resetForTesting();
     GestureDockHost.debugPlace = null;
     GestureDockHost.debugNewChat = null;
@@ -488,7 +491,6 @@ void main() {
           (GestureDockTab.create, s.dockSessionsLabel, GestureDockTab.search),
           (GestureDockTab.projects, s.gdShortTasks, GestureDockTab.tasks),
           (GestureDockTab.projects, s.gdTabProjects, GestureDockTab.projects),
-          (GestureDockTab.settings, s.drawerTools, GestureDockTab.tools),
         ]) {
           await _hold(tester, holder);
           await tester.tap(_shortcut(label));
@@ -530,8 +532,8 @@ void main() {
     for (final (tab, screen) in const <(GestureDockTab, Type)>[
       (GestureDockTab.search, SessionListScreen),
       (GestureDockTab.bots, MissionControlScreen),
-      (GestureDockTab.tools, ToolsHubScreen),
-      (GestureDockTab.settings, SettingsScreen),
+      (GestureDockTab.agents, Scaffold),
+      (GestureDockTab.settings, AppSettingsScreen),
       (GestureDockTab.cron, CronScreen),
       (GestureDockTab.tasks, TasksScreen),
       (GestureDockTab.projects, OwnedResourceHost<TuiGatewayClient>),
@@ -638,7 +640,9 @@ void main() {
         'lib/core/screens/tasks_screen.dart':
             'currentDestination: DockItemId.tasks',
         'lib/core/screens/tools_hub_screen.dart':
-            'currentDestination: DockItemId.tools',
+            'currentDestination: DockItemId.settings',
+        'lib/core/navigation/agents_destination.dart':
+            'currentDestination: DockItemId.agents',
         'lib/core/screens/session_list_screen.dart':
             'includeSessionsAction: false',
         'lib/core/screens/settings_screen.dart': 'includeSettingsAction: false',

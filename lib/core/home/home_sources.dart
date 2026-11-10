@@ -21,6 +21,7 @@ import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
 import 'board/home_board_data.dart';
 import 'home_now.dart';
+import 'launcher/launcher_widget_identity.dart' show lwProfileName;
 
 /// What a chat is doing right now, in the words Home shows beside it: the
 /// tool it runs, its subagents, its background work. Null while it only
@@ -314,7 +315,6 @@ List<HomeBoardBot> homeBoardBots({
       BotPresence.working || BotPresence.thinking => HomeBotState.working,
       BotPresence.idle => HomeBotState.idle,
     };
-    final title = profile.botTitle?.trim();
     final current = agent.currentSession;
     final reply = current?.lastAssistantPreview;
     DateTime? since;
@@ -329,7 +329,7 @@ List<HomeBoardBot> homeBoardBots({
     bots.add(
       HomeBoardBot(
         profileName: profile.name,
-        displayName: title == null || title.isEmpty ? profile.name : title,
+        displayName: lwProfileName(null, profile.name, identity: profile),
         profile: profile,
         state: state,
         step: state == HomeBotState.idle ? null : agent.botChatTitle,

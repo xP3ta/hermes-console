@@ -8,14 +8,18 @@ import '../screens/chat_screen.dart';
 import '../screens/gesture_dock_settings_screen.dart';
 import '../screens/mission_control_screen.dart';
 import '../screens/projects_center_screen.dart';
-import '../screens/settings_screen.dart';
+import '../screens/app_settings_screen.dart';
 import '../services/connection_manager.dart';
 import '../services/new_session_factory.dart';
 import '../services/dock_preferences_store.dart';
 import '../services/global_activity_aggregate.dart';
+import '../services/ssh_profile_presence.dart';
 import '../services/tui_gateway_client.dart';
+import '../design/tokens.dart' show HermesChrome, HermesRadius, HermesSpace;
 import '../theme/app_theme.dart';
 import '../widgets/dock.dart' show DockItemAction, DockItemId, dockRailMargin;
+import '../navigation/agents_destination.dart';
+import '../screens/herdr_agents_screen.dart' show agentsHomeAvailable;
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/dock_style.dart';
 import '../widgets/owned_resource_host.dart';
@@ -41,7 +45,7 @@ import 'gesture_dock_state.dart';
 /// | Chats        | the conversation list       | the conversation list       |
 /// | Proyectos,   | that screen, above the      | that screen, above the Bots |
 /// | Ajustes,     | General Home                | home                        |
-/// | Herramientas,|                             |                             |
+/// | Agentes,     |                             |                             |
 /// | Cron, Tareas |                             |                             |
 /// | Nuevo        | a new chat                  | a new chat                  |
 /// | Actividad    | its sheet                   | its sheet                   |
@@ -55,7 +59,7 @@ class GestureDockHost extends StatefulWidget {
   final GestureDockTab? current;
 
   /// The host screen's dock actions; Inicio, Nuevo, Ajustes and the
-  /// shortcuts (Cron, Tareas, Sesiones, Herramientas) reuse them where they
+  /// shortcuts (Cron, Tareas, Sesiones, Agentes) reuse them where they
   /// exist (Home's keep its refresh-on-return behaviour).
   final Map<DockItemId, DockItemAction> actions;
   final SavedConnection? connection;
@@ -69,6 +73,10 @@ class GestureDockHost extends StatefulWidget {
   /// Medium/expanded windows: the four tabs as a side rail.
   final bool rail;
 
+  /// Where the rail sits in its column: at the top beside a home, centred
+  /// beside the chat + workspace panes (v25's dock).
+  final Alignment railAlignment;
+
   const GestureDockHost({
     required this.actions,
     this.current,
@@ -77,6 +85,7 @@ class GestureDockHost extends StatefulWidget {
     this.onNewChat,
     this.createShortcuts = const [],
     this.rail = false,
+    this.railAlignment = Alignment.topCenter,
     super.key,
   });
 
@@ -89,7 +98,7 @@ class GestureDockHost extends StatefulWidget {
   static GlobalActivityAggregate? debugActivity;
 
   /// Replaces the screen a place opens (Proyectos, Ajustes, Chats, Cron,
-  /// Tareas, Herramientas) and the Bots home, in widget tests.
+  /// Tareas, Agentes) and the Bots home, in widget tests.
   @visibleForTesting
   static Widget Function(BuildContext context, GestureDockTab tab)? debugPlace;
 
@@ -105,9 +114,37 @@ class _GestureDockHostState extends State<GestureDockHost> {
   HermesAppState? _app;
 
   @override
+  void initState() {
+    super.initState();
+    SshProfilePresence.instance.revision.addListener(_refreshSshPresence);
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _app = context.findAncestorStateOfType<HermesAppState>();
+    _refreshSshPresence();
+  }
+
+  @override
+  void dispose() {
+    SshProfilePresence.instance.revision.removeListener(_refreshSshPresence);
+    super.dispose();
+  }
+
+  /// «Agentes» needs an SSH profile: read the saved ones (any connection)
+  /// so the bar knows whether to show it.
+  void _refreshSshPresence() {
+    final app = _app;
+    if (app == null) return;
+    unawaited(
+      agentsHomeAvailable(
+        connections: app.connManager,
+        ssh: app.sshManager,
+      ).then((available) {
+        SshProfilePresence.instance.value = available;
+      }),
+    );
   }
 
   ConnectionManager? get _connManager =>
@@ -163,7 +200,6 @@ class _GestureDockHostState extends State<GestureDockHost> {
     final conn = _connection;
     final manager = _connManager;
     if (manager == null) return null;
-    if (tab == GestureDockTab.tools) return dockToolsBuilder(conn, manager);
     if (conn == null) return null;
     return switch (tab) {
       GestureDockTab.projects => (_) => OwnedResourceHost<TuiGatewayClient>(
@@ -175,7 +211,12 @@ class _GestureDockHostState extends State<GestureDockHost> {
           gateway: gateway,
         ),
       ),
-      GestureDockTab.settings => (_) => SettingsScreen(
+      GestureDockTab.settings => (_) => AppSettingsScreen(
+        connection: conn,
+        connManager: manager,
+      ),
+      GestureDockTab.agents => (context) => buildAgentsDestination(
+        context,
         connection: conn,
         connManager: manager,
       ),
@@ -267,7 +308,7 @@ class _GestureDockHostState extends State<GestureDockHost> {
     GestureDockTab.search: _place(GestureDockTab.search, DockItemId.sessions),
     GestureDockTab.cron: _place(GestureDockTab.cron, DockItemId.cron),
     GestureDockTab.tasks: _place(GestureDockTab.tasks, DockItemId.tasks),
-    GestureDockTab.tools: _place(GestureDockTab.tools, DockItemId.tools),
+    GestureDockTab.agents: _place(GestureDockTab.agents, DockItemId.agents),
     GestureDockTab.activity: _openActivity,
   };
 
@@ -278,7 +319,6 @@ class _GestureDockHostState extends State<GestureDockHost> {
     final sessions = tabs[GestureDockTab.search];
     final cron = tabs[GestureDockTab.cron];
     final tasks = tabs[GestureDockTab.tasks];
-    final tools = tabs[GestureDockTab.tools];
     final projects = tabs[GestureDockTab.projects];
     final bots = tabs[GestureDockTab.bots];
     void push(Widget screen) => unawaited(
@@ -360,12 +400,6 @@ class _GestureDockHostState extends State<GestureDockHost> {
           ),
       ],
       GestureDockTab.settings: [
-        if (tools != null)
-          DockShortcut(
-            label: s.drawerTools,
-            icon: gestureDockTabIcon(GestureDockTab.tools),
-            onTap: tools,
-          ),
         DockShortcut(
           label: s.gdSettingsTitle,
           icon: Icons.dashboard_customize_outlined,
@@ -391,6 +425,7 @@ class _GestureDockHostState extends State<GestureDockHost> {
     listenable: Listenable.merge([
       DockModes.instance,
       GestureDockController.instance.settings,
+      SshProfilePresence.instance,
     ]),
     builder: (context, _) {
       final strings = Strings.of(context);
@@ -407,41 +442,64 @@ class _GestureDockHostState extends State<GestureDockHost> {
     },
   );
 
-  /// Medium/expanded windows: the dock's four tabs, in the same order and
-  /// with the same icons and labels, as the side rail.
+  /// Medium/expanded windows: the dock as the side rail, with the same
+  /// grammar as the bar (QA 9709, dock-final): the places in one pill of
+  /// icons, «Nuevo chat» apart above it as a round piece of the same veil.
   Widget _buildRail(BuildContext context, Strings strings) {
     final colors = Theme.of(context).hermes;
     final style = DockPreferencesController.instance.value.general.style;
     final visual = resolveDockVisual(colors, style);
     final tabs = _tabs();
     final current = widget.current;
-    final layout = GestureDockController.instance.value.tabs;
+    final layout = gestureDockShownTabs(
+      GestureDockController.instance.value.tabs,
+    );
+    final places = [
+      for (final tab in layout)
+        if (tab != GestureDockTab.create) tab,
+    ];
     final selected =
-        current == null || !current.isPlace || !layout.contains(current)
+        current == null || !current.isPlace || !places.contains(current)
         ? null
-        : layout.indexOf(current);
-    final bar = DockBar(
-      key: const ValueKey('gesture-dock-rail'),
+        : places.indexOf(current);
+    final dark = HermesChrome.of(colors).dark;
+    final pill = DockBar(
       axis: Axis.vertical,
       style: style,
       selectedIndex: selected,
+      indicatorColor: colors.accent.withValues(alpha: dark ? .16 : .14),
       children: [
-        for (final tab in layout)
+        for (final tab in places)
           DockItemTile(
             controlKey: ValueKey('gesture-dock-rail-${tab.name}'),
             icon: gestureDockTabIcon(tab),
             selectedIcon: gestureDockTabIcon(tab, selected: true),
             label: gestureDockTabLabel(strings, tab),
             selected: tab.isPlace && current == tab,
-            accent: tab == GestureDockTab.create,
             innerRadius: visual.innerRadius,
             compact: true,
+            iconOnly: true,
+            idleColor: colors.textPrimary,
             selectionBackground: false,
             onTap: tabs[tab],
           ),
       ],
     );
+    final create = layout.contains(GestureDockTab.create);
+    final createOffset = create ? gestureDockHeight + HermesSpace.gap : 0.0;
+    final bar = Column(
+      key: const ValueKey('gesture-dock-rail'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (create) ...[
+          _railCreate(strings, visual, colors, tabs[GestureDockTab.create]),
+          const SizedBox(height: HermesSpace.gap),
+        ],
+        pill,
+      ],
+    );
     final safe = MediaQuery.paddingOf(context);
+    final atTop = widget.railAlignment == Alignment.topCenter;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -450,19 +508,88 @@ class _GestureDockHostState extends State<GestureDockHost> {
           top: safe.top + dockRailMargin,
           bottom: safe.bottom + dockRailMargin,
           width: DockBar.railWidth,
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: SingleChildScrollView(child: RepaintBoundary(child: bar)),
+          // Its own Material: beside the chat + workspace panes the rail
+          // sits outside any Scaffold, and its ink buttons need one (gate
+          // gint18, 'No Material widget found').
+          child: Material(
+            type: MaterialType.transparency,
+            child: Align(
+              alignment: widget.railAlignment,
+              child: SingleChildScrollView(
+                child: atTop
+                    ? RepaintBoundary(child: bar)
+                    // Away from the top the dot rides on the bar itself.
+                    : Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          RepaintBoundary(child: bar),
+                          Positioned(
+                            left: DockBar.railWidth / 2 + 8,
+                            top: 12 + createOffset,
+                            child: _railAttentionDot(),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
           ),
         ),
-        _railAttention(safe),
+        if (atTop) _railAttention(safe, createOffset),
       ],
     );
   }
 
   /// The amber "needs you" dot on the rail's Inicio (first slot), as on
   /// the bar: only away from Inicio.
-  Widget _railAttention(EdgeInsets safe) {
+  Widget _railAttention(EdgeInsets safe, double createOffset) => Positioned(
+    left: safe.left + dockRailMargin + DockBar.railWidth / 2 + 8,
+    top: safe.top + dockRailMargin + 12 + createOffset,
+    child: _railAttentionDot(),
+  );
+
+  /// «Nuevo chat» above the rail: a round piece of the rail's veil, its
+  /// icon in the colour of the text. It does not blur: the rail's pill is
+  /// the one glass layer of this zone.
+  Widget _railCreate(
+    Strings strings,
+    DockVisual visual,
+    HermesThemeColors colors,
+    VoidCallback? onTap,
+  ) {
+    final radius = BorderRadius.circular(HermesRadius.tag);
+    return SizedBox.square(
+      dimension: gestureDockHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Color.alphaBlend(visual.background, colors.background),
+          borderRadius: radius,
+          border: Border.all(color: visual.border),
+          boxShadow: visual.shadows,
+        ),
+        child: Column(
+          children: [
+            DockItemTile(
+              controlKey: const ValueKey('gesture-dock-rail-create'),
+              icon: gestureDockTabIcon(GestureDockTab.create),
+              selectedIcon: gestureDockTabIcon(
+                GestureDockTab.create,
+                selected: true,
+              ),
+              label: gestureDockTabLabel(strings, GestureDockTab.create),
+              innerRadius: HermesRadius.tag,
+              compact: true,
+              iconOnly: true,
+              idleColor: colors.textPrimary,
+              selectionBackground: false,
+              onTap: onTap,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _railAttentionDot() {
     if (widget.current == GestureDockTab.home) return const SizedBox.shrink();
     final colors = Theme.of(context).hermes;
     Widget dot() => _needsYou()
@@ -478,17 +605,13 @@ class _GestureDockHostState extends State<GestureDockHost> {
           )
         : const SizedBox.shrink();
     final source = _activity;
-    return Positioned(
-      left: safe.left + dockRailMargin + DockBar.railWidth / 2 + 8,
-      top: safe.top + dockRailMargin + 12,
-      child: IgnorePointer(
-        child: source == null
-            ? dot()
-            : ListenableBuilder(
-                listenable: source,
-                builder: (context, child) => dot(),
-              ),
-      ),
+    return IgnorePointer(
+      child: source == null
+          ? dot()
+          : ListenableBuilder(
+              listenable: source,
+              builder: (context, child) => dot(),
+            ),
     );
   }
 }

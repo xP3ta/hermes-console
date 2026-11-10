@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:hermes_android/core/design/tokens.dart' show HermesType;
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/glass_look.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 
 void main() {
@@ -33,6 +35,11 @@ void main() {
   testWidgets('shared forms keep a readable and neutral type scale', (
     tester,
   ) async {
+    // The neutral scale is the one without the glass layer's small labels; the
+    // glass and Contour labels have their own tests (glass_look_test,
+    // hermes_style_test).
+    GlassLookPrefs.debugUse(GlassLookPrefs.inMemory(GlassLevel.off));
+    addTearDown(() => GlassLookPrefs.debugUse(null));
     final controller = TextEditingController();
     addTearDown(controller.dispose);
 
@@ -78,8 +85,9 @@ void main() {
 
     final field = tester.widget<TextField>(find.byType(TextField));
     expect(field.style?.fontSize, 14);
-    expect(field.decoration?.helperStyle?.fontSize, 12.5);
-    expect(field.decoration?.errorStyle?.fontSize, 12.5);
+    // Helper and error lines are subtitles of a field: 13 or more.
+    expect(field.decoration?.helperStyle?.fontSize, HermesType.subtitleSize);
+    expect(field.decoration?.errorStyle?.fontSize, HermesType.subtitleSize);
     expect(tester.takeException(), isNull);
   });
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:hermes_android/core/design/tokens.dart' show HermesGel;
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 
@@ -259,7 +260,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(
       tester.widget<AnimatedScale>(find.byType(AnimatedScale)).scale,
-      0.94,
+      HermesGel.pressScale,
     );
 
     await gesture.up();

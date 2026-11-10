@@ -17,7 +17,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/widgets/island.dart';
-import 'package:hermes_android/core/widgets/island_card.dart';
+import 'support/legacy_island_card.dart';
 import 'package:hermes_android/core/widgets/mascot/header_mascot.dart';
 import 'package:hermes_android/core/widgets/mascot/mascot_atlas.dart';
 import 'package:hermes_android/core/widgets/mascot/mascot_identity.dart';

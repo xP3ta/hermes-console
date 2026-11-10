@@ -444,7 +444,7 @@ class _DockState extends State<Dock>
     DockItemId.sessions: GestureDockTab.search,
     DockItemId.cron: GestureDockTab.cron,
     DockItemId.tasks: GestureDockTab.tasks,
-    DockItemId.tools: GestureDockTab.tools,
+    DockItemId.agents: GestureDockTab.agents,
   };
 
   /// The item this screen is: the one its action map marks as selected.

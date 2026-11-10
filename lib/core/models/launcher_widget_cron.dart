@@ -1,8 +1,8 @@
 // Cron section of the launcher widgets: the scheduled jobs of one connection
 // with their next run and how the last one went. Written as ONE atomic JSON
 // string under [LauncherWidgetCronSnapshot.storageKey] by whoever just read
-// the jobs from the server (the Cron screen, or the background listener's own
-// cron pass); the Android widget only reads it. Secret-free: opaque ids,
+// the jobs from the server (the Cron screen or the dashboard); the Android
+// widget only reads it. Secret-free: opaque ids,
 // public job names and times.
 import 'dart:convert';
 

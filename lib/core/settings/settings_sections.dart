@@ -25,3 +25,18 @@ String settingsSectionTitle(Strings s, SettingsSection section) =>
       SettingsSection.data => s.setSecData,
       SettingsSection.about => s.setSecAbout,
     };
+
+/// The title of the screen that shows only [section]: capitalised and
+/// complete, unlike the lower-case caption of the section inside the list.
+String settingsSectionScreenTitle(Strings s, SettingsSection section) =>
+    switch (section) {
+      SettingsSection.connection => s.ssxTitleConnection,
+      SettingsSection.appearance => s.ssxTitleAppearance,
+      SettingsSection.chat => s.ssxTitleChat,
+      SettingsSection.voice => s.voiceTitle,
+      SettingsSection.notifications => s.notifTitle,
+      SettingsSection.security => s.ssxTitleSecurity,
+      SettingsSection.system => s.ssxTitleSystem,
+      SettingsSection.data => s.ssxTitleData,
+      SettingsSection.about => s.ssxTitleAbout,
+    };

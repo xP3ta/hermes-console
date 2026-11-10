@@ -6,6 +6,7 @@ import 'package:home_widget/home_widget.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../home/launcher/launcher_widget_images.dart';
 import '../models/home_widget_snapshot.dart';
 import 'session_archive.dart';
 
@@ -98,6 +99,9 @@ class PluginHomeWidgetStore implements HomeWidgetStore {
 
   @override
   Future<void> requestUpdate() async {
+    // With the app alive, the pictures are drawn first and the publisher of
+    // the pictures asks every receiver to redraw once they are written.
+    if (LauncherWidgetImagePublisher.instance.request()) return;
     for (final provider in _androidProviders) {
       // A failed update of one receiver must never block the others.
       try {
@@ -169,13 +173,19 @@ class HermesHomeWidgetPublisher {
 
   /// Applies a small semantic change without forcing each screen to maintain a
   /// second copy of the complete widget contract.
+  ///
+  /// [restamp] false keeps the snapshot's own `updatedAtMs`: a write that is
+  /// not news (the app going to the background) must not make the launcher
+  /// show a state as fresh for another full freshness window.
   Future<void> update(
     HermesHomeWidgetSnapshot Function(HermesHomeWidgetSnapshot current)
-    transform,
-  ) {
+    transform, {
+    bool restamp = true,
+  }) {
     final operation = _tail.then((_) {
+      final next = transform(_latest);
       final stamped = _withoutDeletedSession(
-        transform(_latest).copyWith(updatedAtMs: _nowMs()),
+        restamp ? next.copyWith(updatedAtMs: _nowMs()) : next,
       );
       _latest = stamped;
       return _write(stamped);

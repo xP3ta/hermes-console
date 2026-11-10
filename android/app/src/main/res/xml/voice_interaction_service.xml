@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Console as a selectable digital assistant (issue #217). The class names
+     are fully qualified on purpose: the flavours change the applicationId, not
+     the namespace of the Kotlin code. Assist data (screen text, screenshot) is
+     neither requested nor used. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.hermesagent.hermes_android.HermesVoiceInteractionSessionService"
+    android:recognitionService="com.hermesagent.hermes_android.HermesAssistantRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false" />

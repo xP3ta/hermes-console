@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:home_widget/home_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../home/launcher/launcher_widget_images.dart';
 import '../models/cron_job.dart';
 import '../models/launcher_widget_cron.dart';
 import 'connection_manager.dart';
@@ -36,6 +37,9 @@ class PluginLauncherWidgetSectionStore implements LauncherWidgetSectionStore {
 
   @override
   Future<void> redraw(String qualifiedAndroidName) async {
+    // With the app alive, the picture of this section is drawn first and
+    // the receiver is asked to redraw once it is written.
+    if (LauncherWidgetImagePublisher.instance.request()) return;
     await HomeWidget.updateWidget(qualifiedAndroidName: qualifiedAndroidName);
   }
 }

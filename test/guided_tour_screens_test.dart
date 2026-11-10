@@ -331,7 +331,8 @@ void main() {
     ];
     expect(
       present,
-      containsAllInOrder(['chat-header', 'chat-composer', 'chat-notch']),
+      // Vistas v3: the notch's step points at «Ajustes» in the header.
+      containsAllInOrder(['chat-header', 'chat-composer', 'chat-settings']),
     );
     _g.start(GuideTourId.chat);
     await tester.pump();

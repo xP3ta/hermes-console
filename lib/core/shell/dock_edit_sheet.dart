@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../services/ssh_profile_presence.dart';
 import '../theme/app_theme.dart';
 import 'gesture_dock.dart' show gestureDockTabIcon, gestureDockTabLabel;
 import 'gesture_dock_state.dart';
@@ -72,9 +73,13 @@ class _DockEditSheetState extends State<DockEditSheet> {
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
+    // Agentes is offered once the app has an SSH profile; one already on the
+    // bar stays listed so it can be moved or removed.
     final available = [
       for (final tab in GestureDockTab.values)
-        if (!_draft.contains(tab)) tab,
+        if (!_draft.contains(tab) &&
+            (tab != GestureDockTab.agents || SshProfilePresence.instance.value))
+          tab,
     ];
     TextStyle section() => TextStyle(
       color: colors.textSecondary,

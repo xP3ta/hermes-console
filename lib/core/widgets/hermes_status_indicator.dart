@@ -62,18 +62,40 @@ class _HermesStatusPulseState extends State<HermesStatusPulse>
       child: SizedBox(width: widget.size, height: widget.size),
     );
     if (reduceMotion) return square;
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) => Opacity(
-        opacity: 0.35 + 0.65 * _controller.value,
-        child: Transform.scale(
-          scale: 0.8 + 0.2 * _controller.value,
-          child: child,
-        ),
-      ),
-      child: square,
+    // B1: the beat only repaints; nothing is rebuilt on each frame.
+    return CustomPaint(
+      size: Size.square(widget.size),
+      painter: _PulsePainter(_controller, color),
     );
   }
+}
+
+/// The square at [beat]'s value: as opaque as 0.35..1 and scaled 0.8..1
+/// around its centre, like the former Opacity + Transform.scale.
+class _PulsePainter extends CustomPainter {
+  _PulsePainter(this.beat, this.color) : super(repaint: beat);
+
+  final Animation<double> beat;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final value = beat.value;
+    final scale = 0.8 + 0.2 * value;
+    final rect = Rect.fromCenter(
+      center: size.center(Offset.zero),
+      width: size.width * scale,
+      height: size.height * scale,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, Radius.circular(2 * scale)),
+      Paint()..color = color.withValues(alpha: color.a * (0.35 + 0.65 * value)),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_PulsePainter oldDelegate) =>
+      oldDelegate.beat != beat || oldDelegate.color != color;
 }
 
 /// Indicador de estado NEUTRO (sin mascota) para progreso/diagnóstico:

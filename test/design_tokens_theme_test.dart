@@ -18,6 +18,22 @@ void main() {
       expect(HermesType.support.fontSize, 12.5);
       expect(HermesType.caption.fontSize, 11.5);
     });
+
+    // Wave 9: a literal size becomes the scale's constant, never a value
+    // of its own.
+    test('each size constant is the size of its style', () {
+      expect(HermesType.displaySize, HermesType.display.fontSize);
+      expect(HermesType.titleSize, HermesType.title.fontSize);
+      expect(HermesType.bodySize, HermesType.body.fontSize);
+      expect(HermesType.textSize, HermesType.text.fontSize);
+      expect(HermesType.supportSize, HermesType.support.fontSize);
+      expect(HermesType.valueSize, HermesType.value.fontSize);
+      expect(HermesType.captionSize, HermesType.caption.fontSize);
+      expect(HermesType.readingSize, HermesType.reading.fontSize);
+      expect(HermesType.value.fontSize, 13);
+      expect(HermesType.text.fontSize, 14);
+      expect(HermesType.reading.fontSize, 15);
+    });
   });
 
   group('theme titles', () {

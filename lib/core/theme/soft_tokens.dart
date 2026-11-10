@@ -12,6 +12,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
+import 'box_fill.dart';
 import 'theme_contrast.dart';
 
 abstract final class SoftRadii {
@@ -120,6 +121,11 @@ final class SoftPalette {
   /// Coloured inks stay below this (no neon).
   static const double maxInkChroma = 0.62;
 
+  /// How far under [maxWashChroma] the surface of a tinted page stays, so
+  /// that its washes can always be calmer than it (one channel step and
+  /// rounding room).
+  static const double tintedSurfaceMargin = 0.01;
+
   final Brightness brightness;
 
   /// Neutral widget surface, lifted from the background.
@@ -133,6 +139,10 @@ final class SoftPalette {
   final Color track;
   final Color text;
   final Color textMuted;
+
+  /// Quieter than [textMuted]: times, counts. Opaque, and still AA 4.5:1 with
+  /// room on every body it can sit on (never a faded copy of the muted ink).
+  final Color faint;
 
   /// Desaturated status inks (≥ 4.5:1 on [surface]).
   final Color attention;
@@ -155,6 +165,7 @@ final class SoftPalette {
     required this.track,
     required this.text,
     required this.textMuted,
+    required this.faint,
     required this.attention,
     required this.failure,
     required this.ok,
@@ -181,18 +192,40 @@ final class SoftPalette {
     final themeStep = (lightness(c.surface) - bgL).abs();
     var surface = themeStep >= 0.02 && themeStep <= 0.12
         ? c.surface
-        : ThemeContrast.blend(
-            c.background,
-            dark ? const Color(0xFFFFFFFF) : const Color(0xFF000000),
-            dark ? 0.055 : 0.035,
-          );
-    surface = _capChroma(surface, 0.06);
-    final text = ThemeContrast.adjustForContrast(c.textPrimary, [
+        : dark
+        ? HermesPageTint.lift(c.background, 0.055, page: c.background)
+        : ThemeContrast.blend(c.background, const Color(0xFF000000), 0.035);
+    // The widgets sit on the bodies of the cards ([HermesBoxFill]) as much
+    // as on [surface]: the inks are tuned for all of them.
+    final bodies = HermesBoxFill.of(c);
+    // Calm, but on a tinted page as coloured as the bodies it sits among
+    // (a step under the pastel washes' own cap, so a wash is always calmer
+    // than its surface): the page's hue is the theme, not a neon.
+    surface = _capChroma(
       surface,
-    ], minimum: 7);
-    final muted = ThemeContrast.adjustForContrast(c.textSecondary, [
-      surface,
-    ], minimum: 4.6);
+      HermesPageTint.isTinted(c.background)
+          ? math.min(
+              maxWashChroma - tintedSurfaceMargin,
+              math.max(0.06, chroma(bodies.group)),
+            )
+          : 0.06,
+    );
+    final reads = [surface, ...bodies.readingBacks(c)];
+    final text = ThemeContrast.adjustForContrast(
+      c.textPrimary,
+      reads,
+      minimum: 7,
+    );
+    final muted = ThemeContrast.adjustForContrast(
+      c.textSecondary,
+      reads,
+      minimum: 7,
+    );
+    final faint = ThemeContrast.adjustForContrast(
+      ThemeContrast.blend(muted, surface, 0.2),
+      reads,
+      minimum: 5.5,
+    );
     Color status(Color raw) => ThemeContrast.adjustForContrast(
       _capChroma(ThemeContrast.blend(raw, muted, 0.22), maxInkChroma),
       [surface],
@@ -208,6 +241,7 @@ final class SoftPalette {
       track: ThemeContrast.blend(surface, text, dark ? 0.10 : 0.08),
       text: text,
       textMuted: muted,
+      faint: faint,
       attention: status(c.warning),
       failure: status(c.error),
       ok: status(c.success),

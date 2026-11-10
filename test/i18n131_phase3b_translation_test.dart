@@ -38,7 +38,6 @@ void main() {
       "i18n131P6Animations", // Animations: native French plural.
       "i18n131P6BadgeAudio", // AUDIO: French media label.
       "i18n131P6BadgeCode", // CODE: native French word for source code.
-      "i18n131P6Document", // Document: native French noun.
       "i18n131DurationSeconds",
       "i18n131McAgentDescriptionLabel",
       "i18n131McActivityLabelSessionUpdated",

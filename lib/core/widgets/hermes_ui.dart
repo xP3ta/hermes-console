@@ -8,19 +8,30 @@
 // uniforme de colores distintos (ver AccentCard). Todos los bordes aquí
 // son uniformes.
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/box_fill.dart';
+import '../design/ambient_backdrop.dart';
+import '../design/box_edge.dart' show HermesBoxEdges;
+import '../design/liquid_sheen.dart';
+import '../design/tokens.dart';
 import '../theme/component_profile.dart';
+import '../theme/lines.dart';
+import '../theme/readable_ink.dart';
+import '../theme/text_scale.dart';
+import '../feedback/haptics.dart';
 
-/// Escala de radios canónica de la consola. Usar SOLO estos tamaños para no
-/// volver al caos de radios sueltos (había 14 valores distintos por el código).
-///  - [chip]  chips/píldoras pequeñas, swatches.
-///  - [field] inputs y elementos de formulario.
-///  - [card]  tarjetas y filas agrupadas.
-///  - [group] superficies de sección (grupos/paneles, hojas).
+/// Escala de radios anterior. La escala única es `HermesRadius`
+/// (`design/tokens.dart`, auditoría 1.4.0 §3.1); lo nuevo usa esa. Estos
+/// valores siguen igual hasta que la ola de literales migre sus usos:
+///  - [chip] 9: pasará a `HermesRadius.chip` (6) o `control` (12).
+///  - [field] 12: es `HermesRadius.control`.
+///  - [card] 14: pasará a `HermesRadius.row` (16).
+///  - [group] 16: es `HermesRadius.row`.
 abstract final class HermesRadii {
   static const double chip = 9;
   static const double field = 12;
@@ -61,6 +72,20 @@ class HermesField extends StatelessWidget {
   /// Key of the inner [TextField], for finders that read its controller.
   final Key? fieldKey;
 
+  /// False keeps the platform's autofill service (password managers, the
+  /// keyboard's saved entries) away from this field: secrets typed here must
+  /// not be offered for saving anywhere else.
+  final bool autofill;
+
+  /// The selection menu of the field; null keeps the platform's. A field for
+  /// a secret passes one without copy and cut.
+  final EditableTextContextMenuBuilder? contextMenuBuilder;
+
+  /// What a [TextField] shows when it is given no menu of its own (the
+  /// framework keeps that default private, so it is read off a bare one).
+  static final EditableTextContextMenuBuilder? _platformMenu =
+      const TextField().contextMenuBuilder;
+
   const HermesField({
     super.key,
     required this.label,
@@ -85,6 +110,8 @@ class HermesField extends StatelessWidget {
     this.maxLength,
     this.focusNode,
     this.fieldKey,
+    this.autofill = true,
+    this.contextMenuBuilder,
   });
 
   @override
@@ -93,14 +120,15 @@ class HermesField extends StatelessWidget {
     final components = Theme.of(context).hermesComponents.profile;
     final fieldRadius = components.shape.fieldRadius;
     final terminal = components.id == ComponentProfiles.terminal.id;
+    // A resting field always shows its boundary ([controlBorder], 3:1 on
+    // the body it sits on): a filled box alone was ~1.0:1 on the body of a
+    // group in every dark theme, a box inside a box nobody could see.
     final restingBorder = components.border.outlinesRestingControls
         ? BorderSide(
             color: colors.controlBorder,
             width: components.border.width,
           )
-        : colors.isLightPalette
-        ? BorderSide(color: colors.controlBorder)
-        : BorderSide.none;
+        : BorderSide(color: colors.controlBorder);
     final InputBorder enabledInputBorder = terminal
         ? UnderlineInputBorder(
             borderSide: BorderSide(
@@ -164,6 +192,8 @@ class HermesField extends StatelessWidget {
             autocorrect: autocorrect,
             enableSuggestions: enableSuggestions,
             enableIMEPersonalizedLearning: enableIMEPersonalizedLearning,
+            autofillHints: autofill ? const <String>[] : null,
+            contextMenuBuilder: contextMenuBuilder ?? _platformMenu,
             minLines: minLines,
             maxLines: obscure ? 1 : maxLines,
             autofocus: autofocus,
@@ -183,16 +213,19 @@ class HermesField extends StatelessWidget {
               // controles realmente deshabilitados (spec 028 A-112).
               helperStyle: TextStyle(
                 color: colors.textSecondary,
-                fontSize: 12.5,
+                fontSize: HermesType.subtitleSize,
                 height: 1.35,
               ),
               errorStyle: TextStyle(
                 color: colors.error,
-                fontSize: 12.5,
+                fontSize: HermesType.subtitleSize,
                 height: 1.35,
               ),
               helperMaxLines: 3,
-              hintStyle: TextStyle(color: colors.textSecondary, fontSize: 13.5),
+              hintStyle: TextStyle(
+                color: colors.textSecondary,
+                fontSize: HermesType.hintSize,
+              ),
               filled: true,
               fillColor: colors.surfaceVariant.withValues(
                 alpha: terminal ? 0.16 : 0.3,
@@ -213,6 +246,80 @@ class HermesField extends StatelessWidget {
   }
 }
 
+/// The "Apple light" look of groups, panels and cards on a light page: a
+/// translucent white body with a soft, diffuse shadow instead of a hard
+/// border, and generous radii. Dark themes, high contrast and profiles that
+/// outline their resting controls keep what they had.
+///
+/// The body is [HermesChrome.fill] (white at 88 %), which is lighter than the
+/// tint it replaces, so every ink that read on it reads better; the shadow is
+/// static and only the few groups of a section paint one (a card does not:
+/// a long list never pays a blur per row).
+abstract final class HermesSoftLight {
+  static bool applies(BuildContext context) {
+    // The glass layer gives dark pages the same look as light ones.
+    if (HermesGlassLook.of(context) != null) return true;
+    final components = Theme.of(context).hermesComponents.profile;
+    return !HermesChrome.ofContext(context).dark &&
+        !MediaQuery.highContrastOf(context) &&
+        !components.border.outlinesRestingControls;
+  }
+
+  /// Body of a group or panel: the glass of the theme when it wears one, and
+  /// where it does not (high contrast, a level that is off) the same solid
+  /// body, derived from the page ([HermesBoxFill]): never a transparency.
+  static Color fill(BuildContext context) =>
+      HermesGlassLook.of(context)?.groupFill ??
+      HermesBoxFill.of(Theme.of(context).hermes).group;
+
+  /// Body of a card (solid, as [fill]).
+  static Color cardFill(BuildContext context, HermesThemeColors colors) =>
+      HermesGlassLook.of(context)?.cardFill ?? HermesBoxFill.of(colors).card;
+
+  /// Whether the boxes of [context] take a solid body: every style but the
+  /// ones that outline their resting controls (Outline), which stay flat on
+  /// purpose.
+  static bool solid(BuildContext context) {
+    final theme = Theme.of(context);
+    return !theme.hermes.outlined &&
+        !theme.hermesComponents.profile.border.outlinesRestingControls;
+  }
+
+  /// The shadow of a group or panel: none on dark glass, where it would only
+  /// be a hard edge.
+  static List<BoxShadow>? shadowFor(
+    BuildContext context,
+    HermesThemeColors colors,
+  ) {
+    final glass = HermesGlassLook.of(context);
+    return glass != null && glass.dark ? null : shadow(colors);
+  }
+
+  /// The soft shadow: the ink of the page at a few percent, wide and low.
+  static List<BoxShadow> shadow(HermesThemeColors colors) => [
+    BoxShadow(
+      color: colors.textPrimary.withValues(alpha: 0.07),
+      blurRadius: 24,
+      spreadRadius: -6,
+      offset: const Offset(0, 8),
+    ),
+    BoxShadow(
+      color: colors.textPrimary.withValues(alpha: 0.04),
+      blurRadius: 3,
+      offset: const Offset(0, 1),
+    ),
+  ];
+
+  /// A radius at least as generous as a card of the floating chrome's row.
+  static double radius(double base) => math.max(base, HermesRadius.row);
+
+  /// How opaque the resting card's body is.
+  static const double cardOpacity = 0.78;
+
+  /// How much of its hairline a card keeps.
+  static const double cardLine = 0.30;
+}
+
 /// Contenedor único de una sección: UNA superficie sutil con las filas
 /// separadas por líneas finas, en vez de una caja por elemento. Base del look
 /// limpio (menos cajas, jerarquía por espaciado). Compartido por todas las
@@ -226,6 +333,10 @@ class HermesGroup extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final components = Theme.of(context).hermesComponents.profile;
     final rows = <Widget>[];
+    // The divider between two rows: the least line that is seen on the
+    // group's body in this theme ([HermesLines.dividerRatio]); 35 % of the
+    // palette's divider sat near 1.1:1 on a charcoal body.
+    final divider = HermesLines.of(colors).divider;
     for (var i = 0; i < children.length; i++) {
       if (i > 0) {
         rows.add(
@@ -234,24 +345,55 @@ class HermesGroup extends StatelessWidget {
             thickness: 1,
             indent: 16,
             endIndent: 16,
-            color: colors.divider.withValues(alpha: 0.35),
+            color: divider,
           ),
         );
       }
       rows.add(children[i]);
     }
-    return Container(
-      decoration: BoxDecoration(
-        color: colors.surfaceVariant.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(components.shape.groupRadius),
-        border: components.border.outlinesRestingControls
-            ? Border.all(color: colors.divider, width: components.border.width)
-            : null,
+    final glass = HermesGlassLook.of(context);
+    final soft = HermesSoftLight.applies(context);
+    final radius = soft
+        ? HermesSoftLight.radius(components.shape.groupRadius)
+        : components.shape.groupRadius;
+    final column = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: rows,
+    );
+    if (glass != null) {
+      return HermesGlassLook.body(
+        glass,
+        BorderRadius.circular(radius),
+        fill: glass.groupFill,
+        lifted: true,
+        child: column,
+      );
+    }
+    return HermesSheen(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radius),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: rows,
+      child: Container(
+        decoration: BoxDecoration(
+          color: HermesSoftLight.solid(context)
+              ? HermesSoftLight.fill(context)
+              : colors.surfaceVariant.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(radius),
+          boxShadow: soft ? HermesSoftLight.shadowFor(context, colors) : null,
+          gradient: glass == null
+              ? null
+              : HermesGlassLook.sheen(glass, fill: glass.groupFill),
+          border: glass != null
+              ? Border.all(color: glass.line)
+              : components.border.outlinesRestingControls
+              ? Border.all(
+                  color: colors.divider,
+                  width: components.border.width,
+                )
+              : null,
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: column,
       ),
     );
   }
@@ -310,7 +452,7 @@ class HermesSwitchTile extends StatelessWidget {
               overflow: subtitleMaxLines == null ? null : TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodyMedium!.copyWith(
                 color: enabled ? colors.textSecondary : colors.textDisabled,
-                fontSize: 12,
+                fontSize: HermesType.subtitleSize,
                 fontWeight: FontWeight.w400,
                 height: 1.35,
                 letterSpacing: 0,
@@ -332,12 +474,35 @@ class HermesPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final components = Theme.of(context).hermesComponents.profile;
+    final glass = HermesGlassLook.of(context);
+    final soft = HermesSoftLight.applies(context);
+    final radius = soft
+        ? HermesSoftLight.radius(components.shape.groupRadius)
+        : components.shape.groupRadius;
+    if (glass != null) {
+      return HermesGlassLook.body(
+        glass,
+        BorderRadius.circular(radius),
+        fill: glass.groupFill,
+        lifted: true,
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        child: child,
+      );
+    }
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 3),
       decoration: BoxDecoration(
-        color: colors.surfaceVariant.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(components.shape.groupRadius),
-        border: components.border.outlinesRestingControls
+        color: HermesSoftLight.solid(context)
+            ? HermesSoftLight.fill(context)
+            : colors.surfaceVariant.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(radius),
+        boxShadow: soft ? HermesSoftLight.shadowFor(context, colors) : null,
+        gradient: glass == null
+            ? null
+            : HermesGlassLook.sheen(glass, fill: glass.groupFill),
+        border: glass != null
+            ? Border.all(color: glass.line)
+            : components.border.outlinesRestingControls
             ? Border.all(color: colors.divider, width: components.border.width)
             : null,
       ),
@@ -347,18 +512,32 @@ class HermesPanel extends StatelessWidget {
   }
 }
 
-/// Fila de navegación: icono tenue (no acento) + título + subtítulo a UNA línea
-/// + chevron. Calmada y consistente, para usar dentro de un [HermesGroup].
+/// Fila de navegación: icono tenue (no acento) + título + subtítulo de hasta
+/// dos líneas (tres con el texto agrandado) + chevron. Calmada y consistente,
+/// para usar dentro de un [HermesGroup].
 class HermesNavRow extends StatelessWidget {
   final IconData icon;
   final String title;
   final String? subtitle;
+
+  /// Current value, right-aligned before the chevron (one line).
+  final String? value;
+
+  /// Takes the chevron's place (a spinner while the row works); null keeps
+  /// the chevron.
+  final Widget? trailing;
   final VoidCallback onTap;
+
+  /// The most of the row the value takes; the title has all the rest.
+  static const double _valueShare = 0.4;
+
   const HermesNavRow({
     required this.icon,
     required this.title,
     required this.onTap,
     this.subtitle,
+    this.value,
+    this.trailing,
     super.key,
   });
 
@@ -369,40 +548,69 @@ class HermesNavRow extends StatelessWidget {
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: colors.textSecondary),
-            const SizedBox(width: 15),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                  if (subtitle != null) ...[
-                    const SizedBox(height: 2),
+        child: LayoutBuilder(
+          builder: (context, row) => Row(
+            children: [
+              Icon(icon, size: 20, color: colors.textSecondary),
+              const SizedBox(width: 15),
+              // The value has its own width, next to the chevron, and the
+              // title all the rest (two equal shares wrapped «Gestionar
+              // instancias» and left «0 ›» floating mid-row).
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      subtitle!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      title,
                       style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
                       ),
                     ),
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle!,
+                        // A subtitle is a sentence: two lines before it is
+                        // cut (one line left «protección de crede…»).
+                        maxLines: math.max(2, labelMaxLines(context, large: 3)),
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: HermesType.subtitleSize,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Icon(Icons.chevron_right, size: 18, color: colors.textDisabled),
-          ],
+              if (value != null) ...[
+                const SizedBox(width: 8),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: row.maxWidth * _valueShare,
+                  ),
+                  child: Text(
+                    value!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 8),
+              // The chevron says the row opens: an informative glyph, 3:1 on
+              // the body (the disabled ink sat at ~2.3:1 on a dark card).
+              trailing ??
+                  Icon(
+                    Icons.chevron_right,
+                    size: 18,
+                    color: colors.textTertiary,
+                  ),
+            ],
+          ),
         ),
       ),
     );
@@ -431,14 +639,25 @@ class HermesSectionHeader extends StatelessWidget {
         children: [
           // Minimalista: sin barrita ni acento decorativo. La jerarquía sale
           // del peso y del espaciado, no de microtipografía en mayúsculas.
+          // TalkBack jumps between headings: a section is one.
           Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0,
-                color: colors.textSecondary,
+            child: Semantics(
+              header: true,
+              child: Text(
+                HermesGlassLook.sectionText(context, label),
+                semanticsLabel: HermesGlassLook.sectionSemantics(
+                  context,
+                  label,
+                ),
+                style: HermesGlassLook.sectionLabel(
+                  context,
+                  TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0,
+                    color: colors.textSecondary,
+                  ),
+                ),
               ),
             ),
           ),
@@ -510,7 +729,13 @@ class HermesCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final components = Theme.of(context).hermesComponents.profile;
-    final radius = BorderRadius.circular(components.shape.cardRadius);
+    final glass = background == null ? HermesGlassLook.of(context) : null;
+    final soft = HermesSoftLight.applies(context) && background == null;
+    final radius = BorderRadius.circular(
+      soft
+          ? HermesSoftLight.radius(components.shape.cardRadius)
+          : components.shape.cardRadius,
+    );
     Widget content = Padding(padding: padding, child: child);
     if (onTap != null || onLongPress != null) {
       // Rol de botón solo cuando la card es accionable (spec 028 A-103).
@@ -527,13 +752,37 @@ class HermesCard extends StatelessWidget {
         ),
       );
     }
+    if (glass != null && borderColor == null && !glow) {
+      return HermesGlassLook.body(
+        glass,
+        radius,
+        fill: glass.cardFill,
+        lifted: true,
+        compact: true,
+        margin: margin,
+        child: content,
+      );
+    }
+    final body =
+        background ??
+        (HermesSoftLight.solid(context)
+            ? HermesSoftLight.cardFill(context, colors)
+            : colors.surface);
     return Container(
       margin: margin,
       decoration: BoxDecoration(
-        color: background ?? colors.surface,
+        color: body,
         borderRadius: radius,
+        gradient: glass == null
+            ? null
+            : HermesGlassLook.sheen(glass, fill: body),
         border: Border.all(
-          color: borderColor ?? colors.divider.withValues(alpha: 0.55),
+          color:
+              borderColor ??
+              glass?.line ??
+              colors.divider.withValues(
+                alpha: soft ? HermesSoftLight.cardLine : 0.55,
+              ),
           width: components.border.width == 0 ? 1 : components.border.width,
         ),
         boxShadow: glow || components.effects.usesStaticShadow
@@ -568,9 +817,18 @@ class HermesBadge extends StatelessWidget {
     super.key,
   });
 
+  /// How much of [color] tints the badge.
+  static const double tint = 0.07;
+
+  /// [color] made readable as the badge's 10 px label on its own tint: an
+  /// accent badge on a light page fell to 2.6:1.
+  static Color readableInk(Color color, HermesThemeColors colors) =>
+      readableInkOnTint(color, color.withValues(alpha: tint), colors);
+
   @override
   Widget build(BuildContext context) {
     final spokenLabel = label.toUpperCase();
+    final ink = readableInk(color, Theme.of(context).hermes);
     final radius = Theme.of(context).hermesComponents.profile.shape.chipRadius;
     return Semantics(
       label: spokenLabel,
@@ -578,7 +836,7 @@ class HermesBadge extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.07),
+            color: color.withValues(alpha: tint),
             borderRadius: BorderRadius.circular(radius),
             border: Border.all(
               color: color.withValues(alpha: 0.40),
@@ -609,7 +867,7 @@ class HermesBadge extends StatelessWidget {
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.8,
-                    color: color,
+                    color: ink,
                   ),
                 ),
               ),
@@ -668,7 +926,7 @@ class _PressableScaleState extends State<PressableScale> {
         onTap: widget.onTap == null
             ? null
             : () {
-                HapticFeedback.selectionClick();
+                HermesHaptics.selection();
                 widget.onTap!();
               },
         onLongPress: widget.onLongPress,
@@ -745,7 +1003,10 @@ class _FadeSlideInState extends State<FadeSlideIn>
   }
 }
 
-/// Botón primario de la consola: ámbar, radius 10, glow suave, press scale.
+/// Any radius beyond half the height reads as a pill.
+const double _pillRadius = 999;
+
+/// Botón primario de la consola: ámbar, pill, glow suave, press scale.
 class HermesPrimaryButton extends StatelessWidget {
   final String label;
   final IconData? icon;
@@ -766,7 +1027,14 @@ class HermesPrimaryButton extends StatelessWidget {
     final components = Theme.of(context).hermesComponents.profile;
     final enabled = onTap != null;
     final terminal = components.id == ComponentProfiles.terminal.id;
-    final enabledForeground = terminal ? colors.accentHover : colors.onAccent;
+    final enabledForeground = terminal ? colors.accentText : colors.onAccent;
+    final fill = terminal
+        ? colors.accent.withValues(alpha: enabled ? 0.11 : 0.035)
+        : enabled
+        ? colors.accent
+        : colors.surfaceVariant;
+    // A disabled label still reads (3:1) on the disabled fill.
+    final foreground = enabled ? enabledForeground : colors.disabledInkOn(fill);
     return PressableScale(
       onTap: onTap,
       child: Container(
@@ -774,12 +1042,12 @@ class HermesPrimaryButton extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 48),
         padding: padding,
         decoration: BoxDecoration(
-          color: terminal
-              ? colors.accent.withValues(alpha: enabled ? 0.11 : 0.035)
-              : enabled
-              ? colors.accent
-              : colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(components.shape.buttonRadius),
+          color: fill,
+          // The terminal profile's square button is a pill; the others keep
+          // their radius.
+          borderRadius: BorderRadius.circular(
+            terminal ? _pillRadius : components.shape.buttonRadius,
+          ),
           border: !terminal && components.border.outlinesRestingControls
               ? Border.all(
                   color: enabled ? colors.accentHover : colors.divider,
@@ -810,11 +1078,7 @@ class HermesPrimaryButton extends StatelessWidget {
                 const SizedBox(width: 9),
               ],
               if (icon != null) ...[
-                Icon(
-                  icon,
-                  size: 18,
-                  color: enabled ? enabledForeground : colors.textDisabled,
-                ),
+                Icon(icon, size: 18, color: foreground),
                 const SizedBox(width: 9),
               ],
               Text(
@@ -827,7 +1091,7 @@ class HermesPrimaryButton extends StatelessWidget {
                   fontWeight: terminal ? FontWeight.w600 : FontWeight.w700,
                   letterSpacing: terminal ? 0.55 : 0.8,
                   fontFamily: terminal ? 'monospace' : null,
-                  color: enabled ? enabledForeground : colors.textDisabled,
+                  color: foreground,
                 ),
               ),
             ],
@@ -864,22 +1128,40 @@ class HermesSecondaryButton extends StatelessWidget {
     final fg = enabled
         ? (color ?? colors.textSecondary)
         : colors.textDisabled.withValues(alpha: 0.5);
+    // On glass an active button has a body, a border and a short shadow; a
+    // disabled one stays the faint outline it was.
+    final glass = enabled && !terminal ? HermesGlassLook.of(context) : null;
     return PressableScale(
       onTap: onTap,
       child: Container(
         constraints: const BoxConstraints(minHeight: 48),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: terminal ? fg.withValues(alpha: 0.045) : null,
-          borderRadius: terminal
-              ? BorderRadius.zero
-              : BorderRadius.circular(components.shape.buttonRadius),
-          border: terminal
-              ? Border(
-                  bottom: BorderSide(
-                    color: fg.withValues(alpha: 0.55),
-                    width: components.border.emphasizedWidth,
+          color:
+              glass?.pieceFill ??
+              (terminal ? fg.withValues(alpha: 0.045) : null),
+          boxShadow: glass == null || glass.shadow == null
+              ? null
+              : [
+                  BoxShadow(
+                    color: glass.shadow!,
+                    blurRadius: 8,
+                    spreadRadius: -2,
+                    offset: const Offset(0, 2),
                   ),
+                ],
+          borderRadius: BorderRadius.circular(
+            terminal ? _pillRadius : components.shape.buttonRadius,
+          ),
+          border: glass != null
+              ? Border.all(
+                  color: glass.line,
+                  width: components.border.emphasizedWidth,
+                )
+              : terminal
+              ? Border.all(
+                  color: fg.withValues(alpha: 0.55),
+                  width: components.border.emphasizedWidth,
                 )
               : Border.all(
                   color: fg.withValues(alpha: 0.35),
@@ -934,40 +1216,56 @@ class HermesInfoBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final t = tone ?? colors.accent;
-    return SizedBox(
-      width: double.infinity,
-      child: Material(
-        key: const ValueKey('hermes-info-banner-surface'),
-        color: Color.alphaBlend(t.withValues(alpha: 0.055), colors.surface),
-        surfaceTintColor: Colors.transparent,
-        elevation: 3,
-        shadowColor: Colors.black.withValues(alpha: 0.32),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: t.withValues(alpha: 0.24)),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, size: 16, color: t.withValues(alpha: 0.88)),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  text,
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.42,
-                    color: colors.textSecondary,
-                  ),
+    final glass = HermesGlassLook.of(context);
+    final radius = BorderRadius.circular(14);
+    final notice = Material(
+      key: const ValueKey('hermes-info-banner-surface'),
+      color: glass == null
+          ? Color.alphaBlend(
+              t.withValues(alpha: 0.055),
+              HermesSoftLight.solid(context)
+                  ? HermesSoftLight.cardFill(context, colors)
+                  : colors.surface,
+            )
+          : Color.alphaBlend(t.withValues(alpha: 0.06), glass.cardFill),
+      surfaceTintColor: Colors.transparent,
+      elevation: 3,
+      shadowColor: glass?.shadow ?? Colors.black.withValues(alpha: 0.32),
+      // On glass the contour is the box's own, in two tones
+      // ([HermesBoxEdges]); the Material keeps the elevation's shadow.
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: glass == null
+            ? BorderSide(color: t.withValues(alpha: 0.24))
+            : BorderSide.none,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 16, color: t.withValues(alpha: 0.88)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                text,
+                style: TextStyle(
+                  fontSize: HermesType.subtitleSize,
+                  height: 1.42,
+                  color: colors.textSecondary,
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
+    );
+    return SizedBox(
+      width: double.infinity,
+      child: glass == null
+          ? notice
+          : HermesBoxEdges(glass: glass, radius: radius, child: notice),
     );
   }
 }

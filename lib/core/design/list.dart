@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import 'liquid_sheen.dart';
 import 'tokens.dart';
 
 /// Quiet uppercase section header (reference `_Header` of the Bot profile).
@@ -53,37 +54,61 @@ class HermesSectionHeader extends StatelessWidget {
 class HermesListGroup extends StatelessWidget {
   final List<Widget> children;
 
-  /// Divider indent; 50 lines up with rows that have a leading icon.
-  final double dividerIndent;
+  /// Divider indent; null lines the divider up with the text of the rows:
+  /// [HermesSpace.rowDividerIndent] (past the icon slot) when any row has a
+  /// leading icon, the row's own padding when none has.
+  final double? dividerIndent;
 
   const HermesListGroup({
     super.key,
     required this.children,
-    this.dividerIndent = HermesSpace.rowDividerIndent,
+    this.dividerIndent,
   });
+
+  /// Where the text of the rows starts.
+  static double textIndentOf(List<Widget> children) {
+    final withLead = children.any(
+      (child) =>
+          child is HermesListRow &&
+          (child.icon != null || child.leading != null),
+    );
+    return withLead ? HermesSpace.rowDividerIndent : HermesSpace.rowH;
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    return Container(
-      decoration: BoxDecoration(
-        color: HermesSurfaces.group(colors),
+    final indent = dividerIndent ?? textIndentOf(children);
+    return HermesSheen(
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(HermesRadius.group),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var i = 0; i < children.length; i++) ...[
-            if (i > 0)
-              Divider(
-                height: 1,
-                indent: dividerIndent,
-                color: HermesSurfaces.divider(colors),
-              ),
-            children[i],
-          ],
-        ],
+      child: Container(
+        decoration: BoxDecoration(
+          color: HermesSurfaces.group(colors),
+          borderRadius: BorderRadius.circular(HermesRadius.group),
+        ),
+        clipBehavior: Clip.antiAlias,
+        // The rows' ink paints over the body, inside its rounded clip (on
+        // the page's Material it went under the body: square corners).
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < children.length; i++) ...[
+                if (i > 0)
+                  Divider(
+                    height: 1,
+                    indent: indent,
+                    endIndent: HermesSpace.rowH,
+                    color: HermesSurfaces.divider(colors),
+                  ),
+                children[i],
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -160,7 +185,18 @@ class HermesListRow extends StatelessWidget {
     }
     final rest = area - _valueGap - needed.ceilToDouble();
     final least = area * 0.4;
-    return rest < least ? least : rest;
+    final share = rest < least ? least : rest;
+    // ... but never so much that the title's longest word breaks in two
+    // («Razonamient / o» at 200 %): the value takes the ellipsis instead.
+    var longestWord = 0.0;
+    for (final word in title.split(' ')) {
+      final width = oneLine(word, HermesType.body);
+      if (width > longestWord) longestWord = width;
+    }
+    final wordRoom = area - _valueGap - longestWord.ceilToDouble();
+    final floor = area * 0.2;
+    if (share <= wordRoom) return share;
+    return wordRoom < floor ? floor : wordRoom;
   }
 
   @override
@@ -257,9 +293,12 @@ class HermesListRow extends StatelessWidget {
       ),
     );
     if (semanticLabel != null) {
+      // excludeSemantics drops the InkWell's tap too: the labelled node
+      // carries it again, or TalkBack announces a button it cannot press.
       row = Semantics(
         button: onTap != null,
         label: semanticLabel,
+        onTap: onTap,
         excludeSemantics: true,
         child: row,
       );

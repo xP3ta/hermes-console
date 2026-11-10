@@ -172,8 +172,9 @@ void main() {
       );
       expect(
         tester.getRect(find.byKey(const ValueKey('gesture-dock-pointer'))),
-        // 390 wide, 34 dp inset: 14 dp sides, 14 dp above the inset.
-        const Rect.fromLTWH(14, 844 - 34 - 14 - 60, 362, 60),
+        // 390 wide, 34 dp inset, 14 dp above it. QA 9709 (dock-final):
+        // three places in a 200 dp pill and «+» apart (10 + 56), centred.
+        const Rect.fromLTWH(62, 844 - 34 - 14 - 56, 266, 56),
       );
       await tester.pumpWidget(const SizedBox());
     });

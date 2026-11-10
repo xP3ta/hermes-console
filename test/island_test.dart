@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/tokens.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/motion.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
@@ -178,16 +179,15 @@ String _text(WidgetTester tester, Finder finder) {
   return text.data ?? text.textSpan!.toPlainText();
 }
 
-Color _dotColor(WidgetTester tester, IslandStatus status) {
-  final box = tester.widget<DecoratedBox>(
-    find.descendant(
-      of: _key('island-dot-${status.name}'),
-      matching: find.byType(DecoratedBox),
-    ),
-  );
-  final decoration = box.decoration as BoxDecoration;
-  return decoration.color ?? (decoration.border! as Border).top.color;
-}
+/// Any state dot of colour, of any state, under [of].
+Finder _anyDot(Finder of) => find.descendant(
+  of: of,
+  matching: find.byWidgetPredicate(
+    (w) =>
+        w.key is ValueKey<String> &&
+        (w.key! as ValueKey<String>).value.startsWith('island-dot-'),
+  ),
+);
 
 IslandEvent _needsYou({VoidCallback? onSee, VoidCallback? onDismissed}) =>
     IslandEvent(
@@ -230,7 +230,9 @@ void main() {
       expect(island.height, IslandMetrics.restHeight);
       expect(island.width, lessThan(160), reason: 'compact: $island');
       expect(_text(tester, _name), 'Hermes');
-      expect(_key('island-dot-idle'), findsOneWidget);
+      // At rest: the name alone, no dot and no word.
+      expect(_anyDot(_island), findsNothing);
+      expect(_key('island-state-idle'), findsNothing);
       expect(_line, findsNothing);
       // The buttons line up with it.
       for (final button in [menu, plus]) {
@@ -240,36 +242,46 @@ void main() {
       expect(find.byType(BackdropFilter), findsNothing, reason: 'no blur');
     });
 
-    testWidgets('the dot says the state with the theme\'s own colours', (
-      tester,
-    ) async {
+    // the owner (gint72): no state dot of colour; it confused the colours. A
+    // state that asks for attention is said in words, in the muted ink,
+    // after the name; at rest and at work nothing is added. A screen reader
+    // hears the state in every case.
+    testWidgets('the state is said in words in the muted ink, never by a '
+        'dot of colour', (tester) async {
+      final semantics = tester.ensureSemantics();
       _phone(tester);
       await tester.pumpWidget(_app(const _Chat()));
-      final colors = AppTheme.hermesRedDark.hermes;
-      final expected = {
-        IslandStatus.idle: colors.success,
-        IslandStatus.working: colors.accent,
-        IslandStatus.needsYou: colors.warning,
-        IslandStatus.reconnecting: colors.warning,
-        IslandStatus.offline: colors.error,
-        IslandStatus.error: colors.error,
-      };
-      for (final MapEntry(key: status, value: color) in expected.entries) {
+      final strings = Strings.of(_ctx(tester));
+      final chrome = HermesChrome.of(AppTheme.hermesRedDark.hermes);
+      for (final status in IslandStatus.values) {
         _scene.value = _Scene(status: status);
         await tester.pump();
-        expect(_dotColor(tester, status), color, reason: status.name);
+        expect(_anyDot(_island), findsNothing, reason: status.name);
         expect(_text(tester, _name), 'Hermes', reason: 'the name stays');
+        final word = _key('island-state-${status.name}');
+        final said = islandStatusLabel(strings, status);
+        if (status == IslandStatus.idle || status == IslandStatus.working) {
+          expect(word, findsNothing, reason: status.name);
+        } else {
+          expect(_text(tester, word), said, reason: status.name);
+          expect(
+            tester.widget<Text>(word).style!.color,
+            chrome.mutedInk,
+            reason: '${status.name}: no colour of its own',
+          );
+          // After the name, on the same line.
+          expect(
+            tester.getCenter(word).dx,
+            greaterThan(tester.getCenter(_name).dx),
+          );
+        }
+        expect(
+          find.bySemanticsLabel(RegExp('^Hermes, ${RegExp.escape(said)}')),
+          findsOneWidget,
+          reason: '${status.name}: TalkBack hears the state',
+        );
       }
-      // Reconnecting is a ring: told from «needs you» without colour.
-      _scene.value = const _Scene(status: IslandStatus.reconnecting);
-      await tester.pump();
-      final ring = tester.widget<DecoratedBox>(
-        find.descendant(
-          of: _key('island-dot-reconnecting'),
-          matching: find.byType(DecoratedBox),
-        ),
-      );
-      expect((ring.decoration as BoxDecoration).color, isNull);
+      semantics.dispose();
     });
 
     testWidgets('the name is the profile, the bot or the room', (tester) async {
@@ -290,7 +302,9 @@ void main() {
       _scene.value = const _Scene(status: IslandStatus.working, timer: '0:07');
       await tester.pump();
       expect(_text(tester, _name), 'Hermes');
-      expect(_key('island-dot-working'), findsOneWidget);
+      // At work the timer says it: no dot, no word.
+      expect(_anyDot(_island), findsNothing);
+      expect(_key('island-state-working'), findsNothing);
       expect(
         find.descendant(of: _island, matching: _key('timer')),
         findsOneWidget,
@@ -352,9 +366,9 @@ void main() {
         tester.widget<Icon>(_key('island-chevron')).icon,
         Icons.keyboard_arrow_down_rounded,
       );
-      // Dot, name, count, chevron, in that order, on one line.
+      // Name, count, chevron, in that order, on one line; no dot.
+      expect(_anyDot(_island), findsNothing);
       final xs = [
-        tester.getCenter(_key('island-dot-idle')).dx,
         tester.getCenter(_name).dx,
         tester.getCenter(_key('island-mark')).dx,
         tester.getCenter(_key('island-chevron')).dx,
@@ -376,8 +390,8 @@ void main() {
                   .shape!
               as RoundedRectangleBorder;
       expect(shape.side.color, colors.accent.withValues(alpha: 0.55));
-      // The dot keeps saying what it said.
-      expect(_key('island-dot-idle'), findsOneWidget);
+      // The state is still said (at rest, to a screen reader).
+      expect(_anyDot(_island), findsNothing);
       final node = tester.getSemantics(
         find.bySemanticsLabel('Hermes, Conectado, 4 en marcha'),
       );
@@ -546,10 +560,20 @@ void main() {
       await tester.tap(_key('island-action'));
       await _settle(tester);
       expect(seen, 1);
-      // Acted on: back to the name and the dot.
+      // Acted on: back to rest, in place. It still needs you, so the line
+      // says it after the name (the owner, gint72: in words, not a dot of
+      // colour): as tall as at rest, centred where it was, wider by the word.
       expect(_line, findsNothing);
       expect(_text(tester, _name), 'Hermes');
-      expect(tester.getRect(_island), rest);
+      expect(
+        _text(tester, _key('island-state-needsYou')),
+        islandStatusLabel(Strings.of(_ctx(tester)), IslandStatus.needsYou),
+      );
+      final back = tester.getRect(_island);
+      expect(back.top, rest.top);
+      expect(back.height, rest.height);
+      expect(back.center.dx, closeTo(rest.center.dx, 0.5));
+      expect(back.width, greaterThanOrEqualTo(rest.width));
     });
 
     testWidgets('a line without an action says it and leaves by itself', (
@@ -583,9 +607,11 @@ void main() {
       expect(_line, findsOneWidget);
       await tester.pump(const Duration(milliseconds: 600));
       await _settle(tester);
-      // Still working, but the words were said: name, dot, nothing else.
+      // Still working, but the words were said: the name, nothing else.
       expect(_line, findsNothing);
-      expect(_key('island-dot-working'), findsOneWidget);
+      expect(_text(tester, _name), 'Hermes');
+      expect(_anyDot(_island), findsNothing);
+      expect(_key('island-state-working'), findsNothing);
       expect(tester.getRect(_island).height, rest.height);
       // The same turn does not say it again; the next one does.
       await tester.pump(const Duration(seconds: 10));
@@ -768,8 +794,11 @@ void main() {
       await _settle(tester);
       expect(dismissed, 1);
       expect(_line, findsNothing);
-      // Dismissed, the state is still on the dot.
-      expect(_key('island-dot-needsYou'), findsOneWidget);
+      // Dismissed, the state is still said, in words after the name.
+      expect(
+        _text(tester, _key('island-state-needsYou')),
+        islandStatusLabel(Strings.of(_ctx(tester)), IslandStatus.needsYou),
+      );
       // The same event does not come back by itself…
       _scene.value = _Scene(
         status: IslandStatus.needsYou,

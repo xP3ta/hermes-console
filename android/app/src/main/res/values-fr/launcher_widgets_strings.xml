@@ -9,6 +9,7 @@
     <string name="lw_cron_description">La prochaine tâche planifiée ; en grand, toutes les tâches et les échecs bien visibles</string>
     <string name="lw_new">Nouveau</string>
     <string name="lw_ask_hint">Demande à Hermes…</string>
+    <string name="lw_ask_hint_named">Demande à %1$s…</string>
     <string name="lw_new_description">Nouveau chat</string>
     <string name="lw_voice_description">Nouveau chat vocal</string>
     <string name="lw_camera_description">Nouveau chat avec l’appareil photo</string>
@@ -151,4 +152,9 @@
     <string name="lw_sample_room_line">Builder répond</string>
     <string name="lw_sample_run_title">Hermes · Terminal</string>
     <string name="lw_sample_run_about">Rapport hebdomadaire</string>
+
+    <!-- Quick Settings tiles -->
+    <string name="widgets_qs_new_chat_label">Nouveau chat</string>
+    <string name="widgets_qs_voice_chat_label">Chat vocal</string>
+    <string name="widgets_qs_camera_chat_label">Chat avec caméra</string>
 </resources>

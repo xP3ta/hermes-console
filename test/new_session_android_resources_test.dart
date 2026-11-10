@@ -5,9 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('shortcut and widget use collision-free secret-free native actions', () {
     const action = 'dev.xpetalab.hermesconsole.action.NEW_SESSION';
-    final shortcut = File(
-      'android/app/src/main/res/xml/shortcuts.xml',
-    ).readAsStringSync();
+    final shortcut = File('android/app/src/main/res/xml/shortcuts.xml')
+        .readAsStringSync();
     final contract = File(
       'android/app/src/main/kotlin/com/hermesagent/hermes_android/'
       'NewSessionLaunchContract.kt',
@@ -38,9 +37,10 @@ void main() {
     ]) {
       expect(contract, contains('const val $actionName'));
     }
-    final nativeActions = RegExp(
-      r'const val ACTION_[A-Z_]+ = "([^"]+)"',
-    ).allMatches(contract).map((match) => match.group(1)).whereType<String>();
+    final nativeActions = RegExp(r'const val ACTION_[A-Z_]+ = "([^"]+)"')
+        .allMatches(contract)
+        .map((match) => match.group(1))
+        .whereType<String>();
     expect(nativeActions.toSet(), hasLength(nativeActions.length));
     expect(contract, contains('action = actionFor(kind, target)'));
     expect(contract, contains('.appendPath(kind.wireValue)'));
@@ -103,9 +103,6 @@ void main() {
       final expiryWorker = read('${kt}HermesWidgetExpiryWorker.kt');
       final manifest = read('android/app/src/main/AndroidManifest.xml');
       final publisher = read('lib/core/services/home_widget_publisher.dart');
-      final background = read(
-        'lib/core/services/notifications/bot_mode_background.dart',
-      );
 
       // A launcher binds a placed widget to its receiver's class name: the
       // names stay, so a "Hermes · Panel" on somebody's home screen becomes
@@ -185,10 +182,11 @@ void main() {
       // Until its first drawing a placed widget is the empty card, never
       // sample content that could pass for real.
       expect(ahora, contains('android:initialLayout="@layout/lw_initial"'));
-      // Chat rápido: one row; the picker offers it once.
+      // Chat rápido: one row by default, two when resized; the picker
+      // offers it once.
       expect(quick, contains('android:targetCellWidth="2"'));
       expect(quick, contains('android:targetCellHeight="1"'));
-      expect(quick, contains('android:resizeMode="horizontal"'));
+      expect(quick, contains('android:resizeMode="horizontal|vertical"'));
       expect(quick, contains('android:previewLayout="@layout/lw_quick_small"'));
       expect(quick, isNot(contains('hide_from_picker')));
       expect(quickWide, contains('android:targetCellWidth="4"'));
@@ -203,22 +201,22 @@ void main() {
         expect(info, contains('android:description="@string/lw_'));
         expect(info, isNot(contains('botw_')));
       }
-      // The app's publisher keeps refreshing these receivers; the Bot Mode
-      // listener only drives the Bot Mode receivers, so Ahora (which shows the
-      // same approvals) follows that snapshot from the native side.
+      // The app's publisher keeps refreshing these receivers; Ahora (which
+      // shows the same approvals) follows the stored Bot Mode snapshot from
+      // the native side.
       for (final name in [
         'NewSessionWidgetProvider',
         'HermesCompactWidgetProvider',
         'HermesControlWidgetProvider',
       ]) {
         expect(publisher, contains("hermes_android.$name'"));
-        expect(background, isNot(contains("hermes_android.$name'")));
         expect(renderer, contains('$name::class.java'));
       }
-      expect(renderer, contains('if (key == BOT_MODE_SNAPSHOT_KEY)'));
+      // The dead Bot Mode snapshot is no longer watched (nothing writes it).
+      expect(renderer, isNot(contains('if (key == BOT_MODE_SNAPSHOT_KEY)')));
       expect(
         read('${kt}HermesApplication.kt'),
-        contains('LauncherWidgetRefresh.watch(this)'),
+        isNot(contains('LauncherWidgetRefresh.watch(this)')),
       );
       // One redraw-only worker for the family; nothing periodic, no network.
       expect(expiryWorker, contains('launcherWidgetReceivers()'));
@@ -401,102 +399,39 @@ void main() {
     expect(renderer, isNot(contains('clock(model.sinceMs)')));
   });
 
-  test('Bots and Salas ship in the family; the three drafts are gone', () {
+  test('Bots and Salas are retired: no receiver, no info, no orphan', () {
     String read(String path) => File(path).readAsStringSync();
     const kt = 'android/app/src/main/kotlin/com/hermesagent/hermes_android/';
     const res = 'android/app/src/main/res';
     final provider = read('${kt}NewSessionWidgetProvider.kt');
     final renderer = read('${kt}LauncherWidgets.kt');
     final manifest = read('android/app/src/main/AndroidManifest.xml');
-    final background = read(
-      'lib/core/services/notifications/bot_mode_background.dart',
-    );
-    const family = {
-      'HermesBotsWidgetProvider': [
-        'BOTS',
-        'lw_bots_name',
-        'hermes_widget_bots_info',
-        'lw_preview_bots',
-      ],
-      'HermesRoomWidgetProvider': [
-        'ROOMS',
-        'lw_rooms_name',
-        'hermes_widget_rooms_info',
-        'lw_preview_rooms',
-      ],
-    };
-    family.forEach((name, parts) {
-      expect(
-        provider,
-        contains(
-          'class $name : LauncherWidgetProvider(LauncherWidgetSubject.${parts[0]})',
-        ),
-      );
-      final start = manifest.indexOf('android:name=".$name"');
-      expect(start, greaterThanOrEqualTo(0), reason: name);
-      final block = manifest.substring(
-        start,
-        manifest.indexOf('</receiver>', start),
-      );
-      expect(block, contains('android:label="@string/${parts[1]}"'));
-      expect(block, contains('android:resource="@xml/${parts[2]}"'));
-      expect(block, isNot(contains('android:enabled="false"')), reason: name);
-      final info = read('$res/xml/${parts[2]}.xml');
-      expect(info, contains('android:previewLayout="@layout/${parts[3]}"'));
-      expect(info, contains('android:initialLayout="@layout/lw_initial"'));
-      expect(info, contains('android:resizeMode="horizontal|vertical"'));
-      expect(info, contains('android:targetCellWidth="2"'));
-      expect(info, contains('android:targetCellHeight="1"'));
-      expect(info, contains('android:updatePeriodMillis="0"'));
-      expect(info, contains('android:widgetCategory="home_screen"'));
-      // The background listener already redraws these two receivers when it
-      // publishes the snapshot they read.
-      expect(background, contains("hermes_android.$name'"));
-      expect(renderer, contains('$name::class.java'));
-    });
-    // They read the listener's snapshot and never show old data as live.
-    expect(renderer, contains('data.bots.trusted(data.nowMs).bots'));
-    expect(renderer, contains('data.bots.trusted(data.nowMs).rooms'));
-    expect(renderer, contains('val offline = !data.botsOnline'));
-    // Who waits for you comes first; a row opens that bot or that room.
-    expect(renderer, contains('it.state.priority'));
-    expect(
-      renderer,
-      contains('pending(LauncherWidgetOpen.Payload(bot.openPayload))'),
-    );
-    expect(
-      renderer,
-      contains('pending(LauncherWidgetOpen.Payload(room.openPayload))'),
-    );
-    // Te necesitan, Pregunta rápida and Estado were never enabled in a
-    // released manifest (1.2.13 did not have them, 1.2.14 shipped them
-    // disabled): Ahora and Chat rápido cover them, so they are removed.
-    for (final gone in [
-      'HermesNeedsYouWidgetProvider',
-      'HermesQuickAskWidgetProvider',
-      'HermesStatusWidgetProvider',
+    for (final name in [
+      'HermesBotsWidgetProvider',
+      'HermesRoomWidgetProvider',
     ]) {
-      expect(manifest, isNot(contains(gone)), reason: gone);
-      expect(provider, isNot(contains(gone)), reason: gone);
-      expect(renderer, isNot(contains(gone)), reason: gone);
+      // A launcher drops a placed widget whose receiver is gone; a receiver
+      // left behind without its class would crash the update instead.
+      expect(manifest, isNot(contains(name)), reason: name);
+      expect(provider, isNot(contains('class $name')), reason: name);
+      expect(renderer, isNot(contains(name)), reason: name);
     }
-    expect(File('${kt}HermesBotModeWidgets.kt').existsSync(), isFalse);
-    for (final dir in ['layout', 'drawable', 'drawable-nodpi', 'xml']) {
-      final left = Directory('$res/$dir')
-          .listSync()
-          .map((f) => f.uri.pathSegments.last)
-          .where((name) => name.startsWith('botw_'));
-      expect(left, isEmpty, reason: dir);
+    for (final file in [
+      '$res/xml/hermes_widget_bots_info.xml',
+      '$res/xml/hermes_widget_rooms_info.xml',
+      '$res/layout/lw_preview_bots.xml',
+      '$res/layout/lw_preview_rooms.xml',
+      '$res/layout/lw_faces.xml',
+      '$res/layout/lw_row_room.xml',
+    ]) {
+      expect(File(file).existsSync(), isFalse, reason: file);
     }
-    // No widget of the family is drawn with Glance any more.
-    final sources = Directory(kt)
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith('.kt'))
-        .map((f) => f.readAsStringSync())
-        .join('\n');
-    expect(sources, isNot(contains('androidx.glance')));
-    expect(sources, isNot(contains('GlanceAppWidget')));
+    expect(renderer, isNot(contains('LauncherWidgetSubject.BOTS')));
+    expect(renderer, isNot(contains('LauncherWidgetSubject.ROOMS')));
+    // Ahora still reads the stored Bot Mode snapshot for approvals.
+    expect(renderer, contains('data.bots.trusted(data.nowMs)'));
+    // The dead Bot Mode snapshot is no longer watched (nothing writes it).
+    expect(renderer, isNot(contains('if (key == BOT_MODE_SNAPSHOT_KEY)')));
   });
 
   test('Tareas: the card in progress, then the pending ones', () {
@@ -612,7 +547,8 @@ void main() {
     expect(
       renderer,
       contains(
-        'val active = if (data.chatOnline && data.chat.listsActivity) '
+        'val active =\n'
+        '            if (data.chatOnline && data.chat.listsActivity && sameInstance) '
         'data.chat.active else emptyList()',
       ),
     );
@@ -633,7 +569,7 @@ void main() {
     expect(state, contains('CHATS_STALE_AFTER_MS = 15 * 60 * 1000L'));
   });
 
-  test('the picker offers the same seven widgets in every build', () {
+  test('the picker offers the same five widgets in every build', () {
     String read(String path) => File(path).readAsStringSync();
     final manifest = read('android/app/src/main/AndroidManifest.xml');
     final qa = read('android/app/src/qa/AndroidManifest.xml');
@@ -655,8 +591,6 @@ void main() {
       'HermesCompactWidgetProvider',
       'HermesControlWidgetProvider',
       'HermesCronWidgetProvider',
-      'HermesBotsWidgetProvider',
-      'HermesRoomWidgetProvider',
       'HermesTasksWidgetProvider',
       'HermesChatsWidgetProvider',
     ]);
@@ -664,8 +598,8 @@ void main() {
       expect(block, isNot(contains('android:enabled="false"')));
       expect(block, contains('android:exported="false"'));
     }
-    // One of the eight receivers is hidden from the picker (the wide Chat
-    // rápido kept for widgets already placed): the seven names of the
+    // One of the six receivers is hidden from the picker (the wide Chat
+    // rápido kept for widgets already placed): the five names of the
     // design are offered.
     final hidden = [
       for (final block in blocks)

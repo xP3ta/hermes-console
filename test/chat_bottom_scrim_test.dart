@@ -392,17 +392,108 @@ void main() {
     expect(hit.path.any((entry) => entry.target == list), isTrue);
   });
 
-  test('the chat mounts it behind its bottom pieces, under the notch', () {
+  test('the chat mounts it behind its bottom pieces, under the row above '
+      'the composer', () {
     final source = File('lib/core/screens/chat_screen.dart').readAsStringSync();
-    final scrim = source.indexOf('HermesBottomScrim(');
-    expect(scrim, greaterThan(0));
-    final mount = source.substring(scrim - 900, scrim);
-    expect(mount, contains('valueListenable: _bottomBarsExtent'));
-    expect(mount, contains('bottom: 0'));
-    // The area of the bottom pieces and not a pixel above it.
-    expect(mount, contains('height: bars,'));
-    // Painted before the notch: the tab on the composer's edge stays clean.
-    expect(scrim, lessThan(source.indexOf('_buildNotch(str)')));
+    // Follow complete constructor calls, skipping comments and quoted
+    // strings when balancing parentheses; no character-window heuristic.
+    String callAt(String text, int start) {
+      expect(start, greaterThanOrEqualTo(0));
+      final open = text.indexOf('(', start);
+      expect(open, greaterThanOrEqualTo(start));
+      final tokens = RegExp(
+        r"""//[^\n]*|/\*[\s\S]*?\*/|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|[()]""",
+      );
+      var depth = 0;
+      for (final token in tokens.allMatches(text, open)) {
+        if (token[0] == '(') depth++;
+        if (token[0] == ')' && --depth == 0) {
+          return text.substring(start, token.end);
+        }
+      }
+      fail('Unclosed constructor at $start');
+    }
+
+    final bars = source.indexOf("ValueKey('chat-bottom-bars')");
+    expect(bars, greaterThan(0));
+    final barsStart = source.lastIndexOf('KeyedSubtree(', bars);
+    final mount = callAt(source, barsStart);
+    expect(
+      mount,
+      matches(
+        r"^KeyedSubtree\(\s*key: const ValueKey\('chat-bottom-bars'\),"
+        r'\s*child: HermesGlassStrip\(',
+      ),
+    );
+    final measuredStart = source.lastIndexOf('KeyedSubtree(', barsStart - 1);
+    final measured = callAt(source, measuredStart);
+    expect(
+      measured,
+      matches(
+        r'^KeyedSubtree\(\s*key: _bottomBarsBoxKey,\s*child: KeyedSubtree\(',
+      ),
+    );
+    expect(measured, contains(mount));
+    final foot = callAt(mount, mount.indexOf('HermesGlassStrip('));
+    expect(foot, contains("ValueKey('chat-foot-glass')"));
+    expect(foot, contains('zone: FrostedZone.bottom'));
+    final child = RegExp(r'\bchild:\s*').firstMatch(foot);
+    expect(child, isNotNull);
+    final stackStart = child!.end;
+    expect(foot.substring(stackStart), startsWith('Stack('));
+    final stack = callAt(foot, stackStart);
+    final fillStart = stack.indexOf('Positioned.fill(');
+    expect(fillStart, greaterThan(0));
+    expect(
+      stack.substring(0, fillStart),
+      matches(
+        r'^Stack\(\s*fit: StackFit.passthrough,\s*clipBehavior: Clip.none,'
+        r'\s*children: \[\s*$',
+      ),
+    );
+    final fill = callAt(stack, fillStart);
+    final scrimStart = fill.indexOf('HermesBottomScrim(');
+    expect(scrimStart, greaterThan(0));
+    expect(
+      fill.substring(0, scrimStart),
+      matches(r'^Positioned.fill\(\s*child:\s*$'),
+    );
+    final scrim = callAt(fill, scrimStart);
+    expect(scrim, contains("ValueKey('chat-foot-scrim')"));
+    expect(
+      fill.substring(scrimStart + scrim.length),
+      matches(r'^\s*,\s*\)$'),
+      reason: 'Positioned.fill has no inset or offset above the bars',
+    );
+    // The non-positioned Column sizes this passthrough Stack. The scrim
+    // fills precisely that footprint and paints first, below its pieces.
+    final fillEnd = fillStart + fill.length;
+    expect(stack.substring(fillEnd), matches(r'^,\s*Column\('));
+    final columnStart = stack.indexOf('Column(', fillEnd);
+    final pieces = callAt(stack, columnStart);
+    expect(pieces, matches(r'^Column\(\s*mainAxisSize: MainAxisSize.min,'));
+    expect(pieces, contains('_buildInputBar()'));
+    expect(
+      stack.substring(columnStart + pieces.length),
+      matches(r'^\s*,\s*\]\s*,\s*\)$'),
+      reason: 'exactly the scrim then the bottom pieces',
+    );
+    // The jump row stays outside the foot, 4 dp above its measured height.
+    // Its inner 4 dp gap preserves the arrow's resting offset of 8 dp.
+    // Its listener still moves it with the bars; source order across
+    // these separate subtrees is not their paint/overlap contract.
+    final row = source.indexOf('bottom: bars + HermesSpace.x1,');
+    expect(row, greaterThan(0));
+    final rowStart = source.lastIndexOf('ValueListenableBuilder<double>(', row);
+    final rowMount = callAt(source, rowStart);
+    expect(rowMount, contains('valueListenable: _bottomBarsExtent'));
+    expect(
+      rowMount,
+      contains('builder: (context, bars, child) => Positioned('),
+    );
+    expect(rowMount, contains('bottom: bars + HermesSpace.x1,'));
+    expect(rowMount, contains('child: child!'));
+    expect(rowStart + rowMount.length, lessThan(barsStart));
   });
 }
 

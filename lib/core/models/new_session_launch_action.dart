@@ -2,7 +2,7 @@
 ///
 /// This is an internal app contract, not a public deep link. The parser only
 /// accepts the fields required to open a blank mobile draft.
-enum NewSessionLaunchSource { shortcut, widget, internalTest }
+enum NewSessionLaunchSource { shortcut, widget, assistant, internalTest }
 
 enum NewSessionLaunchKind { newSession, openApp, openSession, openSetup }
 
@@ -52,6 +52,7 @@ class NewSessionLaunchAction {
     final source = switch (payload['source']) {
       'shortcut' => NewSessionLaunchSource.shortcut,
       'widget' => NewSessionLaunchSource.widget,
+      'assistant' => NewSessionLaunchSource.assistant,
       'internal_test' => NewSessionLaunchSource.internalTest,
       _ => null,
     };
@@ -80,6 +81,12 @@ class NewSessionLaunchAction {
       _ => null,
     };
     if (target == null) return null;
+    // The digital assistant only ever opens a new chat with the voice ready.
+    if (source == NewSessionLaunchSource.assistant &&
+        (kind != NewSessionLaunchKind.newSession ||
+            target != NewSessionLaunchTarget.voice)) {
+      return null;
+    }
 
     final elapsed = payload['received_elapsed_ms'];
     if (elapsed is! int || elapsed < 0) return null;

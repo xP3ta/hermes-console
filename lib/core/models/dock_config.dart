@@ -6,26 +6,35 @@
 /// corrección explícita del usuario sobre el primer draft.
 library;
 
+import '../design/tokens.dart' show HermesRadius;
+
 /// Forma de los bordes del dock y de sus elementos internos.
 enum DockBorderShape {
   square,
   soft,
+
+  /// Píldora completa (QA 9709, «todo en píldoras»): la cápsula y cada
+  /// elemento seleccionado redondean la mitad de su lado corto, en la barra
+  /// inferior y en el raíl vertical. Es la forma por defecto.
   rounded;
 
-  /// Radio del contenedor exterior del dock, en dp.
+  /// Radio del contenedor exterior del dock, en dp. [HermesRadius.tag] se
+  /// recorta a la mitad del lado corto al pintarse: píldora en los dos ejes.
   double get outerRadius => switch (this) {
     DockBorderShape.square => 4,
     DockBorderShape.soft => 12,
-    DockBorderShape.rounded => 24,
+    DockBorderShape.rounded => HermesRadius.tag,
   };
 
   /// Radio de cada celda/elemento interior: sigue al radio exterior con un
-  /// margen fijo de 4dp, sin bajar de 0.
-  double get innerRadius => (outerRadius - 4).clamp(0, outerRadius);
+  /// margen fijo de 4dp, sin bajar de 0; la píldora sigue siendo píldora.
+  double get innerRadius => this == DockBorderShape.rounded
+      ? HermesRadius.tag
+      : (outerRadius - 4).clamp(0, outerRadius);
 
   static DockBorderShape parse(Object? value) => values.firstWhere(
     (candidate) => candidate.name == value,
-    orElse: () => DockBorderShape.soft,
+    orElse: () => DockBorderShape.rounded,
   );
 }
 
@@ -57,11 +66,22 @@ enum DockItemId {
   cron,
   tasks,
   sessions,
-  tools;
 
-  static DockItemId? parse(Object? value) => values
-      .cast<DockItemId?>()
-      .firstWhere((candidate) => candidate?.name == value, orElse: () => null);
+  /// Agentes (the terminal's agent mode). Offered only where the app has an
+  /// SSH profile; a screen that cannot open it leaves it out of its actions.
+  agents;
+
+  /// Id stored by 1.3.x for the retired «Herramientas» item. Its places are
+  /// now Ajustes (app and server) and each bot's profile.
+  static const String legacyToolsName = 'tools';
+
+  static DockItemId? parse(Object? value) {
+    if (value == legacyToolsName) return DockItemId.settings;
+    return values.cast<DockItemId?>().firstWhere(
+      (candidate) => candidate?.name == value,
+      orElse: () => null,
+    );
+  }
 }
 
 /// Cuál de los dos perfiles de dock usa una pantalla.
@@ -83,19 +103,42 @@ enum DockProfileId {
 
 /// Estilo visual de un perfil de dock: bordes, transparencia y profundidad.
 class DockStyle {
-  static const schemaVersion = 1;
+  /// v2 (QA 9709): la forma por defecto pasa de `soft` a `rounded`
+  /// (píldora). Un v1 guardado con `soft` era casi siempre el valor por
+  /// defecto, guardado al tocar cualquier otro ajuste del dock: se lee como
+  /// `rounded`. `square` y `rounded` elegidos a mano se conservan.
+  ///
+  /// v3 (QA 9709, «el dock se ve mate»): el dock es de cristal por defecto
+  /// ([glassTransparency]). La transparencia solo se guarda si el usuario
+  /// la eligió (`null` = la de por defecto). Un v1/v2 guardado con 0.0 era
+  /// el valor por defecto de entonces, que se escribía al tocar cualquier
+  /// otro ajuste del dock: se lee como no elegido. Cualquier otro valor de
+  /// entonces, y desde v3 también el 0.0, es del usuario y se respeta.
+  static const schemaVersion = 3;
+
+  /// Transparencia del cristal por defecto: desenfoque de unos 18 dp,
+  /// velo claro translúcido y borde de luz (ver `resolveDockVisual`).
+  static const double glassTransparency = 0.6;
 
   final DockBorderShape borderShape;
 
-  /// 0.0 = opaco, 1.0 = máxima transparencia (con desenfoque de fondo).
-  final double transparency;
+  /// La transparencia elegida por el usuario, o `null` si no eligió.
+  final double? _transparency;
   final DockDepth depth;
 
   const DockStyle({
-    this.borderShape = DockBorderShape.soft,
-    this.transparency = 0.0,
+    this.borderShape = DockBorderShape.rounded,
+    this._transparency,
     this.depth = DockDepth.elevated,
   });
+
+  /// 0.0 = opaco, 1.0 = máxima transparencia (con desenfoque de fondo):
+  /// la elegida, o la del cristal por defecto.
+  double get transparency => _transparency ?? glassTransparency;
+
+  /// Si el usuario eligió la transparencia (si no, sigue al valor por
+  /// defecto aunque este cambie).
+  bool get transparencyChosen => _transparency != null;
 
   DockStyle copyWith({
     DockBorderShape? borderShape,
@@ -103,14 +146,14 @@ class DockStyle {
     DockDepth? depth,
   }) => DockStyle(
     borderShape: borderShape ?? this.borderShape,
-    transparency: transparency ?? this.transparency,
+    transparency: transparency ?? _transparency,
     depth: depth ?? this.depth,
   );
 
   Map<String, Object?> toJson() => {
     'schema_version': schemaVersion,
     'border_shape': borderShape.name,
-    'transparency': transparency,
+    'transparency': ?_transparency,
     'depth': depth.name,
   };
 
@@ -127,11 +170,16 @@ class DockStyle {
       return const DockStyle();
     }
     final rawTransparency = json['transparency'];
-    final transparency = rawTransparency is num
+    final stored = rawTransparency is num
         ? rawTransparency.toDouble().clamp(0.0, 1.0)
-        : 0.0;
+        : null;
+    // Antes de v3 el 0.0 era el valor por defecto, no una elección.
+    final transparency = version < 3 && stored == 0.0 ? null : stored;
+    final rawShape = json['border_shape'];
     return DockStyle(
-      borderShape: DockBorderShape.parse(json['border_shape']),
+      borderShape: version < 2 && rawShape == DockBorderShape.soft.name
+          ? DockBorderShape.rounded
+          : DockBorderShape.parse(rawShape),
       transparency: transparency,
       depth: DockDepth.parse(json['depth']),
     );
@@ -219,6 +267,9 @@ class DockProfileConfig {
     final rawItems = json['items'];
     final parsedItems = <DockItemConfig>[];
     final seenIds = <DockItemId>{};
+    // A visible legacy «Herramientas» becomes a visible Ajustes, where it
+    // stood in the order.
+    int? legacyToolsAt;
     if (rawItems is List) {
       for (final entry in rawItems) {
         if (entry is Map) {
@@ -226,6 +277,12 @@ class DockProfileConfig {
             for (final e in entry.entries)
               if (e.key is String) e.key as String: e.value,
           };
+          if (asStringMap['id'] == DockItemId.legacyToolsName) {
+            if (asStringMap['visible'] == true) {
+              legacyToolsAt ??= parsedItems.length;
+            }
+            continue;
+          }
           final item = DockItemConfig.fromJson(asStringMap);
           // Un id repetido en lo persistido (dato corrupto o de una versión
           // con un bug propio) rompía las suposiciones de `resolveDockSlots`
@@ -241,6 +298,18 @@ class DockProfileConfig {
     // relleno, `parsedItems` ya no estaría vacío nunca (se habría llenado
     // con todo el catálogo por defecto oculto) y este caso devolvería un
     // perfil con todo oculto en vez del `fallback` real.
+    if (legacyToolsAt != null) {
+      final at = parsedItems.indexWhere((i) => i.id == DockItemId.settings);
+      if (at >= 0) {
+        parsedItems[at] = parsedItems[at].copyWith(visible: true);
+      } else {
+        parsedItems.insert(
+          legacyToolsAt,
+          const DockItemConfig(id: DockItemId.settings),
+        );
+        seenIds.add(DockItemId.settings);
+      }
+    }
     if (parsedItems.isEmpty) return fallback;
     // Cualquier id del catálogo por defecto que falte en lo persistido (por
     // ejemplo, tras una actualización que añade un elemento nuevo) se agrega
@@ -271,7 +340,7 @@ class DockProfileConfig {
       DockItemConfig(id: DockItemId.cron, visible: false),
       DockItemConfig(id: DockItemId.tasks, visible: false),
       DockItemConfig(id: DockItemId.sessions, visible: false),
-      DockItemConfig(id: DockItemId.tools, visible: false),
+      DockItemConfig(id: DockItemId.agents, visible: false),
     ],
   );
 
@@ -285,7 +354,7 @@ class DockProfileConfig {
       DockItemConfig(id: DockItemId.cron, visible: false),
       DockItemConfig(id: DockItemId.tasks, visible: false),
       DockItemConfig(id: DockItemId.sessions, visible: false),
-      DockItemConfig(id: DockItemId.tools, visible: false),
+      DockItemConfig(id: DockItemId.agents, visible: false),
     ],
   );
 }

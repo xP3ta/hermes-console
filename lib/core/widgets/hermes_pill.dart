@@ -87,9 +87,13 @@ class TuiLoader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        Text(
-          effectiveLabel,
-          style: TextStyle(fontSize: 12, color: colors.textSecondary),
+        // It wraps where the row has no more room (large text, a narrow
+        // window), never past the edge.
+        Flexible(
+          child: Text(
+            effectiveLabel,
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
+          ),
         ),
       ],
     );

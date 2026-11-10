@@ -1,158 +1,619 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/hermes_design.dart'
+    show
+        HermesChrome,
+        HermesFloatingSurface,
+        HermesScrim,
+        hermesOriginOf,
+        showHermesSurface;
+import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/core/widgets/chat_control_sheet.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
+import 'package:hermes_android/core/widgets/hermes_ui.dart';
+import 'package:hermes_android/l10n/app_localizations_en.dart';
+import 'package:hermes_android/l10n/app_localizations_es.dart';
 
-const _labels = ChatControlLabels(
-  title: 'Chat settings',
-  scope: 'Only this conversation',
-  sessionSection: 'Session',
-  toolsSection: 'Tools',
-  dangerSection: 'Danger',
-  permissions: 'Permissions',
+// The chat's «Ajustes» window, the owner's final windows (ventanas-final-png): a
+// LIST. On top, the conversation's name and the pill of two round buttons
+// [🔍][+]; then PANELES (Terminal · Archivos · Git · Navegador, the one
+// showing marked «en pantalla»); then the conversation's actions, one row each;
+// «Borrar conversación» last, apart, in red. Model, permissions, «Ir a»,
+// Memory and Skills live elsewhere (status pill, ≡ menu), and how the
+// screen is shared in «Vistas»: none of them come back here.
+
+ChatControlLabels _labels({String? panelOpen}) => ChatControlLabels(
+  title: 'This conversation',
   refresh: 'Refresh',
-  artifacts: 'Artifacts',
   details: 'Details',
   cron: 'Schedule',
   delete: 'Delete conversation',
   readOnly: 'Read only',
+  recovery: 'Recovery',
+  extensions: 'Extensions',
+  content: 'Artifacts',
+  prompts: 'Prompts',
+  showPinnedPrompt: 'Show pinned prompt',
+  branch: 'Branch chat',
+  findInChat: 'Search this chat',
+  newChat: 'New chat',
+  desktop: 'See the bot\'s desktop',
+  panels: 'Panels',
+  panelOpen: panelOpen ?? StringsEn().chaControlPanelOpen,
 );
+
+/// The actions in the mock's order, with every optional one.
+const _actionOrder = <String>[
+  'refresh',
+  'content',
+  'prompts',
+  'show-pinned-prompt',
+  'branch',
+  'details',
+  'cron',
+  'recovery',
+  'extensions',
+];
+
+const _panelOrder = <String>['terminal', 'files', 'git', 'browser'];
+
+Finder _row(String id) => find.byKey(ValueKey('chat-control-$id'));
+Finder _panel(String kind) =>
+    find.byKey(ValueKey('chat-control-workspace-$kind'));
 
 Widget _app({
+  Map<String, int>? calls,
   bool readOnly = false,
   bool showDelete = true,
-  VoidCallback? onDelete,
-  VoidCallback? onArtifacts,
-  VoidCallback? onPrompts,
-  String? promptsLabel,
-}) => MaterialApp(
-  theme: AppTheme.hermesRedDark,
-  home: Scaffold(
-    body: ChatControlSheet(
-      labels: promptsLabel == null
-          ? _labels
-          : ChatControlLabels(
-              title: _labels.title,
-              scope: _labels.scope,
-              sessionSection: _labels.sessionSection,
-              toolsSection: _labels.toolsSection,
-              dangerSection: _labels.dangerSection,
-              permissions: _labels.permissions,
-              refresh: _labels.refresh,
-              artifacts: _labels.artifacts,
-              details: _labels.details,
-              cron: _labels.cron,
-              delete: _labels.delete,
-              readOnly: _labels.readOnly,
-              prompts: promptsLabel,
-            ),
-      onPrompts: onPrompts,
-      conversationTitle: 'Synthetic conversation',
-      readOnly: readOnly,
-      showDetails: true,
-      showCron: true,
-      onPermissions: () {},
-      onRefresh: () {},
-      onArtifacts: onArtifacts ?? () {},
-      onDetails: () {},
-      onCron: () {},
-      onDelete: showDelete ? onDelete ?? () {} : null,
+  bool showDetails = true,
+  bool showCron = true,
+  bool branch = true,
+  bool recovery = true,
+  bool pinned = true,
+  bool extensions = true,
+  List<ChatWorkspaceEntry>? workspace,
+  ThemeData? theme,
+  double textScale = 1,
+  bool newChat = true,
+  bool desktop = false,
+  ChatWorkspaceKind? open,
+  String title = 'Synthetic conversation',
+  String? panelOpen,
+}) {
+  VoidCallback hit(String id) => () {
+    final counts = calls;
+    if (counts != null) counts[id] = (counts[id] ?? 0) + 1;
+  };
+  return MaterialApp(
+    theme: theme ?? AppTheme.hermesRedDark,
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
     ),
-  ),
-);
+    home: Scaffold(
+      body: ChatControlSheet(
+        labels: _labels(panelOpen: panelOpen),
+        conversationTitle: title,
+        readOnly: readOnly,
+        showDetails: showDetails,
+        showCron: showCron,
+        workspace:
+            workspace ??
+            [
+              for (final (kind, label) in const [
+                (ChatWorkspaceKind.terminal, 'Terminal'),
+                (ChatWorkspaceKind.files, 'Files'),
+                (ChatWorkspaceKind.git, 'Git'),
+                (ChatWorkspaceKind.browser, 'Browser'),
+              ])
+                ChatWorkspaceEntry(
+                  kind: kind,
+                  label: label,
+                  open: kind == open,
+                  badgeCount: kind == ChatWorkspaceKind.git ? 4 : null,
+                  badgeSemanticLabel: kind == ChatWorkspaceKind.git
+                      ? '4 changes'
+                      : null,
+                  onTap: hit(kind.name),
+                ),
+            ],
+        onFindInChat: hit('find'),
+        onNewChat: newChat ? hit('new-chat') : null,
+        onDesktop: desktop ? hit('desktop') : null,
+        onRefresh: hit('refresh'),
+        onContent: hit('content'),
+        onPrompts: hit('prompts'),
+        onShowPinnedPrompt: pinned ? hit('show-pinned-prompt') : null,
+        onBranch: branch ? hit('branch') : null,
+        onDetails: hit('details'),
+        onCron: hit('cron'),
+        onRecovery: recovery ? hit('recovery') : null,
+        onExtensions: extensions ? hit('extensions') : null,
+        onDelete: showDelete ? hit('delete') : null,
+      ),
+    ),
+  );
+}
+
+void _tallPhone(WidgetTester tester, [Size size = const Size(390, 1400)]) {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
 
 void main() {
-  testWidgets('Prompts is an on-demand tool row, absent without a callback', (
-    tester,
-  ) async {
+  testWidgets('TalkBack: the conversation\'s name is the heading, the '
+      'window says what it is', (tester) async {
+    final semantics = tester.ensureSemantics();
+    _tallPhone(tester);
     await tester.pumpWidget(_app());
-    expect(find.byKey(const ValueKey('chat-control-prompts')), findsNothing);
-
-    var opened = false;
-    await tester.pumpWidget(
-      _app(promptsLabel: 'Prompts', onPrompts: () => opened = true),
-    );
-    await tester.ensureVisible(find.text('Prompts'));
-    await tester.tap(find.text('Prompts'));
-    await tester.pump();
-    expect(opened, isTrue);
-  });
-
-  testWidgets('keeps only unique session actions and direct tools', (
-    tester,
-  ) async {
-    var artifactsOpened = false;
-    await tester.pumpWidget(_app(onArtifacts: () => artifactsOpened = true));
-
-    expect(find.byKey(const ValueKey('chat-control-sheet')), findsOneWidget);
-    expect(find.text('Synthetic conversation'), findsOneWidget);
-    expect(find.text('Permissions'), findsOneWidget);
-    expect(find.text('Model and reasoning'), findsNothing);
-    expect(find.text('Preferences'), findsNothing);
-    expect(find.text('Density'), findsNothing);
-    expect(find.text('Agents and subagents'), findsNothing);
-    expect(find.text('More tools'), findsNothing);
-    expect(find.text('Refresh'), findsOneWidget);
-    expect(find.text('Artifacts'), findsOneWidget);
-    expect(find.text('Details'), findsOneWidget);
-    expect(find.text('Schedule'), findsOneWidget);
-
-    await tester.ensureVisible(find.text('Artifacts'));
-    await tester.tap(find.text('Artifacts'));
-    await tester.pump();
-    expect(artifactsOpened, isTrue);
-  });
-
-  testWidgets('read-only disables the destructive target', (tester) async {
-    var deleted = false;
-    await tester.pumpWidget(
-      _app(readOnly: true, onDelete: () => deleted = true),
-    );
-    expect(find.text('READ ONLY'), findsOneWidget);
-    await tester.drag(
-      find.byKey(const ValueKey('chat-control-sheet')),
-      const Offset(0, -1000),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete conversation'));
-    await tester.pump();
-
-    expect(deleted, isFalse);
-  });
-
-  testWidgets('omits the dangerous section when deletion is not applicable', (
-    tester,
-  ) async {
-    await tester.pumpWidget(_app(showDelete: false));
-
-    expect(find.text('Danger'), findsNothing);
-    expect(find.text('Delete conversation'), findsNothing);
-    expect(find.byKey(const ValueKey('chat-control-delete')), findsNothing);
-  });
-
-  testWidgets('Desktop release is absent from conversation controls', (
-    tester,
-  ) async {
-    await tester.pumpWidget(_app());
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('chat-control-delete')),
-    );
     expect(
-      find.byKey(const ValueKey('chat-control-release-desktop')),
+      tester.getSemantics(find.byKey(const ValueKey('chat-control-header'))),
+      isSemantics(label: 'Synthetic conversation', isHeader: true),
+    );
+    expect(find.bySemanticsLabel('This conversation'), findsOneWidget);
+    semantics.dispose();
+  });
+
+  testWidgets('order: the name and the pill, PANELES, the actions, Delete', (
+    tester,
+  ) async {
+    _tallPhone(tester);
+    await tester.pumpWidget(_app());
+    final header = tester.getRect(
+      find.byKey(const ValueKey('chat-control-header')),
+    );
+    final quick = tester.getRect(
+      find.byKey(const ValueKey('chat-control-quick')),
+    );
+    // The pill at the name's right, on its first line.
+    expect(quick.left, greaterThanOrEqualTo(header.right));
+    expect(quick.top, lessThan(header.bottom));
+    final heading = tester.getRect(
+      find.byKey(const ValueKey('chat-control-panels')),
+    );
+    expect(find.text('PANELS'), findsOneWidget);
+    expect(heading.top, greaterThan(header.bottom));
+    var previous = heading.bottom;
+    for (final kind in _panelOrder) {
+      final rect = tester.getRect(_panel(kind));
+      expect(rect.top, greaterThanOrEqualTo(previous - 0.5), reason: kind);
+      previous = rect.bottom;
+    }
+    for (final id in _actionOrder) {
+      final rect = tester.getRect(_row(id));
+      expect(rect.top, greaterThan(previous - 0.5), reason: id);
+      previous = rect.bottom;
+    }
+    expect(tester.getRect(_row('delete')).top, greaterThan(previous));
+    // Each one a row as wide as the list, at least 48 dp tall.
+    final width = tester.getSize(_row('refresh')).width;
+    for (final id in [..._actionOrder, 'delete']) {
+      final size = tester.getSize(_row(id));
+      expect(size.height, greaterThanOrEqualTo(48), reason: id);
+      expect(size.width, width, reason: id);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('what lives elsewhere is not here: model, permissions, Ir a, '
+      'Memory, Skills, the layout', (tester) async {
+    _tallPhone(tester);
+    await tester.pumpWidget(_app());
+    for (final key in [
+      // Desktop has one Artifacts view; the old second entry is gone.
+      'chat-control-artifacts',
+      'chat-control-model',
+      'chat-control-permissions',
+      'chat-control-memory',
+      'chat-control-skills',
+      'chat-control-previous-chat',
+      'chat-control-next-chat',
+      'chat-notch-go-to',
+      'chat-views-layout',
+    ]) {
+      expect(find.byKey(ValueKey(key)), findsNothing, reason: key);
+    }
+    expect(
+      find.byWidgetPredicate((w) => w is HermesSegmentedControl),
       findsNothing,
     );
-    expect(
-      find.byKey(const ValueKey('chat-runtime-release-progress')),
-      findsNothing,
-    );
-    expect(find.text('Release for Desktop'), findsNothing);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
   });
 
-  testWidgets('floating menu stays bounded and scrollable at 2x text', (
-    tester,
-  ) async {
+  testWidgets('every row does what it says', (tester) async {
+    _tallPhone(tester);
+    final calls = <String, int>{};
+    await tester.pumpWidget(_app(calls: calls));
+    for (final id in [..._actionOrder, 'delete', 'find', 'new-chat']) {
+      await tester.tap(_row(id));
+    }
+    for (final kind in _panelOrder) {
+      await tester.tap(_panel(kind));
+    }
+    expect(calls, {
+      for (final id in [
+        ..._actionOrder,
+        'delete',
+        'find',
+        'new-chat',
+        ..._panelOrder,
+      ])
+        id: 1,
+    });
+  });
+
+  group('the quick pill (ref-ventanas-2)', () {
+    for (final scale in const [1.0, 1.3, 2.0]) {
+      testWidgets('text ${scale}x: two round buttons, 48 dp targets, '
+          'named for TalkBack', (tester) async {
+        final semantics = tester.ensureSemantics();
+        _tallPhone(tester);
+        await tester.pumpWidget(_app(textScale: scale));
+        expect(tester.takeException(), isNull);
+        final quick = find.byKey(const ValueKey('chat-control-quick'));
+        for (final (id, name) in const [
+          ('find', 'Search this chat'),
+          ('new-chat', 'New chat'),
+        ]) {
+          final button = find.descendant(of: quick, matching: _row(id));
+          expect(button, findsOneWidget, reason: id);
+          final rect = tester.getRect(button);
+          expect(rect.width, greaterThanOrEqualTo(48), reason: id);
+          expect(rect.height, greaterThanOrEqualTo(48), reason: id);
+          expect(
+            tester.getSemantics(button),
+            isSemantics(tooltip: name, isButton: true, hasTapAction: true),
+          );
+          final circle = tester.widget<IconButton>(button);
+          expect(
+            circle.style!.shape!.resolve(const <WidgetState>{}),
+            isA<CircleBorder>(),
+          );
+        }
+        // No divider: two circles in a capsule.
+        expect(
+          find.descendant(of: quick, matching: find.byType(ColoredBox)),
+          findsNothing,
+        );
+        semantics.dispose();
+      });
+    }
+
+    testWidgets('a Bot Chat: «Buscar» and its desktop', (tester) async {
+      _tallPhone(tester);
+      await tester.pumpWidget(_app(newChat: false, desktop: true));
+      final quick = find.byKey(const ValueKey('chat-control-quick'));
+      expect(
+        find.descendant(of: quick, matching: _row('desktop')),
+        findsOneWidget,
+      );
+      expect(_row('new-chat'), findsNothing);
+    });
+
+    testWidgets('without a second action «Buscar» is a row of the list', (
+      tester,
+    ) async {
+      _tallPhone(tester);
+      await tester.pumpWidget(_app(newChat: false));
+      expect(find.byKey(const ValueKey('chat-control-quick')), findsNothing);
+      expect(find.text('Search this chat'), findsOneWidget);
+      expect(
+        tester.getRect(_row('find')).bottom,
+        lessThanOrEqualTo(tester.getRect(_row('refresh')).top + 0.5),
+      );
+    });
+  });
+
+  group('PANELES', () {
+    testWidgets('Terminal · Archivos · Git · Navegador; the one showing is '
+        'marked «on screen» and read so', (tester) async {
+      final semantics = tester.ensureSemantics();
+      _tallPhone(tester);
+      await tester.pumpWidget(_app(open: ChatWorkspaceKind.terminal));
+      final colors = AppTheme.hermesRedDark.hermes;
+      expect(
+        find.descendant(
+          of: _panel('terminal'),
+          matching: find.byKey(const ValueKey('chat-control-panel-open')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-control-panel-open')),
+        findsOneWidget,
+      );
+      expect(
+        tester.getSemantics(_panel('terminal')),
+        isSemantics(
+          label: 'Terminal, on screen',
+          isButton: true,
+          isSelected: true,
+          hasTapAction: true,
+        ),
+      );
+      expect(
+        tester.getSemantics(_panel('files')),
+        isSemantics(label: 'Files', isSelected: false, hasTapAction: true),
+      );
+      // Git reads its count as words.
+      expect(
+        tester.getSemantics(_panel('git')),
+        isSemantics(label: 'Git, 4 changes'),
+      );
+      expect(
+        find.descendant(of: _panel('git'), matching: find.text('4')),
+        findsOneWidget,
+      );
+      final name = tester.widget<Text>(
+        find.descendant(
+          of: _panel('terminal'),
+          matching: find.text('Terminal'),
+        ),
+      );
+      // The accent's words, readable on its tint (REVIEW-Q9-VENT P2).
+      expect(
+        name.style!.color,
+        HermesFloatingSurface.windowInk(
+          colors,
+          colors.accentText,
+          tint: colors.accent.withValues(alpha: 0.16),
+        ),
+      );
+      expect(name.style!.fontWeight, FontWeight.w700);
+      for (final (kind, icon) in const [
+        ('terminal', Icons.terminal_rounded),
+        ('files', Icons.folder_open_outlined),
+        ('git', Icons.call_split_rounded),
+        ('browser', Icons.language_rounded),
+      ]) {
+        expect(
+          find.descendant(of: _panel(kind), matching: find.byIcon(icon)),
+          findsOneWidget,
+          reason: kind,
+        );
+      }
+      semantics.dispose();
+    });
+
+    testWidgets('a panel that does not exist leaves no trace; none, no '
+        'heading', (tester) async {
+      _tallPhone(tester);
+      await tester.pumpWidget(
+        _app(
+          workspace: [
+            ChatWorkspaceEntry(
+              kind: ChatWorkspaceKind.terminal,
+              label: 'Terminal',
+              available: false,
+              onTap: () {},
+            ),
+            ChatWorkspaceEntry(
+              kind: ChatWorkspaceKind.browser,
+              label: 'Browser',
+              onTap: () {},
+            ),
+          ],
+        ),
+      );
+      expect(_panel('terminal'), findsNothing);
+      expect(_panel('browser'), findsOneWidget);
+      await tester.pumpWidget(_app(workspace: const []));
+      expect(find.byKey(const ValueKey('chat-control-panels')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('chat-control-workspace')),
+        findsNothing,
+      );
+    });
+  });
+
+  group('Delete', () {
+    testWidgets('apart, last, in the error colour', (tester) async {
+      _tallPhone(tester);
+      await tester.pumpWidget(_app());
+      final colors = AppTheme.hermesRedDark.hermes;
+      final text = tester.widget<Text>(
+        find.descendant(
+          of: _row('delete'),
+          matching: find.text('Delete conversation'),
+        ),
+      );
+      // The error's red, readable on the window (REVIEW-Q9-VENT P2-1:
+      // the raw token gave 2.93:1 in Console dark), its hue kept.
+      final red = HermesFloatingSurface.windowInk(colors, colors.error);
+      expect(text.style?.color, red);
+      final hue = (HSLColor.fromColor(red).hue -
+              HSLColor.fromColor(colors.error).hue)
+          .abs();
+      expect(hue > 180 ? 360 - hue : hue, lessThan(2));
+      expect(
+        ThemeContrast.ratio(red, HermesChrome.of(colors).opaque),
+        greaterThanOrEqualTo(4.5 - 0.01),
+      );
+      expect(
+        tester.widget<Icon>(
+          find.descendant(of: _row('delete'), matching: find.byType(Icon)),
+        ).color,
+        red,
+      );
+      // A line keeps it apart from the actions.
+      expect(find.byType(Divider), findsNWidgets(2));
+    });
+
+    testWidgets('read-only: shown, disabled, badge in the header', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      _tallPhone(tester);
+      final calls = <String, int>{};
+      await tester.pumpWidget(_app(calls: calls, readOnly: true));
+      expect(find.byType(HermesBadge), findsOneWidget);
+      expect(
+        tester.getSemantics(_row('delete')),
+        isSemantics(hasEnabledState: true, isEnabled: false),
+      );
+      await tester.tap(_row('delete'));
+      expect(calls, isEmpty);
+      final text = tester.widget<Text>(
+        find.descendant(
+          of: _row('delete'),
+          matching: find.text('Delete conversation'),
+        ),
+      );
+      expect(
+        text.style?.color,
+        AppTheme.hermesRedDark.hermes.textDisabled,
+      );
+      semantics.dispose();
+    });
+
+    testWidgets('absent when deletion does not apply', (tester) async {
+      _tallPhone(tester);
+      await tester.pumpWidget(_app(showDelete: false));
+      expect(_row('delete'), findsNothing);
+    });
+  });
+
+  testWidgets('conditional rows only when they exist', (tester) async {
+    _tallPhone(tester);
+    await tester.pumpWidget(
+      _app(
+        branch: false,
+        recovery: false,
+        pinned: false,
+        showCron: false,
+        showDetails: false,
+        extensions: false,
+      ),
+    );
+    for (final id in [
+      'branch',
+      'recovery',
+      'show-pinned-prompt',
+      'cron',
+      'details',
+      'extensions',
+    ]) {
+      expect(_row(id), findsNothing, reason: id);
+    }
+    for (final id in ['refresh', 'content', 'prompts']) {
+      expect(_row(id), findsOneWidget, reason: id);
+    }
+  });
+
+  group('themes', () {
+    for (final (name, theme) in [
+      ('dark', AppTheme.hermesRedDark),
+      ('light', AppTheme.hermesRedLight),
+    ]) {
+      testWidgets('$name: theme tokens, nothing hard-coded', (tester) async {
+        _tallPhone(tester);
+        await tester.pumpWidget(_app(theme: theme));
+        final colors = theme.hermes;
+        final chrome = HermesChrome.of(colors);
+        final artifacts = tester.widget<Text>(
+          find.descendant(
+            of: _row('content'),
+            matching: find.text('Artifacts'),
+          ),
+        );
+        expect(
+          artifacts.style?.color,
+          HermesFloatingSurface.windowInk(colors, colors.textPrimary),
+        );
+        expect(
+          tester.widget<Icon>(
+            find.descendant(of: _row('content'), matching: find.byType(Icon)),
+          ).color,
+          chrome.mutedInk,
+        );
+        final title = tester.widget<Text>(find.text('Synthetic conversation'));
+        expect(
+          title.style?.color,
+          HermesFloatingSurface.windowInk(colors, colors.textPrimary),
+        );
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
+
+  // Geometry 320-884, text 1.0 / 1.3 / 2.0: nothing overflows, nothing is
+  // cut; the name wraps to two lines and the rows' names wrap.
+  // The Fold (773, 884) and a tablet (1280) too (ORDEN-LOOP, Terminal 3).
+  for (final width in const [320.0, 390.0, 773.0, 884.0, 1280.0]) {
+    for (final scale in const [1.0, 1.3, 2.0]) {
+      testWidgets('${width.toInt()} dp, text ${scale}x: rows whole, '
+          'nothing overflows', (tester) async {
+        _tallPhone(tester, Size(width, 2400));
+        final semantics = tester.ensureSemantics();
+        try {
+          await tester.pumpWidget(
+            _app(
+              textScale: scale,
+              panelOpen: StringsEs().chaControlPanelOpen,
+              open: ChatWorkspaceKind.git,
+              title: 'Revisión del apk antes de publicarla en la tienda',
+            ),
+          );
+          expect(tester.takeException(), isNull);
+          final title = tester.widget<Text>(
+            find.text('Revisión del apk antes de publicarla en la tienda'),
+          );
+          expect(title.maxLines, 2);
+          for (final id in [..._actionOrder, 'delete']) {
+            expect(
+              tester.getSize(_row(id)).height,
+              greaterThanOrEqualTo(48),
+              reason: id,
+            );
+          }
+          for (final kind in _panelOrder) {
+            expect(
+              tester.getSize(_panel(kind)).height,
+              greaterThanOrEqualTo(48),
+            );
+          }
+          final selected = _panel('git');
+          expect(
+            tester.getSemantics(selected),
+            isSemantics(
+              label: 'Git, 4 changes, en pantalla',
+              isButton: true,
+              isEnabled: true,
+              isSelected: true,
+              hasTapAction: true,
+            ),
+          );
+          final bounds = tester.getRect(selected);
+          for (final text in ['Git', '4', 'en pantalla']) {
+            final content = find.descendant(
+              of: selected,
+              matching: find.text(text),
+            );
+            expect(content, findsOneWidget);
+            expect(content.hitTestable(), findsOneWidget);
+            final rect = tester.getRect(content);
+            expect(rect.left, greaterThanOrEqualTo(bounds.left));
+            expect(rect.right, lessThanOrEqualTo(bounds.right));
+            expect(rect.top, greaterThanOrEqualTo(bounds.top));
+            expect(rect.bottom, lessThanOrEqualTo(bounds.bottom));
+            final widget = tester.widget<Text>(content);
+            expect(widget.maxLines, isNull, reason: text);
+            expect(widget.overflow, isNull, reason: text);
+          }
+        } finally {
+          semantics.dispose();
+        }
+      });
+    }
+  }
+
+  testWidgets('floating surface at 2x text stays bounded and scrolls to '
+      'Delete', (tester) async {
     tester.view.physicalSize = const Size(360, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -176,13 +637,12 @@ void main() {
                   surfaceKey: const ValueKey('compact-chat-control'),
                   maxWidth: 480,
                   builder: (_) => ChatControlSheet(
-                    labels: _labels,
+                    labels: _labels(),
                     conversationTitle: 'Synthetic conversation',
                     showDetails: true,
                     showCron: true,
-                    onPermissions: () {},
                     onRefresh: () {},
-                    onArtifacts: () {},
+                    onContent: () {},
                     onDetails: () {},
                     onCron: () {},
                     onDelete: () {},
@@ -204,7 +664,7 @@ void main() {
     expect(tester.getSize(surface).width, lessThanOrEqualTo(328));
     expect(tester.getSize(surface).height, lessThan(540));
     await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('chat-control-delete')),
+      _row('delete'),
       260,
       scrollable: find
           .descendant(
@@ -213,245 +673,79 @@ void main() {
           )
           .first,
     );
-    expect(find.byKey(const ValueKey('chat-control-delete')), findsOneWidget);
+    expect(_row('delete'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  group('notch sheet layout', () {
-    const full = ChatControlLabels(
-      title: 'Chat settings',
-      scope: 'Only this conversation',
-      sessionSection: 'Session',
-      toolsSection: 'Tools',
-      dangerSection: 'Danger',
-      permissions: 'Permissions',
-      refresh: 'Refresh',
-      artifacts: 'Artifacts',
-      details: 'Details',
-      cron: 'Schedule',
-      delete: 'Delete conversation',
-      readOnly: 'Read only',
-      recovery: 'Recovery',
-      extensions: 'Extensions',
-      content: 'Files and links',
-      prompts: 'Prompts',
-      showPinnedPrompt: 'Show pinned prompt',
-      branch: 'Branch chat',
-      skills: 'Skills',
-      memory: 'Memory',
-      goTo: 'Go to',
-      chats: 'Chats',
-      home: 'Home',
-      projects: 'Projects',
-      settings: 'Settings',
-      searchChats: 'Search chats',
-      findInChat: 'Search this chat',
-      model: 'Model',
-      previousChat: 'Previous chat',
-      nextChat: 'Next chat',
-    );
-
-    Widget sheet({
-      required Map<String, int> calls,
-      List<ChatNotchDestination>? went,
-      double textScale = 1,
-      ThemeData? theme,
-    }) {
-      VoidCallback hit(String id) =>
-          () => calls[id] = (calls[id] ?? 0) + 1;
-      return MaterialApp(
-        theme: theme ?? AppTheme.hermesRedDark,
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: TextScaler.linear(textScale)),
-          child: child!,
-        ),
-        home: Scaffold(
-          body: ChatControlSheet(
-            labels: full,
-            conversationTitle: 'Synthetic conversation',
-            showDetails: true,
-            showCron: true,
-            onNavigate: (d) => went?.add(d),
-            onFindInChat: hit('find'),
-            onModel: hit('model'),
-            onPreviousChat: hit('previous-chat'),
-            onNextChat: hit('next-chat'),
-            onPermissions: hit('permissions'),
-            onRefresh: hit('refresh'),
-            onArtifacts: hit('artifacts'),
-            onContent: hit('content'),
-            onPrompts: hit('prompts'),
-            onShowPinnedPrompt: hit('show-pinned-prompt'),
-            onBranch: hit('branch'),
-            onDetails: hit('details'),
-            onCron: hit('cron'),
-            onRecovery: hit('recovery'),
-            onExtensions: hit('extensions'),
-            onSkills: hit('skills'),
-            onMemory: hit('memory'),
-            onDelete: hit('delete'),
+  // ORDEN-LOOP 1.4, Terminal 3: Ajustes as it opens, a lifted window
+  // anchored to its button at the top right, on the Fold and a tablet:
+  // whole on screen, no wider than its 360, Delete reachable.
+  for (final size in const [Size(884, 1000), Size(1280, 800), Size(773, 900)]) {
+    testWidgets('lifted at ${size.width.toInt()}x${size.height.toInt()}: '
+        'anchored, whole, bounded', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.hermesRedDark,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Builder(
+                    builder: (anchor) => IconButton(
+                      key: const ValueKey('test-settings'),
+                      icon: const Icon(Icons.more_horiz_rounded),
+                      onPressed: () => showHermesSurface<void>(
+                        context: anchor,
+                        surfaceKey: const ValueKey('test-ajustes'),
+                        originRect: hermesOriginOf(anchor),
+                        maxWidth: 360,
+                        scrim: HermesScrim.menu,
+                        coversPage: false,
+                        lifted: true,
+                        builder: (_) => ChatControlSheet(
+                          labels: _labels(),
+                          conversationTitle: 'Synthetic conversation',
+                          workspace: [
+                            ChatWorkspaceEntry(
+                              kind: ChatWorkspaceKind.terminal,
+                              label: 'Terminal',
+                              open: true,
+                              onTap: () {},
+                            ),
+                          ],
+                          onFindInChat: () {},
+                          onNewChat: () {},
+                          onRefresh: () {},
+                          onContent: () {},
+                          onDelete: () {},
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       );
-    }
-
-    // Every entry the old header ⋮ sheet, the header search icon and the Bot
-    // Chat overflow offered, plus the two that had lost their button (Skills,
-    // Memory), lives in exactly one group of the notch sheet.
-    const groups = <String, List<String>>{
-      'find': ['find'],
-      'session': [
-        'model',
-        'previous-chat',
-        'next-chat',
-        'permissions',
-        'refresh',
-        'details',
-        'prompts',
-        'show-pinned-prompt',
-        'branch',
-      ],
-      'tools': [
-        'artifacts',
-        'content',
-        'cron',
-        'extensions',
-        'skills',
-        'memory',
-        'recovery',
-      ],
-      'danger': ['delete'],
-    };
-
-    testWidgets('every previous action is reachable in its group', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(390, 2400);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final calls = <String, int>{};
-      await tester.pumpWidget(sheet(calls: calls));
-      var previousGroupBottom = double.negativeInfinity;
-      for (final entry in groups.entries) {
-        final group = find.byKey(ValueKey('chat-control-group-${entry.key}'));
-        expect(group, findsOneWidget, reason: entry.key);
-        expect(tester.getRect(group).top, greaterThan(previousGroupBottom));
-        previousGroupBottom = tester.getRect(group).bottom;
-        var previousRowTop = double.negativeInfinity;
-        for (final id in entry.value) {
-          final row = find.descendant(
-            of: group,
-            matching: find.byKey(ValueKey('chat-control-$id')),
-          );
-          expect(row, findsOneWidget, reason: '$id in ${entry.key}');
-          expect(tester.getRect(row).top, greaterThan(previousRowTop));
-          previousRowTop = tester.getRect(row).top;
-          expect(tester.getSize(row).height, greaterThanOrEqualTo(48));
-          await tester.tap(row);
-          await tester.pump();
-          expect(calls[id], 1, reason: id);
-        }
-      }
-      expect(calls.length, groups.values.expand((ids) => ids).length);
-    });
-
-    testWidgets('Ir a: equal grey tiles with the dock icons, in order', (
-      tester,
-    ) async {
-      final went = <ChatNotchDestination>[];
-      await tester.pumpWidget(sheet(calls: {}, went: went));
-      final colors = AppTheme.hermesRedDark.hermes;
-      final row = find.byKey(const ValueKey('chat-notch-go-to'));
-      expect(row, findsOneWidget);
-      expect(find.text('Go to'), findsOneWidget);
-      // Below "Search this chat", above the settings title.
-      expect(
-        tester.getRect(row).bottom,
-        lessThan(tester.getRect(find.text('Chat settings')).top),
-      );
-      expect(
-        tester.getRect(find.byKey(const ValueKey('chat-control-find'))).bottom,
-        lessThan(tester.getRect(row).top),
-      );
-      const expected = <ChatNotchDestination, IconData>{
-        ChatNotchDestination.chats: Icons.forum_outlined,
-        ChatNotchDestination.home: Icons.home_outlined,
-        ChatNotchDestination.projects: Icons.folder_copy_outlined,
-        ChatNotchDestination.settings: Icons.settings_outlined,
-        ChatNotchDestination.searchChats: Icons.manage_search_rounded,
-      };
-      Size? size;
-      double? lastLeft;
-      for (final MapEntry(key: destination, value: icon) in expected.entries) {
-        final tile = find.byKey(ValueKey('chat-notch-go-${destination.name}'));
-        expect(tile, findsOneWidget);
-        final tileSize = tester.getSize(tile);
-        size ??= tileSize;
-        expect(tileSize.width, closeTo(size.width, 0.5));
-        expect(tileSize.height, greaterThanOrEqualTo(48));
-        final left = tester.getRect(tile).left;
-        if (lastLeft != null) expect(left, greaterThan(lastLeft));
-        lastLeft = left;
-        final glyph = tester.widget<Icon>(
-          find.descendant(of: tile, matching: find.byType(Icon)),
-        );
-        expect(glyph.icon, icon);
-        expect(glyph.color, colors.textPrimary);
-        final face = tester.widget<DecoratedBox>(
-          find.descendant(
-            of: tile,
-            matching: find.byKey(const ValueKey('chat-notch-go-face')),
-          ),
-        );
-        expect((face.decoration as BoxDecoration).color, colors.surfaceVariant);
-        await tester.tap(tile);
-        await tester.pump();
-      }
-      expect(went, expected.keys.toList());
-    });
-
-    testWidgets('2x text: tiles wrap to two columns and nothing overflows', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(360, 1600);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.pumpWidget(sheet(calls: {}, textScale: 2));
-      final chats = tester.getRect(
-        find.byKey(const ValueKey('chat-notch-go-chats')),
-      );
-      final home = tester.getRect(
-        find.byKey(const ValueKey('chat-notch-go-home')),
-      );
-      final projects = tester.getRect(
-        find.byKey(const ValueKey('chat-notch-go-projects')),
-      );
-      expect(home.top, closeTo(chats.top, 0.5));
-      expect(projects.top, greaterThan(chats.bottom - 0.5));
+      await tester.tap(find.byKey(const ValueKey('test-settings')));
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+      final window = tester.getRect(find.byKey(const ValueKey('test-ajustes')));
+      expect(window.width, lessThanOrEqualTo(360));
+      expect(window.left, greaterThanOrEqualTo(0));
+      expect(window.right, lessThanOrEqualTo(size.width));
+      expect(window.top, greaterThanOrEqualTo(0));
+      expect(window.bottom, lessThanOrEqualTo(size.height));
+      // At its button: in the right half of the screen.
+      expect(window.center.dx, greaterThan(size.width / 2));
+      expect(_row('delete').hitTestable(), findsOneWidget);
+      expect(find.text('PANELS'), findsOneWidget);
     });
-
-    testWidgets('light theme keeps the tiles neutral grey', (tester) async {
-      await tester.pumpWidget(sheet(calls: {}, theme: AppTheme.hermesRedLight));
-      final face = tester.widget<DecoratedBox>(
-        find.descendant(
-          of: find.byKey(const ValueKey('chat-notch-go-home')),
-          matching: find.byKey(const ValueKey('chat-notch-go-face')),
-        ),
-      );
-      expect(
-        (face.decoration as BoxDecoration).color,
-        AppTheme.hermesRedLight.hermes.surfaceVariant,
-      );
-    });
-
-    testWidgets('without a navigator there is no Ir a row', (tester) async {
-      await tester.pumpWidget(_app());
-      expect(find.byKey(const ValueKey('chat-notch-go-to')), findsNothing);
-    });
-  });
+  }
 }

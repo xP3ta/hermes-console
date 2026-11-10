@@ -1,8 +1,7 @@
 // Tareas section of the launcher widgets: the open cards of one Kanban board,
 // the ones in progress first. Written as ONE atomic JSON string under
 // [LauncherWidgetTasksSnapshot.storageKey] by whoever just read the board
-// (the Tareas screen, or the background listener's own Kanban pass); the
-// Android widget only reads it. Secret-free: opaque ids, public titles.
+// (the Tareas screen or the dashboard); the Android widget only reads it. Secret-free: opaque ids, public titles.
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';

@@ -42,6 +42,7 @@ IslandAction? connectionIslandAction({
   final retryable = switch (kind) {
     null ||
     ConnectionStatusKind.reconnecting ||
+    ConnectionStatusKind.connecting ||
     ConnectionStatusKind.starting => true,
     _ => false,
   };

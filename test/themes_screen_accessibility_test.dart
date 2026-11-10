@@ -102,7 +102,7 @@ void main() {
     for (final preset in AppTheme.presets) {
       families.putIfAbsent(preset.familyId, () => []).add(preset);
     }
-    expect(families, hasLength(20));
+    expect(families, hasLength(21));
     final scrollable = find.byType(Scrollable).first;
     for (final entry in families.entries) {
       final section = entry.value.first.desktopOfficial ? 'desktop' : 'console';
@@ -139,7 +139,7 @@ void main() {
       find.byKey(const ValueKey('console-theme-claude-dark')),
       findsOneWidget,
     );
-    expect(find.text('Hermes Console · 8'), findsOneWidget);
+    expect(find.text('Hermes Console · 9'), findsOneWidget);
     // Quiet UI: no "N themes · tap to apply" hint under the header.
     expect(find.text('20 temas incluidos · toca para aplicar'), findsNothing);
   });

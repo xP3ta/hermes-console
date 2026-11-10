@@ -5,20 +5,50 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
-import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../design/tokens.dart' show HermesChrome;
+import '../design/gel_surface.dart';
+import '../design/glass_strip.dart';
+import '../design/liquid_glass.dart';
+import '../design/smoked_glass.dart';
+import '../design/tokens.dart'
+    show HermesChrome, HermesGel, HermesRadius, HermesSpace;
+import '../services/dock_preferences_store.dart';
+import '../services/ssh_profile_presence.dart';
 import '../theme/app_theme.dart';
+import '../theme/theme_contrast.dart';
+import '../theme/hermes_tokens.dart' show HermesIcon;
+import '../widgets/dock_style.dart' show resolveDockVisual;
+import '../widgets/frosted_backdrop.dart';
 import 'dock_geometry.dart';
 import 'dock_light.dart';
 import 'gesture_dock_state.dart';
+import '../feedback/haptics.dart';
 
-/// Height of the floating bar.
-const double gestureDockHeight = 60;
+/// Height of the floating bar, and the side of the round «+» beside it
+/// (QA 9709, dock-final: one pill of places and «+» apart).
+const double gestureDockHeight = 56;
+
+/// Gap between the pill of places and the round «+».
+const double gestureDockGap = HermesSpace.gap;
+
+/// Width of an item in the pill: 64 dp, down to the 48 dp touch target on
+/// narrow screens.
+const double gestureDockSlotMax = 64;
+const double gestureDockSlotMin = HermesSpace.tap;
+
+/// Inner padding of the pill at each end.
+const double gestureDockPillInset = 4;
 
 /// Gap between the bar and the screen sides.
 const double gestureDockSideMargin = 14;
+
+/// Tighter spacing, used only when five places and «+» would not fit a narrow
+/// window at the 48 dp target otherwise (a 320 dp phone with the cover of a
+/// folding one): the destinations stay, the air between them gives.
+const double gestureDockSideMarginTight = HermesSpace.x2;
+const double gestureDockGapTight = HermesSpace.x1;
+const double gestureDockPillInsetTight = HermesSpace.x1 / 2;
 
 /// Gap between the bar and the system navigation area.
 const double gestureDockBottomGap = 14;
@@ -56,6 +86,104 @@ double gestureDockFootprint(BuildContext context) =>
     gestureDockBottomGap +
     gestureDockHeight +
     gestureDockBreathing;
+
+/// How the dock's items sit: the places in one pill, «Nuevo chat» apart
+/// as a round piece of the same glass when the layout has it. Its order in
+/// the layout does not move it: it is always the round piece at the end.
+@immutable
+class GestureDockLayout {
+  const GestureDockLayout._({
+    required this.places,
+    required this.create,
+    required this.slot,
+    this.gap = gestureDockGap,
+    this.inset = gestureDockPillInset,
+    this.tight = false,
+  });
+
+  /// [tabs] (the user's layout) in [available] width (the window less the
+  /// side margins).
+  ///
+  /// When the places at the 48 dp target and «+» do not fit, the spacing is
+  /// compacted ([tight]): a narrower gap, inset and side margin, which makes
+  /// the bar up to [gestureDockSideMargin] − [gestureDockSideMarginTight] per
+  /// side wider than [available]. No destination is left out.
+  factory GestureDockLayout.of(List<GestureDockTab> tabs, double available) {
+    final places = [
+      for (final tab in tabs)
+        if (tab != GestureDockTab.create) tab,
+    ];
+    final create = tabs.contains(GestureDockTab.create);
+    GestureDockLayout build(double room, double gap, double inset, bool tight) {
+      final round = create ? gap + gestureDockHeight : 0.0;
+      final free = room - round - inset * 2;
+      final slot = places.isEmpty
+          ? gestureDockSlotMax
+          : (free / places.length)
+                .clamp(gestureDockSlotMin, gestureDockSlotMax)
+                .toDouble();
+      return GestureDockLayout._(
+        places: List.unmodifiable(places),
+        create: create,
+        slot: slot,
+        gap: gap,
+        inset: inset,
+        tight: tight,
+      );
+    }
+
+    final roomy = build(available, gestureDockGap, gestureDockPillInset, false);
+    if (roomy.width <= available) return roomy;
+    return build(
+      available + (gestureDockSideMargin - gestureDockSideMarginTight) * 2,
+      gestureDockGapTight,
+      gestureDockPillInsetTight,
+      true,
+    );
+  }
+
+  /// Gap between the pill and «+», and the pill's inner padding.
+  final double gap;
+  final double inset;
+
+  /// The compacted spacing of a narrow window (see [GestureDockLayout.of]).
+  final bool tight;
+
+  /// Every item but «Nuevo chat», in the user's order.
+  final List<GestureDockTab> places;
+
+  /// Whether the round «+» shows.
+  final bool create;
+
+  /// Width of each item of the pill.
+  final double slot;
+
+  double get pillWidth => slot * places.length + inset * 2;
+
+  /// Both pieces and the gap between them.
+  double get width => pillWidth + (create ? gap + gestureDockHeight : 0);
+
+  /// The item under [dx] (from the left of both pieces), mirrored in
+  /// right-to-left languages, where «+» is on the left.
+  GestureDockTab? tabAt(double dx, {required bool rtl}) {
+    if (dx < 0 || dx > width) return null;
+    final x = rtl ? width - dx : dx;
+    if (x > pillWidth) {
+      return create && x >= pillWidth + gap ? GestureDockTab.create : null;
+    }
+    if (places.isEmpty) return null;
+    final slotIndex = ((x - inset) / slot).floor().clamp(0, places.length - 1);
+    return places[slotIndex];
+  }
+
+  /// Centre of [tab] from the left of both pieces, as drawn.
+  double centerOf(GestureDockTab tab, {required bool rtl}) {
+    final x = tab == GestureDockTab.create
+        ? width - gestureDockHeight / 2
+        : inset + slot * (places.indexOf(tab) + .5);
+    return rtl ? width - x : x;
+  }
+}
 
 /// One entry in an item's long-press menu.
 @immutable
@@ -137,13 +265,14 @@ class _GestureDockState extends State<GestureDock>
     vsync: this,
     duration: dockHideDuration,
   );
-  final ValueNotifier<int?> _pressed = ValueNotifier<int?>(null);
+  final ValueNotifier<GestureDockTab?> _pressed =
+      ValueNotifier<GestureDockTab?>(null);
   final GlobalKey _barSlot = GlobalKey(debugLabel: 'gesture-dock-bar');
   final GlobalKey _handleSlot = GlobalKey(debugLabel: 'gesture-dock-handle');
 
   int? _pointer;
   Offset _start = Offset.zero;
-  int? _downTab;
+  GestureDockTab? _downTab;
   bool _moved = false;
   bool _longPressed = false;
   Timer? _longPressTimer;
@@ -153,14 +282,21 @@ class _GestureDockState extends State<GestureDock>
   bool _geometryQueued = false;
 
   /// The items on the bar, in the user's order (edit mode).
-  List<GestureDockTab> get _tabs => _c.value.tabs;
+  List<GestureDockTab> get _tabs => gestureDockShownTabs(_c.value.tabs);
   List<GestureDockTab> _lightTabs = const [];
 
-  /// Where the place this screen is sits on the bar, if it is on it.
+  /// The items of the pill: every item but «Nuevo chat», which is the
+  /// round piece beside it.
+  List<GestureDockTab> get _places => [
+    for (final tab in _tabs)
+      if (tab != GestureDockTab.create) tab,
+  ];
+
+  /// Where the place this screen is sits in the pill, if it is in it.
   int? get _currentSlot {
     final current = widget.current;
     if (current == null || !current.isPlace) return null;
-    final slot = _tabs.indexOf(current);
+    final slot = _places.indexOf(current);
     return slot < 0 ? null : slot;
   }
 
@@ -182,6 +318,7 @@ class _GestureDockState extends State<GestureDock>
     _c.hidden.addListener(_onHiddenChanged);
     _lightTabs = _tabs;
     _c.settings.addListener(_onSettingsChanged);
+    SshProfilePresence.instance.addListener(_onSettingsChanged);
     unawaited(_c.ensureLoaded());
   }
 
@@ -229,6 +366,7 @@ class _GestureDockState extends State<GestureDock>
   void dispose() {
     _c.hidden.removeListener(_onHiddenChanged);
     _c.settings.removeListener(_onSettingsChanged);
+    SshProfilePresence.instance.removeListener(_onSettingsChanged);
     _geometry.unwatch(this);
     _geometry.setMenuOpen(this, false);
     _geometry.clear(this);
@@ -279,27 +417,16 @@ class _GestureDockState extends State<GestureDock>
 
   // ---- touches ---------------------------------------------------------
 
-  /// The item under [local] (bar coordinates). The bar's row is mirrored
-  /// in right-to-left languages, so the slot is too.
-  int? _tabAt(Offset local, double width) {
-    if (local.dx < 0 || local.dx > width) return null;
-    final slot = (local.dx / (width / _tabs.length)).floor().clamp(
-      0,
-      _tabs.length - 1,
-    );
-    return _rtl ? _tabs.length - 1 - slot : slot;
-  }
-
-  void _onDown(PointerDownEvent event, double width, Offset inset) {
+  void _onDown(PointerDownEvent event, GestureDockLayout layout) {
     if (_pointer != null) return;
     _closePopover();
     _pointer = event.pointer;
     _start = event.position;
     _moved = false;
     _longPressed = false;
-    _downTab = _tabAt(event.localPosition - inset, width);
-    _pressed.value = _downTab;
-    final tab = _downTab == null ? null : _tabs[_downTab!];
+    final tab = layout.tabAt(event.localPosition.dx, rtl: _rtl);
+    _downTab = tab;
+    _pressed.value = tab;
     _longPressTimer?.cancel();
     // An item with a menu opens it; anywhere else on the bar the long
     // press opens the edit mode.
@@ -309,7 +436,7 @@ class _GestureDockState extends State<GestureDock>
         if (_moved || _pointer == null) return;
         _longPressed = true;
         _pressed.value = null;
-        unawaited(HapticFeedback.selectionClick());
+        HermesHaptics.selection();
         if (hasMenu) {
           _openPopover(tab);
         } else {
@@ -347,14 +474,14 @@ class _GestureDockState extends State<GestureDock>
     _run(_downTab!);
   }
 
-  /// Runs the item at [slot]. For a place the light leaves for it at once,
-  /// before the screen it opens is there, so it reads as the light picking
-  /// the destination. An action ("Nuevo", "Actividad") moves no light.
-  void _run(int slot) {
-    final tab = _tabs[slot];
+  /// Runs [tab]. For a place the light leaves for it at once, before the
+  /// screen it opens is there, so it reads as the light picking the
+  /// destination. An action ("Nuevo", "Actividad") moves no light.
+  void _run(GestureDockTab tab) {
     final action = widget.onTab[tab];
     if (action == null) return;
-    if (tab.isPlace) _c.light.moveTo(slot, animate: !_reduced);
+    final slot = _places.indexOf(tab);
+    if (tab.isPlace && slot >= 0) _c.light.moveTo(slot, animate: !_reduced);
     action();
   }
 
@@ -369,8 +496,8 @@ class _GestureDockState extends State<GestureDock>
     if (mounted) setState(() => _popover = null);
   }
 
-  /// Side padding of the row of items inside the bar.
-  static const double _rowInset = 6;
+  /// Room above and below the selected item's pill inside its 48 dp.
+  static const double _activeInset = HermesSpace.x1 / 2;
 
   void _hideByHand() => _c.setHidden(true);
 
@@ -387,80 +514,93 @@ class _GestureDockState extends State<GestureDock>
     _queueGeometry();
     return _KeyboardGate(
       onChanged: _queueGeometry,
-      child: ValueListenableBuilder<GestureDockSettings>(
-        valueListenable: _c.settings,
-        builder: (context, settings, _) {
-          final hidden = _c.hidden.value;
-          return Stack(
-            fit: StackFit.expand,
-            clipBehavior: Clip.none,
-            children: [
-              if (_popover != null)
-                Positioned.fill(
-                  child: GestureDetector(
-                    key: const ValueKey('gesture-dock-popover-barrier'),
-                    behavior: HitTestBehavior.translucent,
-                    onTap: _closePopover,
+      child: ListenableBuilder(
+        listenable: Listenable.merge([
+          _c.settings,
+          SshProfilePresence.instance,
+        ]),
+        builder: (context, _) => LayoutBuilder(
+          builder: (context, constraints) {
+            final hidden = _c.hidden.value;
+            final layout = GestureDockLayout.of(
+              gestureDockShownTabs(_c.value.tabs),
+              constraints.maxWidth - gestureDockSideMargin * 2,
+            );
+            final left = (constraints.maxWidth - layout.width) / 2;
+            final popover = _popover;
+            return Stack(
+              fit: StackFit.expand,
+              clipBehavior: Clip.none,
+              children: [
+                if (popover != null)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      key: const ValueKey('gesture-dock-popover-barrier'),
+                      behavior: HitTestBehavior.translucent,
+                      onTap: _closePopover,
+                    ),
                   ),
-                ),
-              Positioned(
-                key: _barSlot,
-                left: gestureDockSideMargin,
-                right: gestureDockSideMargin,
-                bottom: dockBottom,
-                height: gestureDockHeight,
-                // Bar or handle: whichever is in view takes the touches.
-                child: ExcludeSemantics(
-                  excluding: hidden,
-                  child: IgnorePointer(
-                    ignoring: hidden,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) =>
-                          _buildBar(context, constraints.maxWidth, settings),
+                Positioned(
+                  key: _barSlot,
+                  left: left,
+                  width: layout.width,
+                  bottom: dockBottom,
+                  height: gestureDockHeight,
+                  // Bar or handle: whichever is in view takes the touches.
+                  child: ExcludeSemantics(
+                    excluding: hidden,
+                    child: IgnorePointer(
+                      ignoring: hidden,
+                      child: _buildBar(context, layout, _c.value),
                     ),
                   ),
                 ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: handleBottom,
-                child: Center(
-                  child: KeyedSubtree(
-                    key: _handleSlot,
-                    child: _buildHandle(context, strings, hidden),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: handleBottom,
+                  child: Center(
+                    child: KeyedSubtree(
+                      key: _handleSlot,
+                      child: _buildHandle(context, strings, hidden),
+                    ),
                   ),
                 ),
-              ),
-              if (_popover != null)
-                _ShortcutPopover(
-                  key: const ValueKey('gesture-dock-popover'),
-                  tab: _popover!,
-                  slot: settings.tabs.indexOf(_popover!),
-                  slots: settings.tabs.length,
-                  bottom: dockBottom + gestureDockHeight + 10,
-                  shortcuts: widget.shortcuts[_popover!] ?? const [],
-                  onSelected: (shortcut) {
-                    _closePopover();
-                    shortcut.onTap();
-                  },
-                ),
-            ],
-          );
-        },
+                if (popover != null)
+                  _ShortcutPopover(
+                    key: const ValueKey('gesture-dock-popover'),
+                    tab: popover,
+                    center: left + layout.centerOf(popover, rtl: _rtl),
+                    bottom: dockBottom + gestureDockHeight + 10,
+                    shortcuts: widget.shortcuts[popover] ?? const [],
+                    onSelected: (shortcut) {
+                      _closePopover();
+                      shortcut.onTap();
+                    },
+                  ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 
+  /// The pill of places and, apart, the round «+»: two pieces of the same
+  /// glass (QA 9709, dock-final). One listener takes the touches of both.
   Widget _buildBar(
     BuildContext context,
-    double width,
+    GestureDockLayout layout,
     GestureDockSettings settings,
   ) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
     final opaque = settings.opaque || MediaQuery.highContrastOf(context);
-    final tabs = settings.tabs;
+    final dockVisual = resolveDockVisual(
+      colors,
+      DockPreferencesController.instance.value.general.style,
+    );
+    final tone = opaque ? null : _dockTone(colors, dockVisual.background);
     // What a long press reaches, for a screen reader.
     final actions = <CustomSemanticsAction, VoidCallback>{
       if (widget.onActivity != null)
@@ -470,39 +610,58 @@ class _GestureDockState extends State<GestureDock>
         CustomSemanticsAction(label: strings.gdEditDock): widget.onEdit!,
       CustomSemanticsAction(label: strings.gdHideDock): _hideByHand,
     };
-    final surface = _GlassSurface(
+    final pill = _GlassSurface(
       opaque: opaque,
+      name: 'gesture-dock',
+      width: layout.pillWidth,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // Behind the icons and inside the bar's clip: it never spills
-          // out of the pill. Its own layer, so a glide repaints one
-          // gradient and neither the icons nor anything outside the bar.
+          // Behind the icons and inside the pill's clip: it never spills
+          // out of it. Its own layer, so a glide repaints one gradient and
+          // neither the icons nor anything outside the pill.
           IgnorePointer(
             child: RepaintBoundary(
               child: CustomPaint(
                 key: const ValueKey('gesture-dock-light'),
                 painter: DockLightPainter(
                   light: _c.light,
-                  slots: tabs.length,
+                  slots: layout.places.length,
                   color: colors.accent,
                   rtl: _rtl,
-                  inset: _rowInset,
+                  inset: layout.inset,
                 ),
               ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: _rowInset),
+            padding: EdgeInsets.symmetric(horizontal: layout.inset),
             child: Row(
               children: [
-                for (var i = 0; i < tabs.length; i++)
-                  Expanded(child: _buildTab(context, tabs, i, strings, colors)),
+                for (final tab in layout.places)
+                  SizedBox(
+                    width: layout.slot,
+                    child: _buildTab(context, tab, strings, colors),
+                  ),
               ],
             ),
           ),
         ],
       ),
+    );
+    final pieces = Row(
+      children: [
+        pill,
+        if (layout.create) ...[
+          SizedBox(width: layout.gap),
+          _GlassSurface(
+            opaque: opaque,
+            name: 'gesture-dock-create',
+            width: gestureDockHeight,
+            child: _buildTab(context, GestureDockTab.create, strings, colors),
+          ),
+        ],
+      ],
     );
     return Semantics(
       key: const ValueKey('gesture-dock'),
@@ -512,15 +671,31 @@ class _GestureDockState extends State<GestureDock>
       child: Listener(
         key: const ValueKey('gesture-dock-pointer'),
         behavior: HitTestBehavior.opaque,
-        onPointerDown: (e) =>
-            _onDown(e, width - _rowInset * 2, const Offset(_rowInset, 0)),
+        onPointerDown: (e) => _onDown(e, layout),
         onPointerMove: _onMove,
         onPointerUp: _onUp,
         onPointerCancel: _onCancel,
         child: AnimatedBuilder(
           animation: _hide,
-          builder: (context, child) => _transformed(child!),
-          child: RepaintBoundary(child: surface),
+          builder: (context, child) => _transformed(
+            HermesLiquidMotion(
+              moving: _hide.isAnimating || _hide.value != 0,
+              child: child!,
+            ),
+          ),
+          child: RepaintBoundary(
+            child: HermesGlassStrip(
+              zone: FrostedZone.bottom,
+              liquid: tone == null ? HermesLiquid.dock : null,
+              tone: tone,
+              toneInks: HermesSmokedGlass.barInks(colors),
+              enabled: !opaque && dockVisual.blurSigma > 0,
+              blurSigma: dockVisual.blurSigma,
+              veil: dockVisual.background,
+              weakInk: colors.textPrimary,
+              child: pieces,
+            ),
+          ),
         ),
       ),
     );
@@ -543,27 +718,37 @@ class _GestureDockState extends State<GestureDock>
     );
   }
 
+  /// One item: its icon only, no label (QA 9709). The selected place sits
+  /// on a faint pill of the accent colour, its icon filled in the accent;
+  /// every other item is outlined in the colour of the text. Its name is
+  /// for a screen reader, and a long press reaches its menu.
   Widget _buildTab(
     BuildContext context,
-    List<GestureDockTab> tabs,
-    int index,
+    GestureDockTab tab,
     Strings strings,
     HermesThemeColors colors,
   ) {
-    final tab = tabs[index];
     final action = widget.onTab[tab];
-    // Matte: the selected place is its filled icon in the accent colour,
-    // and nothing else. No glow, no shadow, no halo.
     final selected = tab.isPlace && widget.current == tab;
     final shortcuts = widget.shortcuts[tab] ?? const <DockShortcut>[];
     final label = gestureDockTabLabel(strings, tab);
     final enabled = action != null || selected;
-    final glyph = Icon(
-      gestureDockTabIcon(tab, selected: selected),
-      size: tab == GestureDockTab.create ? 28 : 24,
-      color: selected
-          ? colors.accentText
-          : (enabled ? colors.textSecondary : colors.textDisabled),
+    final selection = colors.accent.withValues(
+      alpha: HermesGel.dockGlowCertified(HermesChrome.of(colors).dark),
+    );
+    final glyph = Builder(
+      builder: (context) => Icon(
+        gestureDockTabIcon(tab, selected: selected),
+        size: HermesIcon.xl,
+        color: selected
+            ? _selectedDockInk(
+                colors,
+                selection,
+                _DockSurfaceFill.of(context),
+                tone: HermesGlassStrip.of(context)?.tone,
+              )
+            : (enabled ? colors.textPrimary : colors.textDisabled),
+      ),
     );
     return Semantics(
       key: ValueKey('gesture-dock-tab-${tab.name}'),
@@ -571,32 +756,55 @@ class _GestureDockState extends State<GestureDock>
       selected: selected,
       enabled: enabled,
       label: label,
-      onTap: action == null ? null : () => _run(index),
+      onTap: action == null ? null : () => _run(tab),
       onLongPress: shortcuts.isNotEmpty
           ? () => _openPopover(tab)
           : widget.onEdit,
       excludeSemantics: true,
-      child: ValueListenableBuilder<int?>(
+      child: ValueListenableBuilder<GestureDockTab?>(
         valueListenable: _pressed,
         builder: (context, pressed, child) => AnimatedScale(
-          scale: pressed == index ? .9 : 1,
+          scale: pressed == tab ? .9 : 1,
           duration: _reduced
               ? Duration.zero
               : const Duration(milliseconds: 120),
           child: child,
         ),
-        child: SizedBox(
-          height: 46,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              glyph,
-              if (tab == GestureDockTab.home && !selected)
-                _AttentionDot(
-                  attention: widget.attention,
-                  needsYou: widget.needsYou,
-                ),
-            ],
+        // A hover name for a pointer; touch keeps its long press (the item's
+        // menu), so the tooltip never opens by itself.
+        child: Tooltip(
+          message: label,
+          triggerMode: TooltipTriggerMode.manual,
+          excludeFromSemantics: true,
+          child: SizedBox(
+            height: HermesSpace.tap,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (selected)
+                  Positioned.fill(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: HermesSpace.x1,
+                        vertical: _activeInset,
+                      ),
+                      child: DecoratedBox(
+                        key: const ValueKey('gesture-dock-active'),
+                        decoration: HermesGel.glow(
+                          colors.accent,
+                          BorderRadius.circular(HermesRadius.tag),
+                        ),
+                      ),
+                    ),
+                  ),
+                glyph,
+                if (tab == GestureDockTab.home && !selected)
+                  _AttentionDot(
+                    attention: widget.attention,
+                    needsYou: widget.needsYou,
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -680,8 +888,10 @@ IconData gestureDockTabIcon(
   // The board's own icon in the drawer, which has both forms.
   GestureDockTab.tasks =>
     selected ? Icons.view_kanban_rounded : Icons.view_kanban_outlined,
-  GestureDockTab.tools =>
-    selected ? Icons.handyman_rounded : Icons.handyman_outlined,
+  // Agents (the terminal's agent mode): a robot at a prompt, not the bot
+  // face of Bots.
+  GestureDockTab.agents =>
+    selected ? Icons.terminal_rounded : Icons.terminal_outlined,
   GestureDockTab.activity => Icons.bolt_outlined,
 };
 
@@ -695,7 +905,7 @@ String gestureDockTabLabel(Strings strings, GestureDockTab tab) =>
       GestureDockTab.search => strings.dockSessionsLabel,
       GestureDockTab.cron => strings.gdShortCron,
       GestureDockTab.tasks => strings.gdShortTasks,
-      GestureDockTab.tools => strings.drawerTools,
+      GestureDockTab.agents => strings.navAgents,
       GestureDockTab.activity => strings.gdActivityTitle,
     };
 
@@ -765,45 +975,177 @@ class _KeyboardGateState extends State<_KeyboardGate>
   }
 }
 
-/// The bar's surface: the floating chrome of the theme, opaque when asked
-/// to. It never blurs: nothing scrolls behind the dock (a page's list
-/// dissolves before reaching it), so a backdrop blur would only cost a pass
-/// on every frame.
+/// The visible outline and fill of one piece of the dock's shared band.
 class _GlassSurface extends StatelessWidget {
+  /// Either the user's opaque dock (Editar dock › opaco) or high contrast.
   final bool opaque;
+
+  /// Key prefix: `<name>-glass` or `<name>-opaque` on the fill.
+  final String name;
+  final double width;
   final Widget child;
 
-  const _GlassSurface({required this.opaque, required this.child});
+  const _GlassSurface({
+    required this.opaque,
+    required this.name,
+    required this.width,
+    required this.child,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final chrome = HermesChrome.ofContext(context);
-    final radius = BorderRadius.circular(gestureDockHeight / 2);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: radius,
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x59000000),
-            blurRadius: 30,
-            offset: Offset(0, 14),
-            spreadRadius: -10,
-          ),
-        ],
-      ),
+    final colors = Theme.of(context).hermes;
+    final chrome = HermesChrome.of(colors);
+    // The dock's glass, the same recipe as the rail's and the classic
+    // bar's (Ajustes › Dock › Transparencia): a light translucent veil, a
+    // line of light and a soft shadow, over a moderate blur.
+    final visual = resolveDockVisual(
+      colors,
+      DockPreferencesController.instance.value.general.style,
+    );
+    final radius = BorderRadius.circular(HermesRadius.tag);
+    final glass = HermesGlassStrip.of(context);
+    final tint = opaque ? chrome.opaque : visual.background;
+    Widget fill(BuildContext context, Color color) => _DockSurfaceFill(
+      color: color,
       child: DecoratedBox(
-        key: ValueKey(opaque ? 'gesture-dock-opaque' : 'gesture-dock-glass'),
+        key: ValueKey(opaque ? '$name-opaque' : '$name-glass'),
         decoration: BoxDecoration(
-          color: opaque ? chrome.opaque : chrome.fill,
+          color: color,
           borderRadius: radius,
-          border: Border.all(color: chrome.line),
+          border: Border.all(color: opaque ? chrome.line : visual.border),
         ),
-        // The light that glides behind the icons is a plain rectangle: the
-        // bar's own pill is what keeps it inside the rounded ends.
-        child: ClipRRect(borderRadius: radius, child: child),
+        child: ClipRRect(
+          borderRadius: radius,
+          child: HermesGelSurface(
+            shape: RoundedRectangleBorder(borderRadius: radius),
+            pressable: false,
+            child: child,
+          ),
+        ),
+      ),
+    );
+    return HermesGlassPiece(
+      shape: RoundedRectangleBorder(borderRadius: radius),
+      child: SizedBox(
+        width: width,
+        height: gestureDockHeight,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            boxShadow: glass?.tone != null
+                ? null
+                : opaque
+                ? chrome.shadow
+                : visual.shadows,
+          ),
+          child: fill(
+            context,
+            glass?.veil ?? Color.alphaBlend(tint, colors.background),
+          ),
+        ),
       ),
     );
   }
+}
+
+/// The fill actually painted by the owning dock surface, also in opaque
+/// and policy fallback states. This carries color, never material/state.
+class _DockSurfaceFill extends InheritedWidget {
+  const _DockSurfaceFill({required this.color, required super.child});
+
+  final Color color;
+
+  static Color of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_DockSurfaceFill>()!.color;
+
+  @override
+  bool updateShouldNotify(_DockSurfaceFill oldWidget) =>
+      color != oldWidget.color;
+}
+
+HermesSmokedGlass? _dockTone(HermesThemeColors colors, Color fill) {
+  if (fill.a >= 1) return null;
+  final chrome = HermesChrome.of(colors);
+  final tone = HermesSmokedGlass.dockOf(chrome).withVeilFloor(fill.a);
+  final selection = colors.accent.withValues(alpha: chrome.dark ? .16 : .14);
+  final ink = _tonedSelectedDockInk(colors, selection, tone);
+  // Test the whole range, including an equal-luminance interior and the
+  // opaque fallback painted immediately when another strip takes the zone.
+  return ink.achieved &&
+          tone.worstRatio(ink.color, chrome, over: selection) >= 3.05
+      ? tone
+      : null;
+}
+
+ThemeContrastAdjustment _tonedSelectedDockInk(
+  HermesThemeColors colors,
+  Color selection,
+  HermesSmokedGlass tone,
+) {
+  final (dark, light) = tone.underExtremes(
+    HermesChrome.of(colors),
+    over: selection,
+  );
+  return ThemeContrast.adjustForContrastResult(
+    colors.accentText,
+    [dark, light],
+    minimum: 3.05,
+    maximumHueShift: 10,
+  );
+}
+
+Color _selectedDockInk(
+  HermesThemeColors colors,
+  Color selection,
+  Color fill, {
+  HermesSmokedGlass? tone,
+}) {
+  if (tone != null) return _tonedSelectedDockInk(colors, selection, tone).color;
+  final backgrounds = <Color>[];
+  if (fill.a > 0) {
+    for (final behind in [Colors.black, Colors.white]) {
+      backgrounds.add(
+        ThemeContrast.composite(
+          selection,
+          ThemeContrast.composite(fill, behind),
+        ),
+      );
+    }
+  } else {
+    // With an adaptive shader the child fill is transparent. Bound the
+    // background by its guaranteed primary-ink AA, then the REAL selection
+    // tint. Convex sRGB luminance gives the dark upper bound; scaling RGB
+    // by (1-alpha) gives at least (1-alpha)^2.4 luminance in a light theme.
+    // The margin/gray rounding cover integer compositing. No title badge.
+    final primary = ThemeContrast.luminance(colors.textPrimary);
+    final alpha = ((selection.toARGB32() >> 24) & 255) / 255;
+    final dark = HermesChrome.of(colors).dark;
+    final limit = dark
+        ? (1 - alpha) * ((primary + .05) / HermesLiquid.target - .05) +
+              alpha * ThemeContrast.luminance(selection.withValues(alpha: 1)) +
+              .01
+        : math.pow(1 - alpha, 2.4) *
+                  (HermesLiquid.target * (primary + .05) - .05) -
+              .01;
+    var channel = 0;
+    Color gray(int value) => Color.fromARGB(255, value, value, value);
+    while (channel < 255 && ThemeContrast.luminance(gray(channel)) < limit) {
+      channel++;
+    }
+    if (!dark && channel > 0) channel--;
+    backgrounds.addAll(
+      dark ? [Colors.black, gray(channel)] : [gray(channel), Colors.white],
+    );
+  }
+  final adjustment = ThemeContrast.adjustForContrastResult(
+    colors.accentText,
+    backgrounds,
+    minimum: 3.05,
+    maximumHueShift: 10,
+  );
+  assert(adjustment.achieved, 'dock selection ink must reach its contrast');
+  return adjustment.color;
 }
 
 class _AttentionDot extends StatelessWidget {
@@ -849,17 +1191,16 @@ class _AttentionDot extends StatelessWidget {
 class _ShortcutPopover extends StatelessWidget {
   final GestureDockTab tab;
 
-  /// Where [tab] sits on the bar (on screen, left to right in LTR).
-  final int slot;
-  final int slots;
+  /// Horizontal centre of [tab]'s piece, from the left of the dock's
+  /// parent.
+  final double center;
   final double bottom;
   final List<DockShortcut> shortcuts;
   final ValueChanged<DockShortcut> onSelected;
 
   const _ShortcutPopover({
     required this.tab,
-    required this.slot,
-    required this.slots,
+    required this.center,
     required this.bottom,
     required this.shortcuts,
     required this.onSelected,
@@ -871,11 +1212,6 @@ class _ShortcutPopover extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final width = MediaQuery.sizeOf(context).width;
     const popoverWidth = 236.0;
-    final barWidth = width - gestureDockSideMargin * 2 - 12;
-    final rtl = Directionality.of(context) == TextDirection.rtl;
-    final onScreen = rtl ? slots - 1 - slot : slot;
-    final center =
-        gestureDockSideMargin + 6 + barWidth / slots * (onScreen + .5);
     final left = (center - popoverWidth / 2)
         .clamp(10.0, math.max(10.0, width - popoverWidth - 10))
         .toDouble();

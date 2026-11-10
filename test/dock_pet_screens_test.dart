@@ -188,7 +188,8 @@ void main() {
     });
   }
 
-  test('exactly Ajustes, Perfiles, Voz and the Gateway manager opt out', () {
+  test('exactly Ajustes, Agentes, Perfiles, Voz and the Gateway manager opt '
+      'out', () {
     final optedOut = <String>[
       for (final file in Directory('lib').listSync(recursive: true))
         if (file is File &&
@@ -198,6 +199,8 @@ void main() {
           file.uri.pathSegments.last,
     ]..sort();
     expect(optedOut, [
+      // The terminal's agents are a section of their own, not a pet's place.
+      'agents_destination.dart',
       'gateway_manager_screen.dart',
       'profiles_screen.dart',
       'settings_screen.dart',

@@ -1,6 +1,13 @@
 {
   "@@locale": "ja",
-  "o2FirstChat": "Hermesと話す",
+  "mpnFirstChat": "{name}と話す",
+  "@mpnFirstChat": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "sInvalidPort": "ポートは1〜65535の数値で指定してください。「詳細設定」で修正してください。",
   "sBackToConnection": "接続に戻る",
   "sBadAddress": "アドレスが無効です。コンピューターのアドレスを貼り付けて再試行してください。",
@@ -72,6 +79,21 @@
   "o2OpenChat": "チャットを開く",
   "o2NeedsModelBody": "Hermesが応答するにはモデルの選択が必要です",
   "o2ChooseModel": "モデルを選択",
+  "nacWayPickTitle": "どの方法で接続しますか？",
+  "nacWayNousTitle": "Nous Portal アカウント",
+  "nacWayNousBody": "Hermes が Nous Cloud で動いている場合：ブラウザで Nous アカウントにサインインします。",
+  "nacWayManualTitle": "Dashboard を手動で指定",
+  "nacWayManualBody": "Dashboard のアドレスがわかる場合は、直接または SSH トンネル経由で接続し、パスワード、ID プロバイダー、Nous のいずれかでログインします。",
+  "nacWayScanTitle": "コードをスキャン、またはサーバーを探す",
+  "nacWayScanBody": "Hermes が同じネットワークか Tailscale 上にある場合：セットアップコードをスキャンするか、マシン名を入力すると、Hermes が応答するかをアプリが確認します。",
+  "nacWayRecommended": "おすすめ",
+  "nacWayWhichLink": "どれを選べばいいかわからない",
+  "nacWayWhichTitle": "自分に合うのはどれ？",
+  "nacWayWhichBody": "Nous Portal アカウント：Nous が Hermes をホストしていて、Nous アカウントでサインインする。\n手動 Dashboard：https またはローカルのアドレスか SSH トンネルで接続し、パスワード、ID プロバイダー、Nous のいずれかでログインします。\nスキャンまたは探す：サーバーが同じネットワークか Tailscale 上にあり、セットアップコードが手元にある。",
+  "nacWayNousPageBody": "Nous Portal にログインしてエージェントのアドレスをコピーし、ここに戻ってください。アプリが自動で使います。",
+  "nacWayNousAddressHint": "name.agents.nousresearch.com",
+  "nacWayNousHostOk": "Nous Cloud のサーバー",
+  "nacWayEditorForm": "または、下で接続情報を手動で入力",
   "o2MacLinux": "MacまたはLinux",
   "o2Windows": "Windows",
   "o2IssueTitle": "うまくいきませんでした",
@@ -177,7 +199,72 @@
   "drawerMascots": "ペット",
   "drawerKanban": "カンバン",
   "drawerSsh": "SSH / ターミナル",
-  "drawerSkills": "スキル",
+  "screenTitle": "ボットの画面",
+  "botScreenTooltip": "ボットのデスクトップを表示",
+  "bsaScreen": "画面を見る",
+  "bsaNoDesktop": "デスクトップなし",
+  "bsaTitle": "{bot}の画面",
+  "bsaSubView": "閲覧のみ · {seconds}秒ごとに更新",
+  "bsaSubControl": "操作中です",
+  "bsaSubOff": "停止中",
+  "bsaStateOff": "オフ",
+  "bsaStateOn": "オン",
+  "bsaStateControl": "操作中",
+  "bsaPowerOff": "電源を切る",
+  "bsaPowerOffTitle": "{bot}のコンピュータの電源を切りますか？",
+  "bsaPowerOffBody": "ウィンドウと画面上の作業は閉じられます。ボットは動き続け、あとでもう一度オンにできます。",
+  "bsaPowerOffFailed": "ボットのコンピュータの電源を切れませんでした。",
+  "bsaPowerOffHeld": "別の人が画面を操作中のため、今は電源を切れません。",
+  "bsaTrackpad": "トラックパッド",
+  "bsaKeyboard": "キーボード",
+  "bsaZoomOut": "縮小",
+  "bsaZoomIn": "拡大",
+  "bsaClick": "クリック",
+  "bsaWheel": "ホイール",
+  "bsaRightClick": "右クリック",
+  "bsaPadHint": "動かす · タップでクリック · 2本指でスクロール",
+  "bsaPadScroll": "スクロール",
+  "bsaDirectHint": "画面を直接タッチします",
+  "bsaHttpShort": "暗号化なしの接続 · タップで詳細",
+  "bsaStoppedNote": "オンの間はボットだけが使います",
+  "bsaClose": "閉じる",
+  "screenRefresh": "今すぐ更新",
+  "screenPollHint": "{seconds}秒ごとに更新",
+  "screenSuppressed": "人が画面を操作しています。フレームは一時停止中です。",
+  "screenSuppressedPartial": "人が操作中です。表示は制限されています。",
+  "screenStopped": "ボットのコンピューターは停止しています。",
+  "screenStart": "ボットのコンピューターを起動",
+  "screenUnsupported": "このインスタンスにはディスプレイがインストールされていません。",
+  "screenFailed": "ボットの画面を読み取れませんでした。",
+  "screenStartFailed": "ボットのコンピューターを起動できませんでした。",
+  "screenReadOnly": "読み取り専用の接続です。画面の操作を引き継げません。",
+  "screenStale": "最終表示 — 画面に接続できません",
+  "screenUnavailable": "画面を使うにはボットのHermesを更新してください。",
+  "screenTakeoverTitle": "ボットの画面を操作",
+  "screenTakeover": "操作を引き継ぐ",
+  "screenHandBack": "操作を返す",
+  "screenShowKeyboard": "キーボードを表示",
+  "screenHideKeyboard": "キーボードを隠す",
+  "screenSwitchToTouchpad": "タッチパッドモードに切り替え",
+  "screenSwitchToTouch": "直接タッチに切り替え",
+  "screenChecking": "ボットの画面を確認しています…",
+  "screenStarting": "サーバーで画面を起動しています…",
+  "screenAcquiring": "操作を引き継いでいます…",
+  "screenActiveHint": "操作権があります。いつもどおりタップ、ドラッグ、入力できます。",
+  "screenLeaseLost": "別のクライアントが操作を引き継ぎました。",
+  "screenLeaseAgent": "まだエージェントが画面を使用しています。",
+  "screenRetry": "再試行",
+  "screenStartDisplay": "画面を起動",
+  "screenBlocked": "画面がブロックされているため起動できません。",
+  "screenUnsupportedDetail": "このインスタンスにはディスプレイがインストールされていません。サーバーにはTigerVNCとXfceのコアが必要です。",
+  "screenTakeoverFailed": "画面の操作を引き継げませんでした。",
+  "screenBridgeConnecting": "接続しています…",
+  "screenBridgeMissing": "画面のアドレスがありません",
+  "screenBridgeClosed": "セッションが終了しました",
+  "screenBridgeLost": "接続が切れました。タップして再接続します。",
+  "screenBridgeSecurity": "セキュリティエラー",
+  "screenBridgeCredentials": "画面が認証情報を要求しました",
+  "screenUnencrypted": "暗号化されていない接続です（httpのDashboard）。TailscaleかVPN経由でのみ使ってください。",
   "drawerCron": "スケジュールタスク",
   "drawerSoul": "SOUL",
   "drawerGroupInstance": "インスタンス",
@@ -295,7 +382,6 @@
   "chatAttachCamera": "カメラ",
   "chatAttachPhotos": "ギャラリー",
   "chatAttachFiles": "ファイル",
-  "chaCantSendApproval": "承認を送信できませんでした: {err}",
   "chaTextFileError": "テキストファイルを読み込めませんでした",
   "chaOutboxUnavailable": "ターンを安全に保存できませんでした。送信されていません。メッセージはここに残っており再試行できます。",
   "chaSendNotSentRetry": "送信されていません。メッセージはここに残っています。もう一度送信を押してください。",
@@ -325,7 +411,6 @@
   "chaMenuTooltip": "メニュー",
   "chaProfileChip": "プロファイル: {name}",
   "chaNewChatTooltip": "新しいチャット",
-  "chaPermissionsTitle": "権限 / モード",
   "chaUpdateTitle": "更新",
   "chaSessionDetailsAction": "セッションの詳細を表示",
   "chaModelSheetTitle": "モデルとセッション",
@@ -367,14 +452,343 @@
   "chaContextNotMeasured": "Hermesが回答の最初のテキストを表示したときに測定します",
   "chaContextNotPublished": "Hermesはこのデータを公開していません",
   "chaContextWindowUnavailable": "Hermesはまだこのセッションのコンテキストウィンドウを公開していません。",
-  "chaControlTitle": "この会話の設定",
-  "chaControlScope": "この会話のみ",
-  "chaControlSectionSession": "セッション",
-  "chaControlSectionTools": "ツール",
-  "chaControlSectionDanger": "注意が必要な操作",
+  "chaControlTitle": "この会話",
+  "chaControlTerminal": "ターミナル",
+  "chaControlDeleteConversation": "会話を削除",
+  "chaControlBrowser": "ブラウザー",
+  "brwBack": "戻る",
+  "brwForward": "進む",
+  "brwReload": "ページを再読み込み",
+  "brwAddress": "アドレス",
+  "brwAddressPlaceholder": "アドレスを入力",
+  "brwBlankPage": "上のアドレス欄に入力して閲覧を始めてください。",
+  "brwOpenExternal": "ブラウザーで開く",
+  "brwServerNotFound": "サーバーが見つかりません",
+  "brwFailedToLoad": "ページの読み込みに失敗しました",
+  "brwUnreachable": "ページに到達できませんでした。",
+  "brwRemoteLoopback": "このアドレスはエージェントを実行しているマシンを指しており、このマシンではありません。ブラウザーはページをローカルで読み込むため、リモートの開発サーバーにはポート転送か到達可能なホスト名が必要です。",
+  "brwBackToChat": "チャットに戻る",
+  "brwAgentOffer": "Hermesがページを見せようとしています",
+  "brwAgentOfferOpen": "表示",
+  "brwAgentOfferDismiss": "閉じる",
+  "brwAgentReading": "Hermesがこのページを読んでいます",
+  "brwCleartextTitle": "このアプリはhttpsのページだけを開きます",
+  "brwCleartextBody": "このページは暗号化されていないhttpを使っているため、ここでは読み込めません。システムのブラウザーで開いてください。",
+  "brwRendererGone": "ページが閉じられました",
+  "brwRendererGoneBody": "メモリを解放するため、または応答しなくなったため、Androidがページを閉じました。アプリは開いたままです。もう一度読み込んでください。",
+  "brwTabNew": "新しいタブ",
+  "brwTabBlank": "新しいタブ",
+  "brwTabsShow": "{count, plural, =1{タブを表示} other{{count} 個のタブを表示}}",
+  "brwTabsCount": "{count, plural, =1{1 個のタブ} other{{count} 個のタブ}}",
+  "brwTabClose": "タブ「{name}」を閉じる",
+  "brwTabsCloseAll": "すべて閉じる",
+  "brwTabsCloseAllLabel": "{count, plural, =1{タブを閉じる} other{{count} 個のタブをすべて閉じる}}",
+  "brwTabLabel": "タブ {index}/{count}、{name}",
+  "brwTabAgentLabel": "Hermes のタブ、{name}",
+  "brwTabAgentLiveLabel": "Hermes のタブ、{name}、ライブ",
+  "brwTabHermes": "Hermes",
+  "brwTabClosed": "「{name}」を閉じました",
+  "brwTabsClosed": "{count, plural, =1{1 個のタブを閉じました} other{{count} 個のタブを閉じました}}",
+  "brwTabUndo": "元に戻す",
+  "brwTabHermesSees": "Hermes が見ています",
+  "brwPipWatch": "{host} を見る",
+  "brwPipWatchLabel": "Hermes のブラウザを見る、{host}",
+  "brwPipWatchLabelLive": "Hermes のブラウザを見る、{host}、ライブ",
+  "brwPipLive": "ライブ",
+  "brwPipOffline": "オフライン",
+  "brwPipDone": "完了",
+  "brwPipAgentControls": "Hermes が操作中",
+  "brwPipYouControl": "あなたが操作中",
+  "brwPipDock": "上に固定",
+  "brwPipUndock": "固定を解除",
+  "brwPipExpand": "拡大",
+  "brwPipClose": "ブラウザを閉じる",
+  "brwPipRegion": "Hermes のブラウザ",
+  "gitTitle": "Git",
+  "gitNoBranch": "ブランチなし",
+  "gitDetached": "デタッチ",
+  "gitChanged": "{count, plural, other{{count}件変更}}",
+  "gitAhead": "{count}件先行",
+  "gitBehind": "{count}件遅れ",
+  "gitStage": "ステージ",
+  "gitUnstage": "ステージ解除",
+  "gitStaged": "ステージ済み",
+  "gitNotRepo": "Gitリポジトリではありません",
+  "gitNoDiffs": "差分なし",
+  "gitNoDiff": "表示する差分がありません",
+  "gitCommit": "コミット",
+  "gitCommitMessage": "メッセージ",
+  "gitDiffTooLarge": "差分が大きすぎます",
+  "gitDiffBinary": "バイナリファイル",
+  "gitFailureUnsupported": "このバージョンのHermesはGitを公開していません。",
+  "gitFailureForbidden": "このインスタンスでは、このセッションでGitを使用できません。",
+  "gitFailureRejected": "Gitはサーバーで操作を完了できませんでした。",
+  "gitFailureUnknown": "Gitを読み込めませんでした。",
+  "gitConflicts": "{count, plural, other{未解決の競合{count}件}}",
+  "gitProblemConflict": "未解決の競合があります。",
+  "gitProblemNoIdentity": "サーバーのGitに作成者の名前とメールがありません。",
+  "gitRefresh": "ツリーを更新",
+  "gitStatusModified": "変更",
+  "gitStatusAdded": "追加",
+  "gitStatusDeleted": "削除",
+  "gitStatusRenamed": "名前変更",
+  "gitStatusCopied": "コピー",
+  "gitStatusConflicted": "競合",
+  "gitStatusUntracked": "未追跡",
+  "ghtSwitchAction": "切り替え",
+  "ghtRemoveAction": "削除",
+  "ghtSearchPaths": "パスを検索",
+  "ghtScopeUncommitted": "未コミット",
+  "ghtScopeBranch": "ブランチ",
+  "ghtFileCount": "{count, plural, =1{1 ファイル} other{{count} ファイル}}",
+  "@ghtFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtCleanTitle": "作業ツリーはクリーンです",
+  "ghtCleanBody": "最後のコミットから何も変わっていません。",
+  "ghtBranchCleanTitle": "ブランチはベースと一致しています",
+  "ghtBranchCleanBody": "ベースブランチに対して変更のあるコミットはありません。",
+  "ghtNoMatches": "検索に一致するパスはありません。",
+  "ghtShipTitle": "プッシュとプルリクエスト",
+  "ghtShipOpen": "プッシュとプルリクエストを開く",
+  "ghtCommitOptions": "コミットのオプション",
+  "ghtBranchScopeHint": "ベースに対するブランチの変更（コミット済み）。",
+  "ghtPanelTitle": "変更",
+  "ghtNotRepoBody": "このチャットのフォルダーはサーバー上の Git リポジトリの中にありません。",
+  "ghtGitHubConnected": "GitHub: ログイン済み",
+  "ghtGitHubSignedOut": "GitHub: サーバーで未ログイン",
+  "ghtGitHubMissing": "GitHub: サーバーに gh がありません",
+  "ghtGitHubUnknown": "GitHub: 未確認",
+  "ghtIdentityMissing": "サーバーに作者情報がありません",
+  "ghtRefreshGitHub": "GitHub を再確認",
+  "ghtMore": "その他の Git 操作",
+  "ghtBranchPick": "ブランチを切り替え",
+  "ghtBranchesTitle": "ブランチ",
+  "ghtBranchCurrent": "現在のブランチ",
+  "ghtBranchRemote": "リモート",
+  "ghtBranchInWorktree": "別のワークツリー: {path}",
+  "@ghtBranchInWorktree": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchSwitchConfirmTitle": "{branch} に切り替えますか？",
+  "@ghtBranchSwitchConfirmTitle": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchSwitchConfirmBody": "{count, plural, =1{未コミットの変更が 1 件あります。競合がなければ切り替わり、変更は新しいブランチに引き継がれます。} other{未コミットの変更が {count} 件あります。競合がなければ切り替わり、変更は新しいブランチに引き継がれます。}}",
+  "@ghtBranchSwitchConfirmBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtBranchSwitched": "{branch} に切り替えました",
+  "@ghtBranchSwitched": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtBranchNew": "ワークツリーに新しいブランチ",
+  "ghtBranchNewName": "ブランチ名",
+  "ghtBranchNewBase": "ベースブランチ",
+  "ghtBranchNewCreate": "作成",
+  "ghtBranchNewHint": "サーバーが .worktrees 内の新しいワークツリーにブランチを作ります。",
+  "ghtBranchNone": "ブランチなし",
+  "ghtWorktrees": "ワークツリー",
+  "ghtWorktreeMain": "メイン",
+  "ghtWorktreeLocked": "ロック中",
+  "ghtWorktreeDetached": "detached HEAD",
+  "ghtWorktreeAdd": "ワークツリーを追加",
+  "ghtWorktreeRemove": "ワークツリーを削除",
+  "ghtWorktreeRemoveTitle": "ワークツリーを削除しますか？",
+  "ghtWorktreeRemoveBody": "サーバーのフォルダー {path} を削除します。ブランチは残ります。元に戻せません。",
+  "@ghtWorktreeRemoveBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtWorktreeRemoveForceTitle": "ワークツリーに変更があります",
+  "ghtWorktreeRemoveForceBody": "{path} に変更済みまたは未追跡のファイルがあります。強制すると完全に削除されます。",
+  "@ghtWorktreeRemoveForceBody": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtWorktreeRemoveForce": "強制削除",
+  "ghtWorktreeRemoved": "ワークツリーを削除しました",
+  "ghtWorktreeOpen": "ここで Git を開く",
+  "ghtWorktreeNone": "メインツリーのみ",
+  "ghtWorktreeCreated": "{path} にワークツリーを作成しました",
+  "@ghtWorktreeCreated": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtTabChanges": "変更",
+  "ghtTabCommit": "コミット",
+  "ghtTabPullRequests": "PR",
+  "ghtGroupStaged": "ステージ済み",
+  "ghtGroupUnstaged": "未ステージ",
+  "ghtGroupUntracked": "未追跡",
+  "ghtStageAll": "すべてステージ",
+  "ghtUnstageAll": "すべてステージ解除",
+  "ghtDiscardFile": "変更を破棄",
+  "ghtDiscardAll": "すべての変更を破棄",
+  "ghtDiscardTitle": "{name} の変更を破棄しますか？",
+  "@ghtDiscardTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtDiscardBody": "ファイルは最後のコミットに戻り、新規ファイルは削除されます。元に戻せません。",
+  "ghtDiscardAllTitle": "すべての変更を破棄しますか？",
+  "ghtDiscardAllBody": "{count, plural, =1{1 件のファイルが最後のコミットに戻り、新規ファイルは削除されます。元に戻せません。} other{{count} 件のファイルが最後のコミットに戻り、新規ファイルは削除されます。元に戻せません。}}",
+  "@ghtDiscardAllBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtDiscardAction": "破棄",
+  "ghtDiscarded": "変更を破棄しました",
+  "ghtViewDiff": "差分を見る",
+  "ghtFileActions": "ファイルの操作",
+  "ghtHunkCollapse": "ハンクを折りたたむ",
+  "ghtHunkExpand": "ハンクを展開",
+  "ghtHunkHidden": "{count, plural, =1{1 行を非表示} other{{count} 行を非表示}}",
+  "@ghtHunkHidden": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtCommitContextTitle": "サーバーのコンテキスト",
+  "ghtCommitContextRecent": "最近のコミット",
+  "ghtCommitContextDiff": "コミットに含まれる内容",
+  "ghtCommitContextEmpty": "このコミットのコンテキストはありません。",
+  "ghtCommitContextTruncated": "一部のみ表示",
+  "ghtCommitContextShow": "コンテキストを表示",
+  "ghtCommitContextHide": "コンテキストを隠す",
+  "ghtCommitStagesAllHint": "ステージが空なら、サーバーがコミット前にすべてをステージします。",
+  "ghtCommitAndPush": "コミット後にプッシュ",
+  "ghtCommitDone": "コミットしました",
+  "ghtCommitPushedDone": "コミットしてプッシュしました",
+  "ghtPush": "ブランチをプッシュ",
+  "ghtPushUpstreamHint": "upstream がなければ、同じ名前で origin に公開されます。",
+  "ghtPushAhead": "{count, plural, =1{未プッシュのコミット 1 件} other{未プッシュのコミット {count} 件}}",
+  "@ghtPushAhead": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPushNothing": "プッシュするものはありません",
+  "ghtPushDone": "プッシュしました",
+  "ghtPushBehindHint": "{count, plural, =1{リモートにはここにないコミットが 1 件あります。} other{リモートにはここにないコミットが {count} 件あります。}}",
+  "@ghtPushBehindHint": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPrTitle": "このブランチのプルリクエスト",
+  "ghtPrNone": "このブランチにプルリクエストはありません。",
+  "ghtPrNumber": "#{number}",
+  "@ghtPrNumber": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "ghtPrStateOpen": "オープン",
+  "ghtPrStateMerged": "マージ済み",
+  "ghtPrStateClosed": "クローズ",
+  "ghtPrStateDraft": "下書き",
+  "ghtPrOpenLink": "ブラウザーで開く",
+  "ghtPrLinkUnsafe": "このリンクはアプリからは開けません。",
+  "ghtPrCreate": "プルリクエストを作成",
+  "ghtPrCreateHint": "サーバーがブランチをプッシュし gh で PR を作ります。タイトルと本文はコミットから、ベースはリポジトリの既定ブランチです。",
+  "ghtPrCreateBase": "ベース: {branch}",
+  "@ghtPrCreateBase": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtPrCreateConfirmTitle": "プルリクエストを作成しますか？",
+  "ghtPrCreateConfirmBody": "ブランチ {branch} を GitHub に公開し、{base} に対するプルリクエストを開きます。",
+  "@ghtPrCreateConfirmBody": {
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      },
+      "base": {
+        "type": "String"
+      }
+    }
+  },
+  "ghtPrCreated": "プルリクエストを作成しました",
+  "ghtPrListTitle": "ローカルブランチのプルリクエスト",
+  "ghtPrListEmpty": "ローカルブランチにプルリクエストはありません。",
+  "ghtPrListLoad": "プルリクエストを探す",
+  "ghtGhNotReady": "サーバーで GitHub の準備ができていません。そこで gh でログインしてください。",
+  "ghtDetachedNoPublish": "detached HEAD では公開するブランチがありません。",
+  "ghtProblemPushRejected": "リモートがプッシュを拒否しました。先にリモートの変更を取り込んでください。",
+  "ghtProblemRemoteAuth": "サーバーにそのリモートの認証情報がありません。",
+  "ghtProblemRemoteUnreachable": "リモートに接続できませんでした。",
+  "ghtProblemNoRemote": "ブランチにプッシュ先のリモートがありません。",
+  "ghtProblemGhNotReady": "サーバーに gh がないか、ログインしていません。",
+  "ghtProblemPrExists": "このブランチにはすでにプルリクエストがあります。",
+  "ghtProblemPrNoCommits": "ベースブランチに対する新しいコミットがありません。",
+  "ghtProblemLocalChanges": "ローカルの変更が失われるため、Git は中止しました。",
+  "ghtProblemBranchNotFound": "ブランチが存在しません。",
+  "ghtLockReasonDiscard": "Git の変更を破棄",
+  "ghtLockReasonPush": "ブランチをリモートにプッシュ",
+  "ghtLockReasonPr": "プルリクエストを作成",
+  "ghtLockReasonWorktree": "ワークツリーを削除",
+  "ghtLockReasonSwitch": "未コミットの変更があるままブランチを切り替え",
+  "ghtProjectMenuHint": "変更、コミット、ブランチ、プルリクエスト",
+  "ghtDrawerDetail": "サーバーの変更、ブランチ、プルリクエスト",
+  "ghtDefaultFolderMissing": "サーバーが既定フォルダーを示しませんでした。プロジェクトか会話から Git を開いてください。",
+  "ghtUnsupportedBody": "この Hermes は Git のルートを公開していません。アプリから Git を使うにはサーバーを更新してください。",
+  "ghtFolderLabel": "フォルダー: {path}",
+  "@ghtFolderLabel": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
   "chaControlInherit": "全体設定を使用",
   "chaControlOff": "いいえ",
-  "chaControlRecovery": "ファイルの復元",
   "chaYoloTitle": "このセッションでYOLOを使いますか？",
   "chaYoloBody": "Hermesはこのセッションのすべての操作を確認なしで実行します。削除、sudo、再起動などリスクの高い操作も含まれます。読み取り専用モードのみがYOLOより優先されます。",
   "chaActivate": "有効化",
@@ -394,6 +808,27 @@
   "chaVoiceReturnOverlay": "音声モードに戻る",
   "chaVoiceActiveElsewhere": "「{title}」で音声モードが有効です",
   "chaVoiceExitTooltip": "音声モードを終了",
+  "voiceDockHint": "「{phrase}」と言うと終了・スプライトをタップで一時停止",
+  "voiceDockHintNoPhrase": "スプライトをタップで一時停止",
+  "voiceDockType": "文字で入力",
+  "voiceDockSendNow": "今すぐ送信",
+  "voiceDockInterrupt": "割り込む",
+  "voiceDockReview": "確認",
+  "voiceCapsuleTitle": "音声モード",
+  "voiceCapsuleMinimize": "最小化",
+  "voiceCapsuleOpen": "音声モードを開く",
+  "voiceCapsuleOpenRunning": "実行中のものを開く",
+  "voiceCapsuleExpand": "展開",
+  "voiceModelTitle": "音声のモデル",
+  "voiceModelChange": "変更",
+  "voiceModelMain": "メイン: {model}",
+  "voiceModelPickerHint": "話したときに応答するモデル（このプロファイル）。次の発話から適用されます。",
+  "voiceModelEmptyTitle": "使えるモデルがありません",
+  "voiceModelEmptyBody": "このサーバーにはまだ接続されたモデルがありません。音声はメインのモデルを使います。",
+  "voiceModelOpenModels": "モデルを開く",
+  "voiceModelReadOnly": "読み取り専用",
+  "voiceModelLiveNote": "GPT-Live では専用のモデルが応答します。これは「通常」モード用です。",
+  "voiceModelLoadError": "音声のモデルを読み込めませんでした。",
   "chaVoiceEnd": "終了",
   "chaVoiceComposerHint": "入力…",
   "chaVoicePause": "一時停止",
@@ -491,13 +926,35 @@
   "chaConnectionLostReconnecting": "接続が切れました — 再接続中…",
   "chaConnectionRecovered": "接続が復旧しました",
   "chaHintSystem": "指示（任意）…",
-  "chaHintUser": "Hermesに質問…",
+  "mpnComposerHint": "{name}に質問…",
+  "@mpnComposerHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chaHintUserShort": "質問…",
   "chaAttachTooltip": "ファイルを添付",
   "chaSendTooltip": "メッセージを送信",
   "chaStopTooltip": "停止",
-  "chaSteerSupplementsLabel": "Hermesの作業中に追加",
+  "mpnSteerAdded": "{name}の作業中に追加",
+  "@mpnSteerAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaSteerFailed": "現在の実行への送信を確認できませんでした。テキストは下書きとして保持されます。再接続時に確認して再試行し、重複を避けてください。",
-  "chaSteerQueued": "メッセージを待機列に追加しました。Hermesが完了すると次のターンとして送信されます。",
+  "mpnSteerQueued": "メッセージを待機列に追加しました。{name}が完了すると次のターンとして送信されます。",
+  "@mpnSteerQueued": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "commonAdd": "追加",
   "commonEdit": "編集",
   "commonRefresh": "更新",
@@ -720,7 +1177,17 @@
   "cevDeny": "拒否",
   "cevThisSession": "このセッション",
   "cevAlways": "常に",
-  "cevPermissionHeadline": "Hermesが許可を求めています",
+  "approvalAlwaysTitle": "このコマンドを常に許可しますか？",
+  "approvalAlwaysBody": "これにより \"{pattern}\" パターンが永続的な許可リスト (~/.hermes/config.yaml) に追加されます。Hermes はこのセッションや将来のセッションで、このようなコマンドについて再度尋ねません。",
+  "approvalAlwaysConfirm": "常に許可",
+  "mpnPermissionHeadline": "{name}が許可を求めています",
+  "@mpnPermissionHeadline": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "cevRemember": "記憶する",
   "cevApprovalRequired": "承認が必要です",
   "cevApprovalPending": "保留中",
@@ -752,7 +1219,6 @@
   "ssh2ForgetHostKey": "ホストキーを削除",
   "ssh2ForgetHostKeySub": "次回接続時にサーバーを再検証",
   "ssh2RemoveSshSub": "このインスタンスの認証情報を削除",
-  "sftpListError": "{path}の一覧を取得できませんでした: {error}",
   "sftpDownloading": "{file}をバックグラウンドでダウンロード中…",
   "sftpReadError": "ファイルを読み込めませんでした。",
   "sftpDeleteTitle": "ファイルを削除",
@@ -762,7 +1228,6 @@
   "sftpOpenOf": "{label}のファイル（SFTP）を開く",
   "sftpUpload": "ファイルをアップロード",
   "sftpUpLevel": "上の階層へ",
-  "sftpEmpty": "空のフォルダー",
   "sshcNotText": "ファイルをテキストとして読み込めませんでした（PEMキーですか？）。",
   "sshcMissingHost": "ホストがありません。",
   "sshcInvalidPort": "無効なポートです。",
@@ -799,7 +1264,7 @@
   "ieNetworkNote": "このアプリはAndroidのシステムネットワークを使います。VPN/Tailscale/WireGuardを使う場合は接続テスト前に有効にしてください。",
   "ieCapabilitiesDetected": "検出した機能",
   "setTitle": "設定",
-  "setSecurity": "セキュリティ",
+  "setSecurity": "ロックとプライバシー",
   "setSecuritySub": "ロック、プライバシー、認証情報の保護",
   "setPermissions": "権限 / 承認",
   "setPermissionsSub": "Hermesの許可要求方法: YOLO、対話、慎重、読み取り専用",
@@ -1052,10 +1517,6 @@
   "notifMasterSub": "すべての通知の全体設定",
   "notifApprovalsTitle": "承認",
   "notifApprovalsSub": "Hermesが許可を必要とするとき",
-  "notifCronResultsTitle": "自動処理の結果",
-  "notifCronResultsSub": "結果または対処可能な失敗で終了したCron",
-  "notifKanbanResultsTitle": "Kanbanの結果",
-  "notifKanbanResultsSub": "完了、ブロック、確認が必要になったボードのタスク",
   "notifLocalAgentResultsTitle": "継続目標",
   "notifLocalAgentResultsSub": "接続中のセッションでgoalが一時停止、ブロック、待機、完了になったとき",
   "notifRunsTitle": "実行",
@@ -1064,15 +1525,8 @@
   "notifRepliesSub": "Hermesがバックグラウンドの間に受信した回答",
   "notifForegroundTitle": "前面でも通知",
   "notifForegroundSub": "Hermesを使用中でも通知を表示",
-  "notifBgTitle": "バックグラウンドで待ち受け",
-  "notifBgSub": "アプリを閉じても通知を受信 · 常駐通知を使用",
-  "notifBgActive": "無効にするまで有効 · エージェントのイベントを待ち受け中",
-  "notifBgPaused": "一時停止中 · 有効にするとバックグラウンドでイベントを受信します",
-  "notifBgFiniteNotice": "無効にするまで待ち受けを続け、Androidの常駐通知を表示します。",
-  "notifFgsChannelLabel": "常駐サービスのチャンネル",
-  "notifBgActivating": "常時待ち受けを有効化中…",
-  "notifBgError": "開始エラー · タップして再試行",
-  "notifBgRestartNotice": "最近使ったアプリからHermesを除いても待ち受けは止まりません。強制停止すると、再びアプリを開くまで停止します。",
+  "notifKeepAliveTitle": "バックグラウンドで作業中は接続を維持",
+  "notifKeepAliveSub": "ターン中にアプリを離れても、終わるまで Hermes がライブで届きます（最大 30 分）",
   "notifTestButton": "テスト通知",
   "notifTestSent": "テスト通知を送信しました。",
   "notifTestFailed": "送信できませんでした。システム権限を確認してください。",
@@ -1443,7 +1897,15 @@
   "chaCommandAttachmentsUnsupported": "コマンドの実行前に添付を削除してください。",
   "chaCommandUnknown": "コマンド/{name}はこのサーバーで利用できません。",
   "chaCompactUnavailable": "/compactはHermes Desktopのコマンドではありません。この会話のコンテキストを圧縮するには/compressを使ってください。",
-  "chaCommandFailed": "Hermesはコマンドを実行できませんでした。",
+  "cmdErrNoSession": "{command}: このチャットにはまだ Hermes のセッションがありません。先にメッセージを送るか、もう一度お試しください。",
+  "cmdErrBadArgument": "{command}: コマンドの後に書いた内容を Hermes が受け付けませんでした。",
+  "cmdErrNoRuntime": "{command}: Hermes にこのチャットの有効なセッションがありません。少ししてからもう一度お試しください。",
+  "cmdErrServerRefused": "{command}: Hermes は実行できませんでした。",
+  "cmdErrReadOnly": "{command}: この接続は読み取り専用です。",
+  "cmdErrUnsupported": "{command}: この Hermes サーバーは対応していません。Hermes Agent を更新してください。",
+  "cmdErrOffline": "{command}: Hermes に接続できません。",
+  "cmdErrTimeout": "{command}: Hermes が時間内に応答しませんでした。",
+  "cmdErrFailed": "{command} は失敗しました。",
   "chaCommandAccepted": "コマンド{command}を受け付けました。",
   "chaCompressionAccepted": "Hermesは圧縮を受け付けました。新しいコンテキストの準備ができると会話を更新します。",
   "chaCompressionCompleted": "コンテキストの圧縮が完了しました。",
@@ -1590,7 +2052,6 @@
   "gatewayEraTitle": "Consoleが変わりました",
   "gatewayEraAction": "変更内容を見る",
   "leg3SetupTitle": "Hermesに接続",
-  "leg3SetupBody": "ConsoleはHermesのDashboardを使うようになりました。Hermesがあるコンピューターにこの行を貼り付け、完了後に表示されるコードをスキャンしてください。チャットは残ります。",
   "leg3EraBody": "ConsoleはHermesのDashboardを使うようになりました。コンピューターに1行貼り付け、コードをスキャンする手順をご案内します。チャットは残ります。",
   "leg3UpdatesExisting": "接続「{name}」を更新します。チャットは残ります。",
   "dashboardSetupForgotPassword": "パスワードがわかりません",
@@ -1783,9 +2244,7 @@
   "chaVoiceNeedsServerTitle": "音声サーバーを設定",
   "chaVoiceNeedsServerBody": "サーバー音声認識にはHermes-STTサーバーのURLとトークンが必要です。またはサーバーが応答していません。設定 › 音声で確認してください。",
   "chaVoiceAllowMic": "マイクを許可",
-  "chaQueuedCount": "待機列 · {count}",
   "chaQueuedNote": "ターン終了時に送信します",
-  "chaQueuedPausedCount": "一時停止 · {count}",
   "chaQueueParkedNote": "Stop後に一時停止",
   "chaQueueResume": "待機列を再開",
   "chaQueueEdit": "編集",
@@ -1827,6 +2286,7 @@
   "chaBackgroundAwaitingResponse": "現在の実行の完了を待っています",
   "chaBackgroundDeferredByGoal": "継続goalが有効な間は延期",
   "chaBackgroundActionStop": "停止",
+  "chatRetouchProcessesStopAll": "すべて停止",
   "chaBackgroundActionFailed": "Hermesがこの操作を確認しませんでした。",
   "chaStopStopping": "停止中…",
   "chaStopRetrying": "Stopを再試行中…",
@@ -1856,12 +2316,26 @@
   "chaEmptyPrompt": "メッセージを入力して始めましょう",
   "chaCopyMessage": "メッセージをコピー",
   "chaEditMessage": "メッセージを編集",
-  "chaEditHint": "代わりにHermesにどう答えてほしいですか？",
+  "mpnEditHint": "代わりに{name}にどう答えてほしいですか？",
+  "@mpnEditHint": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaEditCancel": "編集をキャンセル",
   "chaEditSave": "保存して再送信",
   "chaEditFailed": "メッセージを編集できませんでした。元の会話は引き続き利用できます。",
   "chaRegenerate": "回答を再生成",
-  "chaRegenerateWarning": "Hermesは最後の回答を巻き戻し、同じメッセージに再回答します。すでに行われた外部操作は元に戻せません。",
+  "mpnRegenerateWarning": "{name}は最後の回答を巻き戻し、同じメッセージに再回答します。すでに行われた外部操作は元に戻せません。",
+  "@mpnRegenerateWarning": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chaRegenerateFailed": "回答を再生成できませんでした。",
   "chaLoadImageFrom": "{domain}から画像を読み込む",
   "chaStopReading": "読み上げを停止",
@@ -1880,7 +2354,6 @@
   "setRestartingBanner": "更新後にゲートウェイを再起動中… 復帰したらアプリは自動再接続します。",
   "setHermesAutoUpdateTitle": "コンポーネントを自動更新",
   "setHermesAutoUpdateSub": "インスタンスの使用中にHermesの更新を確認します。",
-  "notifListenerStartFailed": "バックグラウンド待ち受けを開始できませんでした。再試行してください。",
   "notifPermManualRoute": "権限がまだ許可されていません。以前拒否してAndroidがダイアログを表示しない場合は、システム設定 › アプリ › Console › 通知で手動で有効にしてください。",
   "voiceSherpaLiveLabel": "高速音声入力",
   "voiceSystemLabel": "Androidの音声認識",
@@ -2075,9 +2548,30 @@
   "voiceGuidePrivacyNote": "音声が端末の外へ送られるのはHermesサーバーを選んだときだけです。音声用のキーはサーバーに保存し、端末には保存しません。",
   "cronJobIdInvalid": "スケジュールタスクの識別子が無効です。",
   "cronProfileInvalid": "スケジュールタスクのプロファイルが無効です。",
-  "interactiveClarifyTitle": "Hermesが確認を求めています",
-  "interactiveSudoTitle": "Hermesにsudoの許可が必要です",
-  "interactiveSecretTitle": "Hermesにシークレットが必要です",
+  "mpnClarifyTitle": "{name}が確認を求めています",
+  "@mpnClarifyTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mpnSudoTitle": "{name}にsudoの許可が必要です",
+  "@mpnSudoTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mpnSecretTitle": "{name}にシークレットが必要です",
+  "@mpnSecretTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "interactiveTerminalTitle": "ターミナルの要求",
   "interactiveAnswerHint": "回答を入力",
   "interactivePasswordHint": "sudoパスワード",
@@ -2085,6 +2579,7 @@
   "interactiveTerminalBody": "このアプリには管理されたターミナルがありません。端末のファイルやプロセスを読み取らず、空のテキストで応答します。",
   "interactiveSend": "送信",
   "interactiveCancel": "タスクを停止",
+  "interactiveSkip": "スキップ",
   "interactiveRetry": "安全な回答を再試行",
   "interactiveRespondFailed": "回答できませんでした: {error}",
   "interactiveBatchProgress": "{total}件中{answered}件回答済み",
@@ -2102,51 +2597,8 @@
   "subagentInterruptNotFound": "Hermesはこの実行中のサブエージェントを見つけられません。サーバーのイベントで状態が更新されます。",
   "subagentInterruptFailed": "サブエージェントを停止できませんでした。",
   "chaArtifactsAction": "成果物",
-  "artifactTitle": "セッションの成果物",
-  "artifactCount": "{count, plural, other{{count}項目}}",
-  "artifactEmptyTitle": "成果物はまだありません",
-  "artifactEmptyBody": "このセッションで生成した画像、文書、結果がここに表示されます。",
-  "artifactImages": "画像",
-  "artifactFiles": "ファイル",
-  "artifactDocuments": "文書",
-  "artifactGenerated": "生成コンテンツ",
-  "artifactToolResults": "ツールの結果",
-  "artifactOther": "その他",
-  "artifactAvailable": "利用可能",
-  "artifactMissing": "利用不可",
-  "artifactExpired": "期限切れ",
   "artifactUnknown": "状態不明",
-  "artifactJumpSource": "元のメッセージへ",
   "artifactSourceUnavailable": "読み込み済み履歴で元のメッセージが見つかりませんでした。",
-  "artifactJumpSemantics": "{name}。元のメッセージへ",
-  "artifactSourceOne": "ソース: メッセージ{number}",
-  "artifactSourceMany": "ソース: メッセージ{number} · {count}件の参照",
-  "generatedArtifactSection": "生成された成果物",
-  "generatedArtifactKindCode": "コード",
-  "generatedArtifactKindHtml": "HTMLソース",
-  "generatedArtifactKindSvg": "SVGソース",
-  "generatedArtifactVersionCount": "{count, plural, other{{count}バージョン}}",
-  "generatedArtifactOpenSemantics": "{name}。生成された成果物を開く",
-  "generatedArtifactSourceOnly": "安全のためConsoleはHTMLとSVGをソースコードとしてのみ表示します。実行したりWebViewで開いたりしません。",
-  "generatedArtifactSourceSemantics": "{title}のソースコード",
-  "generatedArtifactCharacterCount": "{count}文字",
-  "generatedArtifactPreviewTruncated": "プレビューは{limit}文字までです。コピー、共有、保存には完全なバージョンを使用します。",
-  "generatedArtifactCopied": "成果物の内容をコピーしました。",
-  "generatedArtifactSaved": "{name}として保存しました。",
-  "generatedArtifactExportTooLarge": "この成果物はエクスポート上限の{mb} MBを超えています。",
-  "generatedArtifactExportFailed": "成果物をエクスポートできませんでした。",
-  "generatedArtifactVersionOf": "バージョン{current}/{total}",
-  "generatedArtifactPreviousVersion": "前のバージョン",
-  "generatedArtifactNextVersion": "次のバージョン",
-  "generatedArtifactLatest": "最新",
-  "generatedArtifactMissing": "この生成成果物は現在のセッション記録で利用できなくなりました。",
-  "artifactDownloadSaved": "成果物を保存しました。",
-  "artifactDownloadUnavailable": "この成果物はサーバーで利用できなくなりました。",
-  "artifactDownloadExpired": "この成果物は期限切れです。元のメッセージは引き続き利用できます。",
-  "artifactDownloadUnsupported": "このサーバーは成果物用の管理された安全なダウンロード経路を公開していません。",
-  "artifactDownloadAccessDenied": "Hermesが成果物へのアクセスを拒否しました。Dashboardのセッションを確認してください。",
-  "artifactDownloadTooLarge": "この成果物はモバイルのダウンロード上限25 MBを超えています。",
-  "artifactDownloadFailed": "成果物をダウンロードできませんでした。",
   "desktopCenterServerPathRedacted": "[サーバーのパス]",
   "desktopCenterSecretRedacted": "[シークレット省略]",
   "recoveryCenterTitle": "復元",
@@ -2422,6 +2874,12 @@
   "dockToolsLabel": "ツール",
   "dockCronLabel": "ルーチン",
   "chaMentionSuggestions": "プロファイルにメンション",
+  "chaMentionChipLabel": "{name}へのメンション",
+  "chaMentionChipYou": "あなたへのメンション",
+  "chaMentionChipEveryone": "全員へのメンション",
+  "amcAgentChipLabel": "エージェント {name}",
+  "chaImageStackCaption": "{count}枚の画像 · タップして開く",
+  "chaImageStackSemantics": "{count}枚の画像、タップして開く",
   "botSectionNew": "新しいセクション…",
   "botSectionRename": "セクション名を変更",
   "botSectionDelete": "セクションを削除",
@@ -2743,14 +3201,8 @@
   "dotsA11yWaiting": "回答待ち",
   "dotsA11yIdle": "空き",
   "dotsA11yRoom": "{name}、ルーム、{detail}",
-  "notifBotModeListenerOn": "プロファイルとルームから承認、@メンション、ラウンドの概要、リアルタイムの進行状況を通知できます。通知から承認、拒否、返信、停止もできます。",
-  "notifBotModeListenerOff": "バックグラウンド待ち受けはオフです。プロファイル、ルームの通知やウィジェットはHermesを開いている間だけ更新されます。",
   "notifLiveUpdatesTitle": "ライブアップデート",
   "notifLiveUpdatesSub": "作業中のプロファイルとルームをステータスバーとロック画面に表示（Android 16以上）",
-  "notifFixedCardTitle": "固定通知",
-  "notifFixedCardSub": "Androidの「Hermesに接続中」を最小化",
-  "notifKanbanDoneTitle": "タスク完了時も通知",
-  "notifKanbanDoneSub": "個別の選択がないタスクの既定値",
   "designShowAll": "すべて表示",
   "designShowLess": "表示を減らす",
   "designCopied": "コピー済み",
@@ -2833,7 +3285,6 @@
   "subagentUiAllDone": "すべて終了",
   "subagentUiFailedCount": "{count}件失敗",
   "subagentUiListTitle": "サブエージェント",
-  "subagentUiListSubtitle": "このチャットが委譲した作業",
   "subagentUiStop": "停止",
   "subagentUiOpenConversation": "会話を開く",
   "subagentUiSectionNow": "現在の作業",
@@ -2864,6 +3315,8 @@
   "subagentUiLiveTruncated": "最新の出力のみ表示します。",
   "subagentUiLiveTitle": "ライブ出力",
   "subagentUiLiveFollow": "追従",
+  "subagentUiWaitingChild": "サブエージェントを待っています…",
+  "subagentUiGoToEnd": "末尾へ移動",
   "subagentUiGuideHint": "変更することを伝えてください…",
   "subagentUiGuideSend": "指示を送信",
   "subagentUiGuideQueued": "送信済み · 次のステップで適用します",
@@ -2886,6 +3339,8 @@
   "subagentUiTranscriptTitle": "サブエージェントの会話",
   "subagentUiTranscriptTask": "依頼内容",
   "subagentUiTranscriptEmpty": "この会話にはまだメッセージがありません。",
+  "subagentRecordParentOnly": "サブエージェントの会話を開けませんでした。以下は完了時の報告です。",
+  "subagentRecordUnavailable": "Hermes はこのサブエージェントの作業を保存していません。表示できる会話も結果もありません。",
   "subagentUiTranscriptError": "会話を読み込めませんでした。",
   "subagentUiTranscriptReadOnly": "読み取り専用",
   "subagentUiRetry": "再試行",
@@ -3202,6 +3657,9 @@
   "mp1215MemoryChip": "メモリ",
   "mp1215ShowMore": "さらに表示",
   "mp1215ShowLess": "表示を減らす",
+  "liveMemSaving": "メモリに保存中",
+  "liveMemRemoving": "メモリから削除中",
+  "liveMemFailed": "保存できませんでした",
   "pj1215ActionRejected": "Hermesが操作を拒否しました。名前やブランチを確認して再試行してください。",
   "pj1215ActiveNotice": "「{name}」が使用中のプロジェクトになりました",
   "pj1215AgoNow": "今",
@@ -3383,8 +3841,6 @@
   "rr1215KeepAsIs": "後で",
   "rr1215Resumed": "{name}のセッションを再び開きました",
   "rr1215ResumeFailed": "{name}を再開できませんでした。再試行してください。",
-  "sa1215ContentAction": "ファイルとリンク",
-  "sa1215ContentTitle": "ファイルとリンク",
   "sa1215SearchHint": "名前やリンクで検索",
   "sa1215SearchClear": "検索を消去",
   "sa1215FilterAll": "すべて",
@@ -3400,6 +3856,8 @@
   "sa1215OlderPending": "このチャットには未読み込みの古いメッセージがあります。",
   "sa1215LoadOlder": "古いメッセージを読み込む",
   "sa1215LoadOlderFailed": "以前のメッセージを読み込めませんでした",
+  "sa1215ReadFailed": "この会話を読み込めませんでした",
+  "sa1215ReadPartial": "会話をすべて読み込めませんでした。読み込めた分を表示しています。",
   "sa1215OpenFailed": "{name}を開けませんでした",
   "sa1215NotReachable": "このファイルはモバイルで開けません。長押ししてパスをコピーできます。",
   "sa1215AgentPreviews": "エージェントのプレビュー",
@@ -3517,7 +3975,6 @@
   "tc1215FilesChanged": "{count, plural, other{{count}ファイルを変更}}",
   "au1215CronRunViewOnly": "終了していないスケジュール実行: 読み取り専用",
   "au1215CronRunSendBlocked": "このスケジュール実行は読み取り専用です。送信できません。",
-  "au1215BgNeededForAutomation": "cronとKanbanの通知はこれを有効にした場合のみ届きます。",
   "te1215TitleRateLimit": "利用上限に達しました",
   "te1215HintRateLimit": "上限が解除されるまで待つか、別のモデルを試してください。",
   "te1215TitleProviderBusy": "AIサービスが混み合っています",
@@ -3804,6 +4261,8 @@
   "cs1215PinnedPromptHide": "このチャットで非表示",
   "cs1215PinnedPromptSetting": "質問を上部に固定",
   "cs1215PinnedPromptSettingSubtitle": "読んでいる回答への質問をチャット上部に1行で表示します。有効にすると非表示にしたチャットにも再表示されます。",
+  "fluidReasoningCollapsedTitle": "思考ブロックをデフォルトで折りたたむ",
+  "fluidReasoningCollapsedDesc": "ストリーミング中の推論を、開くまで折りたたんだまま利用できるようにします。",
   "q90PinnedPromptHidden": "このチャットで非表示",
   "q90PinnedPromptUndo": "元に戻す",
   "q90PinnedPromptShow": "固定した質問を表示",
@@ -3851,11 +4310,8 @@
   "sp1215LimitExtra": "追加利用: {used} / {limit} {currency}",
   "sp1215LimitLocal": "ローカルモデル: 利用上限もコストもありません。",
   "sp1215LimitNoData": "このプロバイダーの上限データはありません。",
-  "chatNotchLabel": "会話の設定と移動",
-  "chatNotchGoTo": "移動",
-  "chatNotchChats": "チャット",
+  "chatNotchLabel": "この会話のオプション",
   "chatNotchNeedsYouElsewhere": "別の会話で対応が必要です",
-  "chatNotchSearchChats": "チャットを検索",
   "chatNotchFindInChat": "このチャット内を検索",
   "chatNotchPreviousChat": "前のチャット",
   "chatNotchNextChat": "次のチャット",
@@ -3876,6 +4332,7 @@
   "islandEarlierFailed": "メッセージが不足",
   "fh1215TasksDoneFlash": "{count, plural, other{✓ {count}タスク}}",
   "fh1215TasksCompleted": "{count}件完了",
+  "liveTasksEarlierDone": "以前の完了 {count}件",
   "fh1215TasksHideCompleted": "完了を非表示",
   "ctToolPending": "{tool, select, browser_click{ ページの要素をクリック中} browser_fill{ フォームの項目に入力中} browser_navigate{ ページを開いています} browser_snapshot{ ページのスナップショットを取得中} browser_take_screenshot{ スクリーンショットを撮影中} browser_type{ ページに入力中} clarify{ 質問中} cronjob{ cronタスクを予約中} edit_file{ ファイルを編集中} execute_code{ コードを実行中} image_generate{ 画像を生成中} list_files{ ファイルを一覧表示中} memory{ メモリに保存中} patch{ ファイルにパッチを適用中} read_file{ ファイルを読み取り中} search_files{ ファイルを検索中} session_search_recall{ セッション履歴を検索中} setup_choose{ 設定について質問中} start_chat{ チャットを開始中} terminal{ コマンドを実行中} todo{ タスクを更新中} vision_analyze{ 画像を分析中} web_extract{ ウェブページを読み取り中} web_search{ ウェブを検索中} write_file{ ファイルを書き込み中} delegate_task{ タスクを委譲中} process_manage{ バックグラウンド処理を管理中} skill_manage{ スキルを更新中} text_to_speech{ 音声を生成中} send_message{ メッセージを送信中} computer_use{ コンピューターを操作中} manage_connections{ 接続を管理中} manage_catalog{ カタログを確認中} x_search{ Xを検索中} fact_store{ 保存したデータを使用中} fact_feedback{ データを評価中} video_generate{ 動画を生成中} video_analyze{ 動画を分析中} xai_video_edit{ 動画を編集中} xai_video_extend{ 動画を延長中} browser_scroll{ ページをスクロール中} browser_back{ 前のページに戻っています} browser_press{ キーを押しています} browser_get_images{ ページの画像を一覧表示中} browser_vision{ ページを確認中} browser_console{ ブラウザーのコンソールを読み取り中} browser_cdp{ ブラウザーのコマンドを実行中} browser_dialog{ ページのダイアログに応答中} browser_exec{ ブラウザーを操作中} browser_vault_list{ 保存済みアクセスを確認中} browser_vault_unlock{ 保存済みアクセスのロックを解除中} browser_vault_fill{ ログイン情報を入力中} browser_vault_save_login{ ログイン情報を保存中} browser_vault_enter_code{ 確認コードを入力中} kanban_show{ タスクを読み取り中} kanban_list{ タスクを一覧表示中} kanban_create{ タスクを作成中} kanban_complete{ タスクを完了中} kanban_block{ タスクをブロック中} kanban_unblock{ タスクのブロックを解除中} kanban_request_review{ レビューを依頼中} kanban_request_changes{ 変更を依頼中} kanban_heartbeat{ 進捗を報告中} kanban_comment{ タスクにコメント中} kanban_link{ タスクを関連付け中} kanban_attach{ タスクにファイルを添付中} kanban_attach_url{ タスクにリンクを添付中} kanban_attachments{ タスクの添付を一覧表示中} desktop_project{ プロジェクトを変更中} desktop_preview{ プレビューを表示中} drive_preview{ プレビューを使用中} annotate_preview{ プレビューに注釈を追加中} read_terminal{ ターミナルを読み取り中} close_terminal{ ターミナルを閉じています} read_window_below{ 背後のウィンドウを確認中} focus_pane{ パネルを表示中} apply_layout{ 作業スペースを再配置中} react_to_message{ メッセージにリアクション中} gui_tour{ ツアーを開始中} show_tip{ ヒントを表示中} discord{ Discordを使用中} discord_admin{ Discordサーバーを管理中} feishu_doc_read{ Feishuの文書を読み取り中} feishu_drive_list_comments{ Feishuのコメントを一覧表示中} feishu_drive_list_comment_replies{ Feishuの返信を一覧表示中} feishu_drive_reply_comment{ Feishuで返信中} feishu_drive_add_comment{ Feishuでコメント中} yb_query_group_info{ Yuanbaoのグループを読み取り中} yb_query_group_members{ Yuanbaoのメンバーを一覧表示中} yb_send_dm{ Yuanbaoでメッセージを送信中} yb_search_sticker{ Yuanbaoのステッカーを検索中} yb_send_sticker{ Yuanbaoでステッカーを送信中} other{}}",
   "ctToolAction": "{tool, select, browser_click{ クリック中} browser_fill{ 入力中} browser_navigate{ 開いています} browser_snapshot{ 取得中} browser_take_screenshot{ 撮影中} browser_type{ 入力中} clarify{ 質問中} cronjob{ 予約中} edit_file{ 編集中} execute_code{ 実行中} image_generate{ 生成中} list_files{ 一覧表示中} memory{ 保存中} patch{ パッチ適用中} read_file{ 読み取り中} search_files{ 検索中} session_search_recall{ 検索中} setup_choose{ 質問中} start_chat{ 開始中} terminal{ 実行中} todo{ 更新中} vision_analyze{ 分析中} web_extract{ 読み取り中} web_search{ 検索中} write_file{ 書き込み中} delegate_task{ 委譲中} process_manage{ 管理中} skill_manage{ 更新中} text_to_speech{ 生成中} send_message{ 送信中} computer_use{ 操作中} manage_connections{ 管理中} manage_catalog{ 確認中} x_search{ 検索中} fact_store{ 使用中} fact_feedback{ 評価中} video_generate{ 生成中} video_analyze{ 分析中} xai_video_edit{ 編集中} xai_video_extend{ 延長中} browser_scroll{ スクロール中} browser_back{ 戻っています} browser_press{ 押しています} browser_get_images{ 一覧表示中} browser_vision{ 確認中} browser_console{ 読み取り中} browser_cdp{ 実行中} browser_dialog{ 応答中} browser_exec{ 操作中} browser_vault_list{ 確認中} browser_vault_unlock{ ロック解除中} browser_vault_fill{ 入力中} browser_vault_save_login{ 保存中} browser_vault_enter_code{ 入力中} kanban_show{ 読み取り中} kanban_list{ 一覧表示中} kanban_create{ 作成中} kanban_complete{ 完了中} kanban_block{ ブロック中} kanban_unblock{ ブロック解除中} kanban_request_review{ 依頼中} kanban_request_changes{ 依頼中} kanban_heartbeat{ 報告中} kanban_comment{ コメント中} kanban_link{ 関連付け中} kanban_attach{ 添付中} kanban_attach_url{ 添付中} kanban_attachments{ 一覧表示中} desktop_project{ 変更中} desktop_preview{ 表示中} drive_preview{ 使用中} annotate_preview{ 注釈追加中} read_terminal{ 読み取り中} close_terminal{ 閉じています} read_window_below{ 確認中} focus_pane{ 表示中} apply_layout{ 再配置中} react_to_message{ リアクション中} gui_tour{ 開始中} show_tip{ 表示中} discord{ 使用中} discord_admin{ 管理中} feishu_doc_read{ 読み取り中} feishu_drive_list_comments{ 一覧表示中} feishu_drive_list_comment_replies{ 一覧表示中} feishu_drive_reply_comment{ 返信中} feishu_drive_add_comment{ コメント中} yb_query_group_info{ 読み取り中} yb_query_group_members{ 一覧表示中} yb_send_dm{ 送信中} yb_search_sticker{ 検索中} yb_send_sticker{ 送信中} other{}}",
@@ -3982,6 +4439,8 @@
   "thTaglineGruvboxLight": "温かいレトロ · ライト",
   "thTaglineSageGarden": "落ち着いたセージ · 静かな温室",
   "thTaglineSageGardenLight": "淡いセージ · 昼の温室",
+  "presetIndigoTagline": "真夜中のインディゴ · ガラス",
+  "presetIndigoLightTagline": "ラベンダーの霞 · ガラス",
   "thTaglineNous": "GitHubの外観 · Nousブルー",
   "thTaglineNousDark": "GitHubダーク · Nousブルー",
   "thTaglineGithub": "GitHub既定のライト",
@@ -4245,8 +4704,8 @@
   "gt1215ChatHeaderBody": "話している相手と、今の動作を表示します。タップするとアクティビティを確認できます。",
   "gt1215ChatComposerTitle": "ここに入力",
   "gt1215ChatComposerBody": "文字入力や音声入力ができます。＋からファイルや写真を添付できます。",
-  "gt1215ChatNotchTitle": "チャットのタブ",
-  "gt1215ChatNotchBody": "タップしてこの会話を検索・設定できます。上にスワイプすると別の場所へ移動します。",
+  "gt1215ChatNotchTitle": "チャットの設定",
+  "gt1215ChatNotchBody": "タップすると、この会話の検索、新しい会話の開始、設定ができます。パネルは隣の「表示」にあります。",
   "gt1215ChatStatusTitle": "コンテキスト、モデル、権限",
   "gt1215ChatStatusBody": "コンテキストの使用量、応答するモデル、実行可能な操作を確認できます。各部分をタップしてください。",
   "gt1215BotsPinnedTitle": "固定済み",
@@ -4368,7 +4827,6 @@
   "mascotNoticeGo": "移動",
   "mascotSuggestNotifications": "通知がオフになっています",
   "mascotSuggestTurnOn": "有効にする",
-  "mascotSuggestBackground": "アプリを閉じていても、スケジュールタスクが終了したらお知らせできます",
   "mascotSuggestOpenSettings": "設定を開く",
   "connStatusNoNetwork": "ネットワークなし",
   "connStatusAuthRequired": "ログインが必要です",
@@ -6433,6 +6891,10 @@
   "@i18n131ChatRecoveryFailed": {
     "description": "i18n131: Phase 3B translated; chat."
   },
+  "i18n140ChatEndedWithoutReply": "Hermes は応答なしでこのターンを終了しました。",
+  "@i18n140ChatEndedWithoutReply": {
+    "description": "dp140: Notice when Hermes reports the turn over and no reply arrived (Desktop store/session-no-reply.ts NO_REPLY_ERROR)."
+  },
   "i18n131ChatFailureCause": "応答を完了できませんでした：{cause}",
   "@i18n131ChatFailureCause": {
     "description": "i18n131: Phase 3B translated; chat.",
@@ -6651,10 +7113,6 @@
       }
     }
   },
-  "i18n131P6Document": "ドキュメント",
-  "i18n131P6GeneratedArtifact": "生成された成果物",
-  "i18n131P6ToolResult": "ツールの結果",
-  "i18n131P6Artifact": "成果物",
   "i18n131P6WhisperLocal": "ローカルWhisper",
   "i18n131P6PetDimensions": "想定外のサイズ（{actual}）です。{expected}の倍数である必要があります。",
   "@i18n131P6PetDimensions": {
@@ -6675,5 +7133,2367 @@
         "type": "String"
       }
     }
-  }
+  },
+  "sshExpandTerminal": "ターミナルを拡大",
+  "sshShrinkTerminal": "ターミナルを縮小",
+  "sshKeyArrowUp": "上矢印",
+  "sshKeyArrowDown": "下矢印",
+  "sshKeyArrowLeft": "左矢印",
+  "sshKeyArrowRight": "右矢印",
+  "sshSessionKind": "セッションの種類",
+  "sshSessionKindShell": "通常のシェル",
+  "sshSessionKindHint": "Herdrとtmuxは接続が切れてもサーバー上のプロセスを動かし続け、復帰時にアプリがセッションに再接続します。",
+  "sshProgramMissing": "このサーバーには{program}がインストールされていません。アプリが自動でインストールすることはありません。",
+  "sshProgramInstallWith": "インストールするには、サーバーで次を実行してください:",
+  "sshProgramInstallOnServer": "サーバーにインストールしてください。手順:",
+  "sshUsePlainShell": "通常のシェルで続ける",
+  "sshCopied": "コピー済み",
+  "sshReconnecting": "再接続中…",
+  "sshReconnectedFreshShell": "新しいシェルに再接続しました。以前のプロセスは失われました。",
+  "sshReconnectedReattached": "再接続しました。セッションに再アタッチしました。",
+  "sshOffline": "オフライン",
+  "sshHostKeyNeedsReview": "サーバーの鍵を確認する必要があります。手動で再接続してください。",
+  "sshKeyInterrupt": "Ctrl+C（中断）",
+  "sshKeyEndOfInput": "Control D、入力の終了",
+  "sshKeyPipe": "縦棒",
+  "sshKeyTilde": "チルダ",
+  "sshProtocolLabel": "SSH",
+  "herdrPanelTooltip": "Herdr: ワークスペースとエージェント",
+  "herdrStatusWorking": "作業中",
+  "herdrStatusBlocked": "要対応",
+  "herdrStatusIdle": "次の指示を待っています",
+  "herdrStatusDone": "完了",
+  "herdrStatusUnknown": "状態不明",
+  "herdrShell": "シェル",
+  "herdrNoAgent": "このペインでエージェントは検出されていません",
+  "herdrKeepsAgentsAlive": "アプリを閉じてもHerdrがエージェントを動かし続けます。",
+  "herdrServerNotRunning": "Herdrサーバーが起動していません。",
+  "herdrUnreachable": "Herdrの状態を読み取れませんでした。",
+  "herdrEmpty": "Herdrに開いているワークスペースはありません。",
+  "herdrNeedsYouCount": "対応が必要なエージェント: {count}",
+  "cwsWorkspace": "ワークスペース",
+  "cwsFiles": "ファイル",
+  "cwsCollapsePanel": "パネルを折りたたむ",
+  "cwsExpandWorkspace": "最大化",
+  "cwsRestoreSplit": "分割表示に戻す",
+  "cwsCloseTab": "タブを閉じる",
+  "cwsMore": "その他",
+  "cwsLayoutChat": "チャットのみ",
+  "cwsLayoutSplit": "分割",
+  "cwsLayoutWorkspace": "ワークスペースのみ",
+  "cwsOpenTab": "タブを開く",
+  "cwsShowChat": "チャットを表示",
+  "cwsDivider": "チャットとワークスペースの区切り",
+  "cwsHideTools": "ツールを隠す",
+  "cwsShowTools": "ツールを表示",
+  "cwsTerminalKeys": "キーボード",
+  "cwsViews": "表示",
+  "cwsViewList": "チャット一覧",
+  "cwsViewChat": "チャット",
+  "cwsViewWorkspace": "作業パネル",
+  "cwsViewsHintTwo": "この画面には同時に2つまで表示できます。作業パネルを開くと一覧は自動で閉じます。チャットは作業パネルが開いているときだけ非表示にできます。",
+  "cwsViewsState": "表示：{views}",
+  "cwsOpenList": "チャット一覧を開く",
+  "cwsCloseList": "チャット一覧を閉じる",
+  "cwsOpenWorkspace": "作業パネルを開く",
+  "cwsLayoutWork": "作業",
+  "chaControlPanels": "パネル",
+  "chaControlPanelOpen": "表示中",
+  "cwsPanelExpanded": "{panel}を拡大しました",
+  "cwsPanelRestored": "{panel}を元に戻しました",
+  "cwsCloseWorkspace": "作業パネルを閉じる",
+  "cwsPickPanel": "パネルを選ぶ",
+  "cwsViewsHintNoPanel": "画面を分割するにはパネルを開いてください。",
+  "cwsViewsHintStacked": "縦向きではチャットが画面全体を使います。一覧はその上に開き、作業パネルの各タブは全画面で開きます。",
+  "cwsChatShare": "チャット{percent}%",
+  "voz132VoiceProviderError": "音声プロバイダーの応答: {detail}",
+  "@voz132VoiceProviderError": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane).",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "voz132DirectConsentTitle": "プロバイダーへの直接音声",
+  "@voz132DirectConsentTitle": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentBody": "お使いのHermesサーバーは直接音声を許可しています。使用すると、この端末は録音した音声と応答のテキストを、サーバーを経由せず、このプロファイルで設定された音声プロバイダー（例：OpenAI、ElevenLabs、Groq）に直接送信します。そのため、サーバーはそのプロバイダーのキーを端末に渡します。キーはメモリ上にのみ保持され、端末のストレージには保存されません。データの扱いはプロバイダーの規約によります。同意しない場合、音声はこれまでどおりサーバーを経由します。",
+  "@voz132DirectConsentBody": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentAccept": "直接音声を使う",
+  "@voz132DirectConsentAccept": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentAcceptSub": "音声とテキストは端末からプロファイルのプロバイダーへ送られます。",
+  "@voz132DirectConsentAcceptSub": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentDecline": "サーバー経由のままにする",
+  "@voz132DirectConsentDecline": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132DirectConsentDeclineSub": "音声はこれまでどおりHermesサーバーを経由します。",
+  "@voz132DirectConsentDeclineSub": {
+    "description": "voz132: client-direct voice consent and provider error (voice lane)."
+  },
+  "voz132SayStopToEnd": "「{phrase}」と言うと音声チャットを終了できます。",
+  "@voz132SayStopToEnd": {
+    "description": "voz132: notice when a voice conversation starts; names the first voice.stop_phrases entry (voice lane).",
+    "placeholders": {
+      "phrase": {
+        "type": "String"
+      }
+    }
+  },
+  "sshHostKeyRejected": "サーバーの鍵が信頼されていないため、接続しませんでした。",
+  "sshPermissionDenied": "アクセスが拒否されました。",
+  "sshNoSuchFile": "存在しません（削除または移動されました）。",
+  "sshHubLoadError": "SSH設定を読み取れませんでした。",
+  "sftpTryAgain": "もう一度試す",
+  "sftpUnreadableTitle": "読み取れません",
+  "sftpUnreadableBody": "このフォルダーを読み取れませんでした（{error}）",
+  "sftpEmptyTitle": "空です",
+  "sftpEmptyBody": "このフォルダーは空です。",
+  "sftpPreviewLoading": "プレビューを読み込み中",
+  "sftpPreviewUnavailable": "プレビューを表示できません",
+  "sftpPreviewBinaryTitle": "バイナリファイルのようです",
+  "sftpPreviewBinaryBody": "{label}をプレビューすると読めない文字が表示される場合があります。",
+  "sftpPreviewLargeTitle": "ファイルサイズが大きいです",
+  "sftpPreviewLargeBody": "{label}は{size}です。Hermesは最初の512 KBだけを表示します。",
+  "sftpPreviewAnyway": "それでもプレビュー",
+  "sftpPreviewTruncated": "最初の512 KBを表示しています。",
+  "sftpDlShow": "表示",
+  "saveSaved": "保存しました: {name}",
+  "saveAnotherCopy": "別のコピーを保存…",
+  "saveReadyBody": "タップして開く、共有する、または別のコピーを保存します。",
+  "saveNoSpace": "保存先の空き容量が足りません。",
+  "savePermission": "アプリにはその場所への書き込み権限がなくなりました。保存先を選び直してください。",
+  "saveUnsupported": "その保存先はファイルを受け付けません。別の場所を選んでください。",
+  "saveCancelled": "保存をキャンセルしました。",
+  "saveSourceMissing": "保存しようとしたファイルはもうありません。",
+  "saveNetwork": "ダウンロード中にサーバーとの接続が切れました。",
+  "savePickerNotShown": "Android が「名前を付けて保存」を開きませんでした。もう一度お試しください。",
+  "saveTimeout": "保存中に Android が時間内に応答しませんでした。",
+  "saveUnavailable": "このバージョンのアプリはスマホに保存できません。",
+  "saveFailed": "保存できませんでした: Android から予期しないエラーが返されました。",
+  "sftpShareTooLarge": "「{name}」は {size} です。保存せずに共有するには大きすぎます。ダウンロードを使ってください。",
+  "sftpShareLargeTitle": "大きなファイル",
+  "sftpShareLargeBody": "「{name}」は {size} です。共有のために一時的にスマホへ丸ごとコピーし、画面を離れると削除します。",
+  "sftpSharePreparing": "「{name}」を共有の準備中…",
+  "artThumbLoading": "プレビューを読み込み中",
+  "artKindLink": "リンク",
+  "artCopyPath": "パスをコピー",
+  "artCopyUrl": "URLをコピー",
+  "artSectionCount": "{label} · {count}",
+  "artItemSemantics": "{kind}: {name}",
+  "artItemSemanticsAt": "{kind}: {name}（{location}）",
+  "artTypePdf": "PDF",
+  "artTypeDocument": "ドキュメント",
+  "artTypeSpreadsheet": "スプレッドシート",
+  "artTypePresentation": "プレゼンテーション",
+  "artTypeArchive": "圧縮ファイル",
+  "artTypeApp": "Androidアプリ",
+  "artTypeAudio": "音声",
+  "artTypeVideo": "動画",
+  "artTypeText": "テキスト",
+  "artTypeData": "データ",
+  "artTypeCode": "コード",
+  "artTypeOther": "その他のファイル",
+  "artChat": "チャット",
+  "artOpenChat": "会話「{title}」を開く",
+  "brwBackToArtifacts": "成果物に戻る",
+  "artGlobalDetail": "生成された出力を閲覧",
+  "artGlobalSearchHint": "成果物を検索…",
+  "artGlobalRefresh": "成果物を更新",
+  "artGlobalIndexing": "最近のセッションの成果物をインデックス中",
+  "artGlobalProgress": "会話{current}/{total}を読み込み中",
+  "artGlobalEmptyTitle": "成果物が見つかりません",
+  "artGlobalEmptyBody": "セッションで生成された画像やファイルの出力がここに表示されます。",
+  "artGlobalFailed": "成果物の読み込みに失敗しました",
+  "artGlobalSkipped": "成果物のインデックス作成中に、最近の会話{total}件中{skipped}件をスキップしました。",
+  "artGlobalSkippedTooLarge": "{count}件は安全な読み込み上限を超えていました。",
+  "artGlobalTruncated": "{count}件の会話は一部のみ読み込みました（非常に長いか、項目が多すぎます）。",
+  "artGlobalCapped": "最新の成果物3000件のみ表示しています。",
+  "artGlobalScope": "最新の会話{total}件中{indexed}件から。データとバッテリーを節約するため10件ずつ読み込みます。",
+  "artGlobalLoadMore": "さらに{count}件の会話を読み込む",
+  "artGlobalBudget": "通知なしにデータを使わないよう、会話を32MB読んだところでこのまとまりを止めました。最後の会話は一部のみ読み込んでいます。「さらに読み込む」で次の会話に進みます。",
+  "artThumbRemote": "リモート画像を取得できません",
+  "artThumbInsecure": "暗号化されていないhttpの画像",
+  "artThumbNoFolder": "フォルダーのないパス",
+  "artThumbNotFound": "サーバーにありません",
+  "artThumbTooLarge": "大きすぎます",
+  "artThumbDenied": "Hermesが読み取りを許可していません",
+  "artThumbRetry": "再試行",
+  "artOpenFailedBecause": "{name}を開けませんでした。{reason}",
+  "vltSettingsTitle": "パスワードとログイン",
+  "vltSettingsSubtitle": "エージェントが代わりにサインインするための情報",
+  "vltBlurb": "「GitHubにログインして」と言えば、エージェントが代わりにサインインします。初めてサインインページに出会ったときにその場でログイン情報を尋ね、以降は自動で処理します。パスワードはHermesサーバーに暗号化して保存され、ページに直接入力されます。モデルが見ることはありません。",
+  "vltCount": "{count}件保存済み",
+  "vltLoadFailed": "保存済みの項目を読み込めませんでした。",
+  "vltUnavailable": "Hermesに接続できませんでした。",
+  "vltUnsupported": "このHermesサーバーにはパスワードとログインの機能がありません。ここで管理するにはHermesを更新してください。",
+  "vltReadOnly": "読み取り専用の接続です。一覧は表示できますが、変更はできません。",
+  "vltEmpty": "まだ何も保存されていません",
+  "vltEmptyDesc": "ここで何かを追加する必要はありません。エージェントにサイトへのサインインを頼むと、その場で一度だけログイン情報を尋ねます。事前に登録したい場合は「追加」を使ってください。",
+  "vltAddTitle": "ログイン情報・カード・住所を追加",
+  "vltAddDescription": "Hermesサーバーに暗号化して保存されます。エージェントがパスワードを見ることはありません。",
+  "vltAdded": "保存しました。",
+  "vltSaving": "保存中…",
+  "vltKindField": "種類",
+  "vltKindLogin": "ログイン",
+  "vltKindPayment": "支払いカード",
+  "vltKindAddress": "住所",
+  "vltLabelField": "ラベル",
+  "vltLabelHint": "例: GitHub仕事用アカウント",
+  "vltLabelRequired": "ラベルは必須です。",
+  "vltOriginField": "サイトのオリジン",
+  "vltOriginInvalid": "https://example.comのような有効なURLを入力してください。",
+  "vltIdTypeField": "識別子の種類",
+  "vltIdEmail": "メール",
+  "vltIdPhone": "電話番号",
+  "vltIdUsername": "ユーザー名",
+  "vltIdentifierField": "識別子",
+  "vltLoginFieldsRequired": "識別子とパスワードは必須です。",
+  "vltCardNumber": "カード番号",
+  "vltCardNameOptional": "カード名義（任意）",
+  "vltExpMonth": "有効期限（月）",
+  "vltExpYear": "有効期限（年）",
+  "vltCvc": "CVC",
+  "vltPostal": "郵便番号",
+  "vltPostalOptional": "郵便番号（任意）",
+  "vltPaymentFieldsRequired": "カード番号、有効期限（月・年）、CVCは必須です。",
+  "vltLine1": "住所1行目",
+  "vltLine2Optional": "住所2行目（任意）",
+  "vltCity": "市区町村",
+  "vltStateOptional": "都道府県／地域（任意）",
+  "vltCountry": "国",
+  "vltAddressFieldsRequired": "住所1行目、市区町村、郵便番号、国は必須です。",
+  "vltCreatedOn": "追加日 {date}",
+  "vltOtpFieldOptional": "認証キー（任意）",
+  "vltOtpHint": "2FAを有効にするときにサイトが表示する「セットアップキー」です。保存するとHermesがコードを生成します。",
+  "vltOtpPlaceholder": "Base32シークレットまたはotpauth://リンク",
+  "vltOtpInvalid": "キーはBase32シークレットまたはotpauth://totpリンクである必要があります。",
+  "vltTwoFactorBadge": "2FA自動",
+  "vltDeleteTitle": "この項目を削除しますか？",
+  "vltDeleteBody": "「{label}」を削除します。元に戻せません。",
+  "vltDeleteConfirm": "削除",
+  "vltSaveFailed": "Hermesで保存できませんでした。入力内容を確認してください。",
+  "vltRemoveFailed": "削除できませんでした。",
+  "vltSourcesTitle": "パスワードマネージャー",
+  "vltSourcesBlurb": "サーバーにインストールされたパスワードマネージャーは自動的に検出されます。エージェントがそこからログイン情報を初めて必要とするときにロック解除を求めます（セッションごとに一度）。メモリに残るのはセッショントークンだけで、エージェントがマスターパスワードやログイン情報を見ることはありません。",
+  "vltSourceToggleFailed": "パスワードマネージャーの設定を更新できませんでした。",
+  "vltSourceNotInstalled": "未検出です。サーバーに{name}のコマンドラインツールをインストールしてサインインすると、Hermesが自動的に検出します。",
+  "vltSourceDisabled": "検出済みですが、Hermesでは無効になっています。",
+  "vltSourceLockedDesc": "検出済み。エージェントがログイン情報を必要とするときにロック解除を求めます。今すぐ解除することもできます。",
+  "vltSourceUnlockedDesc": "このセッションでロック解除済みです。30分間操作がないか、Hermesが終了すると自動的にロックされます。",
+  "vltStatusLocked": "ロック中",
+  "vltStatusNotDetected": "未検出",
+  "vltStatusOff": "オフ",
+  "vltStatusUnlocked": "ロック解除済み",
+  "vltUnlock": "ロック解除",
+  "vltUnlocking": "ロック解除中…",
+  "vltLock": "ロック",
+  "vltUnlocked": "{name}をこのセッションでロック解除しました。",
+  "vltUnlockTitle": "{name}のロックを解除",
+  "vltUnlockBody": "マスターパスワードを入力してください。サーバー上のパスワードマネージャーに渡された後に破棄され、保存や記録をされることも、エージェントに表示されることもありません。",
+  "vltMasterPassword": "マスターパスワード",
+  "vltUnlockFailed": "ロックを解除できませんでした。マスターパスワードを確認してください。",
+  "vltProfile": "プロファイル: {profile}",
+  "vltSourcesUnavailable": "このHermesサーバーはパスワードマネージャーを報告しません。",
+  "mvDetails": "詳細",
+  "mvLocation": "場所",
+  "mvConversation": "会話",
+  "mvDate": "日時",
+  "mvPosition": "{count}件中{index}件目",
+  "mvGoTo": "{name}、{count}件中{index}件目",
+  "mvZoomIn": "拡大",
+  "mvZoomOut": "縮小",
+  "mvZoomReset": "ズームをリセット（{percent}）",
+  "mvPlay": "再生",
+  "mvView": "アプリで表示",
+  "mvActionFailed": "操作を完了できませんでした",
+  "mvDimensions": "{width}×{height}px",
+  "mvKindNumbered": "{kind}{index}",
+  "voiceNoAudioHeard": "何も聞こえません。マイクが車やヘッドセットのものになっていませんか？",
+  "@voiceNoAudioHeard": {
+    "description": "Voice: the take had nothing in it (too short or no energy), so it was not sent (backlog 1.4.x item 7)."
+  },
+  "voiceMicrophonePhoneTitle": "常にスマートフォンのマイクを使う",
+  "@voiceMicrophonePhoneTitle": {
+    "description": "Voice settings: record from the phone's own microphone instead of a car kit or Bluetooth headset (backlog 1.4.x item 7)."
+  },
+  "voiceMicrophonePhoneSubtitle": "車や Bluetooth ヘッドセットが接続されていても使います。オフのときは Android が選びます。",
+  "@voiceMicrophonePhoneSubtitle": {
+    "description": "Voice settings: explains the phone-microphone switch; off means automatic."
+  },
+  "artThumbUnsupported": "対応していないパスまたはリンク",
+  "artThumbUnreachable": "Hermesに接続できません",
+  "artThumbTimedOut": "時間がかかりすぎました",
+  "artThumbNotImage": "画像ファイルではありません",
+  "artThumbUndecodable": "画像を開けませんでした",
+  "artThumbDownloadFailed": "ダウンロードに失敗しました",
+  "artThumbSvg": "SVGはアプリでプレビューできません",
+  "artGlobalSkippedTimedOut": "{count}件は時間がかかりすぎました。",
+  "vltSaveUnsure": "Hermesから応答がありませんでした。保存済みの可能性があります。再試行する前に一覧を確認してください。",
+  "vltRemoveItem": "「{label}」を削除",
+  "tk140ThoughtBrief": "短い思考",
+  "tk140ThinkingFor": "考え中、{seconds}秒",
+  "tk140ThoughtFor": "思考、{seconds}秒",
+  "tk140ToolsCount": "ツール{count}件",
+  "tk140WorkedFor": "{duration}作業",
+  "tk140SecondsSpoken": "{seconds}秒",
+  "q9TurnVerbsWork": "作業中…|取りかかり中…|処理中…|いじり中…|仕込み中…|没頭中…|配線中…|進行中…|集中中…|奮闘中…",
+  "q9TurnVerbsThink": "考え中…|読んでいます…|見直し中…|思案中…|点をつないでいます…|見極め中…|たどっています…|熟考中…|企み中…|うーん…",
+  "q9ComposerQueueHint": "キューに追加…",
+  "q9TurnMoreSteps": "+{count}ステップ",
+  "@q9TurnMoreSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "q9TurnOutcomeFailed": "エラー",
+  "q9TurnOutcomeRecovered": "再試行後に完了",
+  "constellationTitle": "あなたの星座",
+  "constellationLoading": "メモリを読み込み中…",
+  "constellationEmpty": "まだ表示するものがありません",
+  "constellationHint": "メモリの星座。ドラッグで回転し、ノードをタップすると名前が表示されます。",
+  "constellationRecenter": "中央に戻す",
+  "constellationKindMemory": "記憶",
+  "constellationKindSkill": "スキル",
+  "constellationKindOther": "その他",
+  "cacheTitle": "キャッシュ",
+  "cacheSubtitle": "この端末に保存されたチャットとメッセージ",
+  "cacheOnDevice": "この端末に保存",
+  "cacheChatList": "チャット一覧",
+  "cacheChatListDesc": "タイトル、プレビュー、日付。サーバーが応答する前に一覧が表示されます。",
+  "cacheMessages": "メッセージ",
+  "cacheMessagesDesc": "各チャットの最新メッセージ。チャットがすぐに開きます。",
+  "cacheOffNote": "オフにすると、保存済みの内容が削除されます。サーバーからは何も削除されません。",
+  "cacheLimitSection": "上限",
+  "cacheLimitLabel": "最大 {count} 件のチャットを保存",
+  "@cacheLimitLabel": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cacheLimitHint": "チャットが多いほど容量を使い、アプリ起動時の読み込みが少し長くなります。",
+  "cacheUsage": "使用量",
+  "cacheOnThisDevice": "この端末",
+  "cacheClear": "キャッシュを消去",
+  "cacheCleared": "キャッシュを消去しました",
+  "modelsBotFrequentTitle": "よく使うモデル",
+  "modelsBotFreeOnly": "無料のみ",
+  "modelsBotFreeOnlyEmpty": "この一覧に無料のモデルはありません。",
+  "modelsBotInheritMain": "メインを継承",
+  "modelsBotInheritMainHint": "メインスロットのモデルを使います",
+  "modelsBotAutoMainSlot": "自動はメインスロットのモデルを使います",
+  "modelsBotCreateUnconfirmed": "作成が確認できませんでした。別のボットを作る前に、ボット一覧を確認してください。",
+  "modelsBotSwitchTitle": "この会話のモデルを切り替えますか？",
+  "modelsBotSwitchBody": "この会話はすでに長くなっています。{model} は次のメッセージから応答し、文脈全体を読み直すため、そのターンは時間もコストも増える場合があります。",
+  "@modelsBotSwitchBody": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "modelPickerCurrent": "現在",
+  "modelPickerAllModels": "すべてのモデル",
+  "modelPickerLevelNone": "オフ",
+  "modelPickerLevelMinimal": "最小",
+  "modelPickerLevelXhigh": "非常に高",
+  "modelPickerLevelMax": "最大",
+  "modelPickerLevelUltra": "ウルトラ",
+  "modelPickerLevelDefault": "既定",
+  "modelPickerImpactOff": "推論なし：応答が速く、コストも低くなります。",
+  "modelPickerImpactLight": "軽く考える：応答が速く、コストも抑えられます。",
+  "modelPickerImpactBalanced": "速度・品質・コストのバランスが取れます。",
+  "modelPickerImpactDeep": "深く考える：時間もコストも多くかかります。",
+  "modelPickerImpactDefault": "モデルの通常のレベルを使います。",
+  "stepsBarCommands": "{count, plural, other{コマンドを{count}件実行}}",
+  "stepsBarEdits": "{count, plural, other{ファイルを{count}件編集}}",
+  "stepsBarReads": "{count, plural, other{ファイルを{count}件読み取り}}",
+  "stepsBarSearches": "{count, plural, other{ウェブ検索を{count}回}}",
+  "stepsBarPages": "{count, plural, other{ウェブページを{count}件読み取り}}",
+  "stepsBarOther": "{count, plural, other{その他の呼び出しを{count}件}}",
+  "stepsBarListPair": "{a}、{b}",
+  "stepsBarListLast": "{head}、{last}",
+  "stepsBarListSeparator": "、",
+  "stepsBarStatusRunning": "実行中",
+  "stepsBarStatusFailed": "失敗",
+  "stepsBarStatusDone": "完了",
+  "stepsBarShowCalls": "このステップの各呼び出しを表示",
+  "stepsBarHideCalls": "このステップの呼び出しを非表示",
+  "stepsBarWorkedShow": "ターンのステップを表示",
+  "stepsBarWorkedHide": "ターンのステップを非表示",
+  "stepsBarWord1": "検討中",
+  "stepsBarWord2": "確認中",
+  "stepsBarWord3": "探索中",
+  "stepsBarWord4": "整理中",
+  "stepsBarWord5": "試行中",
+  "stepsBarWord6": "調整中",
+  "kanbanSkinSettingTitle": "新しいカンバンデザイン",
+  "kanbanSkinSettingSubtitle": "状態ごとの列、ライブタイマー付きのカード、一括操作。オフにすると以前のデザインに戻ります。",
+  "kanbanSkinHelpTriage": "明確な仕様を待っているアイデア",
+  "kanbanSkinHelpTodo": "まだ準備できていない保留中の作業",
+  "kanbanSkinHelpScheduled": "指定した時刻まで保留",
+  "kanbanSkinHelpReady": "ディスパッチャー向けに準備済みの作業",
+  "kanbanSkinHelpRunning": "エージェントが実行中",
+  "kanbanSkinHelpBlocked": "停止中：判断またはヘルプが必要",
+  "kanbanSkinHelpReview": "完了、判断待ち",
+  "kanbanSkinHelpDone": "完了し、参照用に保存済み",
+  "kanbanSkinHelpArchived": "アクティブなボードから外れています",
+  "kanbanSkinCount": "{count, plural, =0{タスクなし} other{{count}件のタスク}}",
+  "kanbanSkinSelect": "タスクを選択",
+  "kanbanSkinSelectExit": "選択を終了",
+  "kanbanSkinSelected": "{count, plural, other{{count}件を選択中}}",
+  "kanbanSkinBulkAssign": "再割り当て",
+  "kanbanSkinBulkDelete": "削除",
+  "kanbanSkinBulkArchiveTitle": "タスクをアーカイブ",
+  "kanbanSkinBulkArchiveConfirm": "{count, plural, other{{count}件のタスクをアーカイブします。}}アクティブなボードからは外れますが、サーバーには残ります。",
+  "kanbanSkinBulkDeleteTitle": "タスクを削除",
+  "kanbanSkinBulkDeleteConfirm": "{count, plural, other{{count}件のタスクをサーバーから完全に削除します。}}この操作は元に戻せません。",
+  "kanbanSkinBulkDone": "{count, plural, other{{count}件のタスクを更新しました}}",
+  "kanbanSkinBulkDeleteFailed": "{count, plural, other{{count}件のタスクを削除できませんでした}}",
+  "kanbanSkinColumnEmpty": "この列にタスクはありません",
+  "kanbanSkinLinksCount": "{count, plural, other{リンク{count}件}}",
+  "kanbanSkinSettingsUnavailable": "このサーバーにはオーケストレーション設定がありません",
+  "motionCursorTitle": "返信カーソル",
+  "motionCursorCaption": "返信が届く間、本文の下にカーソルを表示します。本文の表示が遅れることはありません。",
+  "motionCursorOff": "カーソルなし",
+  "motionCursorLine": "線",
+  "motionCursorBlock": "ブロック",
+  "motionCursorUnderscore": "アンダースコア",
+  "motionTreeExpand": "フォルダを開く",
+  "motionTreeCollapse": "フォルダを閉じる",
+  "memShareEditNode": "編集",
+  "memShareTitle": "共有内容を確認",
+  "memShareIntro": "アプリに共有された内容です。送りたくないものは削除し、送信先を選んでください。",
+  "memShareRemove": "削除",
+  "memShareTextChars": "テキスト（{count} 文字）",
+  "@memShareTextChars": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "memShareNothingLeft": "送信するものがありません。共有内容を破棄してください。",
+  "memShareDestination": "送信先",
+  "memShareDiscard": "破棄",
+  "memShareContinue": "続ける",
+  "memShareVerdict": "スキャナーの判定：{verdict}",
+  "@memShareVerdict": {
+    "placeholders": {
+      "verdict": {
+        "type": "String"
+      }
+    }
+  },
+  "memShareVerdictSafe": "安全",
+  "memShareVerdictCaution": "注意",
+  "memShareVerdictDangerous": "危険",
+  "scanDocMenuLabel": "書類をスキャン",
+  "scanDocTitle": "書類をスキャン",
+  "scanDocStartHint": "書類を撮影するか、画像を選択してください。処理はすべてこの端末内で行われ、何もアップロードされません。",
+  "scanDocTakePhoto": "写真を撮る",
+  "scanDocFromGallery": "ギャラリーから選択",
+  "scanDocCropHint": "各隅を書類の端までドラッグしてください。",
+  "scanDocCropReset": "リセット",
+  "scanDocCropContinue": "切り抜き",
+  "scanDocCropInvalid": "四隅が正しい四角形になっていません。位置を調整してください。",
+  "scanDocCropArea": "書類の範囲",
+  "scanDocCorner": "{n}番目の隅(全4)",
+  "scanDocFilterOriginal": "オリジナル",
+  "scanDocFilterGray": "グレースケール",
+  "scanDocFilterContrast": "コントラスト",
+  "scanDocFilterBw": "白黒",
+  "scanDocRotate": "回転",
+  "scanDocDeletePage": "ページを削除",
+  "scanDocAddPage": "ページを追加",
+  "scanDocPageOf": "{total}ページ中{n}ページ目",
+  "scanDocAttachImages": "画像として添付",
+  "scanDocAttachPdf": "PDFとして添付",
+  "scanDocProcessing": "処理中…",
+  "scanDocError": "画像を処理できませんでした。",
+  "scanDocPageLimit": "最大{max}ページに達しました。",
+  "latexFormulaLabel": "数式: {source}",
+  "galleryTitle": "ギャラリー",
+  "galleryAction": "画像ギャラリー",
+  "galleryEmptyTitle": "画像はまだありません",
+  "galleryEmptyBody": "会話で生成または受信した画像がここに表示されます。",
+  "galleryFilterAll": "すべての会話",
+  "galleryFilterTitle": "会話",
+  "galleryImageCount": "{count, plural, other{{count}枚の画像}}",
+  "galleryToday": "今日",
+  "galleryYesterday": "昨日",
+  "galleryTileLabel": "{name}（{conversation}より）",
+  "onbFlowTitle": "エージェントに接続",
+  "onbFlowBody": "ConsoleをHermesにつなぐ方法を選んでください。Dashboardのアドレスを入力するのが最も確実です。",
+  "onbFlowServer": "自分のサーバーに接続",
+  "onbFlowPair": "コマンドでペアリング",
+  "onbFlowQr": "QRコードをスキャン",
+  "onbFlowGuidedBody": "ConsoleはHermesのDashboardを使うようになりました。Hermesがあるコンピューターにこの行を貼り付けて表示されるコードをスキャンするか、Dashboardのアドレスを入力して手動で接続してください。チャットは残ります。",
+  "charactersTitle": "キャラクター",
+  "charactersSettingsSubtitle": "ボットのシルエット、目、飾り、色",
+  "charactersAnimateTitle": "ボットをアニメーションする",
+  "charactersAnimateSubtitle": "オフにするとボットの顔が動かなくなります。システムの視差効果の軽減設定は常に尊重されます",
+  "charactersPreview": "プレビュー",
+  "charactersSectionEyes": "目",
+  "charactersSectionTopper": "頭の飾り",
+  "charactersSectionSeed": "シード",
+  "charactersSeedHint": "空欄：名前に従う",
+  "charactersSeedInvalid": "小文字、数字、ハイフン、アンダースコアのみ（最大64文字）",
+  "charactersAuto": "自動",
+  "charactersEyesSeeded": "シード通り",
+  "charactersEyesWide": "大きい目",
+  "charactersEyesSleepy": "眠そうな目",
+  "charactersEyesHappy": "うれしい目",
+  "charactersTopperNone": "なし",
+  "charactersTopperAntenna": "アンテナ",
+  "charactersTopperSprout": "新芽",
+  "charactersTopperCrown": "王冠",
+  "charactersTopperHalo": "光輪",
+  "charactersSave": "保存",
+  "charactersReset": "リセット",
+  "charactersSaved": "キャラクターを保存しました",
+  "turnFlowThoughtCount": "{count, plural, =1{1回考えました} other{{count}回考えました}}",
+  "screenChatsSubtitleLive": "ライブ {count}件",
+  "screenChatsSubtitleToday": "今日 {count}件",
+  "screenChatsBotFilter": "ボットで絞り込み",
+  "screenProfileToolsGroups": "{count, plural, other{{count} グループ}}",
+  "screenSettingsBrand": "HERMES CONSOLE",
+  "turnLineThinking": "考え中",
+  "turnLineWorked": "作業しました",
+  "litThoughtRow": "思考内容",
+  "mdlPillSectionProvider": "プロバイダ",
+  "mdlPillSectionModels": "{provider} のモデル",
+  "mdlPillSectionResults": "検索結果",
+  "mdlPillSectionSettings": "設定",
+  "mdlPillSearchHint": "すべてのプロバイダを検索",
+  "mdlPillSearchTooltip": "モデルを検索",
+  "mdlPillOpenSettings": "設定 › モデルを開く",
+  "mdlPillProfile": "プロファイル · {name}",
+  "mdlPillTagLocal": "ローカル",
+  "mdlPillFastUnavailable": "このモデルでは利用できません",
+  "livePDone": "完了",
+  "livePWriting": "入力中",
+  "livePCoordinating": "調整中",
+  "livePAgents": "{done}/{total} エージェント",
+  "@livePAgents": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "livePNeedsPermission": "許可が必要です",
+  "livePThought": "{duration}考えました",
+  "@livePThought": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "subFTitle": "サブエージェント · {done}/{total}",
+  "@subFTitle": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "subFAndMore": "{line} ほか{count}件",
+  "@subFAndMore": {
+    "placeholders": {
+      "line": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subFGuideHint": "このエージェントに指示…",
+  "subFGuideSend": "送信",
+  "subFExpandHint": "サブエージェントを表示",
+  "subFCollapseHint": "サブエージェントを隠す",
+  "cnxTitle": "接続",
+  "cnxTabDirect": "ダイレクト",
+  "cnxTabSsh": "SSH",
+  "cnxServer": "サーバー",
+  "cnxSignIn": "サインイン",
+  "cnxNameLabel": "名前 · 任意",
+  "cnxNameHint": "自宅、スタジオ…",
+  "cnxAddressNote": "ダッシュボードの完全なアドレス(ポート付き)。Tailscale を使う場合は、サーバーの 100.x アドレスか Tailscale Serve のアドレスを使い、このスマートフォンで Tailscale を接続したままにしてください。",
+  "cnxMethod": "方法",
+  "cnxMethodPassword": "パスワード",
+  "cnxMethodBrowser": "ブラウザ",
+  "cnxMethodToken": "トークン",
+  "cnxRemember": "パスワードを記憶",
+  "cnxRememberNote": "このスマートフォンの安全なストレージに暗号化して保存されます。",
+  "cnxBrowserNote": "サーバー自身のサインインページをブラウザで開きます。アドレスがログインページの内側にある場合に使います。",
+  "cnxTokenLabel": "セッショントークン",
+  "cnxTokenRejected": "サーバーはそのトークンを受け付けませんでした。",
+  "cnxScanQr": "QR をスキャン、または Hermes サービスをインストール",
+  "cnxSshHost": "SSH ホスト",
+  "cnxSshUser": "SSH ユーザー名",
+  "cnxSshPort": "SSH ポート",
+  "cnxSshAuth": "SSH 認証",
+  "cnxSshAuthPassword": "パスワード",
+  "cnxSshAuthKey": "秘密鍵",
+  "cnxSshPassword": "SSH パスワード",
+  "cnxDashHost": "ダッシュボードのホスト",
+  "cnxDashPort": "ダッシュボードのポート",
+  "cnxSshNote": "ダッシュボードはサーバー上ですでに動作している必要があります。暗号化された SSH トンネルを通じて非公開のままです。",
+  "sshTDashboardRefused": "SSH サーバーがダッシュボードへの接続を開きませんでした。ダッシュボードのホストとポートを確認してください。",
+  "sshTPublicKey": "これは公開鍵です。SSH でサインインするには秘密鍵が必要です。",
+  "sshTPassphraseNeeded": "この鍵は暗号化されています。パスフレーズを入力してください。",
+  "sshTOtherAddress": "このトンネルは別のダッシュボードのアドレスに属しています。",
+  "sshTServerNotFound": "SSH サーバーが見つかりません。ホストを確認してください。",
+  "sshTPassphraseLabel": "鍵のパスフレーズ",
+  "sshTOpening": "SSH トンネルを開いています…",
+  "cnxSshSoon": "SSH トンネルでの接続は、このバージョンではまだ利用できません。このスマートフォンから届くアドレスで「ダイレクト」タブを使ってください。",
+  "vcrEntryAttachments": "音声を使う前に、添付ファイルを送信するか削除してください。",
+  "vcrEntryEditing": "音声を使う前に、メッセージの編集を終えてください。",
+  "vcrEntryApproval": "音声を使う前に、保留中の承認に応答してください。",
+  "vcrEntryQueued": "メッセージが待機中です。送信されてから音声を使ってください。",
+  "vcrRetryMessage": "このメッセージを再送する",
+  "vcrSendFailed": "メッセージを送信できませんでした。再送できるように保存してあります。",
+  "vcrMicBusy": "別のアプリまたは通話がマイクを使用中です。閉じてからもう一度お試しください。",
+  "vcrMicUnavailable": "マイクを開けませんでした。もう一度お試しください。",
+  "vcrNeedsNetwork": "音声認識には接続が必要ですが、接続がありません。復旧したらもう一度お試しください。",
+  "vcrLanguageFallback": "音声の言語はこの認識エンジンで利用できないため、システムの言語を使います。",
+  "vcrServerUnavailable": "サーバーの音声は利用できません。このスマートフォンの音声を使えます。",
+  "vcrUseThisPhone": "このスマートフォンを使う",
+  "vcrPausedByBackground": "バックグラウンドのため一時停止中",
+  "vcrContinue": "続ける",
+  "vcrRouteRestarted": "音声の出力先が変わりました（ヘッドセットまたは Bluetooth）。マイクを再起動しました。",
+  "vcrOpenSettings": "設定を開く",
+  "vcrTranscriptionTimedOut": "文字起こしに時間がかかりすぎたため、中止しました。もう一度お試しください。",
+  "chcFileLabel": "ファイル {name}",
+  "chcFolderLabel": "フォルダ {name}",
+  "chcFileOpenHint": "ファイルを開きます",
+  "chcFileCopyHint": "パスをコピーします",
+  "chcPathCopied": "パスをコピーしました",
+  "chcFileOpenFailed": "ファイルを開けませんでした。パスをコピーしました。",
+  "chcCitationLabel": "引用 {n}",
+  "chcCitationSourceLabel": "出典 {n}",
+  "chcCitationOpenHint": "出典をブラウザで開きます",
+  "mdpSourcesLabel": "出典: {count}件",
+  "mdpSourceLabel": "出典 {n}: {title}、{domain}",
+  "mdpSourceOpenHint": "出典をブラウザで開きます。長押しでリンクをコピー",
+  "mdpOpenLinkHint": "リンクをブラウザで開きます。長押しでリンクをコピー",
+  "mdpLinkChipLabel": "{domain} へのリンク",
+  "mdpLinkCopied": "リンクをコピーしました",
+  "mdpTablePreparing": "表を準備中",
+  "msvCurrentUnknown": "モデルを選択",
+  "msvCurrentHint": "別のモデルを選択",
+  "msvFavorites": "お気に入り",
+  "msvFavoritesHint": "「すべてのモデル」でモデルに星を付けると、ここに表示されます。",
+  "msvFrequent": "よく使う",
+  "msvThink": "推論",
+  "msvThinkOn": "オン",
+  "msvThinkOff": "オフ",
+  "msvFastNormal": "通常",
+  "msvFastActive": "有効",
+  "msvPermissions": "権限",
+  "msvPermissionsManual": "手動",
+  "msvFavAdd": "{model}をお気に入りに追加",
+  "@msvFavAdd": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "msvFavRemove": "{model}をお気に入りから削除",
+  "@msvFavRemove": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "msvFavLimit": "お気に入りは最大{count}件です",
+  "@msvFavLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sv2Close": "閉じる",
+  "sv2CloseHint": "このチャットからグループを隠します。サブエージェントは作業を続けます。",
+  "sv2MenuEntry": "サブエージェント · {count}",
+  "sv2MenuShowHidden": "非表示のサブエージェントを表示",
+  "sv2TaskSection": "依頼内容",
+  "sv2StepsSection": "ステップ",
+  "sv2StepsPartial": "このグループがチャットに現れてから確認できたステップのみ表示します。",
+  "sv2ThoughtSection": "思考",
+  "sv2ResultPartial": "途中経過",
+  "sv2LeftBehind": "完了しませんでした。最後に残した内容です。",
+  "sv2NoResultYet": "まだ結果はありません。",
+  "sv2LastLog": "最後のログ",
+  "kluKeysTitle": "キー",
+  "kluKeysLoading": "キーを読み込み中…",
+  "kluKeysSearch": "キーを検索",
+  "kluSummaryAvailable": "利用可能",
+  "kluSummaryConfigured": "設定済み",
+  "kluProfileLabel": "プロファイル",
+  "kluProfileDefault": "デフォルト",
+  "kluKeysNote": "Hermes は秘密情報を選択したプロファイルの .env に保存します。ここでは書き込みのみで、表示も読み取りもしません。",
+  "kluStatusSet": "設定済み",
+  "kluStatusNotSet": "未設定",
+  "kluCategoryCustom": "カスタム",
+  "kluKeysEmpty": "このプロファイルにはキーがありません。",
+  "kluKeysNoMatches": "一致するキーはありません。",
+  "kluKeysLoadError": "キーを読み込めませんでした",
+  "kluAddKey": "キーを追加",
+  "kluNameLabel": "変数名",
+  "kluNameInvalid": "大文字・数字・アンダースコアのみ、先頭は英字（最大128文字）。",
+  "kluSheetStatus": "状態",
+  "kluSheetCategory": "カテゴリ",
+  "kluValueLabel": "値",
+  "kluValueHint": "新しい値",
+  "kluSaveKey": "キーを保存",
+  "kluDeleteKey": "キーを削除",
+  "kluRevealValue": "入力を表示",
+  "kluHideValue": "入力を隠す",
+  "kluWriteOnly": "保存済みの値は表示されません。新しい値を入力すると現在の値が置き換わります。",
+  "kluValueEmpty": "値を入力してください",
+  "kluValueInvalid": "値に改行や制御文字、先頭・末尾の空白は使用できません。",
+  "kluValueTooLong": "値が {max} 文字を超えています",
+  "kluOverwriteTitle": "{name} を置き換えますか？",
+  "kluOverwriteBody": "プロファイル {profile} にはすでに設定されています。新しい値が現在の値を置き換え、元に戻すことはできません。",
+  "kluOverwriteAction": "置き換える",
+  "kluDeleteTitle": "{name} を削除しますか？",
+  "kluDeleteBody": "プロファイル {profile} の .env から削除されます。",
+  "kluDeleteAction": "削除",
+  "kluSaved": "キー {name} を保存しました",
+  "kluDeleted": "キー {name} を削除しました",
+  "kluSaveFailed": "キーを保存できませんでした。",
+  "kluDeleteFailed": "キーを削除できませんでした。",
+  "kluCleartextBlocked": "この接続はプライベートネットワーク外で暗号化されていない HTTP を使っています。HTTPS を使うまでキーは書き込めません。",
+  "kluCleartextPrivate": "プライベートネットワーク上の暗号化されていない HTTP 接続です。値は暗号化されずに送信されます。",
+  "kluRowLabel": "{name}、{status}、{category}",
+  "kluTargetProfile": "書き込み先のプロファイル: {profile}",
+  "kluLogComponent": "コンポーネント",
+  "kluLogForComponent": " コンポーネント {component} の",
+  "kluUsageTitle": "使用状況",
+  "kluUsageLoading": "使用状況を読み込み中…",
+  "kluUsagePeriod": "{days}日間",
+  "kluUsageTokens": "トークン",
+  "kluUsageInput": "入力",
+  "kluUsageOutput": "出力",
+  "kluUsageSessions": "セッション",
+  "kluUsageCost": "コスト",
+  "kluUsageCostEstimated": "推定コスト",
+  "kluUsageDaily": "1日あたりのトークン",
+  "kluUsageByModel": "モデル別",
+  "kluUsageSessionsCount": "{count}セッション",
+  "kluUsageEmpty": "この期間の使用状況はありません",
+  "kluUsageLoadError": "使用状況を読み込めませんでした",
+  "kluUsageUnsupported": "このサーバーは使用状況の分析を提供していません",
+  "fcoCopyPath": "パスをコピー",
+  "fcoOpenFolder": "フォルダーを開く",
+  "fcoErrNotFound": "ファイルが見つかりません。移動または削除された可能性があります。",
+  "fcoErrForbidden": "サーバーはこのファイルの読み取りを許可していません。",
+  "fcoErrDenied": "サーバーがこのパスを拒否しました。",
+  "fcoErrTooLarge": "ファイルが大きすぎて、ここでは表示できません。",
+  "fcoErrBinary": "バイナリファイルのため、テキストとして表示できません。",
+  "fcoErrTimeout": "サーバーの応答に時間がかかっています。",
+  "fcoErrUnreachable": "ファイルを読み取れませんでした。接続を確認してください。",
+  "fcoErrUnsupported": "このサーバーではファイルを読み取れません。",
+  "fcoErrOutside": "サーバーがこの会話のフォルダー外のファイルを返しました。表示しません。",
+  "fcoErrBadPath": "パスが無効なため、開きません。",
+  "fcoErrNoBase": "このファイルがどのフォルダーにあるか分かりません。",
+  "fcoEmpty": "ファイルは空です。",
+  "fcoSensitiveTitle": "機密ファイル",
+  "fcoSensitiveBody": "{name} にはパスワードやキーが含まれている可能性があります。画面にのみ表示され、端末には保存されません。",
+  "fcoShow": "表示",
+  "cfxSearchedIn": "探した場所（{count}）",
+  "@cfxSearchedIn": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cfxSeveralMatches": "この会話のフォルダーに同じ名前のファイルが複数あります。開くものを選んでください。",
+  "cfxChoose": "ファイルを選択",
+  "sppChangedTitle": "サーバー上でスキルが変更されました",
+  "sppChangedBody": "開いた時点から内容が変わっています。保存すると現在の内容が上書きされます。",
+  "sppCharCount": "{count} / {max}",
+  "@sppCharCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppContentErrorTitle": "SKILL.md を読み込めませんでした",
+  "sppContentErrorBody": "サーバーが応答しないか、スキルが見つかりませんでした。接続を確認して、もう一度お試しください。",
+  "sppContentHeader": "内容",
+  "sppContentTooLongToEdit": "このテキストはサーバーの上限を超えているため、閲覧のみ可能です。",
+  "sppContinue": "続行",
+  "sppCreate": "作成",
+  "sppCreateConfirmTitle": "スキル {name} を作成しますか？",
+  "@sppCreateConfirmTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppCreateConfirmBody": "エージェントが新しいセッションで従う指示です。内容をよく確認してください。",
+  "sppDetailsHeader": "詳細",
+  "sppEdit": "編集",
+  "sppEditorLabel": "SKILL.md の内容",
+  "sppEditTitle": "{name} を編集",
+  "@sppEditTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppEditWarning": "エージェントはこの指示をそのまま実行します。内容を理解した変更だけを保存してください。",
+  "sppFilterActive": "有効",
+  "sppFilterAll": "すべて",
+  "sppFilterInactive": "無効",
+  "sppInsecureTitle": "暗号化されていない接続",
+  "sppInsecurePublicBody": "このサーバーは管理外のネットワーク上で http で接続されます。認証情報を含む通信内容が途中で読み取られる可能性があります。",
+  "sppInsecurePrivateBody": "http（暗号化なし）で接続されますが、プライベートネットワーク内です。",
+  "sppInstallAnyway": "それでもインストール",
+  "sppInstalledSummary": "インストール {total} 件 · 有効 {on} 件",
+  "@sppInstalledSummary": {
+    "placeholders": {
+      "total": {
+        "type": "int"
+      },
+      "on": {
+        "type": "int"
+      }
+    }
+  },
+  "sppMcpAddConfirmTitle": "MCP サーバー {name} を追加しますか？",
+  "@sppMcpAddConfirmTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppMcpAddConfirmBody": "Hermes サーバーが保存し、実行または接続する場合があります。このスマートフォンでは何も実行しません。",
+  "sppMcpAdded": "サーバー {name} を追加しました",
+  "@sppMcpAdded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppMcpAddRejected": "サーバーがこの設定を受け付けませんでした。名前（重複の可能性）とコマンドまたは URL を確認してください。",
+  "sppMcpNameEmpty": "名前を入力してください。",
+  "sppMcpNameChars": "英数字、ピリオド、ハイフン、アンダースコアのみ使用できます（空白不可、最大64文字）。",
+  "sppMcpUrlEmpty": "サーバーのアドレスを入力してください。",
+  "sppMcpUrlScheme": "アドレスは https:// または http:// で始めてください。",
+  "sppMcpUrlHost": "アドレスにホスト名がありません。",
+  "sppMcpUrlUserInfo": "アドレスにユーザー名やパスワードを入れず、認証欄を使ってください。",
+  "sppMcpUrlQuery": "アドレスにパラメーター（?key=value）を入れないでください。認証情報の可能性があります。",
+  "sppMcpUrlFragment": "アドレス末尾の # 以降を削除してください。",
+  "sppMcpCommandEmpty": "コマンドを入力してください。",
+  "sppMcpCommandControl": "コマンドに改行または制御文字が含まれています。",
+  "sppMcpCommandTooLong": "コマンドが長すぎます（最大800文字）。",
+  "sppMcpCommandSpaces": "ここにはプログラム名だけを入力し、引数は下の欄に1行ずつ入力してください。",
+  "sppMcpCommandShell": "サーバーはシェルを使わずにプログラムを起動します。リダイレクトや連結の記号は機能しません。",
+  "sppMcpInsecurePublic": "このアドレスはプライベートネットワーク外で http を使用します。MCP サーバーの通信は暗号化されません。",
+  "sppMcpInsecurePublicToken": "このアドレスはプライベートネットワーク外で http を使い、トークンを送信することになります。暗号化されません。https を使ってください。",
+  "sppMcpInsecurePrivate": "このアドレスは http（暗号化なし）です。プライベートネットワークですが、https を推奨します。",
+  "sppMenuAddMcp": "MCP サーバーを追加",
+  "sppMenuNewSkill": "新しいスキル",
+  "sppNewSkillIntro": "名前、短い説明、指示を入力してください。SKILL.md のヘッダーは端末が用意し、サーバーが検証します。",
+  "sppNewSkillTitle": "新しいスキル",
+  "sppOriginBundled": "組み込み",
+  "sppOriginUser": "ユーザー",
+  "sppOriginHub": "Hub",
+  "sppOriginGit": "Git",
+  "sppOriginExternal": "外部",
+  "sppOverwrite": "上書き",
+  "sppReadOnlySkill": "ここで編集できるのは自分のスキルだけです。ハブや組み込みのスキルは更新時に上書きされます。",
+  "sppRestoreTitle": "元のコピーに戻しますか？",
+  "sppRestoreBody": "この画面を開いた時点の内容にそのまま戻します。",
+  "sppRestored": "元に戻しました",
+  "sppRestoreOriginal": "元に戻す",
+  "sppSave": "保存",
+  "sppSaveTitle": "{name} の変更を保存しますか？",
+  "@sppSaveTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppSaveBody": "テキストで SKILL.md 全体が置き換わります。新しいセッションからエージェントはこの指示に従います。",
+  "sppSaved": "保存しました。新しいセッションから反映されます。",
+  "sppScanAskTitle": "スキャンの結果、判断が必要です",
+  "sppScanAskBody": "インストール前に確認すべき点がサーバーで見つかりました。続行する場合は自己責任でインストールされます。",
+  "sppScanBlockedTitle": "インストールはブロックされました",
+  "sppScanBlockedBody": "セキュリティスキャンによりこのスキルはインストールできません。確認する操作はありません。",
+  "sppScanClean": "セキュリティスキャン：問題なし。",
+  "sppScanFailedTitle": "スキャンできませんでした",
+  "sppScanFailedBody": "セキュリティスキャンから応答がありません。続行しても、インストールはサーバー側のスキャンを通り、拒否される場合があります。",
+  "sppScanFindings": "セキュリティスキャン：{count} 件の検出。",
+  "@sppScanFindings": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppScanMore": "…ほか {count} 件",
+  "@sppScanMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppScanning": "{name} をスキャン中…",
+  "@sppScanning": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppScanUnavailable": "セキュリティスキャン：利用不可。",
+  "sppSearchingHub": "ハブを検索中…",
+  "sppShowMore": "さらに {count} 件を表示",
+  "@sppShowMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppShowRest": "残りを表示（{count} 文字）",
+  "@sppShowRest": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillCategoryChars": "カテゴリーは1つの名前で、小文字・数字・ピリオド・ハイフン・アンダースコアのみ使えます。",
+  "sppSkillCategoryLabel": "カテゴリー（任意）",
+  "sppSkillContentEmpty": "内容が空です。",
+  "sppSkillContentNoBody": "ヘッダーの後に指示がありません。",
+  "sppSkillContentNoDescription": "ヘッダーに description が必要です。",
+  "sppSkillContentNoFrontmatter": "SKILL.md は --- の行で囲んだヘッダーで始める必要があります。",
+  "sppSkillContentNoName": "ヘッダーに name が必要です。",
+  "sppSkillContentNul": "テキストにヌル文字が含まれています。",
+  "sppSkillContentTooLong": "テキストがサーバーの上限 {max} 文字を超えています。",
+  "@sppSkillContentTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillContentUnclosed": "ヘッダーが閉じられていません。2つ目の --- の行がありません。",
+  "sppSkillCreated": "スキル {name} を作成しました",
+  "@sppSkillCreated": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppSkillDescriptionEmpty": "短い説明を入力してください。",
+  "sppSkillDescriptionHelp": "1文で、エージェントがいつ使うべきかを書きます。",
+  "sppSkillDescriptionLabel": "説明",
+  "sppSkillDescriptionTooLong": "新しいスキルの説明は最大 {max} 文字です。",
+  "@sppSkillDescriptionTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppSkillInstructionsLabel": "指示",
+  "sppSkillNameChars": "小文字・数字・ピリオド・ハイフン・アンダースコアを使い、先頭は英数字にしてください。",
+  "sppSkillNameEmpty": "名前を入力してください。",
+  "sppSkillNameHelp": "フォルダー名として使われます（例：my-skill）。",
+  "sppSkillNameLabel": "名前",
+  "sppSkillNameTooLong": "名前は最大 {max} 文字です。",
+  "@sppSkillNameTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "sppStatusFilter": "状態",
+  "sppSwitchLabel": "{name} を有効にする",
+  "@sppSwitchLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppToggleFailed": "{name} を変更できませんでした。元の状態に戻しました。",
+  "@sppToggleFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sppVersion": "v{version}",
+  "@sppVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "sppViewSkillMd": "SKILL.md を表示",
+  "hdaTitle": "エージェント",
+  "hdaFilterAll": "すべて",
+  "hdaStatusWorking": "作業中",
+  "hdaStatusBlocked": "応答待ち",
+  "hdaStatusIdle": "待機中",
+  "hdaStatusDone": "完了",
+  "hdaStatusUnknown": "不明",
+  "hdaInState": "この状態で{duration}",
+  "hdaNow": "たった今",
+  "hdaEmptyTitle": "実行中のエージェントはありません",
+  "hdaEmptyBody": "このサーバーでHerdrを使って起動したエージェントが、リアルタイムの状態とともにここに表示されます。",
+  "hdaNew": "新しいエージェント",
+  "hdaProbing": "サーバーでHerdrを探しています…",
+  "hdaServerStoppedTitle": "Herdrが起動していません",
+  "hdaServerStoppedBody": "Herdrサーバーが応答しません。ターミナルタブで herdr と入力して起動し、ここに戻ってください。",
+  "hdaConnectionError": "サーバーと通信できませんでした。",
+  "hdaTimedOut": "サーバーの応答に時間がかかりすぎました。",
+  "hdaStale": "最後に取得した内容を表示中です。再試行しています…",
+  "hdaHintLine": "このサーバーにはHerdrがインストールされていません。",
+  "hdaHowToInstall": "インストール方法",
+  "hdaHintDismiss": "お知らせを閉じる",
+  "hdaInstallTitle": "Herdrをインストール",
+  "hdaInstallBody": "アプリが自動でインストールすることはありません。サーバーで次を実行してから、この画面に戻ってください。",
+  "hdaInstallProject": "GitHubのプロジェクト",
+  "hdaInstallCheck": "インストールした",
+  "hdaRecheck": "Herdrをもう一度探す",
+  "hdaMore": "エージェントのその他のオプション",
+  "hdaBack": "エージェント一覧に戻る",
+  "hdaRowHint": "出力を開いて指示を送る",
+  "hdaFolderUnknown": "不明なフォルダー",
+  "hdaOutputTitle": "出力",
+  "hdaOutputEmpty": "まだ出力はありません。",
+  "hdaOutputLabel": "{agent}のライブ出力",
+  "hdaOutputFailed": "出力を読み取れませんでした。再試行しています…",
+  "hdaPromptTarget": "{agent} 宛 · {folder}",
+  "hdaPromptHint": "エージェントへの指示を入力",
+  "hdaSend": "送信",
+  "hdaKeysTitle": "キー",
+  "hdaKeyEnter": "Enter",
+  "hdaKeySemantics": "{key}キーを送る",
+  "hdaKeySent": "{key}キーを送信しました",
+  "hdaSentTo": "{agent}に送信しました",
+  "hdaBlockedTitle": "{agent}が応答を待っています",
+  "hdaBlockedBody": "承認または回答を求めています。承認はEnter、拒否はEscを送ります。ほかの選択肢はキーで送ってください。",
+  "hdaAccept": "承認",
+  "hdaReject": "拒否",
+  "hdaReadOnly": "読み取り専用: アプリはサーバー上のHerdrの場所を特定できませんでした。",
+  "hdaGone": "このエージェントはもうHerdrにありません。",
+  "hdaErrBlocked": "{agent}は回答待ちのため、テキストは送信されませんでした。キーを使ってください。",
+  "hdaErrNotFound": "そのエージェントはもう存在しません。",
+  "hdaErrEmpty": "送信する前に何か入力してください。",
+  "hdaErrTooLong": "テキストが長すぎます（最大4 KB）。",
+  "hdaErrChars": "送信できない制御文字が含まれています。",
+  "hdaErrFailed": "操作を完了できませんでした。",
+  "hdaCreateKind": "エージェント",
+  "hdaCreateFolder": "サーバー上のフォルダー",
+  "hdaCreateFolderHint": "/プロジェクトへの/絶対パス",
+  "hdaCreateRecent": "最近",
+  "hdaCreateContinue": "続ける",
+  "hdaCreateConfirmTitle": "このエージェントを作成しますか？",
+  "hdaCreateConfirmBody": "{server}の{folder}でHerdrのワークスペースを開き、{agent}を起動します。サーバー上でエージェントが作業を始めます。",
+  "hdaCreateAction": "作成",
+  "hdaCreated": "エージェントを作成しました",
+  "hdaCreateStartFailed": "ワークスペースは作成されましたが、{agent}は起動しませんでした。ターミナルタブから開いてください。",
+  "hdaErrFolder": "/ で始まる絶対パスのフォルダーを入力してください。",
+  "hdaUnlockReason": "{server}のエージェントを開く",
+  "hdaRowSemantics": "{agent}、{state}、{folder}",
+  "bstEditorTitle": "キャラクターエディター",
+  "bstStudioTitle": "キャラクタースタジオ",
+  "bstUndo": "元に戻す",
+  "bstRedo": "やり直す",
+  "bstMore": "その他のオプション",
+  "bstConfirm": "プロフィールに適用",
+  "bstReset": "リセット",
+  "bstSaveCharacter": "キャラクターを保存",
+  "bstSavedCharacters": "保存したキャラクター",
+  "bstSharePng": "PNGを共有",
+  "bstDuplicate": "キャラクターを複製",
+  "bstNewCharacter": "新しいキャラクター",
+  "bstNameTitle": "キャラクター名",
+  "bstNameHint": "例：青い子猫",
+  "bstDefaultName": "マイキャラクター",
+  "bstCopyName": "{name}（コピー）",
+  "@bstCopyName": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstSavedToast": "「マイキャラクター」に保存しました",
+  "bstAppliedToast": "{name} がこのキャラクターを使用します",
+  "@bstAppliedToast": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstDiscardTitle": "変更を破棄しますか？",
+  "bstDiscardBody": "エディターでの変更はまだどのプロフィールにも適用されていません。",
+  "bstDiscard": "破棄",
+  "bstKeepEditing": "編集を続ける",
+  "bstShareFailed": "画像を共有できませんでした",
+  "bstCanvasSize": "1024 × 1024",
+  "bstPan": "キャンバスを移動",
+  "bstZoomOut": "縮小",
+  "bstZoomIn": "拡大",
+  "bstZoomValue": "{percent}%",
+  "@bstZoomValue": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "bstZoomResetTip": "100%に戻す",
+  "bstFit": "全体表示",
+  "bstCanvasLabel": "キャラクターのキャンバス",
+  "bstStateButton": "プレビューの状態",
+  "bstStatePickTitle": "状態をプレビュー",
+  "bstStateStill": "静止",
+  "bstStateIdle": "待機",
+  "bstStateListen": "聞く",
+  "bstStateThink": "考える",
+  "bstStateWork": "作業",
+  "bstStateSpeak": "話す",
+  "bstStateCurious": "好奇心",
+  "bstStateCelebrate": "お祝い",
+  "bstStateLove": "愛情",
+  "bstStateOops": "おっと",
+  "bstStateSleep": "睡眠",
+  "bstStateBounce": "弾む",
+  "bstStateDance": "ダンス",
+  "bstStateSpin": "回転",
+  "bstTabShape": "形",
+  "bstTabEyes": "目",
+  "bstTabPieces": "パーツ",
+  "bstTabColor": "カラー",
+  "bstFormRound": "丸",
+  "bstFormOrganic": "有機的",
+  "bstFormBoxy": "角ばった",
+  "bstFormRectangle": "長方形",
+  "bstFormCloud": "雲",
+  "bstRange": "範囲",
+  "bstStrength": "強さ",
+  "bstEyeDot": "点",
+  "bstEyeOval": "楕円",
+  "bstEyeJoy": "笑顔",
+  "bstEyeDreamy": "夢見心地",
+  "bstEyeGlint": "きらめき",
+  "bstEyeBold": "力強い",
+  "bstEyeLantern": "ランタン",
+  "bstEyeRing": "リング",
+  "bstEyeWink": "ウインク",
+  "bstEyeAmazed": "驚き",
+  "bstEyeNarrow": "細目",
+  "bstEyeGrumpy": "ムスッ",
+  "bstEyeSlit": "縦長の瞳",
+  "bstEyeUndead": "アンデッド",
+  "bstEyeHeart": "ハート",
+  "bstEyeSize": "目の大きさ",
+  "bstEyeColor": "目の色",
+  "bstColorAuto": "自動",
+  "bstColorCustom": "カスタム",
+  "bstColorInk": "黒",
+  "bstColorWhite": "白",
+  "bstColorViolet": "紫",
+  "bstColorBlue": "青",
+  "bstColorRed": "赤",
+  "bstColorGreen": "緑",
+  "bstHue": "色相",
+  "bstSaturation": "彩度",
+  "bstBrightness": "明度",
+  "bstPieceCatEars": "ネコ耳",
+  "bstPieceBearEars": "クマ耳",
+  "bstPieceBunnyEars": "ウサ耳",
+  "bstPieceCrown": "王冠",
+  "bstPieceHorn": "角",
+  "bstPieceHalo": "光輪",
+  "bstPieceSwirl": "渦巻き",
+  "bstPieceSprout": "新芽",
+  "bstPieceLeaf": "葉",
+  "bstPieceWing": "翼",
+  "bstPieceTail": "しっぽ",
+  "bstPieceStar": "星",
+  "bstPieceHeart": "ハート",
+  "bstPieceBow": "リボン",
+  "bstPiecePaw": "肉球",
+  "bstPieceFin": "ヒレ",
+  "bstPieceBolt": "稲妻",
+  "bstPieceFlower": "花",
+  "bstPieceMoon": "月",
+  "bstPieceDrop": "しずく",
+  "bstPiecesAdd": "パーツを追加",
+  "bstPiecesPlaced": "配置済みパーツ",
+  "bstPiecesNone": "まだパーツがありません。タップして追加します。",
+  "bstPiecesLimit": "パーツの上限に達しました",
+  "bstPieceDelete": "削除",
+  "bstPieceRotation": "回転",
+  "bstPieceSize": "サイズ",
+  "bstPieceFlip": "反転",
+  "bstPiecePosition": "位置",
+  "bstPieceAcross": "横",
+  "bstPieceHeight": "縦",
+  "bstFur": "ファー",
+  "bstFinish": "仕上げ",
+  "bstFinishFlat": "フラット",
+  "bstFinishMatte": "マット",
+  "bstFinishSoft": "ソフト",
+  "bstFinishGlossy": "光沢",
+  "bstSolidColors": "単色",
+  "bstColorOriginal": "オリジナル",
+  "bstBodyColor": "ボディの色",
+  "bstGradients": "グラデーション",
+  "bstGradSunrise": "日の出",
+  "bstGradZest": "柑橘",
+  "bstGradBay": "入り江",
+  "bstGradGumdrop": "グミ",
+  "bstGradCinder": "燃えさし",
+  "bstGradNightfall": "夕闇",
+  "bstGradTide": "潮",
+  "bstGradApricot": "アプリコット",
+  "bstGradPlum": "プラム",
+  "bstGradSpearmint": "スペアミント",
+  "bstGradBorealis": "オーロラ",
+  "bstGradSherbet": "シャーベット",
+  "bstGradPetal": "花びら",
+  "bstGradPearl": "パール",
+  "bstGenerateTitle": "AIで生成",
+  "bstGenerateHint": "キャラクターを説明：翼のある青い子猫",
+  "sagAsk": "エージェントに依頼",
+  "sagCopy": "依頼文をコピー",
+  "sagPaste": "返答を貼り付け",
+  "sagHelp": "{name}との新しいチャットを開き、キャラクターの仕様とあなたの一文を送ります。モデルを1ターン消費し、チャットは履歴に残ります。返答が来たら内容をコピーして「返答を貼り付け」をタップすると、下書きに反映されます。元に戻すこともできます。",
+  "@sagHelp": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sagOffWhy": "書き込み可能な接続で、プロフィールが有効なときだけ使えます。",
+  "sagStatusCopied": "依頼文をコピーしました。このボットのチャットに貼り付け、返答をコピーしてください。",
+  "sagStatusApplied": "キャラクターを下書きに反映しました。元に戻せます。",
+  "sagStatusInvalid": "返答を理解できませんでした。別の文でお試しください。",
+  "sagStatusEmpty": "貼り付ける内容がありません。先にエージェントの返答をコピーしてください。",
+  "sagStatusNeedPhrase": "先に一文を入力してください。",
+  "sagChatTitle": "キャラクターデザイン",
+  "bstSavedEmpty": "まだ保存したキャラクターはありません。",
+  "bstSavedHint": "タップで使用。長押しで編集・複製・削除ができます。",
+  "bstMoreActions": "その他の操作",
+  "bstMyCharacters": "マイキャラクター",
+  "bstPresets": "プリセット",
+  "bstPresetCoral": "コーラル",
+  "bstPresetLilac": "ライラック",
+  "bstPresetSunny": "サニー",
+  "bstPresetMint": "ミント",
+  "bstPresetSlate": "スレート",
+  "bstPresetKitten": "子猫",
+  "bstPresetEmber": "熾火",
+  "bstPresetRegal": "ロイヤル",
+  "bstCustomize": "カスタマイズ",
+  "bstUseCharacter": "このキャラクターを使う",
+  "bstCurrentCharacter": "現在のキャラクター",
+  "bstDeleteTitle": "「{name}」を削除しますか？",
+  "@bstDeleteTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "bstOriginalFace": "元の顔に戻す",
+  "bstOriginalToast": "元の顔に戻しました",
+  "lflTitle": "外観とスタイル",
+  "lflAppearance": "外観",
+  "lflAppearanceSystem": "システム",
+  "lflAppearanceLight": "ライト",
+  "lflAppearanceDark": "ダーク",
+  "lflAccent": "アクセント",
+  "lflAccentCustom": "カスタムカラー",
+  "lflAccentPickerTitle": "アクセントカラー",
+  "lflAccentTerracotta": "テラコッタ",
+  "lflAccentOrange": "オレンジ",
+  "lflAccentRose": "ローズ",
+  "lflAccentViolet": "バイオレット",
+  "lflAccentIndigo": "インディゴ",
+  "lflAccentBlue": "ブルー",
+  "lflAccentTeal": "ティール",
+  "lflAccentGreen": "グリーン",
+  "lflAccentSlate": "スレート",
+  "lflLightBackground": "ライトの背景",
+  "lflDarkBackground": "ダークの背景",
+  "lflBgWhite": "ホワイト",
+  "lflBgPaper": "ペーパー",
+  "lflBgMidnight": "ミッドナイト",
+  "lflBgBlack": "ブラック",
+  "lflBgGray": "グレー",
+  "lflFont": "フォント",
+  "lflFontSystem": "システム",
+  "lflFontSystemDesc": "Android の標準フォント。中立的でなじみのある書体です。",
+  "lflFontInterDesc": "画面と長文の読みやすさを考えた、くっきりしたゴシック体。",
+  "lflFontMontserratDesc": "幾何学的でゆとりがあり、見出しに個性が出ます。",
+  "lflFontNunitoDesc": "角の丸いゴシック体で、親しみやすく読みやすい書体です。",
+  "lflFontMonoDesc": "等幅フォント。コードやターミナルらしい雰囲気に。",
+  "lflMoreThemes": "その他のテーマ",
+  "lflMoreThemesBody": "{count} 件のテーマ。それぞれ独自のスタイルです",
+  "lflThemeBanner": "テーマ：{name}",
+  "lflThemeBannerBody": "リストのテーマを使用中です。外観・アクセント・背景を変更すると、外観とスタイルに戻ります。",
+  "lflReturn": "外観とスタイルに戻る",
+  "pexChange": "変更",
+  "pexAvatarLabel": "{name} のビジュアル。タップして変更",
+  "@pexAvatarLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "pexPhoto": "写真",
+  "pexCharacter": "キャラクター",
+  "pexCharacterNote": "キャラクターはこの端末にのみ保存されます。",
+  "pexCharacterOpen": "キャラクターを選ぶ・作る",
+  "pexReset": "リセット",
+  "pexDone": "完了",
+  "pexDescription": "説明",
+  "pexDescriptionHint": "このプロフィールの用途",
+  "pexReasoning": "推論",
+  "pexSaveFailed": "保存できませんでした。接続を確認してもう一度お試しください。",
+  "pexDescriptionFailed": "説明を保存できませんでした。もう一度お試しください。",
+  "pexReasoningFailed": "推論レベルを変更できませんでした。",
+  "krhKeysNote": "Hermes は選んだプロファイルの .env にシークレットを保存します。一覧に値は表示されません。必要なときだけ個別に表示できます。",
+  "krhWriteOnly": "新しい値を入力すると現在の値が置き換わります。保存済みの値は「値を表示」をタップしたときだけ表示されます。",
+  "krhRevealAction": "値を表示",
+  "krhRevealConfirmTitle": "値を表示しますか？",
+  "krhRevealConfirmBody": "数秒間だけ画面に表示され、その後自動的に隠れます。",
+  "krhRevealConfirmAction": "表示",
+  "krhRevealAuthReason": "保存された値を表示するため、本人確認をしてください",
+  "krhRevealAuthFailed": "本人確認ができませんでした。値は非表示のままです。",
+  "krhRevealLoading": "値を取得しています…",
+  "krhRevealCountdown": "{seconds} 秒後に非表示",
+  "@krhRevealCountdown": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "krhRevealHide": "隠す",
+  "krhRevealCopied": "コピーしました。30 秒後にクリップボードから消去されます。",
+  "krhRevealHiddenHint": "値は非表示",
+  "krhRevealVisibleLabel": "値を表示中",
+  "krhRevealBlocked": "プライベートネットワーク外では http で値を表示できません。HTTPS を使ってください。",
+  "krhRevealTooMany": "リクエストが続きすぎています。数秒待ってください。",
+  "krhRevealNotFound": "この値はプロファイルの .env にもうありません。",
+  "krhRevealFailed": "値を取得できませんでした。",
+  "krhHttpPublicLine": "暗号化されていない http 接続です。送信内容は途中で読み取られる可能性があります。",
+  "krhPrivateHttpInfo": "プライベートネットワーク内の http 接続です。",
+  "tplSshRunInHint": "任意で、初期状態はオフです。ターミナルは通常のシェルです。Herdr または tmux を選ぶと、接続時に自動で起動し、ネットワークが切れてもプロセスが動き続けます。エージェントは専用のセクションにあります。",
+  "tplAgentsAddSshTitle": "SSH 接続を追加",
+  "tplAgentsAddSshBody": "エージェントは SSH でサーバーから読み取ります。接続を追加すると、ここに表示されます。",
+  "tplAgentsPickAgent": "エージェントを選ぶと画面が表示されます",
+  "tplAgentsServerLabel": "サーバー",
+  "tplAgentsProcTitle": "Herdr なしで実行中: {names}",
+  "@tplAgentsProcTitle": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "tplAgentsProcHint": "Herdr で開くと、ここから操作できます。",
+  "navAgents": "エージェント",
+  "navSettingsSearch": "設定を検索…",
+  "navGroupConnection": "接続",
+  "navGroupSecurityData": "セキュリティとデータ",
+  "navGroupLook": "外観",
+  "navGroupAlerts": "通知",
+  "navGroupServer": "サーバー",
+  "navGroupHelp": "ヘルプ",
+  "navSshStartHint": "SSHプロファイルを追加するとターミナルを使え、ドックにエージェントが表示されます",
+  "navMaintenanceData": "データ・バックアップ・クリーンアップ",
+  "navCharactersPets": "マスコットとキャラクター",
+  "navAppearanceMore": "ドック、言語など",
+  "navAlertsSub": "通知とバックグラウンド",
+  "navModelsProviders": "モデルとプロバイダー",
+  "navAboutHelp": "概要とヘルプ",
+  "navEditProfile": "プロファイルを編集",
+  "navProfileActive": "アクティブ",
+  "navActiveProfileNotice": "アクティブなプロファイル: {name}",
+  "navFollowsActiveHint": "アクティブなプロファイルに従います。開くとこのプロファイルがアクティブになります",
+  "navSwitchProfile": "プロファイルを切り替え",
+  "navSecIntegrations": "連携",
+  "navSecWork": "作業",
+  "navSecAgent": "エージェント",
+  "navAdvanced": "詳細",
+  "navAdvancedHint": "音声、キー、ログなど",
+  "navMcp": "MCP",
+  "navBotCard": "ボットカード",
+  "navBotCardSub": "現在の状況、ルーム、複製、削除",
+  "psfMakeActive": "アクティブにする",
+  "psfViewProfile": "プロファイルを表示",
+  "psfSearchHint": "プロファイルを検索",
+  "psfNoMatch": "一致するプロファイルがありません",
+  "bstGenerateButton": "生成",
+  "bstGenerateWhy": "エディターからプロフィールのAIへ安全に問い合わせる方法はまだありません。依頼するとチャットが丸ごと1ターン始まってしまうためです。今は手動でキャラクターを作成してください。回答の検証は準備済みです。",
+  "pghOpenDetail": "詳細を開く",
+  "pghFactVersion": "バージョン",
+  "pghFactOrigin": "提供元",
+  "pghFactState": "状態",
+  "pghFactAuth": "認証",
+  "pghFactTransport": "トランスポート",
+  "pghFactAddress": "アドレス",
+  "pghFactTools": "ツール",
+  "pghStateOn": "有効",
+  "pghStateOff": "無効",
+  "pghHubButton": "プラグインハブ",
+  "pghHubTitle": "プラグインハブ",
+  "pghHubSubtitle": "サーバーのプラグインカタログを探してインストール",
+  "pghHubIntro": "サーバーが選定したプラグインカタログです。各プラグインは無効の状態でインストールされます。必要なときに有効にしてください。",
+  "pghNoCatalogTitle": "プラグインカタログがありません",
+  "pghNoCatalogBody": "このサーバーはプラグインカタログを公開していません。リポジトリが分かっている場合は、拡張機能から Git または owner/repo でインストールできます。",
+  "pghUpdatesGroup": "利用可能な更新",
+  "pghInstalledDisabled": "無効の状態でインストールしました。必要なときに一覧から有効にしてください。",
+  "ssxTitleSecurity": "セキュリティ",
+  "ssxTitleChat": "チャット",
+  "ssxTitleAppearance": "外観、ドック、言語",
+  "ssxTitleData": "データとバックアップ",
+  "ssxTitleSystem": "メンテナンス",
+  "ssxTitleConnection": "接続",
+  "ssxTitleAbout": "このアプリについて",
+  "hdpSearchHint": "エージェントやフォルダを検索",
+  "hdpSearchClear": "検索をクリア",
+  "hdpFocused": "フォーカス中",
+  "hdpShellOnly": "シェルのみ",
+  "hdpWorkspaceAgents": "{count, plural, other{エージェント {count} 件}}",
+  "@hdpWorkspaceAgents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpWorkspaceMenu": "ワークスペース {name} のオプション",
+  "@hdpWorkspaceMenu": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpNoMatches": "検索に一致するものがありません。",
+  "hdpUpdatedNow": "たった今更新",
+  "hdpUpdatedSeconds": "{seconds} 秒前に更新",
+  "@hdpUpdatedSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpUpdatedAgo": "{duration}前に更新",
+  "@hdpUpdatedAgo": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpStarting": "起動中…",
+  "hdpStartingHint": "起動が遅いエージェントは最大30秒ほどかかります。ここで待つ必要はありません。",
+  "hdpStartFailedTitle": "{agent} が起動しませんでした",
+  "@hdpStartFailedTitle": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpStartFailedBody": "ワークスペースは作成されましたが、エージェントが時間内に現れませんでした。",
+  "hdpStartReason": "サーバーの応答",
+  "hdpRetry": "再試行",
+  "hdpOpenTerminal": "ターミナルで開く",
+  "hdpDismiss": "閉じる",
+  "hdpOpenWithHerdr": "herdr で開く",
+  "hdpNotInstalled": "未インストール",
+  "hdpInstallNote": "薄く表示されているものはサーバーにありません。サーバーにインストールしてから再確認してください。",
+  "hdpDetectFailed": "インストール済みのエージェントを確認できなかったため、すべて表示しています。",
+  "hdpNoneInstalled": "このサーバーには対応エージェントがインストールされていません。",
+  "hdpRefreshAgents": "再確認",
+  "hdpChooseFolder": "フォルダを選ぶ",
+  "hdpNameLabel": "ワークスペース名（任意）",
+  "hdpNameHint": "既定ではフォルダ名",
+  "hdpStart": "開始",
+  "hdpConfirmBody": "{server} の {folder} で {agent} を起動します。",
+  "@hdpConfirmBody": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      },
+      "folder": {
+        "type": "String"
+      },
+      "server": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpFolderTitle": "フォルダ",
+  "hdpFolderHome": "ホーム",
+  "hdpFolderFavorites": "ピン留め",
+  "hdpFolderRunning": "エージェントが動いている場所",
+  "hdpFolderPin": "フォルダをピン留め",
+  "hdpFolderUnpin": "ピン留めを外す",
+  "hdpFolderFilter": "フォルダを絞り込む",
+  "hdpFolderEmpty": "ここにフォルダはありません。",
+  "hdpFolderGit": "Git リポジトリ",
+  "hdpFolderCreate": "ここにフォルダを作成",
+  "hdpFolderNameLabel": "フォルダ名",
+  "hdpFolderUse": "このフォルダを選ぶ",
+  "hdpFolderUp": "上のフォルダ",
+  "hdpFolderHidden": "隠しフォルダの表示を切り替え",
+  "hdpFolderUnreadable": "このフォルダを読み込めませんでした。",
+  "hdpFolderMore": "最初の {count} 件を表示しています。",
+  "@hdpFolderMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpFolderAdvanced": "パスを入力",
+  "hdpFolderCheck": "このパスを使う",
+  "hdpFolderNotFound": "そのパスはサーバー上のフォルダではありません。",
+  "hdpFolderNameEmpty": "名前を入力してください。",
+  "hdpFolderNameSlash": "名前に / や \\ は使えません。",
+  "hdpFolderNameDots": "名前を . や .. にはできません。",
+  "hdpFolderNameControl": "名前に制御文字が含まれています。",
+  "hdpFolderNameLong": "名前が長すぎます。",
+  "hdpFolderCreateFailed": "フォルダを作成できませんでした。",
+  "hdpFolderPathLabel": "パス: {path}",
+  "@hdpFolderPathLabel": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "hdpJumpToEnd": "最新へ",
+  "hdpBlockedBody": "応答待ちです。確定する前に画面を確認してください。Enter は選択中の項目を選び、それが「はい」とは限りません。",
+  "hdpKeyEnterMarked": "Enter（選択中）",
+  "hdpKeyEscCancel": "Esc（キャンセル）",
+  "hdpTerminalLiveTitle": "ターミナルはすでに開いています",
+  "hdpTerminalLiveBody": "コマンドはそのターミナルに入力されます。Herdr やエディタなどが動いていると、その文字列を受け取ります。コピーすることもできます。",
+  "hdpTerminalType": "入力する",
+  "hdpTerminalCopy": "コマンドをコピー",
+  "hdpSessionsTitle": "セッション",
+  "hdpTabShell": "シェル",
+  "hdpTabTmux": "Tmux",
+  "hdpTabHerdr": "Herdr",
+  "hdpTabRecent": "最近",
+  "hdpShellRow": "通常のシェル",
+  "hdpShellBody": "ターミナルはそのままです。",
+  "hdpNoSessions": "セッションはまだありません。",
+  "hdpNoRecent": "今も存在する最近の項目はありません。",
+  "hdpSessionWindows": "{count, plural, other{ウィンドウ {count} 個}}",
+  "@hdpSessionWindows": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hdpSessionInUse": "使用中",
+  "hdpSessionRunning": "実行中",
+  "hdpSessionStopped": "停止中",
+  "hdpSessionDefault": "既定のセッション",
+  "hdpSessionsFailed": "セッションを読み込めませんでした。",
+  "lasMenuLearn": "スキルを覚えさせる",
+  "lasTitle": "スキルを覚えさせる",
+  "lasSubmit": "覚えさせる",
+  "lasFieldLabel": "エージェントに何を覚えさせますか？",
+  "lasFieldHelp": "URL やリポジトリを貼り付けるか、タスクを説明してください。",
+  "lasAgentNote": "プロファイルのエージェントが自分のツールで、新しいチャットで行います。時間がかかり、トークンを消費することがあります。このアプリは何もダウンロードしません。",
+  "lasErrEmpty": "エージェントに覚えさせる内容を入力してください。",
+  "lasErrTooLong": "長すぎます。要点だけにしてください。",
+  "lasLinkHttp": "暗号化されていない http のリンクがあります。https をおすすめします。開く前に確認するようエージェントに依頼します。",
+  "lasLinkOdd": "一般的でないスキーム（https 以外）のリンクがあります。開く前に確認するようエージェントに依頼します。",
+  "lasChatTitle": "スキルを覚えさせる",
+  "pfuManageProfiles": "プロファイルを管理",
+  "pfuManageProfilesSub": "サーバーのプロファイルを作成・複製・名前変更・削除します",
+  "pfuMakeActive": "アクティブにする",
+  "pfuOpenChat": "チャットを開く",
+  "pfuClone": "複製",
+  "pfuOpenHint": "プロファイルを開く",
+  "navAllSettings": "すべての設定",
+  "navAllSettingsSub": "音声、ドック、バックアップなどすべての設定",
+  "ssxAllBadge": "全設定",
+  "ssxAllSub": "すべてをまとめた一覧",
+  "exuTabsLabel": "セクション",
+  "exuAddTooltip": "追加または探す",
+  "exuMenuSkillHub": "スキルハブを探す",
+  "exuMenuPluginHub": "プラグインハブを探す",
+  "exuMenuInstallSource": "Git または owner/repo からインストール",
+  "exuMenuMcpCatalog": "MCPカタログを探す",
+  "exuMoreTools": "ツール",
+  "exuMoreServer": "Webhook とサーバーの状態",
+  "exuHubSkillTitle": "スキルハブ",
+  "exuToolsScopeNote": "ツールグループは単一のプロファイルではなく、サーバー全体に適用されます。",
+  "exuSearchSkills": "スキルを検索",
+  "exuSearchPlugins": "プラグインを検索",
+  "exuSearchMcp": "MCPサーバーを検索",
+  "agfTrayTitle": "対応が必要",
+  "agfReasonQuestion": "質問",
+  "agfReasonApproval": "承認",
+  "agfReasonWaiting": "待機中",
+  "agfStateAnswer": "回答が必要",
+  "agfStateWorking": "作業中…",
+  "agfStateFree": "待機",
+  "agfStateDone": "完了",
+  "agfDoneTitle": "完了 ({count})",
+  "@agfDoneTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfDoneExpand": "完了を表示",
+  "agfDoneCollapse": "完了を非表示",
+  "agfServerPick": "サーバーを切り替え",
+  "agfCopyPath": "パスをコピー",
+  "agfLaunchedHere": "↳ Console から起動",
+  "agfAskCommand": "コマンド",
+  "agfOptionSemantics": "{number} を選択: {label}",
+  "@agfOptionSemantics": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      },
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "agfSending": "送信中…",
+  "agfSent": "送信しました ✓",
+  "agfSendFailed": "送信できませんでした · 再試行",
+  "agfAskKeyHint": "選んだ番号のキーだけを送信します。",
+  "agfKeysMenu": "クイックキー",
+  "agfShellsTitle": "ターミナルのみ ({count})",
+  "@agfShellsTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfShowTerminal": "ターミナル画面を表示",
+  "agfShowConversation": "会話を表示",
+  "agfNoTranscript": "ターミナル画面: このエージェントの会話を確実には特定できませんでした。",
+  "agfLoadEarlier": "以前のメッセージを読み込む",
+  "agfThinking": "思考",
+  "agfStepsMore": "{count, plural, other{他 {count} ステップ}}",
+  "@agfStepsMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agfStepRunning": "実行中",
+  "agfStepDone": "完了",
+  "agfStepFailed": "失敗",
+  "nrdAlertsTitle": "通知する内容",
+  "nrdMasterTitle": "通知を表示",
+  "nrdMasterSub": "すべての通知の総合スイッチ",
+  "nrdQuestionsTitle": "質問",
+  "nrdQuestionsSub": "Hermes が質問して返答を待っているとき",
+  "nrdDoneTitle": "完了",
+  "nrdDoneSub": "Hermes が返答を終えたとき",
+  "pekCronSwitchTitle": "Cron",
+  "pekCronSwitchSub": "予定されたジョブが完了または失敗したとき",
+  "pekKanbanSwitchTitle": "Kanban",
+  "pekKanbanSwitchSub": "カードが完了、ブロック、または対応が必要になったとき",
+  "cswRailLabel": "エージェント",
+  "cswAgentFace": "{agent}、{count, plural, one {1件の会話} other {{count}件の会話}}",
+  "cswAgentCurrent": "現在: {title}",
+  "cswChatCount": "{count, plural, one {1件のチャット} other {{count}件のチャット}}",
+  "cswChatCountMore": "{count}+件のチャット",
+  "cswAgentFaceMore": "{agent}、{count}+件の会話",
+  "cswNoChats": "読み込まれた会話はありません",
+  "cswNewChatWith": "{agent}と新しい会話",
+  "cswSeeMore": "さらに表示（{count}）",
+  "cswClosePanel": "エージェントの会話を閉じる",
+  "cswCurrentChat": "開いている会話",
+  "qrcConnecting": "接続中…",
+  "nacLinkTitle": "{name} を接続",
+  "@nacLinkTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkPreparing": "サインインを準備しています…",
+  "nacLinkIntro": "ブラウザで {name} が開きます。コードを求められたら、次のコードを入力してください:",
+  "@nacLinkIntro": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkIntroNoBrowser": "ブラウザで {name} を開き、次のコードを入力してください:",
+  "@nacLinkIntroNoBrowser": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkCodeLabel": "あなたのコード",
+  "nacLinkCopyCode": "コードをコピー",
+  "nacLinkCodeCopied": "コードをコピーしました",
+  "nacLinkExpiresIn": "コードの有効期限: あと {time}",
+  "@nacLinkExpiresIn": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkOpen": "{name} を開く",
+  "@nacLinkOpen": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkOpenAgain": "もう一度開く",
+  "nacLinkOpenFailed": "ブラウザを開けませんでした。コードをコピーして別の端末からサインインしてください。",
+  "nacLinkAddressUnvetted": "アプリは {name} の公式サイト上のページしか開きません。アクセスする前にこのアドレスを確認してください。",
+  "@nacLinkAddressUnvetted": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkCopyAddress": "アドレスをコピー",
+  "nacLinkAddressCopied": "アドレスをコピーしました",
+  "nacCardExpired": "セッションの有効期限が切れました。再接続してください",
+  "nacLinkCheckNow": "今すぐ確認",
+  "nacLinkWaiting": "ブラウザでの承認を待っています…",
+  "nacLinkApprovedTitle": "{name} を接続しました",
+  "@nacLinkApprovedTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkApprovedAs": "{email} として接続済み",
+  "@nacLinkApprovedAs": {
+    "placeholders": {
+      "email": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkApprovedBody": "そのモデルがセレクターで使えるようになりました。",
+  "nacLinkDone": "完了",
+  "nacLinkDeniedTitle": "アクセスが拒否されました",
+  "nacLinkDeniedBody": "ブラウザでアクセスが許可されませんでした。もう一度お試しください。",
+  "nacLinkExpiredTitle": "コードの有効期限が切れました",
+  "nacLinkExpiredBody": "新しいコードを取得し、数分以内にブラウザで完了してください。",
+  "nacLinkCancelledTitle": "サインインをキャンセルしました",
+  "nacLinkCancelledBody": "何も保存されていません。",
+  "nacLinkFailedTitle": "サインインが完了しませんでした",
+  "nacLinkFailedBody": "サーバーが完了できませんでした。もう一度お試しください。",
+  "nacLinkFailedRetryAfter": "サービスが待機を求めています。{time} 後にもう一度お試しください。",
+  "@nacLinkFailedRetryAfter": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "nacLinkFailedNoRetry": "このサーバーは現在サインインを完了できません。",
+  "nacLinkOfflineTitle": "サーバーに接続できません",
+  "nacLinkOfflineBody": "ネットワークを確認して、もう一度お試しください。",
+  "nacLinkUnsupportedTitle": "このサーバーでは利用できません",
+  "nacLinkUnsupportedBody": "この Hermes のバージョンはアプリからアカウントを接続できません。サーバーを更新するか、サーバーのターミナルから接続してください。",
+  "nacLinkReadOnlyTitle": "読み取り専用の接続",
+  "nacLinkReadOnlyBody": "この接続からはサインインやアカウントの変更はできません。",
+  "nacLinkTryAgain": "もう一度試す",
+  "nacDurationSeconds": "{count} 秒",
+  "@nacDurationSeconds": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nacDurationMinutes": "{count} 分",
+  "@nacDurationMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nacCardPitch": "Nous Portal アカウントでサインインすると、この Hermes でそのモデルを使えます。接続はサーバーに保存されます。",
+  "nacCardConnect": "Nous Portal で接続",
+  "nacCardConnected": "接続済み",
+  "nacCardConnectedTier": "接続済み · {tier}",
+  "@nacCardConnectedTier": {
+    "placeholders": {
+      "tier": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardValidUntil": "{date} まで有効",
+  "@nacCardValidUntil": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardNotConnected": "未接続",
+  "nacCardFreeTier": "無料枠、アカウントなし",
+  "nacCardUnsupported": "このサーバーでは利用できません",
+  "nacCardUnsupportedBody": "この Hermes のバージョンはアプリからのアカウント接続に対応していません。",
+  "nacCardManage": "アカウントのオプション",
+  "nacCardReconnect": "アカウントを切り替える",
+  "nacCardDisconnect": "接続を解除",
+  "nacCardDisconnectTitle": "{name} の接続を解除しますか?",
+  "@nacCardDisconnectTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardDisconnectBody": "サーバーに保存された資格情報が削除されます。アカウントを再接続するまで、そのモデルは使えません。",
+  "nacCardDisconnected": "{name} の接続を解除しました",
+  "@nacCardDisconnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardStillConnected": "サーバーはまだ {name} を接続済みと表示しています。",
+  "@nacCardStillConnected": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacCardUnlockReason": "{name} アカウントの接続を解除",
+  "@nacCardUnlockReason": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "nacScreenTitle": "Nous Portal アカウント",
+  "nacScreenBody": "Nous Portal アカウントを使うと、この Hermes はあなたのサブスクリプションのモデルを使います。資格情報はスマートフォンではなくサーバーに保存されます。",
+  "nacScreenLoadFailed": "アカウントの状態を読み取れませんでした。",
+  "nacScreenManageModels": "モデルとプロバイダー",
+  "nacSettingsSubtitle": "アカウントを接続または解除",
+  "nacOnboardingOffer": "Nous Portal アカウントを接続してそのモデルを使う",
+  "nacSheetConnect": "Nous Portal を接続",
+  "nacSheetNoAccountHint": "利用できるモデルがありません。アカウントを接続して Nous Portal のモデルを使ってください。",
+  "nacContinueWithNous": "Nous で続行",
+  "nacContinueWithProvider": "{name} で続行",
+  "@nacContinueWithProvider": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpAhora": "いま",
+  "lwpChats": "チャット",
+  "lwpCron": "Cron",
+  "lwpTasks": "タスク",
+  "lwpNewChat": "新しい会話",
+  "lwpNewChatLine": "入力または音声",
+  "lwpNewChatSetup": "先にHermesに接続",
+  "lwpVoice": "音声",
+  "lwpAgent": "Hermes",
+  "lwpNeedsPermission": "許可が必要です",
+  "lwpAsksYou": "質問があります",
+  "lwpNeedsYou": "あなたが必要です",
+  "lwpAllow": "許可",
+  "lwpDeny": "拒否",
+  "lwpOpen": "開く",
+  "lwpWorking": "作業中",
+  "lwpThinking": "考え中",
+  "lwpResponding": "返信中",
+  "lwpStartedAt": "{time}から",
+  "@lwpStartedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpCalmTitle": "待っている人はいません",
+  "lwpCalmEnd": "静かです",
+  "lwpLastFinished": "最新: {title} · {time}",
+  "@lwpLastFinished": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpOffline": "オフライン",
+  "lwpOfflineTitle": "{instance}が応答しません",
+  "@lwpOfflineTitle": {
+    "placeholders": {
+      "instance": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpOfflineTitleGeneric": "サーバーが応答しません",
+  "lwpLastKnown": "最終確認",
+  "lwpSetupTitle": "Hermesを設定",
+  "lwpSetupLine": "インスタンスに接続すると、誰があなたを待っているかここに表示されます。",
+  "lwpSetupButton": "はじめる",
+  "lwpChatsWaiting": "{count, plural, =0{すべて確認済み} other{{count}件が待機中}}",
+  "@lwpChatsWaiting": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpChatsRunning": "{count, plural, other{{count}件が進行中}}",
+  "@lwpChatsRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpChatsEmptyTitle": "チャットはまだありません",
+  "lwpChatsEmptyLine": "接続するとここに表示されます。",
+  "lwpChatWaits": "待機中",
+  "lwpChatWriting": "入力中…",
+  "lwpCronEmptyTitle": "予定はありません",
+  "lwpCronEmptyLine": "アプリから最初の予定を作成。",
+  "lwpCronPaused": "一時停止",
+  "lwpCronFailed": "失敗",
+  "lwpCronRunning": "実行中",
+  "lwpCronNoNext": "次回の予定なし",
+  "lwpInMinutes": "{count, plural, other{{count}分後}}",
+  "@lwpInMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpInHours": "{hours}時間{minutes}分後",
+  "@lwpInHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpInDays": "{count, plural, other{{count}日後}}",
+  "@lwpInDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpToday": "今日",
+  "lwpTomorrow": "明日",
+  "lwpYesterday": "昨日",
+  "lwpDayTime": "{day} · {time}",
+  "@lwpDayTime": {
+    "placeholders": {
+      "day": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpAgoMinutes": "{count, plural, =0{たった今} other{{count}分前}}",
+  "@lwpAgoMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpAgoHours": "{count, plural, other{{count}時間前}}",
+  "@lwpAgoHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpTasksEmptyTitle": "ボードはありません",
+  "lwpTasksEmptyLine": "接続すると表示されます。",
+  "lwpTasksRunning": "進行中",
+  "lwpTasksAttention": "待機中",
+  "lwpTasksPending": "未着手",
+  "lwpTasksNext": "次 · {title}",
+  "@lwpTasksNext": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpTasksInProgressUnit": "進行中",
+  "lwpTasksPendingCount": "{count, plural, other{未着手{count}件}}",
+  "@lwpTasksPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpTasksAttentionCount": "{count, plural, other{待機中{count}件}}",
+  "@lwpTasksAttentionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpA11yNeeds": "{name}が許可を求めています: {what}",
+  "@lwpA11yNeeds": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yAsks": "{name}からの質問: {what}",
+  "@lwpA11yAsks": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yWorking": "{name}が作業中: {what}",
+  "@lwpA11yWorking": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "what": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOffline": "{time}からオフライン",
+  "@lwpA11yOffline": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11ySetup": "Hermesを設定すると誰が待っているかここに表示されます",
+  "lwpA11yNextJob": "次の予定: {name}、{when}",
+  "@lwpA11yNextJob": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yChats": "{count, plural, =0{会話はありません} other{{count}件の会話。最初は{first}}}",
+  "@lwpA11yChats": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "first": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yTasks": "タスク: 進行中{running}件、待機中{attention}件、未着手{pending}件",
+  "@lwpA11yTasks": {
+    "placeholders": {
+      "running": {
+        "type": "int"
+      },
+      "attention": {
+        "type": "int"
+      },
+      "pending": {
+        "type": "int"
+      }
+    }
+  },
+  "lwpA11yOpenChat": "{title}を開く",
+  "@lwpA11yOpenChat": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOpenJob": "予定{name}を開く",
+  "@lwpA11yOpenJob": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yNewChat": "Hermesと新しい会話",
+  "lwpA11yVoice": "新しい音声会話",
+  "lwpA11yAllow": "{name}を許可",
+  "@lwpA11yAllow": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yDeny": "{name}の要求を拒否",
+  "@lwpA11yDeny": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "lwpA11yOpenApp": "Hermes Consoleを開く",
+  "nacNousWriteAddress": "アドレスを手入力する",
+  "nacNousWaitingAddress": "アドレスを待っています…",
+  "nacNousOpenPortal": "Nous Portal を開く",
+  "nacNousPasteAddress": "アドレスを貼り付け",
+  "nacNousPasteNone": "コピーされた Nous Cloud のアドレスがありません",
+  "subagentUiStatusUnconfirmed": "未確認",
+  "cronNoticeAutomatic": "自動",
+  "cronNoticeAll": "すべて",
+  "cronNoticeFailuresOnly": "失敗のみ",
+  "cronNoticeOff": "オフ",
+  "cronNoticeAutomaticHint": "自動ではすべての失敗を通知し、成功の通知はジョブごとに60分に1回までです。",
+  "cronNoticeInherit": "設定のモードに従う",
+  "cronNoticeAutomaticRepliesHint": "「すべて」のみ、内部処理によるターンへの応答も通知します。失敗や確認を求める応答は引き続き通知します。",
+  "biComposerInterruptHint": "中断して送信…",
+  "biComposerSteerHint": "エージェントに指示…",
+  "biQueueThisMessageHint": "長押しでこのメッセージをキューに追加",
+  "biInterruptFailedQueued": "中断できませんでした。メッセージはキューに残っています",
+  "subagentPillAgents": "エージェント",
+  "subagentPillWorking": "作業中",
+  "subagentPillRunningTool": "{tool} を実行中",
+  "@subagentPillRunningTool": {
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "exuToolGroupsTitle": "ツールグループ",
+  "exuToolGroupsSubtitle": "エージェントが使えるHermesの組み込み機能",
+  "exuBuiltinToolsEmpty": "利用可能な組み込みツールグループはありません",
+  "exuBuiltinToolsEmptyBody": "MCPサーバーとそのツールは、拡張機能のMCPタブで管理します。",
+  "turnLineEdited": "{count, plural, other{ファイルを{count}件編集}}",
+  "turnLineRead": "{count, plural, other{ファイルを{count}件読み取り}}",
+  "turnLineRan": "{count, plural, other{コマンドを{count}件実行}}",
+  "turnLineSearchedFiles": "{count, plural, other{ファイル内を{count}回検索}}",
+  "turnLineSearchedWeb": "{count, plural, other{ウェブを{count}回検索}}",
+  "turnLineOpened": "{count, plural, other{ページを{count}件開く}}",
+  "turnLineUsedTools": "{count, plural, other{ツールを{count}件使用}}",
+  "turnLineFailed": "{count, plural, other{{count}件失敗}}",
+  "turnLineAgents": "{count, plural, other{エージェント{count}件}}",
+  "turnLineMore": "他{count}件",
+  "turnLineThought": "思考",
+  "turnLineDelegated": "{count, plural, other{タスクを{count}件委任}}",
+  "turnLineReadCalls": "{count, plural, other{{count}回読み取り}}",
+  "turnLineEditCalls": "{count, plural, other{{count}回編集}}",
+  "turnLineExecutedCode": "{count, plural, other{コードを{count}回実行}}",
+  "turnLineSteps": "{count}ステップ",
+  "@turnLineSteps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msvModelLoading": "モデルを読み込み中…",
+  "msvModelUnavailable": "モデルを利用できません",
+  "msvProviderNoUsage": "このプロバイダーの使用状況データはありません",
+  "msvUsageAvailable": "利用枠に余裕があります",
+  "msvUsageNearLimit": "上限に近づいています",
+  "msvCapabilityUnavailable": "このモデルでは利用できません",
+  "queueSheetTitle": "送信待ち",
+  "queuePillCount": "{count} 件送信待ち",
+  "@queuePillCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "queuePillPaused": "一時停止中",
+  "activitySheetTitle": "アクティビティ",
+  "chatDelegatesSheetLive": "バックグラウンド · {clock}",
+  "chatDelegatesSheetDone": "委任済み · {clock}",
+  "delegatedCapsuleRunning": "{count, plural, other{{count} 件のサブエージェントに委任 · {clock} · {done}/{count}}}",
+  "delegatedCapsuleDone": "{count, plural, other{✓ {count} 件のサブエージェントが完了 · {clock}}}",
+  "delegatedCapsuleFinished": "{count, plural, other{✓ {count} 件のサブエージェントが完了}}",
+  "delegatedCapsuleRunningIdle": "{count, plural, other{{count} 件のサブエージェントを実行中}}",
+  "delegatedChildNoData": "データなし",
+  "activityProcessesTitle": "バックグラウンドプロセス",
+  "activityAgentCount": "エージェント {count} 件",
+  "@activityAgentCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "activityProcessCount": "プロセス {count} 件",
+  "@activityProcessCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "activityStop": "停止",
+  "activityWaitingAgents": "{count} 件のサブエージェントを待機中",
+  "@activityWaitingAgents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "adkTitle": "実行の許可",
+  "adkOnce": "今回のみ許可",
+  "adkSession": "このセッション中",
+  "adkAlways": "この種類のコマンドを常に許可",
+  "adkViewFull": "全文を表示",
+  "adkAlwaysConfirm": "このプロファイルでこの種類のコマンドを常に許可",
+  "adkSending": "決定を送信中…",
+  "adkSendError": "決定を送信できませんでした。再試行してください。",
+  "adkWaiting": "許可を待っています",
+  "adkAllowed": "許可済み",
+  "adkDenied": "拒否済み",
+  "adkAlwaysHint": "このプロファイルのすべてのチャットでこの種類のコマンドを許可します。許可はサーバーに保存されます。",
+  "batTitle": "バッテリー",
+  "batStateUnrestricted": "制限なし",
+  "batStateOptimized": "最適化",
+  "batStateRestricted": "バックグラウンドで制限",
+  "batOptimizedBody": "スマホが待機中、Androidは通知を遅らせることがあります。Samsungでは バッテリー → スリープ中のアプリ も確認してください。すぐに届くようにするには「制限なし」を選びます。",
+  "batRestrictedBody": "Androidがこのアプリをバックグラウンドで制限しています。通知が届かない可能性があります。アプリのバッテリー使用量で制限を解除してください。",
+  "batOpenSettings": "バッテリー設定を開く",
+  "batPromptTitle": "バックグラウンドでもConsoleの接続を維持",
+  "batPromptBody": "Consoleを離れると、Androidが接続を切断することがあります。バッテリー設定で、使用制限を解除してください。",
+  "batPromptNotNow": "今はしない",
+  "batPromptRestore": "ホームに案内を再表示",
+  "batPushBatteryNote": "Androidが通知を遅らせたり、バックグラウンドで接続を切断したりすることがあります。バッテリー設定で、使用制限を解除してください。この手順は任意です。",
+  "chatLiveDelegating": "{count, plural, other{{count} 件のタスクを委任中}}",
+  "chatLiveWaitingDelegates": "サブエージェントを待機中",
+  "chatLiveCommands": "{count} 件のコマンド",
+  "chatLiveAgents": "{count} 個のサブエージェント",
+  "chatLiveReady": "{count} 件完了",
+  "chatLiveSteps": "{count} ステップ",
+  "assistRowTitle": "デジタルアシスタント",
+  "assistRowOn": "デジタルアシスタントに設定済み：呼び出すと音声の準備ができた新しいチャットが開きます",
+  "assistRowOff": "Console をデジタルアシスタントに選ぶと、呼び出し時に音声入力つきの新しいチャットが開きます。画面は読み取りません。",
+  "subagentHistoricalUnavailable": "保存されたチャットには、これらのサブエージェントの詳細が残っていません。",
+  "lflHapticsTitle": "触覚フィードバック",
+  "lflHapticsSubtitle": "タップ、送信、ターン完了のときに軽く振動します。システムのタッチフィードバックがオフの場合は振動しません",
+  "notifBgTitle": "バックグラウンドで待ち受け",
+  "notifBgSub": "アプリを閉じても通知を受信 · 常駐通知を使用",
+  "notifBgActive": "無効にするまで有効 · エージェントのイベントを待ち受け中",
+  "notifListenerStartFailed": "バックグラウンド待ち受けを開始できませんでした。再試行してください。",
+  "notifBgRestartNotice": "最近使ったアプリからHermesを除いても待ち受けは止まりません。強制停止すると、再びアプリを開くまで停止します。",
+  "au1215BgNeededForAutomation": "cronとKanbanの通知はこれを有効にした場合のみ届きます。",
+  "notifFixedCardTitle": "固定通知",
+  "notifFixedCardSub": "Androidの「Hermesに接続中」を最小化"
 }

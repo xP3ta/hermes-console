@@ -105,10 +105,31 @@ class HermesSelectField<T> extends StatelessWidget {
         ),
       );
     } else {
+      // Drawn as a field, it shows a field's resting boundary: the control
+      // border (3:1), as [HermesField] paints it. The theme's resting border
+      // (the divider at 55 % on the fill) was ~1.1:1, so «Método» beside
+      // outlined fields read as a grey block with no edge.
+      final given = decoration?.enabledBorder ?? decoration?.border;
+      final InputBorder? resting = given != null
+          ? null
+          : theme.inputDecorationTheme.enabledBorder is UnderlineInputBorder
+          ? UnderlineInputBorder(
+              borderSide: BorderSide(color: colors.controlBorder),
+            )
+          : OutlineInputBorder(
+              borderRadius: BorderRadius.circular(
+                theme.hermesComponents.profile.shape.fieldRadius,
+              ),
+              borderSide: BorderSide(color: colors.controlBorder),
+            );
       field = InputDecorator(
         decoration: (decoration ?? const InputDecoration())
             .applyDefaults(theme.inputDecorationTheme)
-            .copyWith(enabled: enabled, suffixIcon: arrow),
+            .copyWith(
+              enabled: enabled,
+              suffixIcon: arrow,
+              enabledBorder: resting,
+            ),
         isEmpty: current == null && hint == null,
         child: text,
       );
