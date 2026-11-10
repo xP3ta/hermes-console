@@ -124,8 +124,11 @@ SPDX-License-Identifier = "CC0-1.0"
 [[annotations]]
 path = "lib/core/widgets/link_brand_glyphs.dart"
 precedence = "override"
-SPDX-FileCopyrightText = "Simple Icons contributors"
-SPDX-License-Identifier = "CC0-1.0"
+SPDX-FileCopyrightText = [
+  "Simple Icons contributors",
+  "Copyright (c) 2025 Nous Research",
+]
+SPDX-License-Identifier = "CC0-1.0 AND MIT"
 
 # Provider-logo path data copied from LobeHub Icons
 # (@lobehub/icons-static-svg@1.95.1, MIT); see ASSET_PROVENANCE.md and
