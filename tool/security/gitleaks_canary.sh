@@ -30,7 +30,12 @@ random_alnum() {
 print("".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(int(sys.argv[1]))))' "$1"
 }
 token="ghp""_$(random_alnum 36)"
-api_key="$(random_alnum 32)"
+# generic-api-key ignores a value with no digit or with one of its stopwords
+# inside (words such as "admin", or "md5"), so a fully random key was missed
+# about once in 70 runs. Letters and digits taking turns rule both out and
+# keep the value random.
+api_key="$(python3 -c 'import secrets, string
+print("".join(secrets.choice(string.digits if i % 2 else string.ascii_letters) for i in range(32)))')"
 printf 'GITHUB_TOKEN=%s\n' "$token" >"$work/scan/canary.env"
 printf "const token = '%s';\nconst apiKey = '%s';\n" "$token" "$api_key" \
   >"$work/scan/test/canary_test.dart"
