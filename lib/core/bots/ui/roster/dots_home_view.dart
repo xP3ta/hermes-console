@@ -132,14 +132,26 @@ class _DotsHomeViewState extends State<DotsHomeView> {
   @override
   void didUpdateWidget(covariant DotsHomeView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // By name, not by count: a refresh can swap one bot for another. Not by
+    // identity either: the list is rebuilt on every build of the parent.
     if (!identical(oldWidget.screenAccess, widget.screenAccess) ||
-        oldWidget.bots.length != widget.bots.length) {
+        !_sameProfiles(oldWidget.bots, widget.bots)) {
       _askScreens();
     }
     if (!identical(oldWidget.searchOpen, widget.searchOpen)) {
       oldWidget.searchOpen.removeListener(_onSearchToggle);
       widget.searchOpen.addListener(_onSearchToggle);
     }
+  }
+
+  static bool _sameProfiles(List<BotRosterEntry> a, List<BotRosterEntry> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (botScreenProfile(a[i].profile) != botScreenProfile(b[i].profile)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void _onSearchToggle() {
