@@ -70,11 +70,12 @@ jobs:
           git -C "$RUNNER_TEMP/scan" init -q
           git -C "$RUNNER_TEMP/scan" fetch -q --no-tags "$GITHUB_WORKSPACE" HEAD
           git -C "$RUNNER_TEMP/scan" checkout -q --detach FETCH_HEAD
+          echo "history under scan: $(git -C "$RUNNER_TEMP/scan" rev-list --count HEAD) commits, tip $(git -C "$RUNNER_TEMP/scan" rev-parse --short HEAD)"
           cp "$GITHUB_WORKSPACE/.gitleaks.toml" "$RUNNER_TEMP/scan/.gitleaks.toml" 2>/dev/null || true
           docker run --rm \
             -v "$RUNNER_TEMP/scan:/repo:ro" \
             "$GITLEAKS_IMAGE" \
-            git /repo --config /repo/.gitleaks.toml --no-banner --redact=100
+            git /repo --config /repo/.gitleaks.toml --no-banner --redact=100 --verbose
 
       - name: Scan verified and unknown secrets with TruffleHog
         run: |
