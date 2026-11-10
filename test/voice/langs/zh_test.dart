@@ -25,7 +25,7 @@ void main() {
     expect(language.systemTtsOnly, isFalse);
     expect(language.commands.wordSeparated, isFalse);
     expect(language.messages.keys.toSet(), voiceLanguageFor('en').messages.keys.toSet());
-    expect(language.messages, hasLength(11));
+    expect(language.messages, hasLength(13));
     for (final message in language.messages.values) {
       expect(message, matches(RegExp(r'[\u4e00-\u9fff]')));
     }

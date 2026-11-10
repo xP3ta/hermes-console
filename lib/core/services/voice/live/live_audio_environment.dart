@@ -13,14 +13,21 @@ enum LiveAudioEvent {
 /// observers; cancelling the last listener stops them.
 const EventChannel _liveAudioChannel = EventChannel('hermes/live_audio_events');
 
-Stream<LiveAudioEvent> platformLiveAudioEvents() => _liveAudioChannel
-    .receiveBroadcastStream()
-    .map(
-      (event) => switch (event) {
-        'focusLost' => LiveAudioEvent.focusLost,
-        'routeChanged' => LiveAudioEvent.routeChanged,
-        _ => null,
-      },
-    )
-    .where((event) => event != null)
-    .cast<LiveAudioEvent>();
+///
+/// One stream is shared by every listener (GPT-Live and the chained engine):
+/// a second `receiveBroadcastStream` on the same channel would take over the
+/// first one's handler, and cancelling either would stop both.
+Stream<LiveAudioEvent> platformLiveAudioEvents() =>
+    _sharedLiveAudioEvents ??= _liveAudioChannel
+        .receiveBroadcastStream()
+        .map(
+          (event) => switch (event) {
+            'focusLost' => LiveAudioEvent.focusLost,
+            'routeChanged' => LiveAudioEvent.routeChanged,
+            _ => null,
+          },
+        )
+        .where((event) => event != null)
+        .cast<LiveAudioEvent>();
+
+Stream<LiveAudioEvent>? _sharedLiveAudioEvents;

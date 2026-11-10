@@ -15,6 +15,15 @@ final class LiveMicrophoneDeniedException implements Exception {
   String toString() => 'LiveMicrophoneDeniedException';
 }
 
+/// The microphone is held by something else (a call, another app) and could
+/// not be opened for the session.
+final class LiveMicrophoneBusyException implements Exception {
+  const LiveMicrophoneBusyException();
+
+  @override
+  String toString() => 'LiveMicrophoneBusyException';
+}
+
 /// What `VoiceLiveSession` needs from a WebRTC stack, and nothing more.
 ///
 /// The production adapter (`FlutterWebRtcTransport`) is the only file that

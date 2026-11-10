@@ -28,7 +28,7 @@ void main() {
     expect(language.systemTtsOnly, isFalse);
     expect(language.messages.keys.toSet(),
         voiceLanguageFor('en').messages.keys.toSet());
-    expect(language.messages, hasLength(11));
+    expect(language.messages, hasLength(13));
     for (final key in language.messages.keys) {
       expect(language.message(key), isNot(voiceLanguageFor('en').message(key)),
           reason: key);

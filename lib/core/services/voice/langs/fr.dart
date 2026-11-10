@@ -110,6 +110,9 @@ const _frVoiceMessages = <String, String>{
   'responseRequired': 'Hermes attend votre réponse. Ouvrez l’application pour continuer.',
   'stopNotSaved': 'Impossible d’enregistrer l’arrêt en toute sécurité. Réessayez.',
   'recognitionUnavailable': 'La reconnaissance vocale n’est pas prête ({status}).',
+  'providerError': 'Le fournisseur de voix a répondu : {detail}',
+  'noAudioHeard':
+      'On n’entend rien. Le micro est-il celui de la voiture ou d’un casque ?',
 };
 
 // The shared policy only partially folds French accents. Accept both forms.

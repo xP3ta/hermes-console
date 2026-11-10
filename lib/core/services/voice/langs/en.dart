@@ -174,7 +174,10 @@ const _enVoiceMessages = <String, String>{
   "approvalRequired": "Hermes needs your approval. Open the app to review it.",
   "responseRequired": "Hermes needs your response. Open the app to continue.",
   "stopNotSaved": "Couldn't save Stop safely. Try again.",
-  "recognitionUnavailable": "Voice recognition is not ready ({status})."
+  "recognitionUnavailable": "Voice recognition is not ready ({status}).",
+  "providerError": "The voice provider replied: {detail}",
+  "noAudioHeard":
+      "Nothing can be heard. Is the microphone the car's or a headset's?",
 };
 
 class _EnSpeechGrammar extends VoiceSpeechGrammar {

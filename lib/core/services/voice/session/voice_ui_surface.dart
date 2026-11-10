@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show Listenable;
 import '../../active_chat_service.dart' show ActiveChat;
 import '../voice_phase.dart';
 import '../voice_service.dart' show SttCheck;
+import 'voice_care.dart';
 
 /// Superficie pública que la pantalla de chat necesita del modo voz.
 /// `Listenable` aporta `addListener`/`removeListener` para actualizar la UI.
@@ -39,6 +40,18 @@ abstract class VoiceUiSurface implements Listenable {
   /// Sale del modo voz: libera motores STT/TTS y limpia el estado de turno.
   Future<void> exit();
 
+  /// What the user can do now about a failure or a pause, typed; the screen
+  /// words it. Null when there is nothing to act on.
+  VoiceCare? get care;
+
+  /// Text of a message dictated but not sent, kept so Retry sends the same
+  /// words. Null when nothing is held.
+  String? get heldTurnText;
+
+  /// Hands the held message back (to the composer, when the conversation is
+  /// closed) and forgets it. Null when nothing is held.
+  String? takeHeldTurnText();
+
   /// Aviso honesto en el overlay ("no te he oído", "en cola: …"), o `null`.
   String? get note;
 
@@ -54,6 +67,11 @@ abstract class VoiceUiSurface implements Listenable {
   /// fuera de una captura.
   String get partialTranscript;
 
+  /// Notifies when [partialTranscript] changes. A partial is not a state
+  /// change: an engine that keeps it out of its own notifications gives a
+  /// narrower listenable here, so the live draft rebuilds alone.
+  Listenable get partialTranscriptChanges => this;
+
   /// Último final STT aceptado. Se conserva durante el turno del asistente para
   /// que la zona “Tú” no desaparezca al cerrar el micrófono.
   String get userTranscript => partialTranscript;
@@ -62,6 +80,11 @@ abstract class VoiceUiSurface implements Listenable {
   /// overlay para tocar una aprobación).
   bool get userPaused => false;
 
+  /// Privacy (App Lock, the app hidden) is hiding the conversation's words:
+  /// the phase reads idle then, which is not the end of a turn, and nothing
+  /// heard may stay on screen.
+  bool get privacyHidden => false;
+
   /// El chat propietario mantiene un run o submit vivo.
   bool get backendActive => false;
 
@@ -69,6 +92,11 @@ abstract class VoiceUiSurface implements Listenable {
   /// Preferencia o capability por sí solas no autorizan a la UI a prometer
   /// interrupción.
   bool get spokenInterruptionArmed => false;
+
+  /// A spoken reply is playing (or its audio is still in flight). A typed
+  /// send now cuts it and tells Hermes so (Desktop `isVoicePlaybackActive`,
+  /// voice-playback.ts:824-826, used by use-prompt-actions/submit.ts:332).
+  bool get voicePlaybackActive => false;
 
   /// Pausa/Reanudar conservan el cursor de narración.
   void pauseConversation() => onOrbTap();

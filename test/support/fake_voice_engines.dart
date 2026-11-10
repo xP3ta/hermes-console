@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/voice/conversation/gpt_live_voice_conversation_controller.dart';
 import 'package:hermes_android/core/services/voice/conversation/voice_conversation_engine.dart';
+import 'package:hermes_android/core/services/voice/session/voice_care.dart';
 import 'package:hermes_android/core/services/voice/voice_phase.dart';
 import 'package:hermes_android/core/services/voice/voice_service.dart';
 
@@ -27,6 +28,17 @@ class FakeVoiceEngine extends ChangeNotifier
   bool active = false;
   @override
   String? note;
+  @override
+  VoiceCare? care;
+  @override
+  String? heldTurnText;
+  @override
+  String? takeHeldTurnText() {
+    final held = heldTurnText;
+    heldTurnText = null;
+    return held;
+  }
+
   @override
   bool audioLeaseRequired = false;
 
@@ -139,7 +151,14 @@ class FakeVoiceEngine extends ChangeNotifier
   @override
   bool get spokenInterruptionArmed => false;
   @override
+  bool voicePlaybackActive = false;
+  @override
   String get publicCommentary => '';
   @override
+  bool get privacyHidden => false;
+  @override
   String get userTranscript => partialTranscript;
+
+  @override
+  Listenable get partialTranscriptChanges => this;
 }

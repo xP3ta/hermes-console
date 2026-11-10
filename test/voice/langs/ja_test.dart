@@ -25,7 +25,7 @@ void main() {
     expect(language.streamingVoiceId, 'af_heart');
     expect(language.systemTtsOnly, isTrue);
     expect(language.messages.keys, voiceLanguageFor('en').messages.keys);
-    expect(language.messages, hasLength(11));
+    expect(language.messages, hasLength(13));
     for (final value in language.messages.values) {
       expect(value, matches(RegExp(r'[ぁ-んァ-ン一-龯]')));
     }

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../voice_service.dart';
+import '../voice_server_prefs.dart';
 
 typedef FullDuplexPlaybackSafetyProbe =
     Future<FullDuplexPlaybackSafety> Function();
@@ -349,7 +350,11 @@ final class FullDuplexBargeInMonitor {
   FullDuplexBargeInMonitor({
     required this.source,
     FullDuplexPlaybackSafetyProbe? playbackSafetyProbe,
-  }) : _playbackSafetyProbe = playbackSafetyProbe ?? source.playbackSafety;
+    double? Function()? thresholdMultiplier,
+    Duration Function()? endpointSilence,
+  }) : _playbackSafetyProbe = playbackSafetyProbe ?? source.playbackSafety,
+       _thresholdMultiplierOf = thresholdMultiplier,
+       _endpointSilenceOf = endpointSilence;
 
   static const int sampleRate = 16000;
   static const int _frameSamples = 480; // 30 ms
@@ -374,6 +379,15 @@ final class FullDuplexBargeInMonitor {
       0.37 * _webAudioLevelToPcm16Rms; // 3978.24
   static const double _thresholdMultiplier = 3.5;
 
+  /// [_endpointFrames] unless the profile set its own silence hold.
+  int get _endpointFramesNow {
+    final silence = _endpointSilenceOf?.call();
+    if (silence == null || silence <= Duration.zero) return _endpointFrames;
+    return (silence.inMicroseconds / _frameMicroseconds).ceil();
+  }
+
+  static const int _frameMicroseconds = _frameSamples * 1000000 ~/ sampleRate;
+
   // Guard anti-eco TTS→STT (paridad upstream 0.20.3 `is_tts_echo`): un
   // transcript de barge-in con similitud >= 0.6 (SequenceMatcher + ventana
   // deslizante) contra el TTS recién hablado es auto-captura del altavoz.
@@ -383,6 +397,18 @@ final class FullDuplexBargeInMonitor {
 
   final FullDuplexCaptureSource source;
   final FullDuplexPlaybackSafetyProbe _playbackSafetyProbe;
+
+  /// `voice.barge_in_threshold_multiplier`, read when a turn arms the
+  /// monitor like Desktop reads it when it creates one
+  /// (`use-voice-conversation.ts:613`).
+  final double? Function()? _thresholdMultiplierOf;
+
+  /// `voice.silence_duration` for the utterance endpoint, read per frame
+  /// like Desktop (`voice-barge-in.ts:354`).
+  final Duration Function()? _endpointSilenceOf;
+
+  double _floorMultiplier = _thresholdMultiplier;
+  double _playbackMinimumRms = _minimumPlaybackRms;
 
   StreamSubscription<Uint8List>? _subscription;
   Future<void> _operationTail = Future<void>.value();
@@ -473,6 +499,10 @@ final class FullDuplexBargeInMonitor {
     _onSpeechEndpoint = onSpeechEndpoint;
     _onTranscriptionStart = onTranscriptionStart;
     _onTranscript = onTranscript;
+    // Desktop `bargeInTriggerLevels` (voice-barge-in.ts:82-88).
+    final scale = bargeInThresholdScale(_thresholdMultiplierOf?.call());
+    _floorMultiplier = _thresholdMultiplier * scale;
+    _playbackMinimumRms = _minimumPlaybackRms * scale;
     if (_wantArmed || _armed) return Future<bool>.value(true);
 
     _wantArmed = true;
@@ -727,11 +757,11 @@ final class FullDuplexBargeInMonitor {
     if (!_speechStarted) {
       var threshold = math.max(
         _minimumTriggerRms,
-        _noiseFloor * _thresholdMultiplier,
+        _noiseFloor * _floorMultiplier,
       );
       if (_playbackActive) {
         threshold = math.min(
-          math.max(threshold, _minimumPlaybackRms),
+          math.max(threshold, _playbackMinimumRms),
           _triggerCeilingRms,
         );
       }
@@ -796,7 +826,7 @@ final class FullDuplexBargeInMonitor {
       _silentFrames = 0;
       _onSpeechAboveThreshold?.call();
     }
-    if (_silentFrames >= _endpointFrames ||
+    if (_silentFrames >= _endpointFramesNow ||
         _captureFrames >= _maxCaptureFrames) {
       debugPrint(
         '[VOICE-PERF] voice.barge.endpoint frames=$_captureFrames '
@@ -823,6 +853,11 @@ final class FullDuplexBargeInMonitor {
             .transcribe(_pcm16Wav(pcm))
             .timeout(const Duration(seconds: 90));
         transcript = text.trim().isEmpty ? null : text.trim();
+      } on TimeoutException {
+        debugPrint(
+          '[VOICE-PERF] voice.barge.transcribe_timeout stage=transcription',
+        );
+        transcript = null;
       } catch (_) {
         transcript = null;
       }

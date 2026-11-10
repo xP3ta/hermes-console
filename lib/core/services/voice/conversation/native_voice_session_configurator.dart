@@ -2,9 +2,15 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../connection_manager.dart';
+import '../client_direct_voice_routes.dart';
+import '../hermes_dictation_stream.dart';
 import '../hermes_pcm_stream.dart';
 import '../hermes_speech_stream.dart';
+import '../pcm_level_sink.dart';
 import '../server_voice_config.dart';
+import '../stt_hermes_server.dart';
+import '../tts_engine.dart';
+import '../voice_client_direct.dart';
 import '../voice_service.dart';
 import '../voice_settings.dart';
 import 'native_voice.dart';
@@ -67,6 +73,9 @@ configureHermesServerDictation({
   required String profile,
   DashboardClient? dashboardClient,
   NativeVoiceDashboardFactory? dashboardFactory,
+  VoiceClientDirect? clientDirect,
+  VoiceClientConfigCache? clientDirectCache,
+  HermesDictationSocketConnector? liveSocketConnector,
 }) async {
   assert(dashboardClient == null || dashboardFactory == null);
   HermesServerDictationConfigurationResult unavailableOrSuperseded() {
@@ -93,6 +102,21 @@ configureHermesServerDictation({
       HermesDictationProbeCache.forget(identity);
       return unavailableOrSuperseded();
     }
+    final directAccepted =
+        ClientDirectVoiceConsentStore(preferences).read(identity) ==
+        ClientDirectVoiceConsent.accepted;
+    final loadVoiceConfig = dashboardVoiceClientConfigLoader(
+      dashboard,
+      profile,
+      cache: clientDirectCache,
+    );
+    // Resolved beside the probe; it never throws.
+    final liveOffered = hermesLiveDictationOffered(
+      identity: identity,
+      clientDirectAccepted: directAccepted,
+      loadVoiceConfig: loadVoiceConfig,
+      loadServerConfig: () => dashboard.getServerConfig(profile: profile),
+    );
     if (!HermesDictationProbeCache.isConfirmed(identity)) {
       final available = await probeHermesTranscription(
         statusOf: (endpoint) =>
@@ -104,6 +128,7 @@ configureHermesServerDictation({
       }
       HermesDictationProbeCache.confirm(identity);
     }
+    final live = await liveOffered;
     // Motor y consentimiento pueden cambiar mientras responde el probe. No
     // transfieras el cliente con una elección ya retirada.
     if (voice.settings.sttEngine != SttEngineKind.hermesServer ||
@@ -111,14 +136,39 @@ configureHermesServerDictation({
             NativeVoiceConsent.accepted) {
       return unavailableOrSuperseded();
     }
+    HermesTranscribeRequest transcribe = (dataUrl, mimeType) =>
+        dashboard.transcribeAudio(
+          dataUrl,
+          mimeType: mimeType,
+          profile: profile,
+          timeout: kHermesServerTranscribeTimeout,
+        );
+    // Dictation never asks: it uses direct voice only once the user accepted
+    // its consent for this server.
+    if (directAccepted) {
+      transcribe = clientDirectTranscribe(
+        relay: transcribe,
+        loadConfig: loadVoiceConfig,
+        direct: clientDirect,
+      );
+    }
+    // Live dictation goes to this same server (keys stay there); the
+    // recording above stays the fallback (Desktop use-voice-recorder.ts:119).
+    final liveDictation = live
+        ? HermesDictationStreamClient(
+            dashboardBaseUrl: connection.effectiveDashboardUrl,
+            auth: dashboard.webSocketAuth,
+            profile: profile,
+            connector: liveSocketConnector,
+          ).open
+        : null;
     transferredToVoice = voice.enableHermesServerDictation(
       owner: owner,
       preparation: preparation,
-      transcribe: (dataUrl, mimeType) => dashboard.transcribeAudio(
-        dataUrl,
-        mimeType: mimeType,
-        profile: profile,
-      ),
+      transcribe: transcribe,
+      liveDictation: liveDictation,
+      sttLease: (lease, active) =>
+          dashboard.setSttLease(lease, active: active, profile: profile),
       onDispose: dashboard.close,
     );
     return transferredToVoice
@@ -129,6 +179,40 @@ configureHermesServerDictation({
       voice.cancelHermesServerDictationPreparation(preparation);
       dashboard.close();
     }
+  }
+}
+
+/// Whether the host serves live dictation for this profile.
+///
+/// Desktop reads `stt.streaming` from `GET /api/audio/voice-config`
+/// (`use-voice-recorder.ts:214-215`; the host fills it with
+/// `streaming_available()`, `voice_client_config.py:248-254`). That answer
+/// can carry the provider key, and Console only requests it once the user
+/// accepted direct voice. Without that consent the same `stt.streaming` key
+/// is read from `GET /api/config`; a provider without a live wire then
+/// answers the socket with `error` (`audio.py:548-552`) and the recording
+/// is transcribed, as in Desktop. The `/api/config` verdict is held 60 s
+/// like Desktop's voice-config cache; a failed read means no live dictation.
+@visibleForTesting
+Future<bool> hermesLiveDictationOffered({
+  required String identity,
+  required bool clientDirectAccepted,
+  required VoiceClientConfigLoader loadVoiceConfig,
+  required Future<Map<String, dynamic>> Function() loadServerConfig,
+}) async {
+  try {
+    if (clientDirectAccepted) {
+      return (await loadVoiceConfig())?.sttStreaming ?? false;
+    }
+    final held = HermesLiveDictationGateCache.read(identity);
+    if (held != null) return held;
+    final offered = hermesLiveDictationEnabledInConfig(
+      await loadServerConfig(),
+    );
+    HermesLiveDictationGateCache.store(identity, offered);
+    return offered;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -151,6 +235,8 @@ Future<bool> configureAcceptedNativeVoiceSession({
   DashboardClient? dashboardClient,
   NativeVoiceDashboardFactory? dashboardFactory,
   HermesPcmStreamSinkFactory? sinkFactory,
+  VoiceClientDirect? clientDirect,
+  VoiceClientConfigCache? clientDirectCache,
 }) async {
   assert(dashboardClient == null || dashboardFactory == null);
   assert(preparation == null || owner != null);
@@ -208,6 +294,39 @@ Future<bool> configureAcceptedNativeVoiceSession({
       // sigue siendo el fallback autoritativo si esta lectura falla.
     }
 
+    HermesSpeakRequest speak = (text) =>
+        dashboard.synthesizeSpeech(text, profile: profile);
+    HermesTranscribeRequest transcribe = (dataUrl, mimeType) =>
+        dashboard.transcribeAudio(
+          dataUrl,
+          mimeType: mimeType,
+          profile: profile,
+          timeout: kHermesServerTranscribeTimeout,
+        );
+    var clientDirectSpeech = false;
+    // Client-direct voice only behind its own consent: without it no key is
+    // fetched and the route stays exactly as it was.
+    if (ClientDirectVoiceConsentStore(preferences).read(identity) ==
+        ClientDirectVoiceConsent.accepted) {
+      final loadConfig = dashboardVoiceClientConfigLoader(
+        dashboard,
+        profile,
+        cache: clientDirectCache,
+      );
+      final directConfig = await loadConfig();
+      clientDirectSpeech = directConfig?.tts != null;
+      speak = clientDirectSpeak(
+        relay: speak,
+        loadConfig: loadConfig,
+        direct: clientDirect,
+      );
+      transcribe = clientDirectTranscribe(
+        relay: transcribe,
+        loadConfig: loadConfig,
+        direct: clientDirect,
+      );
+    }
+
     // La elección puede revocarse mientras responden el probe o las lecturas de
     // configuración. La comprobación inicial no autoriza instalar callbacks
     // después de esos awaits.
@@ -224,21 +343,24 @@ Future<bool> configureAcceptedNativeVoiceSession({
       auth: dashboard.webSocketAuth,
       profile: profile,
       ttsConfigurationSignature: ttsConfigurationSignature,
-      sinkFactory: sinkFactory ?? MethodChannelHermesPcmStreamSink.new,
+      // QA 9709: what plays also says how loud it is, for the wave.
+      sinkFactory: () => LevelReportingPcmSink(
+        (sinkFactory ?? MethodChannelHermesPcmStreamSink.new)(),
+        voice.playbackLevel,
+      ),
     );
     transferredToVoice = voice.enablePreparedNativeVoice(
       owner: configurationOwner,
       preparation: reservation,
-      speak: (text) => dashboard.synthesizeSpeech(text, profile: profile),
-      transcribe: (dataUrl, mimeType) => dashboard.transcribeAudio(
-        dataUrl,
-        mimeType: mimeType,
-        profile: profile,
-      ),
+      speak: speak,
+      transcribe: transcribe,
       speechStream: speechStream.open,
       ttsLease: (lease, active) =>
           dashboard.setTtsLease(lease, active: active, profile: profile),
+      sttLease: (lease, active) =>
+          dashboard.setSttLease(lease, active: active, profile: profile),
       onDispose: dashboard.close,
+      clientDirectSpeech: clientDirectSpeech,
     );
     return transferredToVoice;
   } finally {

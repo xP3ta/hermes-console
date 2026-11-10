@@ -201,7 +201,10 @@ void main() {
     }
     await tester.ensureVisible(finder);
     await tester.tap(finder);
-    await tester.pumpAndSettle();
+    // The squares blink while the sheet is open: no settling.
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     await tester.tap(find.text(label).last);
     await settle(tester);
   }
