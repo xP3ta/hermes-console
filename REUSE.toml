@@ -9,6 +9,7 @@ SPDX-PackageDownloadLocation = "https://github.com/xP3ta/hermes-console"
 [[annotations]]
 path = [
   ".github/**",
+  ".coderabbit.yaml",
   ".gitignore",
   ".gitleaks.toml",
   ".metadata",
