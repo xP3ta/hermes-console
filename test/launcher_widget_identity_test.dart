@@ -356,6 +356,25 @@ void main() {
     },
   );
 
+  test('a list of another instance takes no live state from the chat', () {
+    LwChatsScene chats(String connectionId) => LwChatsScene.from(
+      LauncherWidgetChatsSnapshot(
+        connectionId: connectionId,
+        updatedAtMs: lwNow,
+        chats: const [LauncherWidgetChat(id: 's', title: 'Chat')],
+      ),
+      _chat(),
+      nowMs: lwNow,
+    );
+    final same = chats(_connection);
+    expect(same.rows.single.waits, isTrue);
+    expect(same.waiting, 1);
+    final other = chats('another-connection');
+    expect(other.rows.single.waits, isFalse);
+    expect(other.rows.single.running, isFalse);
+    expect(other.waiting, 0);
+  });
+
   test('decoded photos stay within the avatar pixel budget', () async {
     final recorder = ui.PictureRecorder();
     ui.Canvas(recorder).drawColor(const ui.Color(0xFF00FF00), ui.BlendMode.src);
