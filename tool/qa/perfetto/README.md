@@ -227,3 +227,16 @@ tanto su mera ejecucion no cierra T061.
   fingerprint, version instalada, UID y PID. Esto no demuestra por si solo que
   el APK local sea byte a byte el instalado: esa igualdad sigue siendo un gate
   de instalacion/release separado.
+
+## Chat en streaming (F0 de la auditoría de fluidez)
+
+`chat_stream_metrics.sql` lee los eventos `hermes.chat.stream.*` de
+`lib/core/services/chat_stream_trace.dart`:
+`flush` (el servicio publica), `reveal` (la pantalla revela más),
+`tail_build` (se reconstruye la cola viva), `turn_end` (fin del turno: lo que
+aparece de golpe) y `highlight` (resaltado de código). Solo los emite una build
+`qa` con `--dart-define=HERMES_CHAT_STREAM_TRACE=true`; llevan solo números de
+caracteres, nunca texto. Se usa con la misma captura que la voz, sustituyendo
+`@TARGET_PID@`, y el jank del mismo tramo sale de `frame_process_metrics.sql`.
+El escenario debe ser una respuesta grabada sin datos reales (servidor de
+fixtures o backend de e2e).
