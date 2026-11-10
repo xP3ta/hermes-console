@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
+import 'package:hermes_android/core/screens/shared_review_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -468,6 +470,60 @@ void main() {
     final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
     expect(chat.session.id, 'cron_job-r_20261006_081500');
     expect(chat.session.profile, 'radar');
+    await disposeApp(tester);
+  });
+
+  testWidgets('locked: a share waits for the unlock before its review', (
+    tester,
+  ) async {
+    final messenger = tester.binding.defaultBinaryMessenger;
+    const secureChannel = MethodChannel(
+      'plugins.it_nomads.com/flutter_secure_storage',
+    );
+    const shareChannel = MethodChannel('hermes/share');
+    final secure = <String, String>{};
+    messenger.setMockMethodCallHandler(secureChannel, (call) async {
+      final args = (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
+      switch (call.method) {
+        case 'write':
+          secure[args['key'] as String] = args['value'] as String;
+        case 'read':
+          return secure[args['key'] as String];
+        case 'delete':
+          secure.remove(args['key'] as String);
+        case 'readAll':
+          return Map<String, String>.from(secure);
+      }
+      return null;
+    });
+    var delivered = false;
+    messenger.setMockMethodCallHandler(shareChannel, (call) async {
+      if (call.method != 'takePendingShare' || delivered) return null;
+      delivered = true;
+      return {
+        'id': 'locked-share',
+        'text': 'shared while locked',
+        'attachments': const [],
+        'rejected_attachments': 0,
+      };
+    });
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(secureChannel, null);
+      messenger.setMockMethodCallHandler(shareChannel, null);
+    });
+
+    final harness = await _pumpHarness(tester, appLockEnabled: true);
+    addTearDown(harness.activeChats.dispose);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+    expect(delivered, isTrue);
+    expect(find.byType(SharedReviewScreen), findsNothing);
+
+    harness.appLock.unlock();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.byType(SharedReviewScreen), findsOneWidget);
     await disposeApp(tester);
   });
 }

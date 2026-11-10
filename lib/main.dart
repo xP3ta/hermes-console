@@ -1778,6 +1778,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // ACTION_SEND/ACTION_SEND_MULTIPLE → borrador revisable en un chat nuevo.
     widget.connManager.activeConnectionId.addListener(_retryPendingShare);
     unawaited(_initShareInbox());
+    widget.appLock.locked.addListener(_retryPendingShare);
     widget.connManager.activeConnectionId.addListener(
       _retryPendingNewSessionLaunch,
     );
@@ -3253,6 +3254,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (!mounted || _openingSharedContent) return;
     final content = await _shareInbox.peek();
     if (content == null || !mounted) return;
+    // Locked: the review would go over the lock route and show the share
+    // and the saved instances. It stays in the inbox until the unlock.
+    if (widget.appLock.locked.value) return;
     final nav = _navigatorKey.currentState;
     if (nav == null) return;
 
@@ -3388,6 +3392,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     widget.appLock.locked.removeListener(_openCatalogLinks);
     widget.connManager.activeConnectionId.removeListener(_openCatalogLinks);
     widget.connManager.activeConnectionId.removeListener(_retryPendingShare);
+    widget.appLock.locked.removeListener(_retryPendingShare);
     widget.connManager.connectionsRevision.removeListener(
       _syncBackgroundCronConnections,
     );
