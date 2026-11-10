@@ -1,0 +1,5 @@
+^test/capabilities/spp_safety_test\.dart$
+^test/subagent_finished_record_test\.dart$
+^test/video_masking_test\.dart$
+^test/cnx/ssh_tunnel_page_test\.dart$
+^test/ssh_tunnel/ssh_tunnel_connector_test\.dart$
