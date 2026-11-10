@@ -13,7 +13,10 @@ import '../bots/room/room_fixtures.dart';
 void main() {
   late Directory dir;
   setUp(() async {
-    SharedPreferences.setMockInitialValues({'app_locale': 'en'});
+    SharedPreferences.setMockInitialValues({
+      'app_locale': 'en',
+      'notif_hide_sensitive_content': false, // these tests read the text of the notices
+    });
     dir = await Directory.systemTemp.createTemp('faces');
   });
   tearDown(() => dir.delete(recursive: true));

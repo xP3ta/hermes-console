@@ -25,8 +25,9 @@ String plainNotificationText(String? raw, {int max = 180}) {
       .replaceAll(RegExp(r'[`*_~]{1,3}'), '')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
-  if (text.length <= max) return text;
-  final cut = text.substring(0, max - 1);
+  final runes = text.runes.toList(growable: false);
+  if (runes.length <= max) return text;
+  final cut = String.fromCharCodes(runes.take(max - 1));
   final space = cut.lastIndexOf(' ');
   return '${(space > max * 0.6 ? cut.substring(0, space) : cut).trimRight()}…';
 }
@@ -39,6 +40,27 @@ String firstLinePlain(String? raw, {int max = 120}) {
     if (plain.isNotEmpty) return plain;
   }
   return '';
+}
+
+/// The words of the notice the background check posts when it finds a chat
+/// turn over: «xPeta · terminó» over the chat's title; with content hidden
+/// (or no title) over the generic «Nueva actividad en Hermes». The agent's
+/// name is what the live row already showed on the lock screen; the chat's
+/// title is shown only where the user allowed content.
+({String title, String body, String who}) liveTurnFinishedCopy(
+  NotifL10n t, {
+  required String who,
+  required String chatTitle,
+  required bool hideSensitive,
+}) {
+  final name = plainNotificationText(who, max: 40);
+  final shown = name.isEmpty ? t.brand : name;
+  final chat = hideSensitive ? '' : plainNotificationText(chatTitle, max: 80);
+  return (
+    title: t.liveFinishedTitle(shown),
+    body: chat.isEmpty ? t.privateTitle : chat,
+    who: shown,
+  );
 }
 
 /// Bot Mode copy from the language catalogs, resolved without BuildContext like [NotifL10n].
@@ -621,10 +643,14 @@ class RichNotificationBuilder {
     String? shortcutIconPath,
   }) {
     final text = t.approvalNeedsOk(command, description);
+    // A card that hides the command («X te necesita») never offers to
+    // approve it: Deny and Open only; approving happens in the app.
     final actions = <RichAction>[
-      if (offered.contains('once')) RichAction('approve', t.actApprove),
+      if (!hideSensitive && offered.contains('once'))
+        RichAction('approve', t.actApprove),
       if (offered.contains('deny')) RichAction('deny', t.actDeny),
-      if (allowAlways &&
+      if (!hideSensitive &&
+          allowAlways &&
           offered.contains('always') &&
           !offered.contains('once'))
         RichAction('always', t.actAlways),
@@ -830,6 +856,61 @@ class RichNotificationBuilder {
       // the same name the public version already shows, plus the state.
       'summaryLine': '$lockName · ${t.summaryState(accent)}',
     };
+  }
+
+  /// The end of a chat turn found by the background check (the app's socket
+  /// was cut): one silent card titled «xPeta · terminó»
+  /// ([liveTurnFinishedCopy]) at [tag]/[id], the address the chat's reply
+  /// notice uses, so one replaces the other instead of stacking. The chat's
+  /// conversation keeps its own name ([conversationTitle]; the agent's when
+  /// content is hidden) and the lock screen shows only who and «Terminó».
+  Map<String, Object?> turnFinished({
+    required String? tag,
+    required int id,
+    required String conversationId,
+    required String ownerKey,
+    required String who,
+    required String chatTitle,
+    required bool hideSensitive,
+    required NotificationOpen open,
+    required int nowMs,
+    NotificationActionPayload? action,
+    String? iconPath,
+    String? shortcutIconPath,
+  }) {
+    final copy = liveTurnFinishedCopy(
+      t,
+      who: who,
+      chatTitle: chatTitle,
+      hideSensitive: hideSensitive,
+    );
+    final named = hideSensitive ? '' : plainNotificationText(chatTitle, max: 80);
+    final args = conversation(
+      tag: tag ?? '',
+      conversationId: conversationId,
+      conversationTitle: named.isEmpty ? copy.who : named,
+      // One to one: Android titles the card with the sender, «xPeta ·
+      // terminó», and shows [body] below it.
+      isGroup: false,
+      messages: [
+        RichMessage(
+          senderKey: 'hermes:$ownerKey',
+          senderName: copy.title,
+          text: copy.body,
+          iconPath: iconPath,
+          timeMs: nowMs,
+        ),
+      ],
+      open: open,
+      action: action,
+      extraActions: [RichAction('read', t.actMarkRead)],
+      accent: RichAccent.done,
+      publicTitle: copy.who,
+      shortcutIconPath: shortcutIconPath,
+    );
+    final out = Map<String, Object?>.of(args)..['id'] = id;
+    if (tag == null) out.remove('tag');
+    return out;
   }
 
   /// Every non-Bot Hermes event (Cron, Kanban, runs, normal chats, goals)
@@ -1091,6 +1172,22 @@ class RichNotificationBuilder {
 }
 
 /// Narrow platform surface, faked in tests.
+/// What Android does with this app in the background (M6).
+@immutable
+class BatteryOptimizationStatus {
+  const BatteryOptimizationStatus({
+    required this.ignoringOptimizations,
+    required this.backgroundRestricted,
+  });
+
+  /// The app is on the «unrestricted» list (Doze does not batch it).
+  final bool ignoringOptimizations;
+
+  /// The person restricted it in the background (Samsung «sleeping apps»
+  /// and the like end here): pushes may not arrive at all.
+  final bool backgroundRestricted;
+}
+
 abstract interface class RichNotificationSink {
   /// True when the native renderer accepted the card.
   Future<bool> postConversation(Map<String, Object?> args);
@@ -1142,6 +1239,35 @@ class PlatformRichNotifications
 
   Future<bool> openPromotionSettings() async =>
       await _call<bool>('openPromotionSettings') ?? false;
+
+  /// M6: whether Android may hold the app back in the background; `null`
+  /// when the native side does not say (older build, odd reply).
+  Future<BatteryOptimizationStatus?> batteryStatus() async {
+    final raw = await _call<Map<Object?, Object?>>('batteryStatus');
+    final ignoring = raw?['ignoringOptimizations'];
+    final restricted = raw?['backgroundRestricted'];
+    if (ignoring is! bool || restricted is! bool) return null;
+    return BatteryOptimizationStatus(
+      ignoringOptimizations: ignoring,
+      backgroundRestricted: restricted,
+    );
+  }
+
+  /// Opens the system page where battery use of this app is changed.
+  Future<bool> openBatterySettings() async =>
+      await _call<bool>('openBatterySettings') ?? false;
+
+  /// Issue #217: whether Console is the chosen digital assistant; `null`
+  /// when the native side does not say.
+  Future<bool?> assistantIsDefault() async {
+    final raw = await _call<Map<Object?, Object?>>('assistantStatus');
+    final value = raw?['isDefault'];
+    return value is bool ? value : null;
+  }
+
+  /// Opens the system page where the digital assistant app is chosen.
+  Future<bool> openAssistantSettings() async =>
+      await _call<bool>('openAssistantSettings') ?? false;
 
   /// Opens Android's screen of the notification category [channelId] of this
   /// app (the app's notification settings when the system has no such
@@ -1241,11 +1367,36 @@ class PlatformRichNotifications
   /// Tells a headless drain worker this engine is done.
   Future<void> drainFinished() => _call<bool>('drainFinished');
 
+  /// Answers `checkLiveTurns` from `HermesLiveTurnCheckWorker`: one run of
+  /// the background check of this engine's live rows. Set by the UI engine
+  /// (the only one that owns chat rows); unset, the worker ends its chain.
+  /// The third argument lists the sessions whose row the tray still shows
+  /// (null: an older native side that does not say).
+  static Future<Map<String, Object?>> Function(
+    int attempt,
+    Duration elapsed,
+    Set<String>? inTray,
+  )?
+  liveTurnCheck;
+
   /// Wakes [onActions] whenever the native inbox receives a tap.
   @override
   void listen(void Function() onActions) {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'actionsAvailable') onActions();
+      if (call.method == 'checkLiveTurns') {
+        final check = liveTurnCheck;
+        if (check == null) return const {'pending': 0};
+        final args = call.arguments;
+        final attempt = args is Map ? args['attempt'] : null;
+        final elapsed = args is Map ? args['elapsedMs'] : null;
+        final sessions = args is Map ? args['sessions'] : null;
+        return check(
+          attempt is int ? attempt : 0,
+          Duration(milliseconds: elapsed is int ? elapsed : 0),
+          sessions is List ? sessions.whereType<String>().toSet() : null,
+        );
+      }
       return null;
     });
   }

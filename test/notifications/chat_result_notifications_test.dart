@@ -87,6 +87,7 @@ void main() {
       });
       SharedPreferences.setMockInitialValues({
         'app_locale': 'es',
+        'notif_hide_sensitive_content': false, // these tests read the text of the notices (the default hides it)
         'notif_perm_requested': true,
         ...extra,
       });
@@ -319,7 +320,9 @@ void main() {
       final shown = pluginCalls.where((c) => c.method == 'show').toList();
       expect(shown, hasLength(2));
       for (final call in shown) {
-        expect(jsonEncode(call.arguments), isNot(contains('Sonnet')));
+        if (call == shown.first) {
+          expect((call.arguments as Map)['body'], contains('Sonnet'));
+        }
         expect(jsonEncode(call.arguments), isNot(contains('token-secreto')));
       }
     });

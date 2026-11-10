@@ -5,6 +5,8 @@ import 'package:crypto/crypto.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:uuid/uuid.dart';
 
+import 'cron_notice_policy.dart';
+
 typedef DeliveryClock = int Function();
 typedef LeaseTokenFactory = String Function();
 typedef DeliveryDigest = List<int> Function(List<int> input);
@@ -297,7 +299,7 @@ class NotificationDeliveryStore {
   }
 
   static const databaseFileName = 'notification_delivery_v2.db';
-  static const schemaVersionNumber = 2;
+  static const schemaVersionNumber = 3;
   static const busyTimeoutMilliseconds = 2000;
   static const transactionRetryWindow = Duration(seconds: 3);
   static const transactionRetryBackoff = Duration(milliseconds: 10);
@@ -553,6 +555,7 @@ class NotificationDeliveryStore {
           singleInstance: false,
           onConfigure: _configure,
           onCreate: (database, _) => _ensureSchema(database),
+          onUpgrade: (database, _, _) => _ensureSchema(database),
           onOpen: _ensureSchema,
         ),
       );
@@ -647,10 +650,23 @@ ON delivery_event(status, lease_until)
 CREATE INDEX IF NOT EXISTS delivery_event_run_idx
 ON delivery_event(conn_id, profile, run_id, destination_kind, status)
 ''');
+    await database.execute('''
+CREATE TABLE IF NOT EXISTS cron_notice_window (
+  scope_key TEXT PRIMARY KEY,
+  window_start INTEGER NOT NULL,
+  success_count INTEGER NOT NULL
+)
+''');
+    await database.execute('''
+CREATE TABLE IF NOT EXISTS cron_notice_event (
+  event_key TEXT PRIMARY KEY,
+  reserved_at INTEGER NOT NULL
+)
+''');
     await database.insert('delivery_meta', const <String, Object?>{
       'key': 'schema_version',
-      'value': '2',
-    }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
+      'value': '3',
+    }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
   }
 
   sqflite.Database get _db {
@@ -1362,6 +1378,68 @@ WHERE event_key = ? AND status = 'pending'
     });
   }
 
+  /// Atomically deduplicate a cron message and reserve its success budget.
+  /// The window is anchored at the first reserved success, never at wall-clock
+  /// hour boundaries. Failures and explicit All never spend that budget.
+  /// Reservations survive crashes; a crash may cost an alert, never add one.
+  Future<bool> reserveCronNotice({
+    required String connId,
+    required String profile,
+    required String jobId,
+    required String messageId,
+    required bool ok,
+    required CronNoticeMode mode,
+    required bool allowed,
+  }) async {
+    final scope = jsonEncode([
+      connId.trim(),
+      profile.trim().toLowerCase(),
+      jobId.trim(),
+    ]);
+    final scopeKey = _privacyDigest(scope);
+    final eventKey = _privacyDigest(jsonEncode([connId.trim(), messageId]));
+    final now = _clock();
+    return _exclusive((transaction) async {
+      await transaction.rawInsert(
+        'INSERT OR IGNORE INTO cron_notice_event(event_key, reserved_at) VALUES (?, ?)',
+        <Object?>[eventKey, now],
+      );
+      // rawInsert's last-row-id is not an insertion indicator on SQLite.
+      final changes = sqflite.Sqflite.firstIntValue(
+        await transaction.rawQuery('SELECT changes()'),
+      );
+      if (changes != 1) return false;
+      await transaction.delete(
+        'cron_notice_event',
+        where: 'reserved_at < ?',
+        whereArgs: <Object?>[now - mappingRetention.inMilliseconds],
+      );
+      if (!allowed ||
+          mode == CronNoticeMode.off ||
+          (ok && mode == CronNoticeMode.failuresOnly)) {
+        return false;
+      }
+      if (!ok || mode != CronNoticeMode.automatic) return true;
+      final rows = await transaction.query(
+        'cron_notice_window',
+        where: 'scope_key = ?',
+        whereArgs: <Object?>[scopeKey],
+      );
+      final start = rows.isEmpty ? null : rows.single['window_start']! as int;
+      if (start != null &&
+          now - start < CronNoticePolicy.successWindowMs &&
+          (rows.single['success_count']! as int) >= 1) {
+        return false;
+      }
+      await transaction.insert('cron_notice_window', <String, Object?>{
+        'scope_key': scopeKey,
+        'window_start': now,
+        'success_count': 1,
+      }, conflictAlgorithm: sqflite.ConflictAlgorithm.replace);
+      return true;
+    });
+  }
+
   Future<int> countActiveWork() =>
       _countWhere("status IN ('pending', 'leased', 'cancel_pending')");
 
@@ -1548,6 +1626,8 @@ LIMIT -1 OFFSET ?
       'source_cursor',
       'android_id_map',
       'delivery_meta',
+      'cron_notice_window',
+      'cron_notice_event',
     };
     if (!allowed.contains(table)) throw ArgumentError.value(table, 'table');
     final rows = await _db.rawQuery('PRAGMA table_info($table)');

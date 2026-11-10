@@ -1739,7 +1739,7 @@ void main() {
       );
       await first.open();
 
-      expect(await first.schemaVersion(), 2);
+      expect(await first.schemaVersion(), 3);
       expect(
         await first.tableNames(),
         containsAll(<String>[
@@ -1796,7 +1796,7 @@ void main() {
         databasePath: path,
       );
       await reopened.open();
-      expect(await reopened.schemaVersion(), 2);
+      expect(await reopened.schemaVersion(), 3);
       expect(await reopened.tableColumns('delivery_event'), columns);
       await reopened.close();
     });

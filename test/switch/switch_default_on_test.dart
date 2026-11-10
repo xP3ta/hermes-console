@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SWITCH: the simple connect is on in every variant without any dart-define.
 // The welcome mounted with NO simpleConnectEnabled argument must offer
-// the two doors; the constant itself must be true by default.
+// the three cards; the constant itself must be true by default.
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/config/flavor.dart';
 import 'package:hermes_android/core/screens/onboarding_screen.dart';
@@ -14,7 +14,7 @@ void main() {
   });
 
   for (final language in ['es', 'en']) {
-    testWidgets('$language: default welcome offers the two doors', (
+    testWidgets('$language: default welcome offers the three cards', (
       tester,
     ) async {
       final manager = await onboardingManager();
@@ -30,9 +30,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       final s = onboardingStrings(tester);
-      expect(find.text(s.onb4HaveHermes), findsOneWidget);
-      expect(find.text(s.onb4NoHermes), findsOneWidget);
-      expect(s.onb4HaveHermes, language == 'es' ? 'Ya tengo Hermes' : isNotEmpty);
+      expectOnboardingWays(tester, s);
     });
 
     testWidgets('$language: switch forced off keeps the same welcome', (
@@ -52,8 +50,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       final s = onboardingStrings(tester);
-      expect(find.text(s.onb4HaveHermes), findsOneWidget);
-      expect(find.text(s.onb4NoHermes), findsOneWidget);
+      expectOnboardingWays(tester, s);
     });
   }
 }

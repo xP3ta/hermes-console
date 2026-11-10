@@ -1,6 +1,6 @@
 // Shared executor for notification / widget taps (spec 070 P1-2). The UI
-// isolate, the background listener and the headless drain worker all run
-// the same [NotificationActionDrainer]:
+// isolate and the headless drain worker both run the same
+// [NotificationActionDrainer]:
 //  * one router per isolate, persistent semantic dedupe (cross-drain and
 //    cross-engine, stored in SharedPreferences);
 //  * at-least-once: an entry leaves the native inbox only after it reached a

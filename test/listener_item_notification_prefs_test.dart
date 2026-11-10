@@ -87,6 +87,7 @@ void main() {
       'app_locale': 'en',
       'notif_perm_requested': true,
       'notif_background_listen': true,
+      'notif_hide_sensitive_content': false,
       'notif_cron_results': true,
       'notif_kanban_results': true,
     });
