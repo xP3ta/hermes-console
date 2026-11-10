@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FILTER_OWNERS = {
     "lib/core/design/glass_strip.dart",
     "lib/core/widgets/frosted_backdrop.dart",  # legacy adapter, same policy
+    "lib/core/design/smoked_glass.dart",  # glass_strip's blur-then-tone filter
 }
 FILTER = re.compile(r"\b(?:BackdropFilter\s*\(|ImageFilter\s*\.\s*(?:blur|shader)\s*\()")
 MATERIAL = re.compile(r"\b(?:HermesGlassStrip|HermesLiquidSurface|FrostedBackdrop)(?:\s*\.\s*glass)?\s*\(")
