@@ -33,36 +33,21 @@ final _statusZoneKey = GlobalKey(debugLabel: 'status-zone');
 const _notchSheet = ValueKey('chat-control-dialog');
 const _statusSheet = ValueKey('status-sheet-under-test');
 
-// Every row the chat gives the notch sheet: on a phone it is taller than the
-// sheet's cap, so its list scrolls (like in the app).
+// Every pill the chat gives the notch sheet. At 1x it fits a phone; the
+// tests that need its list to scroll open it at 2x text (one column).
 const _labels = ChatControlLabels(
-  title: 'Ajustes de esta conversación',
-  scope: 'Solo esta conversación',
-  sessionSection: 'Sesión',
-  toolsSection: 'Herramientas',
-  dangerSection: 'Zona sensible',
-  permissions: 'Permisos',
+  title: 'Esta conversación',
   refresh: 'Actualizar',
-  artifacts: 'Artefactos',
-  content: 'Contenido',
+  content: 'Artefactos',
   prompts: 'Prompts',
   branch: 'Ramificar',
   details: 'Detalles',
   cron: 'Programación',
   extensions: 'Extensiones',
-  skills: 'Skills',
-  memory: 'Memoria',
-  delete: 'Eliminar conversación',
+  recovery: 'Recuperación',
+  delete: 'Borrar conversación',
   readOnly: 'Solo lectura',
   findInChat: 'Buscar en este chat',
-  previousChat: 'Chat anterior',
-  nextChat: 'Chat siguiente',
-  searchChats: 'Buscar chats',
-  goTo: 'Ir a',
-  chats: 'Chats',
-  home: 'Inicio',
-  projects: 'Proyectos',
-  settings: 'Ajustes',
 );
 
 Rect? _grabber() {
@@ -72,7 +57,12 @@ Rect? _grabber() {
 
 /// The bottom of a chat: transcript, the notch on the composer's top edge,
 /// the composer and the status pill under it.
-Future<void> _pumpChatBottom(WidgetTester tester, {bool reduce = false}) async {
+Future<void> _pumpChatBottom(
+  WidgetTester tester, {
+  bool reduce = false,
+  double textScale = 1,
+  bool showCron = false,
+}) async {
   tester.view.physicalSize = _phone;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -83,7 +73,10 @@ Future<void> _pumpChatBottom(WidgetTester tester, {bool reduce = false}) async {
       supportedLocales: Strings.supportedLocales,
       theme: AppTheme.hermesRedDark,
       builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(disableAnimations: reduce),
+        data: MediaQuery.of(context).copyWith(
+          disableAnimations: reduce,
+          textScaler: TextScaler.linear(textScale),
+        ),
         child: child!,
       ),
       home: Scaffold(
@@ -97,7 +90,7 @@ Future<void> _pumpChatBottom(WidgetTester tester, {bool reduce = false}) async {
                   child: ChatNotch(
                     key: _notchKey,
                     open: false,
-                    semanticLabel: 'Ajustes de la conversación e Ir a',
+                    semanticLabel: 'Opciones de esta conversación',
                     onOpen: () => showChatNotchSheet<void>(
                       context: context,
                       liveOrigin: _grabber,
@@ -106,20 +99,23 @@ Future<void> _pumpChatBottom(WidgetTester tester, {bool reduce = false}) async {
                         labels: _labels,
                         conversationTitle: 'Conversación de prueba',
                         showDetails: true,
-                        onPermissions: () {},
+                        showCron: showCron,
+                        workspace: [
+                          ChatWorkspaceEntry(
+                            kind: ChatWorkspaceKind.terminal,
+                            label: 'Terminal',
+                            onTap: () {},
+                          ),
+                        ],
                         onRefresh: () {},
-                        onArtifacts: () {},
                         onContent: () {},
                         onPrompts: () {},
                         onBranch: () {},
                         onDetails: () {},
+                        onCron: () {},
+                        onRecovery: () {},
                         onExtensions: () {},
-                        onSkills: () {},
-                        onMemory: () {},
                         onFindInChat: () {},
-                        onPreviousChat: () {},
-                        onNextChat: () {},
-                        onNavigate: (_) {},
                         onDelete: () {},
                       ),
                     ),
@@ -473,7 +469,7 @@ void main() {
     testWidgets('pulled by its content at the top of the list: the same', (
       tester,
     ) async {
-      await _pumpChatBottom(tester);
+      await _pumpChatBottom(tester, textScale: 2);
       final open = await _open(tester, _notchKey, _notchSheet);
       final list = find.byKey(const ValueKey('chat-control-sheet'));
       final position = tester
@@ -509,7 +505,7 @@ void main() {
       testWidgets('none under the finger that is pulling the sheet down', (
         tester,
       ) async {
-        await _pumpChatBottom(tester);
+        await _pumpChatBottom(tester, textScale: 2);
         await _open(tester, _notchKey, _notchSheet);
         expect(effects, findsOneWidget, reason: 'the list has the indicator');
         final finger = await tester.startGesture(
@@ -531,13 +527,21 @@ void main() {
       testWidgets('kept for a fling that runs the list into its top', (
         tester,
       ) async {
-        await _pumpChatBottom(tester);
+        // Keep more than 200 px of scroll with the compact rows by enabling
+        // the real scheduling action at 2x text. The fling starts away from
+        // the edge and reaches it after the finger lifts.
+        await _pumpChatBottom(tester, textScale: 2, showCron: true);
         final open = await _open(tester, _notchKey, _notchSheet);
         final position = tester
             .state<ScrollableState>(
               find.descendant(of: list, matching: find.byType(Scrollable)),
             )
             .position;
+        expect(
+          position.maxScrollExtent,
+          greaterThan(200),
+          reason: 'the fixture must have enough runway for the fling',
+        );
         await tester.drag(list, const Offset(0, -260));
         await tester.pumpAndSettle();
         expect(position.pixels, greaterThan(200));

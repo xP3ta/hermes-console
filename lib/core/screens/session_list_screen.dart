@@ -2,6 +2,7 @@ import 'dart:async';
 import '../bots/data/gateway_socket_meter.dart';
 import '../services/app_lock_sensitive_read_fence.dart';
 import '../services/connection_status.dart';
+import '../services/cold_start_store.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -20,7 +21,12 @@ import '../models/desktop_control_center.dart';
 import '../models/session_live_status.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/enclosing_route.dart';
+import '../models/agent_profile.dart';
 import '../services/active_profile_scope.dart';
+import '../services/bot_roster_store.dart';
+import '../widgets/mission_profile_avatar.dart';
+import '../widgets/profile_face.dart';
+import '../widgets/profile_scope.dart';
 import '../services/active_chat_service.dart';
 import '../models/core_read.dart';
 import '../services/connection_manager.dart';
@@ -45,16 +51,27 @@ import '../utils/home_recent_sessions.dart';
 import '../utils/session_title.dart';
 import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
+import '../theme/text_scale.dart';
 import '../widgets/onstage_gate.dart';
+import '../widgets/working_ring.dart';
 import '../widgets/accent_card.dart';
+import '../utils/responsive.dart';
 import '../widgets/adaptive_list_detail.dart';
 import '../widgets/calendar_bucket_label.dart';
 import '../widgets/general_dock_shell.dart';
+import '../widgets/dock_scroll_clearance.dart';
+import '../widgets/workspace/chat_workspace.dart';
+import '../widgets/workspace/chat_workspace_host.dart' show ChatWorkspaceScope;
+import '../widgets/workspace/chat_switcher.dart';
+import '../widgets/workspace/profile_rail_chats.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart';
+import '../design/ambient_backdrop.dart' show HermesGlassLook;
 import '../widgets/hermes_ui.dart';
+import '../widgets/loading_skeleton.dart';
 import '../widgets/read_only.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_title_editor_route.dart';
@@ -266,6 +283,10 @@ class SessionListScreen extends StatefulWidget {
   final DateTime Function()? clockOverride;
   final TuiGatewayClient Function(SavedConnection connection)? gatewayFactory;
   final SessionExportService? sessionExporter;
+
+  /// The rail's cache of the other profiles' chats (tests: their own, with
+  /// no pause between requests). Defaults to the connection's shared one.
+  final ProfileRailChats? railChatsOverride;
   const SessionListScreen({
     required this.connection,
     required this.connManager,
@@ -282,6 +303,7 @@ class SessionListScreen extends StatefulWidget {
     @visibleForTesting this.gatewayFactory,
     @visibleForTesting this.sessionExporter,
     @visibleForTesting this.chatScreenBuilderOverride,
+    @visibleForTesting this.railChatsOverride,
     this.autofocusSearch = false,
     super.key,
   });
@@ -413,12 +435,20 @@ class _SessionListScreenState extends State<SessionListScreen>
   /// status changes (tool, waiting, done), held while a chat covers the list.
   final OnstageGate _liveStatusGate = OnstageGate();
 
+  /// The Chats list the last run saved, painted while the server answers
+  /// (what Nous calls «Chat List» caching). It stands only for the default
+  /// view (Chats, not archived) of one profile, and only until a read lands.
+  bool _coldListChecked = false;
+  bool _showingColdList = false;
+  String _coldListOwner = '';
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _activeChats ??=
         widget.activeChatsOverride ??
         context.findAncestorStateOfType<HermesAppState>()?.activeChats;
+    _paintColdStartList();
     _globalActivity ??=
         widget.globalActivityOverride ?? _activeChats?.globalActivity;
     // `activeIds` is force-notified on every subagent event of a run. While a
@@ -452,6 +482,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     // After the back transition, not inside it (see [runWhenUncovered]).
     runWhenUncovered(context, _route, () {
       if (!mounted) return;
+      if (_healthCheckOwed) {
+        _healthCheckOwed = false;
+        unawaited(_checkHealth());
+      }
       unawaited(_fetchSessions(showLoader: false));
       if (_remoteActivityDirty) {
         _remoteActivityDirty = false;
@@ -542,6 +576,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     _checkHealth();
   }
 
+  late final ProfileRailChats _railChats =
+      widget.railChatsOverride ?? ProfileRailChats.of(widget.connection.id);
+  bool _railReadScheduled = false;
+
   late final ActiveProfileScope _profileScope = ActiveProfileScope.of(
     widget.connManager,
     widget.connection.id,
@@ -612,12 +650,20 @@ class _SessionListScreenState extends State<SessionListScreen>
     _foreground = state == AppLifecycleState.resumed;
     if (_foreground) {
       if (_sessionSafetyTimer == null) _armSessionSafetyTimer();
-      _checkHealth();
+      // Covered by a chat, the list's probe waits for `didPopNext`: on a
+      // resume it would only compete with the chat's own recovery.
+      if (_listVisible) {
+        _checkHealth();
+      } else {
+        _healthCheckOwed = true;
+      }
       _scheduleEventReconnect(immediate: true);
     } else {
       if (state != AppLifecycleState.inactive) {
         _sessionSafetyTimer?.cancel();
         _sessionSafetyTimer = null;
+        // In the background the rail reads no other profile.
+        _railChats.cancel(this);
       }
       _eventReconnectTimer?.cancel();
       _eventReconnectTimer = null;
@@ -655,7 +701,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     );
     setState(() {});
     if (ok) {
-      _fetchSessions();
+      // Rows already on screen stay while the read lands (Desktop's way).
+      unawaited(_fetchSessions(showLoader: false));
       unawaited(_refreshRemoteActivity());
     } else {
       await _showLocalDrafts();
@@ -742,6 +789,8 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   @override
   void dispose() {
+    _views.dispose();
+    _railChats.cancel(this);
     ConnectionStatusRegistry.instance.changes.removeListener(_onLinkChanged);
     AppLockSensitiveReadFence.changes.removeListener(_onDraftDisclosureChanged);
     _profileScope.removeListener(_onActiveProfileChanged);
@@ -897,6 +946,9 @@ class _SessionListScreenState extends State<SessionListScreen>
   /// False while another route covers the list (a chat pushed over it keeps
   /// the list mounted). Without a route (tests, embedding) it counts visible.
   bool get _listVisible => _route?.isCurrent != false;
+
+  /// A resume arrived while covered: the health probe runs on `didPopNext`.
+  bool _healthCheckOwed = false;
 
   Future<void> _refreshRemoteActivityIfVisible() async {
     if (!_listVisible) {
@@ -1179,21 +1231,32 @@ class _SessionListScreenState extends State<SessionListScreen>
   }
 
   Future<void> _refreshSessionsAndActivity() async {
-    await _fetchSessions();
+    // No loader swap: it would unmount the RefreshIndicator mid-gesture and
+    // replace the rows with the skeleton (an empty list still shows it).
+    await _fetchSessions(showLoader: false);
     await _refreshRemoteActivity();
   }
 
   // ── Data fetching ────────────────────────────────────────────────────────
 
-  SessionLibraryQuery get _libraryQuery => SessionLibraryQuery(
-    pageSize: 50,
+  SessionLibraryQuery get _libraryQuery =>
+      _libraryQueryFor(_profileScope.name, pageSize: 50);
+
+  /// The list's query (category, archived view, order) for [profile]: the
+  /// list reads the active profile with it, the agent rail the first page
+  /// of the others.
+  SessionLibraryQuery _libraryQueryFor(
+    String? profile, {
+    required int pageSize,
+  }) => SessionLibraryQuery(
+    pageSize: pageSize,
     archived: _showArchived
         ? SessionArchiveMode.only
         : SessionArchiveMode.exclude,
     order: SessionLibraryOrder.recent,
     sources: _activeCategory.sources,
     excludeSources: _activeCategory.excludeSources,
-    profile: _profileScope.name,
+    profile: profile,
   );
 
   void _openScheduledJobs() {
@@ -1501,6 +1564,106 @@ class _SessionListScreenState extends State<SessionListScreen>
         : rows.where((row) => !archive.isSessionDeleted(row)).toList();
   }
 
+  /// First frame: the list the last run left on disk. Nothing private is
+  /// painted while App Lock is locked, and a list read that already landed
+  /// (or a view other than the default one) is never overwritten.
+  void _paintColdStartList() {
+    if (_coldListChecked) return;
+    final store = _activeChats?.coldStartStore;
+    if (store == null) return;
+    _coldListChecked = true;
+    if (_activeCategory != SessionCategory.chats || _showArchived) return;
+    if (context
+            .findAncestorStateOfType<HermesAppState>()
+            ?.appLock
+            .locked
+            .value ==
+        true) {
+      return;
+    }
+    final owner = Session.profileOwner(_profileScope.name);
+    final cached = store.peekList(
+      connectionId: widget.connection.id,
+      profile: owner,
+    );
+    if (cached != null) {
+      _applyColdStartList(cached, owner);
+    } else {
+      unawaited(_loadColdStartList(store, owner));
+    }
+  }
+
+  Future<void> _loadColdStartList(ColdStartStore store, String owner) async {
+    final ticket = AppLockSensitiveReadFence.capture(widget.connManager.prefs);
+    try {
+      final cached = await store.loadList(
+        connectionId: widget.connection.id,
+        profile: owner,
+      );
+      if (cached == null || !mounted || !ticket.isCurrent) return;
+      _applyColdStartList(cached, owner);
+    } catch (error) {
+      debugPrint('[session-list] cold-start list (${error.runtimeType})');
+    }
+  }
+
+  void _applyColdStartList(List<Session> cached, String owner) {
+    // Only before the first list of this run: a server read, a draft merge
+    // or another view already own the rows.
+    if (!mounted ||
+        !_loading ||
+        _sessions.isNotEmpty ||
+        _activeCategory != SessionCategory.chats ||
+        _showArchived ||
+        Session.profileOwner(_profileScope.name) != owner) {
+      return;
+    }
+    final rows = _withoutDeleted(
+      cached.where((s) => s.listsAsOwnRow && s.source != 'mobile-draft'),
+    )..sort(compareSessionsByRecentActivity);
+    if (rows.isEmpty) return;
+    setState(() {
+      _sessions = rows;
+      _showingColdList = true;
+      _coldListOwner = owner;
+      _loading = false;
+    });
+  }
+
+  /// Saves what the server just listed (default view only) for the next
+  /// cold start. Local drafts are not the server's and never leave the
+  /// device's own draft store.
+  void _saveColdStartList(List<Session> listed, String owner) {
+    final store = _activeChats?.coldStartStore;
+    if (store == null ||
+        _activeCategory != SessionCategory.chats ||
+        _showArchived) {
+      return;
+    }
+    unawaited(
+      store
+          .saveList(
+            connectionId: widget.connection.id,
+            profile: owner,
+            sessions: [
+              for (final s in listed)
+                if (s.source != 'mobile-draft') s,
+            ],
+          )
+          .catchError((Object error) {
+            debugPrint('[session-list] list not saved (${error.runtimeType})');
+          }),
+    );
+  }
+
+  /// The painted cold list stops standing in for the list as soon as the
+  /// view it belongs to changes.
+  bool get _coldListStands =>
+      _showingColdList &&
+      _activeCategory == SessionCategory.chats &&
+      !_showArchived &&
+      Session.profileOwner(_profileScope.name) == _coldListOwner;
+
   Future<bool> _fetchSessions({bool showLoader = true}) => _underListRead(
     (listRead) => _fetchSessionsRead(listRead, showLoader: showLoader),
   );
@@ -1517,7 +1680,10 @@ class _SessionListScreenState extends State<SessionListScreen>
         ? _sessionChangeEpoch
         : null;
     final previousSessions = List<Session>.of(_sessions);
-    if (showLoader || _sessions.isEmpty) {
+    // A cold list on screen is not hidden behind the loader: the read
+    // replaces it when it lands.
+    if (!_coldListStands) _showingColdList = false;
+    if ((showLoader && !_showingColdList) || _sessions.isEmpty) {
       setState(() {
         _loading = true;
         _error = null;
@@ -1585,7 +1751,9 @@ class _SessionListScreenState extends State<SessionListScreen>
         _librarySource = library?.source ?? SessionLibrarySource.gateway;
         _libraryExhaustive = library?.exhaustive ?? false;
         _loading = false;
+        _showingColdList = false;
       });
+      _saveColdStartList(sorted, requestedOwner);
       _replayDeferredRoster();
       // Every page of the gateway's default listing for this profile: what
       // a deletion tombstone may be confirmed against. A Dashboard page or
@@ -1807,7 +1975,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       _pendingArchiveByLogicalId.remove(session.logicalId);
       _listRevision++;
     });
-    await _fetchSessions();
+    await _fetchSessions(showLoader: false);
     if (!mounted) return;
     AppFeedback.of(
       context,
@@ -2100,6 +2268,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
     final panes = _panes.currentState;
     if (panes != null && panes.active) {
+      // The chat is the view in use (and the list over it goes).
+      _views.chatOpened();
       await _openChatInPane(panes, session);
       return;
     }
@@ -2115,6 +2285,14 @@ class _SessionListScreenState extends State<SessionListScreen>
   final GlobalKey<AdaptiveListDetailState> _panes =
       GlobalKey<AdaptiveListDetailState>(debugLabel: 'session-list-panes');
 
+  /// The views of this screen on a tablet or an open Fold: the list, the
+  /// open chat and its workspace (mock 134). The chat in the pane uses this
+  /// same controller ([ChatWorkspaceScope]).
+  late final ChatWorkspaceController _views = ChatWorkspaceController(
+    prefs: widget.connManager.prefs,
+    screen: ChatWorkspaceScreen.chats,
+  );
+
   /// The conversation open in the tablet pane. One source of truth: the
   /// pane shows the same [ChatScreen] a phone would push, and that screen
   /// binds the session through `ActiveChatService.attach`, so a deep link or
@@ -2126,14 +2304,17 @@ class _SessionListScreenState extends State<SessionListScreen>
     Session session,
   ) async {
     if (_paneSession?.id == session.id && panes.hasDetail) return;
-    _paneSession = session;
+    // The list marks the conversation open beside it.
+    setState(() => _paneSession = session);
     final deleted = await panes.show<bool>(
       MaterialPageRoute<bool>(
         settings: RouteSettings(name: 'session-pane:${session.id}'),
         builder: (_) => _chatScreenFor(session),
       ),
     );
-    if (identical(_paneSession, session)) _paneSession = null;
+    if (identical(_paneSession, session) && mounted) {
+      setState(() => _paneSession = null);
+    }
     if (deleted == true && mounted) _evictDeletedSessions([session]);
   }
 
@@ -2167,7 +2348,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       _evictDeletedSessions([session]);
     } else {
       // El detalle puede haber ramificado o reanudado: refrescar barato.
-      _fetchSessions();
+      unawaited(_fetchSessions(showLoader: false));
     }
   }
 
@@ -2727,24 +2908,7 @@ class _SessionListScreenState extends State<SessionListScreen>
           ];
 
     final list = source.where((s) {
-      // Hidden chats stay out of the lists (Archive > Hidden lists them);
-      // a search still finds them, as on Desktop, to show them again.
-      if (!searching && _isHidden(s)) return false;
-      // Deleted on the server (from any screen): never painted again.
-      if (_archive?.isSessionDeleted(s) ?? false) return false;
-
-      final archived = _isArchived(s);
-      if (_showArchived != archived) return false;
-      if (!_activeCategory.includesSource(s.source)) return false;
-      final folder = _projectFilterFolder;
-      if (folder != null &&
-          !sessionInProjectFolder(
-            folder,
-            cwd: s.cwd,
-            gitRepoRoot: s.gitRepoRoot,
-          )) {
-        return false;
-      }
+      if (!_passesListFilters(s, searching: searching)) return false;
 
       // Apply search query
       if (query.isEmpty || _repository != null) return true;
@@ -2763,6 +2927,31 @@ class _SessionListScreenState extends State<SessionListScreen>
       isPinned: _isPinned,
       pinnedFirst: !_showArchived,
     );
+  }
+
+  /// The list's own filters on one row, the search text aside: hidden,
+  /// deleted, the archived view, the category and the project folder. The
+  /// agent rail applies them to the other profiles' pages too.
+  bool _passesListFilters(Session s, {required bool searching}) {
+    // Hidden chats stay out of the lists (Archive > Hidden lists them);
+    // a search still finds them, as on Desktop, to show them again.
+    if (!searching && _isHidden(s)) return false;
+    // Deleted on the server (from any screen): never painted again.
+    if (_archive?.isSessionDeleted(s) ?? false) return false;
+
+    final archived = _isArchived(s);
+    if (_showArchived != archived) return false;
+    if (!_activeCategory.includesSource(s.source)) return false;
+    final folder = _projectFilterFolder;
+    if (folder != null &&
+        !sessionInProjectFolder(
+          folder,
+          cwd: s.cwd,
+          gitRepoRoot: s.gitRepoRoot,
+        )) {
+      return false;
+    }
+    return true;
   }
 
   /// Intercala cabeceras de sección entre las sesiones (Fijadas, luego Hoy /
@@ -2855,11 +3044,91 @@ class _SessionListScreenState extends State<SessionListScreen>
   Widget build(BuildContext context) =>
       EnclosingRoute(onRoute: _attachRoute, child: _buildScreen(context));
 
-  Widget _buildScreen(BuildContext context) {
-    final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    return Scaffold(
-      appBar: HermesAppBar(
+  /// The Chats screen's header: «≡», «Conversaciones», the connection's
+  /// state, new chat and the menu. Across the screen on a phone; on a wide
+  /// window (mock 134) over the list only.
+  /// The connection's state in words. A down socket names its state and
+  /// overrides what REST said.
+  String _connectionWord(Strings s) {
+    final link = _health.link?.kind;
+    if (link != null && link != ConnectionStatusKind.connected) {
+      return connectionStatusWord(s, link);
+    }
+    if (_health.showsChecking) return s.hwServerChecking;
+    return _health.online ? s.hwServerOnline : s.hwServerOffline;
+  }
+
+  /// The header's second line: «1 en vivo · 5 hoy». Only when the list is
+  /// loaded and the text is not so large that two lines would not fit the
+  /// bar (the count is secondary; the title is not).
+  String? _chatsSubtitle(Strings s) {
+    if (_loading ||
+        !_archiveReady ||
+        _error != null ||
+        !_health.healthy ||
+        _showArchived ||
+        MediaQuery.textScalerOf(context).scale(1) > 1.3) {
+      return null;
+    }
+    final now = _now();
+    final firstDay = MaterialLocalizations.of(context).firstDayOfWeekIndex;
+    final weekStartsOn = firstDay == 0 ? DateTime.sunday : firstDay;
+    const today = CalendarBucketKey(CalendarBucket.today);
+    var live = 0;
+    var todayCount = 0;
+    for (final session in _filteredSessions) {
+      if (_liveStatusFor(session).isLive) live++;
+      final bucket = calendarBucket(
+        _sort.dateFor(session) ?? session.lastActivityAt,
+        now,
+        weekStartsOn: weekStartsOn,
+      );
+      if (bucket == today) todayCount++;
+    }
+    final parts = <String>[
+      if (live > 0) s.screenChatsSubtitleLive(live),
+      if (todayCount > 0) s.screenChatsSubtitleToday(todayCount),
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
+  /// «Conversaciones» and, under it, the day's count. It follows the live
+  /// state, which the screen's own rebuilds do not carry.
+  Widget _buildHeaderTitle(Strings s, HermesThemeColors colors) =>
+      ListenableBuilder(
+        listenable: Listenable.merge([_activeIdsGate, _liveStatusGate]),
+        builder: (context, _) {
+          final title = Text(
+            s.drawerSessions,
+            semanticsLabel: '${s.drawerSessions}, ${_connectionWord(s)}',
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.2,
+            ),
+          );
+          final subtitle = _chatsSubtitle(s);
+          if (subtitle == null) return title;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title,
+              Text(
+                subtitle,
+                key: const ValueKey('session-list-subtitle'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: HermesType.caption.copyWith(color: colors.textTertiary),
+              ),
+            ],
+          );
+        },
+      );
+
+  PreferredSizeWidget _buildHeader(Strings s, HermesThemeColors colors) =>
+      HermesAppBar(
         automaticallyImplyLeading: false,
         leading: Builder(
           builder: (ctx) => IconButton(
@@ -2868,39 +3137,31 @@ class _SessionListScreenState extends State<SessionListScreen>
             tooltip: s.slMenuTooltip,
           ),
         ),
-        title: Text(
-          s.drawerSessions,
-          style: TextStyle(
-            color: colors.textPrimary,
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            letterSpacing: -0.2,
-          ),
-        ),
-        // The instance is not named again here; its state is: connected or
-        // not, and read-only when it is.
-        titleBadge: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _ConnectionDot(
-              connected: _health.online,
-              checking: _health.showsChecking,
-              link: _health.link?.kind,
-            ),
-            if (widget.connection.readOnly) ...[
-              const SizedBox(width: 6),
-              const ReadOnlyBadge(compact: true),
-            ],
-          ],
-        ),
+        // the owner (gint72): no state dot of colour in the title pill. The
+        // connection's state is said with the name to a screen reader; on
+        // screen, a server that does not answer is the list's own state
+        // (connecting, the issue), and the socket's is in the ≡ menu.
+        title: _buildHeaderTitle(s, colors),
+        // The instance is not named again here. Read-only, when it is: its
+        // words while they fit beside the title, its icon when the header is
+        // narrow or the text large, down to only said (gint51, gint67).
+        titleBadge: widget.connection.readOnly
+            ? const ReadOnlyBadge(compact: true, fitWidth: true)
+            : null,
         centerTitle: false,
         titleSpacing: 0,
         actions: [
+          // Mock 134-A: a pencil drawn in outline (audit 2.1).
           IconButton(
-            icon: Icon(Icons.edit_square, color: colors.textPrimary),
+            icon: Icon(Icons.edit_outlined, color: colors.textPrimary),
             onPressed: _createNewSession,
             tooltip: s.slNewSession,
           ),
+          // Ola 4 (audit 2.1, P2): under the filters «Archivo» took a row of
+          // its own below 410 dp. Mock 134-A has no «Archivo»; of the
+          // audit's two places (the ⋮ menu or an icon in the header) it is
+          // in the header: one tap, as a filter is.
+          _buildArchiveToggle(),
           HermesMenuButton<String>(
             icon: Icon(Icons.more_vert, color: colors.textSecondary),
             tooltip: s.slMoreOptions,
@@ -2951,7 +3212,18 @@ class _SessionListScreenState extends State<SessionListScreen>
             ],
           ),
         ],
-      ),
+      );
+
+  Widget _buildScreen(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    // Away from a phone (an open Fold either way up, a tablet; mock 134)
+    // the header is the list's: over the list column beside a chat, gone
+    // with the list when a chat takes the pane. No bar runs across a chat.
+    final phone = Responsive.sizeClassOf(context) == WindowSizeClass.compact;
+    final header = _buildHeader(s, colors);
+    return Scaffold(
+      appBar: phone ? header : null,
       drawerEnableOpenDragGesture: true,
       drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
       drawer: HermesDrawer(
@@ -2974,27 +3246,352 @@ class _SessionListScreenState extends State<SessionListScreen>
         onCreate: _createNewSession,
         includeSessionsAction: false,
         paneLayout: true,
+        // Tablets only: on an open Fold the list, the chat and the
+        // workspace need the room (mock 134); «≡» has the same places.
+        railMinWidth: kChatWorkspaceNavigationMinWidth,
         // Tablets: the open conversation lives beside the list (expanded)
         // or in place of it (medium) instead of on a route of its own.
-        body: AdaptiveListDetail(
-          key: _panes,
-          visibilityObserver: hermesRouteObserver,
-          placeholder: const _ChatPanePlaceholder(),
-          onCollapsedWithDetail: _reopenPaneChatFullScreen,
-          list: _buildBody(),
+        // Which of the list, the chat and the workspace show is the
+        // screen's one views controller, shared with the open chat.
+        bodyBuilder: (_, _) => ChatWorkspaceScope(
+          controller: _views,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              if (_views.updateWindowWidth(constraints.maxWidth)) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _views.viewsChanged();
+                });
+              }
+              return ListenableBuilder(
+                listenable: _views,
+                builder: (context, _) => AdaptiveListDetail(
+                  key: _panes,
+                  visibilityObserver: hermesRouteObserver,
+                  placeholder: const _ChatPanePlaceholder(),
+                  onCollapsedWithDetail: _reopenPaneChatFullScreen,
+                  listWidth: ChatWorkspaceController.listWidth,
+                  listVisible: _views.listVisible,
+                  listOverlay: _views.listOverlay,
+                  onDismissListOverlay: _views.dismissListOverlay,
+                  listOverlayDismissLabel: s.cwsCloseList,
+                  // Mock 134 state A: a short, faint line between the list
+                  // and the chat, not a full-height rule.
+                  dividerMargin: EdgeInsets.only(
+                    top: MediaQuery.paddingOf(context).top + 6,
+                    bottom: 14,
+                  ),
+                  dividerOpacity: 0.55,
+                  // The list folded beside an open chat leaves its agents
+                  // on a rail: one face per agent, its chats in a panel.
+                  foldedListRail: phone ? null : _buildChatSwitcher,
+                  list: phone
+                      ? _buildBody()
+                      : _ListColumn(
+                          header: header,
+                          selectedId: _paneSession?.id,
+                          child: _buildBody(),
+                        ),
+                ),
+              );
+            },
+          ),
         ),
       ),
     );
   }
 
+  /// The rail of agents beside [pane] while the list is folded (expanded
+  /// window, a chat open): a view of the sessions this screen already
+  /// holds, grouped by agent, with the live status and unread the rows
+  /// show. It follows the same gates as the rows.
+  Widget _buildChatSwitcher(Widget pane) {
+    final roster = BotRosterRegistry.shared.store(widget.connection.id);
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _activeIdsGate,
+        _liveStatusGate,
+        ?_globalActivity,
+        ?_archive,
+        roster,
+        _railChats,
+      ]),
+      builder: (context, _) {
+        _scheduleRailRead(roster);
+        return _buildChatSwitcherRail(context, roster, pane);
+      },
+    );
+  }
+
+  /// The scope the rail's pages of other profiles are read and kept under:
+  /// the list's category and archived view, whichever profile is active.
+  String get _railScope =>
+      _libraryQueryFor(null, pageSize: ChatSwitcherRail.pageSize).fingerprint;
+
+  /// After this frame, asks [_railChats] for the first page of every other
+  /// profile that may have chats (it reads at most once a minute per scope,
+  /// one request at a time; a repeat call is free).
+  ///
+  /// Server side effect, known and accepted: Hermes runs its session
+  /// auto-archive on a list read (off by default; when on, at most once per
+  /// 24 h per profile), so this read can trigger it for the other profiles
+  /// too and opens their database for writing, as opening that profile's
+  /// list would. Nothing else is written; it never runs under App Lock or in
+  /// the background.
+  void _scheduleRailRead(BotRosterStore roster) {
+    if (_railReadScheduled) return;
+    _railReadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _railReadScheduled = false;
+      final repository = _repository;
+      if (!mounted || repository == null || !_foreground) return;
+      final owners = _railOwnersToRead(roster);
+      _railChats.refresh(
+        scope: _railScope,
+        owners: owners,
+        locked: ProfileFace.appLocked,
+        requester: this,
+        load: (owner) async {
+          final page = await repository.peekFirstPage(
+            _libraryQueryFor(
+              owner == 'default' ? null : owner,
+              pageSize: ChatSwitcherRail.pageSize,
+            ),
+          );
+          return ProfileRailPage(sessions: page.sessions, more: page.more);
+        },
+      );
+    });
+  }
+
+  /// The roster's profiles other than the active one, most recently active
+  /// first. A roster read with sessions says which profiles have any: only
+  /// those are read. A roster without them says nothing, so all are.
+  List<String> _railOwnersToRead(BotRosterStore roster) {
+    final active = Session.profileOwner(_profileScope.name);
+    double? lastHint(AgentProfile profile) {
+      double? best;
+      for (final summary in [
+        profile.lastSession,
+        profile.preferredSession,
+        profile.canonicalSession,
+      ]) {
+        if (summary == null) continue;
+        final at = summary.lastActive ?? summary.startedAt ?? 0;
+        if (best == null || at > best) best = at;
+      }
+      return best;
+    }
+
+    final hinted = roster.profiles.any((profile) => lastHint(profile) != null);
+    final wanted = [
+      for (final profile in roster.profiles)
+        if (_profileOwner(profile) != active &&
+            (!hinted || lastHint(profile) != null))
+          (owner: _profileOwner(profile), at: lastHint(profile) ?? 0),
+    ]..sort((a, b) => b.at.compareTo(a.at));
+    return [for (final entry in wanted) entry.owner];
+  }
+
+  Widget _buildChatSwitcherRail(
+    BuildContext context,
+    BotRosterStore roster,
+    Widget pane,
+  ) => ChatSwitcherRail(
+    agents: _switcherAgents(Strings.of(context), roster),
+    currentChatId: _paneSession?.id,
+    avatarCache: ProfileFace.cacheFor(
+      widget.connection,
+      rosterTicket: roster.ticket,
+    ),
+    connectionId: widget.connection.id,
+    onOpenChat: _openChatById,
+    onNewChat: (agent) => agent == null
+        ? _createNewSession()
+        : _createNewSessionWith(agent.owner),
+    onOpenList: _views.toggleList,
+    child: pane,
+  );
+
+  /// Every profile's chats as the agent rail lists and counts them, and
+  /// whether the server has more of them («N+»). The one source of the
+  /// rail's faces and panels and of the profile strip's counts (an open
+  /// Fold, a tablet, a phone on its side): the same rows, the same rule.
+  ///
+  /// The active profile's are the list's own; the others' the first pages
+  /// [_railChats] read, through the list's own predicate. While searching
+  /// (the rail only) the active profile's are every row the search loaded,
+  /// and the other profiles' pages are left out.
+  ({Map<String, List<Session>> byOwner, Map<String, bool> more})
+  _railChatsByOwner(BotRosterStore roster, {required bool searching}) {
+    final source = searching ? _sessions : _filteredSessions;
+    final byOwner = <String, List<Session>>{};
+    final seen = <String>{};
+    void add(Session session) {
+      if (!seen.add(session.id)) return;
+      byOwner
+          .putIfAbsent(Session.profileOwner(session.profile), () => [])
+          .add(session);
+    }
+
+    for (final session in source) {
+      if (session.listsAsOwnRow) add(session);
+    }
+    final pane = _paneSession;
+    if (pane != null) add(pane);
+    // The other profiles' first pages (the list reads the active one only),
+    // through the list's own filters. Every count is of the chats the
+    // panel lists, by the list's own predicate, «N+» while the server has
+    // pages not read: never the server's `total`, which also counts rows no
+    // list shows (Fold, 9960: «Forja · 7 chats» over two).
+    final active = Session.profileOwner(_profileScope.name);
+    final more = <String, bool>{
+      if (!searching && _branchesMayHaveMore) active: true,
+    };
+    if (!searching) {
+      final scope = _railScope;
+      // While the active profile's own read is pending its list is empty:
+      // its last known rail page stands in for the count, not 0.
+      final activeStandIn = _loading && (byOwner[active]?.isEmpty ?? true);
+      for (final profile in roster.profiles) {
+        final owner = _profileOwner(profile);
+        if (owner == active && !activeStandIn) continue;
+        final page = _railChats.page(scope, owner);
+        if (page == null) continue;
+        for (final session in page.sessions) {
+          if (Session.profileOwner(session.profile) == owner &&
+              session.listsAsOwnRow &&
+              _passesListFilters(session, searching: false)) {
+            add(session);
+          }
+        }
+        if (page.more) more[owner] = true;
+      }
+    }
+    for (final chats in byOwner.values) {
+      chats.sort(compareSessionsByRecentActivity);
+    }
+    return (byOwner: byOwner, more: more);
+  }
+
+  /// The one order of the agents, for the rail's faces and the profile
+  /// strip's: those with chats, newest chat first, then the roster's others
+  /// in the roster's order (QA 9980 SC11: the strip kept the roster's order
+  /// while the rail sorted by activity).
+  List<String> _agentOwnerOrder(
+    BotRosterStore roster,
+    Map<String, List<Session>> byOwner,
+  ) {
+    final owners = byOwner.keys.toList()
+      ..sort(
+        (a, b) => byOwner[b]!.first.lastActivityAt.compareTo(
+          byOwner[a]!.first.lastActivityAt,
+        ),
+      );
+    for (final profile in roster.profiles) {
+      final owner = _profileOwner(profile);
+      if (!byOwner.containsKey(owner)) owners.add(owner);
+    }
+    return owners;
+  }
+
+  /// The rail's agents: those with chats in the list, newest chat first,
+  /// then the roster's others (a new chat with them is one tap away). The
+  /// chat open in the pane is always listed, even before the list carries
+  /// it (a chat just created).
+  List<ChatSwitcherAgent> _switcherAgents(Strings s, BotRosterStore roster) {
+    final (:byOwner, :more) = _railChatsByOwner(
+      roster,
+      searching: _searchQuery.trim().isNotEmpty,
+    );
+    final owners = _agentOwnerOrder(roster, byOwner);
+    final profiles = <String, AgentProfile>{
+      for (final profile in roster.profiles) _profileOwner(profile): profile,
+    };
+    return [
+      for (final owner in owners)
+        ChatSwitcherAgent(
+          owner: owner,
+          // The name Bots and Inicio give the face beside it (its title
+          // first: «Forja», not «console-builder»).
+          name:
+              profiles[owner]?.visibleName ??
+              activeProfileDisplayLabel(
+                s,
+                owner == 'default' ? '' : owner,
+                roster.profiles,
+              ),
+          profile: profiles[owner],
+          more: more[owner] ?? false,
+          chats: [
+            for (final session in byOwner[owner] ?? const <Session>[])
+              ChatSwitcherChat(
+                id: session.id,
+                title: _titleFor(session),
+                time: _relativeTime(session.lastActivityAt, s),
+                mark: _switcherMark(session),
+              ),
+          ],
+        ),
+    ];
+  }
+
+  /// The one mark of a chat on the rail, as the row shows it: a live turn
+  /// is working (or waiting, when it needs the user); otherwise unread.
+  ChatSwitcherMark _switcherMark(Session session) {
+    final status = _liveStatusFor(session);
+    if (status.phase == SessionLivePhase.waitingForUser) {
+      return ChatSwitcherMark.waiting;
+    }
+    if (status.isLive) return ChatSwitcherMark.working;
+    if (_archive?.isSessionUnread(session) ?? false) {
+      return ChatSwitcherMark.unread;
+    }
+    return ChatSwitcherMark.none;
+  }
+
+  /// A row of the rail's panel: the chat by its id, through the same path
+  /// a row of the list takes (the pane keeps the screen).
+  void _openChatById(String id) {
+    final pane = _paneSession;
+    final session = pane != null && pane.id == id
+        ? pane
+        : _sessions.where((row) => row.id == id).firstOrNull ??
+              _railChats
+                  .pages(_railScope)
+                  .expand((page) => page.sessions)
+                  .where((row) => row.id == id)
+                  .firstOrNull;
+    if (session == null) return;
+    unawaited(_openChat(session));
+  }
+
+  /// «Nueva conversación con …»: a fresh chat bound to [owner] (the main
+  /// profile stays unnamed, as [_createNewSession] leaves it).
+  void _createNewSessionWith(String owner) {
+    final session = Session(
+      id: generateSessionId(),
+      title: Strings.of(context).drawerNewChat,
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 0,
+      isActive: true,
+      preview: '',
+      startedAt: DateTime.now().millisecondsSinceEpoch.toDouble() / 1000,
+      profile: owner == 'default' ? null : owner,
+    );
+    unawaited(_openChat(session));
+  }
+
   Widget _buildBody() {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
-    if (_health.checking && !_health.healthy) {
+    if (_health.checking && !_health.healthy && !_showingColdList) {
       return _ConnectingState(host: widget.connection.host);
     }
 
-    if (!_health.healthy) {
+    // The first check of the run is still on the wire and the cold list is
+    // on screen: that is not «no connection» yet.
+    if (!_health.healthy && !(_health.checking && _showingColdList)) {
       return _ConnectionIssueState(
         baseUrl: widget.connection.baseUrl,
         onRetry: _checkHealth,
@@ -3002,7 +3599,16 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
 
     if (_loading || !_archiveReady) {
-      return const Center(child: TuiLoader());
+      // Ola 7 (AUDITORIA-PULIDO §4.2): the shape of the list that is
+      // coming, where its rows will be, instead of «Cargando…».
+      return HermesControlsScroll(
+        controls: const [],
+        slivers: [
+          HermesControlsScroll.children(const [
+            _SessionListSkeleton(),
+          ], padding: _listPadding),
+        ],
+      );
     }
 
     if (_error != null) {
@@ -3061,6 +3667,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       onRefresh: _refreshSessionsAndActivity,
       controls: [
         _buildSearchField(),
+        _buildBotFilterRow(),
         _buildFilterControl(),
         // Script-only scheduled jobs never create a session: their runs live
         // under each job (Desktop's sidebar cron section). The Automation tab
@@ -3101,6 +3708,8 @@ class _SessionListScreenState extends State<SessionListScreen>
               _activeIdsGate,
               _liveStatusGate,
               ?_globalActivity,
+              // The bots' sprites follow the roster.
+              BotRosterRegistry.shared.store(widget.connection.id),
               // La reserva inferior depende de si el dock está
               // activado (interruptor global de Ajustes).
               DockPreferencesController.instance.listenable,
@@ -3133,6 +3742,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 return _SessionCardRow(
                   first: row.first,
                   last: row.last,
+                  sessionId: session.id,
                   child: _hiddenView
                       ? _hiddenSessionRow(session, s)
                       : _sessionRow(session, s, colors),
@@ -3141,6 +3751,26 @@ class _SessionListScreenState extends State<SessionListScreen>
             ),
           ),
       ],
+    );
+  }
+
+  /// The bot's own small sprite for [session]'s row: its silhouette, static.
+  Widget _botSprite(Session session, {bool working = false}) {
+    final owner = Session.profileOwner(session.profile);
+    final roster = BotRosterRegistry.shared.store(widget.connection.id);
+    AgentProfile? profile;
+    for (final candidate in roster.profiles) {
+      if (_profileOwner(candidate) == owner) profile = candidate;
+    }
+    return ProfileFace(
+      profileName: owner,
+      profile: profile,
+      avatarCache: ProfileFace.cacheFor(
+        widget.connection,
+        rosterTicket: roster.ticket,
+      ),
+      size: _sessionSpriteSize,
+      working: working,
     );
   }
 
@@ -3185,6 +3815,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       },
       child: _SessionTile(
         session: session,
+        leading: _botSprite(session, working: streamActive),
         title: _titleFor(session),
         formattedTime: _relativeTime(session.lastActivityAt, s),
         pinned: pinned,
@@ -3203,6 +3834,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     final onServer = _archive?.isSessionHiddenOnServer(session) ?? false;
     return _SessionTile(
       session: session,
+      leading: _botSprite(session),
       title: _titleFor(session),
       formattedTime: _relativeTime(session.lastActivityAt, s),
       hiddenNote: onServer ? s.slHiddenOnServerNote : s.slHiddenLocalNote,
@@ -3248,9 +3880,91 @@ class _SessionListScreenState extends State<SessionListScreen>
     );
   }
 
+  /// One chip per bot of the roster, its sprite and name: the profile
+  /// switcher's own logic (the active profile scopes this list), one tap
+  /// away from the list. Nothing to choose between with a single bot.
+  ///
+  /// Away from a phone held upright (an open Fold, a tablet, a phone on its
+  /// side: the windows where the agent rail stands in for a folded list)
+  /// each face also wears the rail's count, from the rail's own source and
+  /// rule ([_railChatsByOwner]): the strip and the rail never disagree
+  /// (QA 9970 SC11, Pixel on its side: faces with no number). Not while
+  /// searching: the other profiles' pages are not searched.
+  Widget _buildBotFilterRow() {
+    final roster = BotRosterRegistry.shared.store(widget.connection.id);
+    final counted =
+        Responsive.sizeClassOf(context) != WindowSizeClass.compact;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _profileScope,
+        roster,
+        if (counted) _railChats,
+        if (counted && _archive != null) _archive!,
+      ]),
+      builder: (context, _) {
+        final profiles = roster.profiles;
+        if (profiles.length < 2) return const SizedBox.shrink();
+        final s = Strings.of(context);
+        final faces = ProfileFace.cacheFor(
+          widget.connection,
+          rosterTicket: roster.ticket,
+        );
+        final searching = _searchQuery.trim().isNotEmpty;
+        final railChats = counted
+            ? _railChatsByOwner(roster, searching: false)
+            : null;
+        final counts = searching ? null : railChats;
+        // Where the rail exists the faces keep its order (and only the
+        // roster's profiles are drawn); elsewhere, the roster's.
+        final byOwner = {
+          for (final profile in profiles) _profileOwner(profile): profile,
+        };
+        final ordered = railChats == null
+            ? profiles
+            : [
+                for (final owner in _agentOwnerOrder(roster, railChats.byOwner))
+                  if (byOwner[owner] != null) byOwner[owner]!,
+              ];
+        if (counted) _scheduleRailRead(roster);
+        return Padding(
+          padding: const EdgeInsets.only(bottom: HermesSpace.x2),
+          child: Semantics(
+            container: true,
+            label: s.screenChatsBotFilter,
+            child: SingleChildScrollView(
+              key: const ValueKey('session-bot-filter'),
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final profile in ordered)
+                    _BotFilterChip(
+                      profile: profile,
+                      label: profileDisplayLabel(s, profile),
+                      count: counts == null
+                          ? null
+                          : counts.byOwner[_profileOwner(profile)]?.length ?? 0,
+                      more: counts?.more[_profileOwner(profile)] ?? false,
+                      cache: faces,
+                      selected: _profileOwner(profile) == _profileScope.owner,
+                      onTap: () => unawaited(
+                        _profileScope.switchTo(
+                          profile.isDefault ? '' : profile.name,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildFilterControl() {
     final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     final categories = HermesSegmentedControl<SessionCategory>(
       value: _activeCategory,
       onChanged: _selectCategory,
@@ -3278,51 +3992,38 @@ class _SessionListScreenState extends State<SessionListScreen>
         ),
       ],
     );
-    final archiveButton = Semantics(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+      child: SizedBox(width: double.infinity, child: categories),
+    );
+  }
+
+  /// The archive's toggle, in the header: a 48 dp target around the icon,
+  /// filled while the archive shows.
+  Widget _buildArchiveToggle() {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    return Semantics(
       button: true,
       selected: _showArchived,
       label: s.slFilterArchived,
+      // excludeSemantics drops the IconButton's own tap: the node carries
+      // it, or TalkBack reads a button a double tap does nothing on.
+      onTap: _toggleArchived,
+      excludeSemantics: true,
       child: Tooltip(
         message: s.slFilterArchived,
         child: IconButton(
           key: const ValueKey('session-filter-archived'),
           onPressed: _toggleArchived,
-          icon: const Icon(Icons.inventory_2_outlined, size: 20),
+          icon: const Icon(Icons.inventory_2_outlined, size: HermesIcon.md),
           color: _showArchived ? colors.textPrimary : colors.textSecondary,
           style: IconButton.styleFrom(
-            minimumSize: const Size(50, 50),
-            backgroundColor: _showArchived
-                ? colors.surface
-                : colors.surfaceVariant.withValues(alpha: 0.46),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
+            minimumSize: const Size.square(HermesSpace.tap),
+            backgroundColor: _showArchived ? colors.surface : null,
+            shape: const CircleBorder(),
           ),
         ),
-      ),
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 410) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                SizedBox(width: double.infinity, child: categories),
-                const SizedBox(height: 6),
-                archiveButton,
-              ],
-            );
-          }
-          return Row(
-            children: [
-              Expanded(child: categories),
-              const SizedBox(width: 8),
-              archiveButton,
-            ],
-          );
-        },
       ),
     );
   }
@@ -3387,7 +4088,8 @@ class _LibraryScopeNotice extends StatelessWidget {
 /// global apagado el dock no existe y no se reserva nada.
 double _dockBottomReservation(BuildContext context) =>
     DockPreferencesController.instance.value.useDock
-    ? 48 + 12 + 6 + MediaQuery.paddingOf(context).bottom
+    ? DockScrollClearance.maybeOf(context) ??
+          48 + 12 + 6 + MediaQuery.paddingOf(context).bottom
     : 0;
 
 /// Cabecera de sección del listado: etiqueta en mayúsculas + cuenta.
@@ -3424,6 +4126,7 @@ class _SessionSectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final style = HermesType.caption.copyWith(color: colors.textTertiary);
     // La cabecera respira sobre su tarjeta y separa secciones sin necesidad de
     // una caja propia.
     return Semantics(
@@ -3433,26 +4136,18 @@ class _SessionSectionLabel extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            // The label in small caps on the left, its count on the right,
+            // both in the quiet tone.
             Expanded(
               child: Text(
                 header.label.toUpperCase(),
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.4,
-                  color: colors.textSecondary,
-                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: style,
               ),
             ),
-            const SizedBox(width: 8),
-            Text(
-              '${header.count}',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: colors.textTertiary,
-              ),
-            ),
+            const SizedBox(width: HermesSpace.x2),
+            Text('${header.count}', style: style),
           ],
         ),
       ),
@@ -3460,47 +4155,270 @@ class _SessionSectionLabel extends StatelessWidget {
   }
 }
 
-/// Una fila dentro de la tarjeta redondeada de su sección: redondea solo los
-/// extremos y dibuja el separador fino salvo en la última.
+/// A row of the list at rest (the mockup's 64 dp).
+const double _sessionRowHeight = 64;
+
+/// The bot's sprite at the start of a row.
+const double _sessionSpriteSize = 36;
+
+String _profileOwner(AgentProfile profile) =>
+    profile.isDefault ? 'default' : profile.name;
+
+/// A bot of the filter row: its small sprite over its name. The selected one
+/// wears the accent ring the profile switcher gives the active profile.
+/// With a [count] (windows where the agent rail exists), the rail's badge
+/// sits on the face and the face is read as the rail's is.
+class _BotFilterChip extends StatelessWidget {
+  const _BotFilterChip({
+    required this.profile,
+    required this.label,
+    required this.cache,
+    required this.selected,
+    required this.onTap,
+    this.count,
+    this.more = false,
+  });
+
+  /// The face of the strip, a touch smaller than a row's tap target.
+  static const double faceSize = 40;
+
+  final AgentProfile profile;
+  final String label;
+  final MissionProfileAvatarCache cache;
+  final bool selected;
+  final VoidCallback onTap;
+
+  /// The chats the agent rail counts for the profile; null where the rail
+  /// does not exist (a phone held upright) or while searching.
+  final int? count;
+
+  /// «N+»: the server has chats past [count].
+  final bool more;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final count = this.count;
+    final face = ProfileFace(
+      profileName: _profileOwner(profile),
+      profile: profile,
+      avatarCache: cache,
+      active: selected,
+      size: faceSize,
+    );
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: count == null
+          ? label
+          : chatSwitcherCountLabel(
+              Strings.of(context),
+              label,
+              count,
+              more: more,
+            ),
+      onTap: onTap,
+      excludeSemantics: true,
+      child: InkWell(
+        key: ValueKey('session-bot-filter-${profile.name}'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(HermesRadius.control),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            minWidth: HermesSpace.tap,
+            maxWidth: 72,
+            minHeight: HermesSpace.tap,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: HermesSpace.x1,
+              vertical: HermesSpace.x1,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (count == null || count == 0)
+                  face
+                else
+                  // The badge stays within the face's height (the name
+                  // sits 2 px under it) and leans into the chip's own
+                  // padding sideways, never past it: no wider than the
+                  // face and that padding (a «10+» in large text over a
+                  // short name's chip shrinks rather than cover the next).
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      face,
+                      Positioned(
+                        right: -HermesSpace.x1,
+                        bottom: 0,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: faceSize + HermesSpace.x1,
+                          ),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: ChatSwitcherCountBadge(
+                              key: ValueKey(
+                                'session-bot-filter-count-${profile.name}',
+                              ),
+                              count: count,
+                              more: more,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: HermesType.caption.copyWith(
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    color: selected ? colors.textPrimary : colors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Around the rows of the list, as the loaded list has them.
+const EdgeInsets _listPadding = EdgeInsets.fromLTRB(
+  HermesSpace.x4,
+  HermesSpace.x1,
+  HermesSpace.x4,
+  HermesSpace.x3,
+);
+
+/// Ola 7: the list's first load, four rows of the shape that is coming, in
+/// the same cards as the rows. Static.
+class _SessionListSkeleton extends StatelessWidget {
+  const _SessionListSkeleton();
+
+  static const int _rows = 4;
+
+  @override
+  Widget build(BuildContext context) => SkeletonSemantics(
+    child: Column(
+      key: const ValueKey('session-list-skeleton'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < _rows; i++)
+          _SessionCardRow(
+            first: i == 0,
+            last: i == _rows - 1,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: _sessionRowHeight),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: HermesSpace.x4,
+                  vertical: HermesSpace.x3,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SkeletonBar(widthFactor: i.isEven ? 0.58 : 0.44),
+                    const SizedBox(height: HermesSpace.x2),
+                    SkeletonBar(
+                      widthFactor: i.isEven ? 0.82 : 0.7,
+                      height: HermesSpace.gap,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+/// Una conversación como píldora propia: relleno de cristal, el mismo
+/// acabado que los botones a escala de caja (contorno en dos tonos, filo de
+/// luz arriba y sombra corta) y separación entre filas. Sin blur sobre el
+/// contenido: todo se pinta, así que una lista larga no cuesta más.
 class _SessionCardRow extends StatelessWidget {
+  /// How much of the card is its surface; the rest lets the backdrop through.
+  static const double _cardGlass = 0.58;
+
   final bool first;
   final bool last;
+  final String? sessionId;
   final Widget child;
 
   const _SessionCardRow({
     required this.first,
     required this.last,
     required this.child,
+    this.sessionId,
   });
+
+  /// Air between two pills and the corner radius of each.
+  static const double gap = 8;
+  static const double radius = HermesRadius.card;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final radius = Radius.circular(
-      Theme.of(context).hermesComponents.profile.shape.groupRadius,
+    final chrome = HermesChrome.of(colors);
+    final wide = _WideListScope.maybeOf(context);
+    // Every conversation is ONE pill of its own: its own glass fill, a hair
+    // of border and air between rows, never a line of text on the page and
+    // never a slab of joined rows. No blur over the content: the fill, the
+    // rims and the short compact shadow are painted.
+    final selected =
+        wide != null && sessionId != null && wide.selectedId == sessionId;
+    final shape = BorderRadius.circular(radius);
+    final glass = HermesGlassLook.of(context);
+    // Beside the chat the open conversation is the lifted one.
+    final body = ClipRRect(
+      borderRadius: shape,
+      // El recorte mantiene el deslizamiento dentro de las esquinas
+      // redondeadas de la tarjeta.
+      child: Material(type: MaterialType.transparency, child: child),
     );
-    final shape = BorderRadius.vertical(
-      top: first ? radius : Radius.zero,
-      bottom: last ? radius : Radius.zero,
-    );
-    return DecoratedBox(
-      decoration: BoxDecoration(color: colors.surface, borderRadius: shape),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // El recorte mantiene el deslizamiento dentro de las esquinas
-          // redondeadas de la tarjeta.
-          ClipRRect(borderRadius: shape, child: child),
-          if (!last)
-            Padding(
-              padding: const EdgeInsets.only(left: 16),
-              child: Divider(
-                height: 1,
-                thickness: 1,
-                color: colors.divider.withValues(alpha: 0.55),
-              ),
-            ),
-        ],
+    final Widget pill;
+    if (glass != null) {
+      pill = HermesGlassLook.body(
+        glass,
+        shape,
+        fill: glass.cardFill,
+        line: selected ? glass.selectedLine : null,
+        lifted: true,
+        compact: true,
+        child: body,
+      );
+    } else {
+      pill = DecoratedBox(
+        decoration: BoxDecoration(
+          color: selected
+              ? colors.surface
+              : HermesSoftLight.solid(context)
+              ? HermesSoftLight.cardFill(context, colors)
+              : colors.surface.withValues(alpha: _cardGlass),
+          borderRadius: shape,
+          border: Border.all(color: selected ? colors.accent : chrome.line),
+          boxShadow: selected ? chrome.shadow : null,
+        ),
+        child: body,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: gap),
+      child: KeyedSubtree(
+        key: selected ? const ValueKey('session-row-selected') : null,
+        child: pill,
       ),
     );
   }
@@ -3543,90 +4461,6 @@ class _SwipeAffordance extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Punto "en vivo" con anillo que se expande: la conversación está corriendo
-/// ahora mismo. El anillo se apaga cuando el sistema pide reducir movimiento.
-class _LiveDot extends StatefulWidget {
-  final Color color;
-
-  const _LiveDot({required this.color, super.key});
-
-  @override
-  State<_LiveDot> createState() => _LiveDotState();
-}
-
-class _LiveDotState extends State<_LiveDot>
-    with SingleTickerProviderStateMixin {
-  AnimationController? _ring;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    if (reduceMotion) {
-      _ring?.dispose();
-      _ring = null;
-      return;
-    }
-    _ring ??= AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ring?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final dot = Container(
-      width: 8,
-      height: 8,
-      decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
-    );
-    final ring = _ring;
-    if (ring == null) return dot;
-    // The ring repaints every frame while the row is live: keep it on its own
-    // layer so each tick does not repaint the row's title, preview and card.
-    return RepaintBoundary(
-      child: SizedBox(
-        width: 8,
-        height: 8,
-        child: AnimatedBuilder(
-          animation: ring,
-          builder: (context, child) {
-            final t = Curves.easeOut.transform(ring.value);
-            return Stack(
-              clipBehavior: Clip.none,
-              alignment: Alignment.center,
-              children: [
-                Transform.scale(
-                  scale: 1 + 1.6 * t,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: widget.color.withValues(alpha: 0.55 * (1 - t)),
-                        width: 1.5,
-                      ),
-                    ),
-                  ),
-                ),
-                ?child,
-              ],
-            );
-          },
-          child: dot,
         ),
       ),
     );
@@ -3688,53 +4522,6 @@ class _FilteredEmptyState extends StatelessWidget {
         primaryLabel: onCreateNew == null ? null : s.drawerNewChat,
         primaryIcon: Icons.edit_square,
         onPrimary: onCreateNew,
-      ),
-    );
-  }
-}
-
-class _ConnectionDot extends StatelessWidget {
-  final bool connected;
-  final bool checking;
-  final ConnectionStatusKind? link;
-
-  const _ConnectionDot({
-    required this.connected,
-    required this.checking,
-    this.link,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    // A down socket names its state and overrides what REST said.
-    final linkDown = link != null && link != ConnectionStatusKind.connected;
-    final color = linkDown
-        ? ((link == ConnectionStatusKind.reconnecting ||
-                  link == ConnectionStatusKind.starting)
-              ? colors.accent
-              : colors.error)
-        : checking
-        ? colors.accent
-        : connected
-        ? colors.success
-        : colors.error;
-    final s = Strings.of(context);
-    // The dot is all that is left of the connection's line: it is said in
-    // words to a screen reader.
-    return Semantics(
-      label: linkDown
-          ? connectionStatusWord(s, link!)
-          : checking
-          ? s.hwServerChecking
-          : connected
-          ? s.hwServerOnline
-          : s.hwServerOffline,
-      child: Container(
-        key: const ValueKey('session-list-connection-dot'),
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
       ),
     );
   }
@@ -3898,6 +4685,9 @@ class _ConnectionIssueState extends StatelessWidget {
 
 class _SessionTile extends StatelessWidget {
   final Session session;
+
+  /// The bot's sprite, at the start of the row.
+  final Widget? leading;
   final String title;
   final String formattedTime;
   final bool pinned;
@@ -3922,6 +4712,7 @@ class _SessionTile extends StatelessWidget {
 
   const _SessionTile({
     required this.session,
+    this.leading,
     required this.title,
     required this.formattedTime,
     this.pinned = false,
@@ -3966,6 +4757,45 @@ class _SessionTile extends StatelessWidget {
         ? null
         : sessionSearchHighlights(session);
     final liveTone = sessionStatusColor(colors, _statusTone);
+    final showUnread =
+        unread &&
+        !streamActive &&
+        status.phase != SessionLivePhase.waitingForUser;
+    final unreadDot = Semantics(
+      label: strings.slUnreadDot,
+      child: Container(
+        key: ValueKey('session-unread-${session.id}'),
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: colors.accent, shape: BoxShape.circle),
+      ),
+    );
+    // Mock 134-A: beside the chat the time closes the preview line («… · 20
+    // h»), so the title keeps the column's width (audit 2.1, P1: a column
+    // of its own took 90-120 dp of a 300 dp list).
+    final wide = _WideListScope.maybeOf(context) != null;
+    final timeInPreview = wide && onShow == null && formattedTime.isNotEmpty;
+    final previewStyle = HermesType.support.copyWith(
+      height: 1.25,
+      color: colors.textSecondary,
+    );
+    final timeStyle = HermesType.support.copyWith(
+      fontWeight: FontWeight.w500,
+      color: colors.textTertiary,
+    );
+    Widget previewLine(Widget preview) => !timeInPreview
+        ? preview
+        : Row(
+            children: [
+              Flexible(child: preview),
+              Text(
+                ' · $formattedTime',
+                key: ValueKey('session-time-${session.id}'),
+                maxLines: 1,
+                style: timeStyle,
+              ),
+            ],
+          );
 
     return InkWell(
       onTap: onTap,
@@ -3973,11 +4803,18 @@ class _SessionTile extends StatelessWidget {
       child: ConstrainedBox(
         // 64dp es el alto de fila del mockup y deja el objetivo táctil muy por
         // encima del mínimo de 44dp.
-        constraints: const BoxConstraints(minHeight: 64),
+        constraints: const BoxConstraints(minHeight: _sessionRowHeight),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          padding: EdgeInsets.symmetric(
+            horizontal: wide ? HermesSpace.inset : HermesSpace.x4,
+            vertical: 11,
+          ),
           child: Row(
             children: [
+              if (leading != null) ...[
+                leading!,
+                const SizedBox(width: HermesSpace.x3),
+              ],
               Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -3985,21 +4822,17 @@ class _SessionTile extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        if (streamActive) ...[
-                          _LiveDot(
-                            key: ValueKey('session-live-dot-${session.id}'),
-                            color: liveTone,
-                          ),
-                          const SizedBox(width: 8),
-                        ],
                         Flexible(
                           child: Text(
                             title.isNotEmpty ? title : strings.slNoTitle,
-                            maxLines: 1,
+                            // Beside the chat (≥ 300 dp) a long title takes
+                            // a second line instead of «Comprobar proble…».
+                            maxLines: _WideListScope.maybeOf(context) == null
+                                ? 1
+                                : 2,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
+                            style: HermesType.body.copyWith(
                               fontWeight: FontWeight.w600,
-                              fontSize: 15,
                               letterSpacing: -0.2,
                               color: colors.textPrimary,
                             ),
@@ -4011,33 +4844,23 @@ class _SessionTile extends StatelessWidget {
                             status.phase ==
                                 SessionLivePhase.waitingForUser) ...[
                           const SizedBox(width: 7),
-                          Container(
-                            key: ValueKey('session-attention-${session.id}'),
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: colors.warning,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ],
-                        if (unread &&
-                            !streamActive &&
-                            status.phase !=
-                                SessionLivePhase.waitingForUser) ...[
-                          const SizedBox(width: 7),
+                          // TalkBack reads what the dot means (audit 2.1).
                           Semantics(
-                            label: strings.slUnreadDot,
+                            label: sessionLiveStatusLabel(strings, status),
                             child: Container(
-                              key: ValueKey('session-unread-${session.id}'),
+                              key: ValueKey('session-attention-${session.id}'),
                               width: 7,
                               height: 7,
                               decoration: BoxDecoration(
-                                color: colors.accent,
+                                color: colors.warning,
                                 shape: BoxShape.circle,
                               ),
                             ),
                           ),
+                        ],
+                        if (showUnread && timeInPreview) ...[
+                          const SizedBox(width: 7),
+                          unreadDot,
                         ],
                         if (session.isJob) ...[
                           const SizedBox(width: 7),
@@ -4077,65 +4900,89 @@ class _SessionTile extends StatelessWidget {
                           container: true,
                           excludeSemantics: true,
                           label: activityLabel,
-                          // Smaller and lighter than the title, in the state's
-                          // own colour (it used to be the title's white).
-                          child: Text(
-                            activityLabel,
-                            key: ValueKey('session-running-${session.id}'),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              height: 1.25,
-                              fontWeight: FontWeight.w500,
-                              color: liveTone,
-                            ),
+                          // The state is told once, here: a ring turning
+                          // beside its text, not a dot before the title.
+                          child: Row(
+                            children: [
+                              HermesWorkingRing(
+                                key: ValueKey(
+                                  'session-live-ring-${session.id}',
+                                ),
+                                color: liveTone,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                // Smaller and lighter than the title, in the
+                                // state's own colour (it used to be the
+                                // title's white).
+                                child: Text(
+                                  activityLabel,
+                                  key: ValueKey(
+                                    'session-running-${session.id}',
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: HermesType.support.copyWith(
+                                    height: 1.25,
+                                    fontWeight: FontWeight.w500,
+                                    color: liveTone,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       )
                     else if (highlights != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 3),
-                        child: Text.rich(
-                          TextSpan(
-                            children: [
-                              for (final span in highlights)
-                                TextSpan(
-                                  text: span.text,
-                                  style: span.highlighted
-                                      ? TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          color: colors.textPrimary,
-                                        )
-                                      : null,
-                                ),
-                            ],
-                          ),
-                          key: ValueKey('session-snippet-${session.id}'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.25,
-                            color: colors.textSecondary,
+                        child: previewLine(
+                          Text.rich(
+                            TextSpan(
+                              children: [
+                                for (final span in highlights)
+                                  TextSpan(
+                                    text: span.text,
+                                    style: span.highlighted
+                                        ? TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            color: colors.textPrimary,
+                                          )
+                                        : null,
+                                  ),
+                              ],
+                            ),
+                            key: ValueKey('session-snippet-${session.id}'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: previewStyle,
                           ),
                         ),
                       )
                     else if (previewText.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 3),
-                        child: Text(
-                          previewText,
-                          key: session.hasLocalDraft
-                              ? ValueKey('session-draft-${session.id}')
-                              : null,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.25,
-                            color: colors.textSecondary,
+                        child: previewLine(
+                          Text(
+                            previewText,
+                            key: session.hasLocalDraft
+                                ? ValueKey('session-draft-${session.id}')
+                                : null,
+                            // Ola 8: two lines once the text is enlarged.
+                            maxLines: labelMaxLines(context),
+                            overflow: TextOverflow.ellipsis,
+                            style: previewStyle,
                           ),
+                        ),
+                      )
+                    else if (timeInPreview)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          formattedTime,
+                          key: ValueKey('session-time-${session.id}'),
+                          maxLines: 1,
+                          style: timeStyle,
                         ),
                       ),
                   ],
@@ -4145,23 +4992,27 @@ class _SessionTile extends StatelessWidget {
                 const SizedBox(width: 8),
                 SessionRowStopControl(onStop: onStop!),
               ],
-              const SizedBox(width: 12),
-              if (onShow != null)
+              if (onShow != null) ...[
+                const SizedBox(width: 12),
                 TextButton.icon(
                   key: ValueKey('session-show-${session.id}'),
                   onPressed: onShow,
                   icon: const Icon(Icons.visibility_outlined, size: 18),
                   label: Text(strings.slHiddenShowAction),
-                )
-              else
-                Text(
-                  formattedTime,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
-                    color: colors.textTertiary,
-                  ),
                 ),
+              ] else if (!timeInPreview) ...[
+                const SizedBox(width: 12),
+                // The time at the end of the row and, under it, the unread
+                // dot.
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(formattedTime, style: timeStyle),
+                    if (showUnread) ...[const SizedBox(height: 6), unreadDot],
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -4200,7 +5051,7 @@ class _ChatPanePlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return ColoredBox(
-      color: Theme.of(context).scaffoldBackgroundColor,
+      color: Theme.of(context).hermes.background,
       child: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -4221,4 +5072,61 @@ class _ChatPanePlaceholder extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The list of chats with its own header, beside a chat (mock 134): the
+/// header covers the list only. The list starts under it, so it takes no
+/// status bar inset of its own.
+class _ListColumn extends StatelessWidget {
+  const _ListColumn({
+    required this.header,
+    required this.selectedId,
+    required this.child,
+  });
+
+  final PreferredSizeWidget header;
+
+  /// The conversation open beside the list.
+  final String? selectedId;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      SizedBox(
+        height: MediaQuery.paddingOf(context).top + header.preferredSize.height,
+        child: header,
+      ),
+      Expanded(
+        // the owner (ronda Fold 2): the list scrolls under a phone's floating
+        // header without clipping; here the header is the column's own, so
+        // the rows stopped at its edge would paint over its round buttons.
+        child: ClipRect(
+          key: const ValueKey('session-list-column-body'),
+          child: MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            child: _WideListScope(selectedId: selectedId, child: child),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+/// The list as the column beside the chat on a wide window (mock 134 state
+/// A), and the conversation open beside it. Its rows sit on the page's own
+/// background like the chat, and titles take two lines.
+class _WideListScope extends InheritedWidget {
+  const _WideListScope({required this.selectedId, required super.child});
+
+  final String? selectedId;
+
+  static _WideListScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_WideListScope>();
+
+  @override
+  bool updateShouldNotify(_WideListScope oldWidget) =>
+      oldWidget.selectedId != selectedId;
 }

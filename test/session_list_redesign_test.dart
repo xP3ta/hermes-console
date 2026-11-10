@@ -6,10 +6,14 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/edges.dart';
+import 'package:hermes_android/core/design/tokens.dart'
+    show HermesGel, HermesRadius;
 import 'package:hermes_android/core/widgets/session_status_tone.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
+import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
+import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/global_activity_aggregate.dart';
@@ -22,12 +26,14 @@ import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/session_row_stop_control.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/box_edge_probe.dart';
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/home_chat_finders.dart';
 import 'support/test_api_client.dart';
@@ -287,6 +293,8 @@ void main() {
     List<Map<String, dynamic>> rows, {
     ActiveChatService? activeChats,
     DateTime Function()? clock,
+    Future<void>? sessionsGate,
+    Future<void> Function()? readGate,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final manager = await ConnectionManager.create(prefs);
@@ -296,6 +304,8 @@ void main() {
       manualToken: 'dashboard-token',
       httpClientOverride: MockClient((request) async {
         if (request.method == 'GET' && request.url.path == '/api/sessions') {
+          if (sessionsGate != null) await sessionsGate;
+          if (readGate != null) await readGate();
           return _page(rows);
         }
         return http.Response('{}', 404);
@@ -329,8 +339,92 @@ void main() {
 
   int nowSeconds() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
-  testWidgets('the header says «Conversaciones» and nothing under it: the '
-      'connection is a dot beside the name, said in words', (tester) async {
+  // T3-A (Ola 7, AUDITORIA-PULIDO §4.2): while the list first loads, the
+  // shape of its rows in their cards, static, read as «Cargando…»; then
+  // the rows.
+  // Flicker audit P1: a refresh over a list that already has rows never
+  // swaps them for the skeleton (nor unmounts the RefreshIndicator).
+  testWidgets('refresh with rows on screen: no skeleton, the rows stay', (
+    tester,
+  ) async {
+    Completer<void>? hold;
+    var reads = 0;
+    await pump(
+      tester,
+      [_row('fila-viva', title: 'Fila viva', lastActive: 1)],
+      readGate: () async {
+        reads++;
+        await hold?.future;
+      },
+    );
+    const skeleton = ValueKey('session-list-skeleton');
+    await _pumpUntil(tester, find.text('Fila viva'));
+    final before = reads;
+
+    hold = Completer<void>();
+    final pull = tester.state<RefreshIndicatorState>(
+      find.byType(RefreshIndicator).first,
+    );
+    unawaited(pull.show());
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(skeleton), findsNothing);
+      expect(find.text('Fila viva'), findsOneWidget);
+      expect(find.byType(RefreshIndicator), findsWidgets);
+    }
+    expect(reads, greaterThan(before));
+
+    hold.complete();
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.byKey(skeleton), findsNothing);
+    expect(find.text('Fila viva'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('first load: a static skeleton of rows, then the rows', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    final gate = Completer<void>();
+    await pump(tester, [
+      _row('tras-esqueleto', title: 'Tras el esqueleto', lastActive: 1),
+    ], sessionsGate: gate.future);
+    const skeleton = ValueKey('session-list-skeleton');
+    await _pumpUntil(tester, find.byKey(skeleton));
+    expect(
+      tester.getSemantics(find.byKey(skeleton)),
+      isSemantics(label: 'Cargando…', isLiveRegion: true),
+    );
+    // Static: nothing in it moves by itself (a shimmer is an animated
+    // builder, a loader a progress indicator). The rows' own cards are a
+    // Material, which only animates when it changes.
+    bool movesByItself(Widget w) {
+      if (w is AnimatedWidget || w is ProgressIndicator) return true;
+      return w is TweenAnimationBuilder;
+    }
+
+    expect(
+      find.descendant(
+        of: find.byKey(skeleton),
+        matching: find.byWidgetPredicate(movesByItself),
+      ),
+      findsNothing,
+    );
+    expect(find.text('Cargando…'), findsNothing);
+
+    gate.complete();
+    await _pumpUntil(tester, find.text('Tras el esqueleto'));
+    expect(find.byKey(skeleton), findsNothing);
+    expect(tester.takeException(), isNull);
+    handle.dispose();
+  });
+
+  // the owner (gint72): no state dot of colour in a title pill. The connection
+  // is said with the name, in words, to a screen reader.
+  testWidgets('the header says «Conversaciones» and its day count: no '
+      'dot of colour; the connection is said in words', (tester) async {
     final handle = tester.ensureSemantics();
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
@@ -345,37 +439,51 @@ void main() {
     ], clock: () => now);
     await _pumpUntil(tester, find.text('Firma del keystore en CI'));
 
-    final pill = find.byKey(const ValueKey('hermes-app-bar-title'));
+    final pill = find.byWidgetPredicate(
+      (w) =>
+          w.key == const ValueKey('hermes-app-bar-title') ||
+          w.key == const ValueKey('hermes-app-bar-plain-title'),
+    );
     final name = find.descendant(
       of: pill,
       matching: find.text('Conversaciones'),
     );
-    final dot = find.descendant(
-      of: pill,
-      matching: find.byKey(const ValueKey('session-list-connection-dot')),
-    );
     expect(name, findsOneWidget);
-    expect(dot, findsOneWidget);
-    // One line: the name is the only text of the pill, and the instance's
-    // name is not repeated anywhere in the header.
+    expect(
+      find.byKey(const ValueKey('session-list-connection-dot')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: pill,
+        matching: find.byWidgetPredicate(
+          (w) =>
+              w is DecoratedBox &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).shape == BoxShape.circle,
+        ),
+      ),
+      findsNothing,
+      reason: 'no dot of any kind in the title pill',
+    );
+    // The name and, under it, the day's count (mock «Chats», «1 hoy»); the
+    // instance's name is not repeated anywhere in the header.
     expect(
       find.descendant(of: pill, matching: find.byType(Text)),
-      findsOneWidget,
+      findsNWidgets(2),
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('session-list-subtitle')))
+          .data,
+      '1 hoy',
     );
     expect(find.text('Redesign QA'), findsNothing);
-    expect(
-      tester.getRect(dot).left,
-      greaterThanOrEqualTo(tester.getRect(name).right),
-    );
-    expect(
-      tester.getRect(dot).center.dy,
-      closeTo(tester.getRect(name).center.dy, 2),
-    );
     expect(tester.getSize(pill).height, lessThanOrEqualTo(44));
     // The state is said, whichever it is at this moment.
     final strings = Strings.of(tester.element(pill));
     expect(
-      tester.getSemantics(dot).label,
+      tester.getSemantics(name).label,
       anyOf(
         contains(strings.hwServerOnline),
         contains(strings.hwServerOffline),
@@ -383,6 +491,155 @@ void main() {
       ),
     );
     handle.dispose();
+  });
+
+  testWidgets('el título lleva su subtítulo y cada fila el sprite de su bot', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final now = DateTime(2026, 10, 14, 12, 0);
+    final today = now.millisecondsSinceEpoch ~/ 1000;
+    final yesterday = DateTime(2026, 10, 13, 12).millisecondsSinceEpoch ~/ 1000;
+    await pump(tester, [
+      _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
+      _row('hoy-2', title: 'Notas de la release', lastActive: today - 60),
+      _row('ayer-1', title: 'Deploy a staging', lastActive: yesterday),
+    ], clock: () => now);
+    await _pumpUntil(tester, find.text('Firma del keystore en CI'));
+
+    // Nothing is running: only «2 hoy», under the title.
+    final subtitle = find.byKey(const ValueKey('session-list-subtitle'));
+    expect(tester.widget<Text>(subtitle).data, '2 hoy');
+    expect(
+      tester.getRect(subtitle).top,
+      greaterThanOrEqualTo(
+        tester.getRect(find.text('Conversaciones')).bottom - 1,
+      ),
+    );
+    // Every row starts with its bot's sprite (the default bot's, here).
+    expect(
+      find.byKey(const ValueKey('profile-face-default')),
+      findsNWidgets(3),
+    );
+  });
+
+  testWidgets('la fila de bots cambia el perfil activo y se calla con uno', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() => BotRosterRegistry.shared.forget(_connectionId));
+
+    AgentProfile bot(String name, {bool isDefault = false}) =>
+        AgentProfile.fromJson({
+          'name': name,
+          'path': '/home/u/.hermes/profiles/$name',
+          'is_default': isDefault,
+        });
+
+    final now = DateTime(2026, 10, 14, 12, 0);
+    final today = now.millisecondsSinceEpoch ~/ 1000;
+    BotRosterRegistry.shared.publish(_connectionId, 'QA', [
+      bot('default', isDefault: true),
+    ]);
+    final manager = await pump(tester, [
+      _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
+    ], clock: () => now);
+    await _pumpUntil(tester, find.text('Firma del keystore en CI'));
+    expect(find.byKey(const ValueKey('session-bot-filter')), findsNothing);
+
+    BotRosterRegistry.shared.publish(_connectionId, 'QA', [
+      bot('default', isDefault: true),
+      bot('ana'),
+    ]);
+    await tester.pump();
+    expect(find.byKey(const ValueKey('session-bot-filter')), findsOneWidget);
+    expect(find.text('ana'), findsOneWidget);
+    // The filter row sits between the search field and the tabs.
+    expect(
+      tester.getRect(find.byKey(const ValueKey('session-bot-filter'))).bottom,
+      lessThanOrEqualTo(
+        tester.getRect(find.byKey(const ValueKey('session-filter-all'))).top,
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('session-bot-filter-ana')));
+    await tester.pump();
+    expect(manager.activeProfileFor(_connectionId), 'ana');
+  });
+
+  testWidgets('la fila de bots llama al perfil principal por su nombre real, '
+      'como la lista de Bots, y «Hermes» solo sin nombre', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() => BotRosterRegistry.shared.forget(_connectionId));
+
+    AgentProfile bot(
+      String name, {
+      bool isDefault = false,
+      String? title,
+      String? display,
+    }) => AgentProfile.fromJson({
+      'name': name,
+      'path': '/home/u/.hermes/profiles/$name',
+      'is_default': isDefault,
+      'display_name': ?display,
+      if (title != null)
+        'ui_meta': {
+          'hermes-bots': {'title': title},
+        },
+    });
+
+    final now = DateTime(2026, 10, 14, 12, 0);
+    final today = now.millisecondsSinceEpoch ~/ 1000;
+    BotRosterRegistry.shared.publish(_connectionId, 'QA', [
+      bot('default', isDefault: true, title: 'xPeta', display: 'Hermes'),
+      bot('ana'),
+    ]);
+    await pump(tester, [
+      _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
+    ], clock: () => now);
+    await _pumpUntil(tester, find.text('Firma del keystore en CI'));
+    final row = find.byKey(const ValueKey('session-bot-filter'));
+    expect(
+      find.descendant(of: row, matching: find.text('xPeta')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: row, matching: find.text('Hermes')),
+      findsNothing,
+    );
+    // A secondary profile keeps its own name.
+    expect(
+      find.descendant(of: row, matching: find.text('ana')),
+      findsOneWidget,
+    );
+
+    BotRosterRegistry.shared.publish(_connectionId, 'QA', [
+      bot('default', isDefault: true),
+      bot('ana'),
+    ]);
+    await tester.pump();
+    expect(
+      find.descendant(of: row, matching: find.text('Hermes')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: row, matching: find.text('xPeta')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: row, matching: find.text('ana')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('las secciones llevan etiqueta en mayúsculas y su cuenta', (
@@ -411,6 +668,57 @@ void main() {
     // Cuenta por sección: 2 hoy, 1 ayer.
     expect(find.text('2'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
+    // Section label in small caps on the left, its count on the right edge,
+    // in the quiet tone (no « · » joining them any more).
+    expect(find.text(' · '), findsNothing);
+    final label = tester.widget<Text>(
+      find.text(strings.sesDateToday.toUpperCase()),
+    );
+    final colors = Theme.of(
+      tester.element(find.byType(SessionListScreen)),
+    ).hermes;
+    expect(label.style!.color, colors.textTertiary);
+    final todayLabel = tester.getRect(
+      find.text(strings.sesDateToday.toUpperCase()),
+    );
+    expect(
+      tester.getRect(find.text('2')).center.dy,
+      closeTo(todayLabel.center.dy, 1),
+    );
+    expect(
+      tester.getRect(find.text('2')).left,
+      greaterThan(todayLabel.right),
+      reason: 'the count closes the line, on the right of the label',
+    );
+    // «Archivo» sits in the header with a 48 dp target, not on a row of its
+    // own under the filters.
+    final archive = find.byKey(const ValueKey('session-filter-archived'));
+    expect(archive, findsOneWidget);
+    expect(tester.getSize(archive).height, greaterThanOrEqualTo(48));
+    expect(
+      tester.getRect(archive).bottom,
+      lessThanOrEqualTo(
+        tester.getRect(find.byKey(const ValueKey('session-filter-all'))).top,
+      ),
+    );
+    // TalkBack (REVIEW-T2-A C1): a button a double tap activates, and it
+    // says when the archive is on.
+    final semantics = tester.ensureSemantics();
+    await tester.pump();
+    expect(
+      tester.getSemantics(archive),
+      isSemantics(
+        label: strings.slFilterArchived,
+        isButton: true,
+        hasTapAction: true,
+        isSelected: false,
+      ),
+    );
+    final node = tester.getSemantics(archive);
+    node.owner!.performAction(node.id, SemanticsAction.tap);
+    await tester.pump();
+    expect(tester.getSemantics(archive), isSemantics(isSelected: true));
+    semantics.dispose();
   });
 
   testWidgets(
@@ -442,6 +750,95 @@ void main() {
       expect(find.text('Renombrada en Inicio'), findsOneWidget);
     },
   );
+
+  testWidgets('cada conversación es una píldora propia: radio, borde y aire '
+      'entre filas', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final now = DateTime(2026, 10, 14, 12, 0);
+    final today = now.millisecondsSinceEpoch ~/ 1000;
+    await pump(tester, [
+      _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
+      _row('hoy-2', title: 'Notas de la release', lastActive: today - 60),
+    ], clock: () => now);
+    await _pumpUntil(tester, find.text('Firma del keystore en CI'));
+
+    BoxDecoration pillOf(String title) {
+      final box = find
+          .ancestor(
+            of: find.text(title),
+            matching: find.byWidgetPredicate(
+              (w) =>
+                  w is DecoratedBox &&
+                  w.decoration is BoxDecoration &&
+                  (w.decoration as BoxDecoration).borderRadius ==
+                      BorderRadius.circular(HermesRadius.card),
+            ),
+          )
+          .first;
+      return tester.widget<DecoratedBox>(box).decoration as BoxDecoration;
+    }
+
+    // Each row has its own rounded body and the finish of a box: a contour
+    // in two tones (lighter on top), the light of the top edge, the shade of
+    // the bottom one and the short compact shadow, all painted (no blur over
+    // the text).
+    for (final title in ['Firma del keystore en CI', 'Notas de la release']) {
+      final decoration = pillOf(title);
+      expect(decoration.color, isNotNull, reason: title);
+      final boxes = boxEdgesAround(find.text(title));
+      expect(boxes, findsOneWidget, reason: title);
+      final edge = edgeOf(tester, boxes);
+      final under = ThemeContrast.composite(
+        decoration.color!,
+        const Color(0xFF202020),
+      );
+      expect(
+        ThemeContrast.luminance(ThemeContrast.composite(edge.top, under)),
+        greaterThan(
+          ThemeContrast.luminance(ThemeContrast.composite(edge.bottom, under)),
+        ),
+        reason: title,
+      );
+      final shadow = shadowOf(tester, boxes)!;
+      expect(shadow.blur, HermesGel.boxShadowCompactBlur, reason: title);
+      expect(shadow.drop, HermesGel.boxShadowCompactDrop, reason: title);
+      expect(shadow.color.a, greaterThan(0), reason: title);
+    }
+    // Two pills, not one joined card: the air between them.
+    final first = tester.getRect(
+      find
+          .ancestor(
+            of: find.text('Firma del keystore en CI'),
+            matching: find.byWidgetPredicate(
+              (w) =>
+                  w is DecoratedBox &&
+                  w.decoration is BoxDecoration &&
+                  (w.decoration as BoxDecoration).borderRadius ==
+                      BorderRadius.circular(HermesRadius.card),
+            ),
+          )
+          .first,
+    );
+    final second = tester.getRect(
+      find
+          .ancestor(
+            of: find.text('Notas de la release'),
+            matching: find.byWidgetPredicate(
+              (w) =>
+                  w is DecoratedBox &&
+                  w.decoration is BoxDecoration &&
+                  (w.decoration as BoxDecoration).borderRadius ==
+                      BorderRadius.circular(HermesRadius.card),
+            ),
+          )
+          .first,
+    );
+    expect(second.top - first.bottom, greaterThanOrEqualTo(6));
+    expect(find.byType(Divider), findsNothing);
+  });
 
   testWidgets('las fijadas van en su propia sección, antes que los días', (
     tester,
@@ -807,16 +1204,16 @@ void main() {
         status.style!.fontWeight!.value,
         lessThan(title.style!.fontWeight!.value),
       );
-      final dotFills = tester
-          .widgetList<Container>(
-            find.descendant(
-              of: find.byKey(const ValueKey('session-live-dot-compacting-1')),
-              matching: find.byType(Container),
-            ),
-          )
-          .map((c) => (c.decoration as BoxDecoration?)?.color)
-          .whereType<Color>();
-      expect(dotFills, contains(status.style!.color));
+      // The live state is a ring beside its own text, no longer a dot
+      // before the title.
+      expect(
+        find.byKey(const ValueKey('session-live-ring-compacting-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('session-live-dot-compacting-1')),
+        findsNothing,
+      );
       expect(find.byType(SessionRowStopControl), findsNothing);
       activeChats.dispose();
       await tester.pump(const Duration(seconds: 10));
