@@ -20,6 +20,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../../utils/transport_privacy.dart';
 import 'stt_user_error.dart';
 
 /// STT wire shapes Desktop speaks (`DirectSttConfig.wire`).
@@ -45,6 +46,19 @@ const Duration _defaultSttTimeout = Duration(seconds: 60);
 
 String? _nonEmptyString(Object? value) =>
     value is String && value.isNotEmpty ? value : null;
+
+/// The provider URL, if the key may be sent there: TLS, or plain HTTP only
+/// inside a private network, the same boundary [TransportPrivacy] draws for
+/// the server's own URLs. Plain HTTP to a public host keeps that direction on
+/// the relay.
+String? _allowedBaseUrl(Object? value) {
+  final url = _nonEmptyString(value);
+  if (url == null ||
+      TransportPrivacy.classify(url) == TransportPrivacyClass.publicCleartext) {
+    return null;
+  }
+  return url;
+}
 
 /// The relay path's Whisper-silence contract, shipped by the server so a
 /// direct transcript agrees with a relayed one.
@@ -103,7 +117,7 @@ final class DirectSttConfig {
   static DirectSttConfig? _parse(Map<dynamic, dynamic> raw) {
     if (raw['mode'] != 'direct') return null;
     final wire = _sttWires[raw['wire']];
-    final baseUrl = _nonEmptyString(raw['base_url']);
+    final baseUrl = _allowedBaseUrl(raw['base_url']);
     final apiKey = _nonEmptyString(raw['api_key']);
     if (wire == null || baseUrl == null || apiKey == null) return null;
     final seconds = raw['timeout_s'];
@@ -158,7 +172,7 @@ final class DirectTtsConfig {
   static DirectTtsConfig? _parse(Map<dynamic, dynamic> raw) {
     if (raw['mode'] != 'direct') return null;
     final wire = _ttsWires[raw['wire']];
-    final baseUrl = _nonEmptyString(raw['base_url']);
+    final baseUrl = _allowedBaseUrl(raw['base_url']);
     final apiKey = _nonEmptyString(raw['api_key']);
     if (wire == null || baseUrl == null || apiKey == null) return null;
     final speed = raw['speed'];
