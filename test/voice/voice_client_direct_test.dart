@@ -157,6 +157,38 @@ void main() {
       expect(config.tts, isNull);
     });
 
+    test('the key never goes over plain HTTP to a public host', () {
+      for (final url in [
+        'http://stt.example.com/v1',
+        'http://203.0.113.7:8000/v1',
+      ]) {
+        final config = VoiceClientConfig.fromResponse(
+          response(
+            stt: openAiStt(extra: {'base_url': url}),
+            tts: openAiTts(extra: {'base_url': url}),
+          ),
+        );
+        expect(config?.stt, isNull, reason: url);
+        expect(config?.tts, isNull, reason: url);
+      }
+      for (final url in [
+        'https://stt.example.com/v1',
+        'http://192.168.1.20:8000/v1',
+        'http://100.101.102.103:8000/v1',
+        'http://whisper.tail1234.ts.net/v1',
+        'http://127.0.0.1:8000/v1',
+      ]) {
+        final config = VoiceClientConfig.fromResponse(
+          response(
+            stt: openAiStt(extra: {'base_url': url}),
+            tts: openAiTts(extra: {'base_url': url}),
+          ),
+        )!;
+        expect(config.stt?.baseUrl, url);
+        expect(config.tts?.baseUrl, url);
+      }
+    });
+
     test('a non-positive or missing timeout falls back to 60 s', () {
       for (final value in [null, 0, -3, 'soon']) {
         final config = VoiceClientConfig.fromResponse(
