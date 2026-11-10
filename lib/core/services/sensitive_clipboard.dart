@@ -48,6 +48,9 @@ class SensitiveClipboard {
       done = false;
     }
     if (!done) await Clipboard.setData(ClipboardData(text: value));
+    // Another copy may have finished while this one waited: only the last
+    // one keeps a timer.
+    _cancel();
     _digest = _hash(value);
     _timer = Timer(clearAfter, () => unawaited(_clearIfSame()));
   }
