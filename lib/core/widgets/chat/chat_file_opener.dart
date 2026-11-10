@@ -166,12 +166,15 @@ class ChatFileOpener {
             folders: learned,
             cancelled: () => closed,
           );
+    // A search hit (found, or chosen from several) keeps the reference's
+    // check that the server did not follow a link out of the folders: a
+    // retry or a confirmation must not skip it.
     Future<ChatFileContent> loadAt(String path, {required bool confirmed}) =>
         loadChatFile(
           files: files,
           resolution: chatResolveFilePath(path),
           roots: roots,
-          askedRelative: false,
+          askedRelative: ref.root != ChatPathRoot.absolute,
           confirmedSensitive: confirmed,
         );
     _opening = true;
