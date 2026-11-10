@@ -83,8 +83,8 @@ jobs:
             -v "$RUNNER_TEMP/scan:/repo:ro" \
             trufflesecurity/trufflehog@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a \
             --no-update --fail --fail-on-scan-errors \
-            --exclude-detectors=URI --exclude-paths=/repo/tool/security/trufflehog_exclude_paths.txt --results=verified,unknown \
-            --json git file:///repo \
+            --exclude-detectors=URI --results=verified,unknown \
+            --json git --exclude-paths=/repo/tool/security/trufflehog_exclude_paths.txt file:///repo \
             > "$RUNNER_TEMP/trufflehog.jsonl"
           test ! -s "$RUNNER_TEMP/trufflehog.jsonl"
 
