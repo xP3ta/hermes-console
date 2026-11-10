@@ -59,7 +59,16 @@ class _FakeRepo extends CompanionRepository {
   Future<List<Companion>> loadAll() async => _all;
 }
 
-Future<CompanionController> _controller(List<Companion> pets) async {
+/// [on]: the user already turned the mascot on; the app starts with it off.
+Future<CompanionController> _controller(
+  List<Companion> pets, {
+  bool on = true,
+}) async {
+  if (on) {
+    SharedPreferences.setMockInitialValues({
+      CompanionPreferences.enabledKey: true,
+    });
+  }
   final prefs = await CompanionPreferences.load();
   final c = CompanionController(_FakeRepo(pets), prefs);
   await c.init();
@@ -131,7 +140,7 @@ void main() {
     tester,
   ) async {
     final handle = tester.ensureSemantics();
-    final c = await _controller([_pet('nimbus', 'Nimbus')]);
+    final c = await _controller([_pet('nimbus', 'Nimbus')], on: false);
     await _pumpScreen(tester, c);
 
     // What it used to promise is gone.
@@ -159,7 +168,13 @@ void main() {
       return null;
     }
 
-    // On, everywhere, by default.
+    // Off by default: nothing chosen yet means no floating pet.
+    expect(c.enabled, isFalse);
+    expect(chosen(), 'off');
+    expect(find.bySemanticsLabel('Presencia Apagada'), findsOneWidget);
+
+    await tester.tap(find.text('En toda la app'));
+    await tester.pump();
     expect(c.enabled, isTrue);
     expect(chosen(), 'full');
     expect(find.bySemanticsLabel('Presencia En toda la app'), findsOneWidget);

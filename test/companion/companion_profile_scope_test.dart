@@ -392,7 +392,11 @@ Future<void> _waitForNextControllerNotification(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(
+    () => SharedPreferences.setMockInitialValues({
+      CompanionPreferences.enabledKey: true,
+    }),
+  );
 
   test(
     'dos perfiles del mismo dispositivo tienen mascotas distintas',
@@ -776,14 +780,10 @@ void main() {
       spritesheetBase64: _opaquePngBase64,
     );
     h.gateway.emitPetChanged();
-    await _waitForController(
-      h.controller,
-      () {
-        final active = h.controller.activeCompanion;
-        return active?.slug == 'zoro' && active?.spritesheetAsset != firstPath;
-      },
-      reason: 'la revisión nueva de zoro no sustituyó el atlas anterior',
-    );
+    await _waitForController(h.controller, () {
+      final active = h.controller.activeCompanion;
+      return active?.slug == 'zoro' && active?.spritesheetAsset != firstPath;
+    }, reason: 'la revisión nueva de zoro no sustituyó el atlas anterior');
 
     final second = h.controller.activeCompanion;
     expect(second?.slug, 'zoro');

@@ -23,6 +23,61 @@ void main() {
         languageCode: lang,
       );
 
+  test(
+    'review low: legacy session.usage groups order by their provider identity',
+    () {
+      final limits = AccountUsageLimits.fromGateway(
+        fx.usage(account: fx.codexLines, credits: fx.nousLines),
+      );
+      expect(
+        limits.lines
+            .where((l) => l.source == AccountLimitSource.account)
+            .map((l) => l.providerSlug)
+            .toSet(),
+        {'openai-codex'},
+      );
+      final preferred = planLimitsView(
+        limits,
+        es,
+        languageCode: 'es',
+        preferredProvider: ' NOUS ',
+      );
+      final values = preferred.rows
+          .where((r) => r.usedPercent != null)
+          .map((r) => r.usedPercent);
+      expect(values, [40, 28, 91]);
+      expect(
+        planLimitsView(
+          limits,
+          es,
+          languageCode: 'es',
+        ).rows.where((r) => r.usedPercent != null).map((r) => r.usedPercent),
+        [28, 91, 40],
+      );
+    },
+  );
+
+  test(
+    'review low: multiple legacy account groups keep each provider window together',
+    () {
+      final limits = AccountUsageLimits.fromGateway(
+        fx.usage(account: [...fx.codexLines, ...fx.claudeLines]),
+      );
+      final preferred = planLimitsView(
+        limits,
+        es,
+        languageCode: 'es',
+        preferredProvider: 'ANTHROPIC',
+      );
+      expect(
+        preferred.rows
+            .where((r) => r.usedPercent != null)
+            .map((r) => r.usedPercent),
+        [0, 45, 8.4, 28, 91],
+      );
+    },
+  );
+
   test('Codex windows: localized labels, percentages and reset times', () {
     final v = view(fx.codexLines);
     final rows = [for (final r in v.rows) (r.label, r.value, r.detail)];

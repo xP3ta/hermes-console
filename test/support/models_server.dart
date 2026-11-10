@@ -95,6 +95,47 @@ class ModelsServer {
   /// `GET /api/providers/oauth` rows.
   List<Map<String, dynamic>> accounts = [];
 
+  /// Status of `POST /api/providers/oauth/{id}/start` (404: an older server
+  /// without the Accounts routes; 400: the provider refused).
+  int oauthStartStatus = 200;
+
+  /// What `start` hands over for a device-code provider.
+  String oauthUserCode = 'HRMS-2026';
+  String oauthVerificationUrl =
+      'https://portal.nousresearch.com/device?user_code=HRMS-2026';
+  int oauthExpiresIn = 900;
+  int oauthPollInterval = 5;
+
+  /// The device-code sessions the server knows, by id, with the fields
+  /// `GET …/poll/{id}` answers (hermes_cli/web_routers/oauth.py).
+  final oauthSessions = <String, Map<String, dynamic>>{};
+  int _oauthSessionSeq = 0;
+
+  /// Settles session [sessionId] the way the server's poller does: approved
+  /// also signs the account in.
+  void settleOAuth(
+    String sessionId, {
+    required String status,
+    String? reason,
+    String? email,
+    bool? retryable,
+    int? retryAfter,
+  }) {
+    final session = oauthSessions[sessionId]!;
+    session['status'] = status;
+    if (reason != null) session['reason'] = reason;
+    if (email != null) session['account_email'] = email;
+    if (retryable != null) session['retryable'] = retryable;
+    if (retryAfter != null) session['retry_after'] = retryAfter;
+    if (status == 'approved') {
+      for (final account in accounts) {
+        if (account['id'] == session['provider']) {
+          account['status'] = {'logged_in': true};
+        }
+      }
+    }
+  }
+
   /// `GET /api/config`.
   Map<String, dynamic> config = {
     'fallback_providers': <Object>[],
@@ -192,6 +233,10 @@ class ModelsServer {
     ];
   }
 
+  /// Reads of `/api/model/options` that asked the server to refresh its
+  /// per-provider cache (`refresh=1`).
+  int optionsRefreshes = 0;
+
   DashboardClient client() => DashboardClient(
     host: '127.0.0.1',
     manualToken: 'synthetic-fixture-token',
@@ -200,6 +245,10 @@ class ModelsServer {
       final body = request.body.isEmpty
           ? null
           : (jsonDecode(request.body) as Map).cast<String, dynamic>();
+      if (path == '/api/model/options' &&
+          request.url.queryParameters['refresh'] == '1') {
+        optionsRefreshes++;
+      }
       requests.add((
         method: request.method,
         path: path,
@@ -218,6 +267,75 @@ class ModelsServer {
         endpoints.removeWhere((endpoint) => endpoint['id'] == id);
         catalog.removeWhere((row) => row['slug'] == id);
         return json({'ok': true, 'endpoints': endpoints});
+      }
+      const sessionsPath = '/api/providers/oauth/sessions/';
+      if (path.startsWith(sessionsPath) && request.method == 'DELETE') {
+        final sid = Uri.decodeComponent(path.substring(sessionsPath.length));
+        final session = oauthSessions.remove(sid);
+        if (session == null) {
+          return json({'ok': false, 'message': 'session not found'});
+        }
+        session['cancelled'] = true;
+        return json({'ok': true, 'session_id': sid});
+      }
+      if (path.startsWith('/api/providers/oauth/') &&
+          path.endsWith('/start') &&
+          request.method == 'POST') {
+        final id = Uri.decodeComponent(path.split('/')[4]);
+        if (oauthStartStatus != 200) {
+          return json({'detail': 'synthetic refusal'}, oauthStartStatus);
+        }
+        final row = accounts.cast<Map<String, dynamic>?>().firstWhere(
+          (account) => account!['id'] == id,
+          orElse: () => null,
+        );
+        if (row == null) return json({'detail': 'Unknown provider $id'}, 400);
+        if (row['flow'] != 'device_code') {
+          return json({'detail': 'external flow'}, 400);
+        }
+        final sid = 'synthetic-session-${++_oauthSessionSeq}';
+        oauthSessions[sid] = {
+          'session_id': sid,
+          'provider': id,
+          'status': 'pending',
+          'error_message': null,
+          'expires_at':
+              DateTime.now().millisecondsSinceEpoch / 1000 + oauthExpiresIn,
+          'reason': null,
+          'account_email': null,
+          'model': null,
+          'handoff': null,
+          'handoff_status': null,
+          'retryable': null,
+          'retry_after': null,
+        };
+        return json({
+          'session_id': sid,
+          'flow': 'device_code',
+          'user_code': oauthUserCode,
+          'verification_url': oauthVerificationUrl,
+          'expires_in': oauthExpiresIn,
+          'poll_interval': oauthPollInterval,
+        });
+      }
+      if (path.startsWith('/api/providers/oauth/') &&
+          path.contains('/poll/') &&
+          request.method == 'GET') {
+        final parts = path.split('/');
+        final id = Uri.decodeComponent(parts[4]);
+        final sid = Uri.decodeComponent(parts[6]);
+        final session = oauthSessions[sid];
+        if (session == null) {
+          return json({'detail': 'Session not found or expired'}, 404);
+        }
+        if (session['provider'] != id) {
+          return json({'detail': 'Provider mismatch for session'}, 400);
+        }
+        return json({
+          for (final entry in session.entries)
+            if (entry.key != 'provider' && entry.key != 'cancelled')
+              entry.key: entry.value,
+        });
       }
       if (path.startsWith('/api/providers/oauth/')) {
         final id = path.split('/').last;

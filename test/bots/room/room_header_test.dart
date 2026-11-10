@@ -11,6 +11,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/core/bots/ui/room/room_header.dart';
+import 'package:hermes_android/core/widgets/chat/mention_chips.dart';
 
 import '../../support/inter_font.dart';
 import 'room_fixtures.dart';
@@ -203,7 +204,10 @@ void main() {
       expect(find.byType(AppBar), findsNothing);
       expect(find.descendant(of: _bar, matching: _cluster), findsOneWidget);
       expect(_pillLine(tester), 'Console Devs');
-      expect(find.byKey(const ValueKey('island-dot-idle')), findsOneWidget);
+      // the owner (gint72): no state dot of colour on the island; idle adds no
+      // word either.
+      expect(find.byKey(const ValueKey('island-dot-idle')), findsNothing);
+      expect(find.byKey(const ValueKey('island-state-idle')), findsNothing);
       expect(
         _statusText(tester),
         matches(RegExp(r'^4 bots · round finished \d+ min ago$')),
@@ -270,11 +274,12 @@ void main() {
         find.byKey(const ValueKey('room-header-dot-m-radar-working')),
         findsOneWidget,
       );
-      // …and is the room's name again, with the working dot and the clock.
+      // …and is the room's name again, with the clock (no dot of colour:
+      // the owner, gint72).
       await tester.pump(const Duration(seconds: 4));
       await _frames(tester);
       expect(_pillLine(tester), 'Console Devs');
-      expect(find.byKey(const ValueKey('island-dot-working')), findsOneWidget);
+      expect(find.byKey(const ValueKey('island-dot-working')), findsNothing);
       expect(
         tester
             .widget<Text>(find.byKey(const ValueKey('room-header-elapsed')))
@@ -447,7 +452,15 @@ void main() {
       expect(
         find.descendant(
           of: first,
-          matching: find.textContaining('question 0 @builder'),
+          matching: find.textContaining('question 0 '),
+        ),
+        findsOneWidget,
+      );
+      // `@builder` is a member: it reads as a chip of this same bubble.
+      expect(
+        find.descendant(
+          of: first,
+          matching: find.widgetWithText(MentionChip, '@builder'),
         ),
         findsOneWidget,
       );

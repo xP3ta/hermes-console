@@ -144,7 +144,7 @@ Future<Map<String, BotSectionChange>?> chooseBotSection(
             ),
             for (final profile in profiles)
               CheckboxListTile(
-                title: Text(profile.botTitle ?? profile.name),
+                title: Text(profile.botListName),
                 value: selected.contains(profile.name),
                 onChanged: (value) => setState(() {
                   if (value == true) {

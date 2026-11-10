@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../characters/bot_motion.dart';
+
 /// Motion for existing raster avatars (including selected pet thumbnails).
 /// Procedural faces keep their own scan/blink animation in HermesBotFace.
 class BotAvatarMotion extends StatefulWidget {
@@ -45,7 +47,7 @@ class _BotAvatarMotionState extends State<BotAvatarMotion>
   );
   bool get _enabled =>
       widget.enabled &&
-      !MediaQuery.disableAnimationsOf(context) &&
+      botMotionAllowed(context) &&
       TickerMode.valuesOf(context).enabled;
   void _sync() {
     if (widget.clock != null) {

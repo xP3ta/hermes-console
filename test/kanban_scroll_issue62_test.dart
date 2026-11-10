@@ -10,9 +10,11 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/kanban_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/scroll_behavior.dart';
+import 'package:hermes_android/core/widgets/kanban_skin_style.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'support/pump_until_loaded.dart';
 
 /// Issue #62: "Can't scroll in bot rooms or in kanban — it feels pinned in
@@ -119,6 +121,8 @@ void main() {
     required void Function() onBoardRead,
     ScrollBehavior scrollBehavior = const MomentumScrollBehavior(),
   }) async {
+    // This test describes the previous skin, kept as the fallback.
+    SharedPreferences.setMockInitialValues({kKanbanNewSkinPrefKey: false});
     tester.view.physicalSize = const Size(412, 860);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);

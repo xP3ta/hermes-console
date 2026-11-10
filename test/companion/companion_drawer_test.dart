@@ -1,4 +1,4 @@
-// Verifica que "Mascotas" vive en el hub de Herramientas y que, SIN instancia
+// Verifica que "Mascotas" vive en Ajustes de la app y que, SIN instancia
 // configurada, queda bloqueada como el resto de apartados.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -53,39 +53,22 @@ Future<GlobalKey<ScaffoldState>> _pumpDrawer(
   return key;
 }
 
-// Encuentra un item del drawer arrastrando su Scrollable hasta que aparezca:
-// la cabecera de conexión más el separador que agrupa la navegación puede
-// empujar entradas tardías (p. ej. "Herramientas") fuera del viewport de test.
-Future<void> _revealDrawerItem(WidgetTester tester, String label) async {
-  final item = find.text(label);
-  final scrollable = find
-      .descendant(of: find.byType(Drawer), matching: find.byType(Scrollable))
-      .first;
-  for (var attempt = 0; attempt < 4 && item.evaluate().isEmpty; attempt++) {
-    await tester.drag(scrollable, const Offset(0, -120));
-    await tester.pump();
-  }
-  await tester.scrollUntilVisible(item, 80, scrollable: scrollable);
-  await tester.pump();
-}
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('el drawer mueve "Mascotas" al hub de Herramientas', (
+  testWidgets('el drawer lleva "Mascotas y personajes" a Ajustes de la app', (
     tester,
   ) async {
     final manager = await _emptyManager();
     await _pumpDrawer(tester, manager);
 
-    await _revealDrawerItem(tester, 'Herramientas');
-    expect(find.text('Herramientas'), findsOneWidget);
-    expect(find.text('Mascotas'), findsNothing);
+    expect(find.text('Ajustes'), findsOneWidget);
+    expect(find.text('Mascotas y personajes'), findsNothing);
 
-    await tester.tap(find.text('Herramientas'));
+    await tester.tap(find.text('Ajustes'));
     await tester.pumpAndSettle();
     expect(find.byType(ToolsHubScreen), findsOneWidget);
-    expect(find.text('Mascotas'), findsOneWidget);
+    expect(find.text('Mascotas y personajes'), findsOneWidget);
   });
 
   testWidgets('el scroll del drawer usa clamping local sin rebote', (
@@ -105,10 +88,9 @@ void main() {
     final manager = await _emptyManager();
     await _pumpDrawer(tester, manager);
 
-    await _revealDrawerItem(tester, 'Herramientas');
-    await tester.tap(find.text('Herramientas'));
+    await tester.tap(find.text('Ajustes'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Mascotas'));
+    await tester.tap(find.text('Mascotas y personajes'));
     await tester.pumpAndSettle();
 
     // Bloqueado: no navega a la pantalla (como el resto de apartados).

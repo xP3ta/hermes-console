@@ -100,7 +100,7 @@ void main() {
     final link = FakeConnectionLink()
       ..linkReconnectAt = DateTime.utc(2026, 10, 18);
     registry.bind('c', link);
-    expect(registry.current('c')?.kind, ConnectionStatusKind.reconnecting);
+    expect(registry.currentRaw('c')?.kind, ConnectionStatusKind.reconnecting);
   });
 }
 

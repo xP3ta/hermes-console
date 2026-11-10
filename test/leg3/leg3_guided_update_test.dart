@@ -131,7 +131,7 @@ void main() {
       await tester.pumpAndSettle();
       final s = Strings.of(tester.element(find.byType(ManualSetupPage)));
       expect(find.text(s.leg3SetupTitle), findsOneWidget);
-      expect(find.text(s.leg3SetupBody), findsOneWidget);
+      expect(find.text(s.onbFlowGuidedBody), findsOneWidget);
       expect(find.text(dashboardSetupCommand(_unix)), findsOneWidget);
       expect(find.text(s.onb4HelpSafeTitle), findsOneWidget);
       expect(find.text(s.onb4HelpVps), findsOneWidget);
@@ -167,6 +167,7 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 300));
       if (!guided) {
+        await revealOnboarding(tester, 'onboarding-help');
         await tester.tap(find.byKey(const ValueKey('onboarding-help')));
         await tester.pump(const Duration(milliseconds: 100));
       }

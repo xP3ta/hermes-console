@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import '../../../models/attachment_draft.dart';
 import '../../../models/hosted_groups.dart';
@@ -253,8 +252,6 @@ final class DashboardRoomAttachmentActions
   Future<void> share(RoomAttachmentRef ref, File file) => shareMediaFile(file);
 
   @override
-  Future<ArtifactSaveResult> save(RoomAttachmentRef ref, File file) async {
-    final Uint8List bytes = await file.readAsBytes();
-    return exporter.saveBytes(fileName: ref.name, bytes: bytes);
-  }
+  Future<ArtifactSaveResult> save(RoomAttachmentRef ref, File file) =>
+      exporter.saveFile(fileName: ref.name, file: file);
 }

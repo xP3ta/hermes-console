@@ -577,7 +577,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
                   onPressed: onRemove,
                 ),
               if (onEdit != null)
-                Icon(Icons.chevron_right, size: 18, color: colors.textDisabled),
+                Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
             ],
           ),
         ),

@@ -4,9 +4,12 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../design/modal.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+import '../models/oauth_account.dart';
 import '../models/provider_auth_failure.dart';
 import '../screens/models_screen.dart';
+import '../screens/nous_account_screen.dart' show connectProviderAccount;
 import '../services/connection_manager.dart';
+import '../design/ambient_backdrop.dart' show hermesTonalButtonStyle;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../feedback/feedback_policy.dart';
@@ -134,59 +137,14 @@ Future<bool> runProviderReauth({
     );
   }
 
-  Map<String, dynamic> start;
-  try {
-    start = await client.startOAuth(provider, profile: profile);
-  } catch (error) {
-    if (!context.mounted) return false;
-    AppFeedback.of(context).notify(
-      FeedbackKind.error,
-      s.mdlOAuthStartError(localizedApiError(s, error)),
-    );
-    return false;
-  }
-  if (!context.mounted) return false;
-  final sessionId = providerOAuthStartField(start, const [
-    'session_id',
-    'session',
-    'poll_id',
-    'device_code',
-    'state',
-  ]);
-  final url = normalizeProviderOAuthBrowserUrl(
-    providerOAuthStartField(start, const [
-      'verification_uri_complete',
-      'verification_url_complete',
-      'auth_url',
-      'authorization_url',
-      'login_url',
-      'verification_url',
-      'verification_uri',
-      'url',
-    ]),
+  final outcome = await connectProviderAccount(
+    context: context,
+    client: client,
     connection: connection,
-    dashboardBaseUrl: client.baseUrl,
+    account: OAuthAccount.fromJson(row),
+    profile: profile,
   );
-  if (sessionId.isEmpty || url.isEmpty) {
-    AppFeedback.of(
-      context,
-    ).notify(FeedbackKind.error, s.mdlOAuthNotAvailable(label), warning: true);
-    return false;
-  }
-  final ok = await Navigator.of(context).push<bool>(
-    MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => ProviderOAuthLoginScreen(
-        providerName: label,
-        providerSlug: provider,
-        url: url,
-        code: providerOAuthStartField(start, const ['user_code', 'code']),
-        expiresIn: (start['expires_in'] as num?)?.toInt() ?? 0,
-        poll: () => client.pollOAuth(provider, sessionId, profile: profile),
-      ),
-    ),
-  );
-  return ok == true;
+  return outcome.approved;
 }
 
 Future<bool> _externalSignIn({
@@ -346,6 +304,7 @@ class ProviderAuthBanner extends StatelessWidget {
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.tonalIcon(
+                style: hermesTonalButtonStyle,
                 key: const ValueKey('hr1215-provider-auth-action'),
                 onPressed: onAction,
                 icon: const Icon(Icons.key_rounded, size: 18),

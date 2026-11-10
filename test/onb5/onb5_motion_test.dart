@@ -76,6 +76,7 @@ void main() {
     tester,
   ) async {
     await openOnboarding(tester, motion: true);
+    await revealOnboarding(tester, 'onboarding-manual');
     await tester.tap(find.byKey(const ValueKey('onboarding-manual')));
     await tester.pump();
     await _ms(tester, 80);
@@ -100,6 +101,7 @@ void main() {
     tester,
   ) async {
     await openOnboarding(tester, motion: true);
+    await revealOnboarding(tester, 'onboarding-manual');
     await tester.tap(find.byKey(const ValueKey('onboarding-manual')));
     await tester.pump();
     await _ms(tester, 300);
@@ -115,6 +117,7 @@ void main() {
     (tester) async {
       await openOnboarding(tester, motion: true);
       expect(opacityOf(tester, find.byKey(_mark)), 1);
+      await revealOnboarding(tester, 'onboarding-scan');
       await tester.tap(find.byKey(const ValueKey('onboarding-scan')));
       // Frame 0: still there (it was cut here before).
       await tester.pump();
@@ -164,6 +167,7 @@ void main() {
   group('reduced motion: the first frame is the end state', () {
     testWidgets('Connect by hand', (tester) async {
       await openOnboarding(tester);
+      await revealOnboarding(tester, 'onboarding-manual');
       await tester.tap(find.byKey(const ValueKey('onboarding-manual')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 16));
@@ -187,6 +191,7 @@ void main() {
 
     testWidgets('confirmation', (tester) async {
       await openOnboarding(tester);
+      await revealOnboarding(tester, 'onboarding-scan');
       await tester.tap(find.byKey(const ValueKey('onboarding-scan')));
       await tester.pump();
       await tester.pump(const Duration(seconds: 2));
@@ -199,6 +204,7 @@ void main() {
 
     testWidgets('the camera panel', (tester) async {
       await openOnboarding(tester);
+      await revealOnboarding(tester, 'onboarding-scan');
       await tester.tap(find.byKey(const ValueKey('onboarding-scan')));
       await tester.pump();
       final panel = find.byKey(const ValueKey('qr-help-panel'));

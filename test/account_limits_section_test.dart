@@ -63,6 +63,27 @@ List<String> _texts(WidgetTester tester) => [
 ];
 
 void main() {
+  testWidgets('review low: active legacy credit provider puts its bars first', (
+    tester,
+  ) async {
+    final limits = AccountUsageLimits.fromGateway(
+      fx.usage(account: fx.codexLines, credits: fx.nousLines),
+      usageBars: fx.barsAvailable,
+    );
+    await tester.pumpWidget(
+      _app(AccountLimitsSection(limits: limits, preferredProvider: ' NOUS ')),
+    );
+    expect(
+      tester
+          .getTopLeft(find.byKey(const ValueKey('account-usage-bar-plan')))
+          .dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('account-limit-bar-1'))).dy,
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   // QA 9494 P2 (privacy): the section showed the server's English lines as
   // is, with a top-up URL carrying the organization id. Only localized
   // labels from the structured data render; free text loses URLs and ids.
@@ -226,7 +247,7 @@ void main() {
     final session = tester.widget<LinearProgressIndicator>(
       find.byKey(const ValueKey('account-limit-bar-1')),
     );
-    expect(session.color, colors.accent);
+    expect(session.color, colors.success);
   });
 
   testWidgets('ambiguous lines are text only', (tester) async {
@@ -326,7 +347,10 @@ void main() {
       addTearDown(notifier.dispose);
       await tester.pumpWidget(_app(_sheet(notifier)));
       expect(find.byType(AccountLimitsSection), findsNothing);
-      expect(find.byKey(const ValueKey('account-limits-section')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('account-limits-section')),
+        findsNothing,
+      );
       expect(tester.getSize(find.byType(SessionModelSheetBody)), without);
     });
 
@@ -342,9 +366,7 @@ void main() {
       expect(find.text('Límites de tu plan'), findsOneWidget);
     });
 
-    testWidgets('Nous bars still render without account_lines', (
-      tester,
-    ) async {
+    testWidgets('Nous bars still render without account_lines', (tester) async {
       final limits = AccountUsageLimits.fromGateway(
         fx.usage(credits: fx.nousLines),
         usageBars: fx.barsAvailable,

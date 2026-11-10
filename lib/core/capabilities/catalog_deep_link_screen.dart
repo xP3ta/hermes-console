@@ -137,7 +137,7 @@ class _CatalogDeepLinkScreenState extends State<CatalogDeepLinkScreen> {
   }
 
   CatalogDestination _active() => CatalogDestination(
-    connectionId: widget.connManager.activeConnectionId.value ?? '',
+    connectionId: widget.connManager.resolveActiveConnectionId() ?? '',
     profile: widget.connManager.activeProfileFor(widget.connection.id),
   );
 

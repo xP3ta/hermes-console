@@ -856,19 +856,19 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: _wrapWithDock(_buildBody()),
+      body: _wrapWithDock(_buildBody),
     );
   }
 
-  Widget _wrapWithDock(Widget body) {
+  Widget _wrapWithDock(Widget Function(double) buildBody) {
     final connManager = widget.connManager;
-    if (connManager == null) return body;
+    if (connManager == null) return buildBody(0);
     return GeneralDockShell(
       connection: widget.connection,
       connManager: connManager,
       onCreateAnchored: _showAnchoredEditor,
       currentDestination: DockItemId.cron,
-      body: body,
+      bodyBuilder: (_, bottomClearance) => buildBody(bottomClearance),
     );
   }
 
@@ -909,7 +909,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(double bottomClearance) {
     final s = Strings.of(context);
     if (_loading && _jobs.isEmpty) return const Center(child: TuiLoader());
 
@@ -917,7 +917,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       final needsDashboard =
           _dependencyFailure == DashboardDependencyFailure.credentials;
       return Padding(
-        padding: const EdgeInsets.all(20),
+        padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomClearance),
         child: FeatureDependencyNotice(
           noticeId:
               'cron-${needsDashboard ? 'dashboard' : 'load'}-${widget.connection.id}',
@@ -950,7 +950,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
           HermesSpace.pageH,
           HermesSpace.pageTop,
           HermesSpace.pageH,
-          96 + MediaQuery.paddingOf(context).bottom,
+          96 + MediaQuery.paddingOf(context).bottom + bottomClearance,
         ),
         children: [
           _scopeHeader(),

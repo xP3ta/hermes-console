@@ -220,11 +220,15 @@ class MobileOAuthLogin {
     _abort?.call();
   }
 
+  /// [provider] names the Dashboard auth provider to sign in with (`nous`,
+  /// an OIDC one…) when the server lists several; empty lets the server
+  /// pick its only one.
   Future<MobileOAuthSession> run({
     required String connectionId,
     required String baseUrl,
     required bool Function() authorityCurrent,
     bool allowPrivateHttp = false,
+    String provider = '',
   }) async {
     if (_disposed || _abort != null || !authorityCurrent()) {
       throw const MobileOAuthException();
@@ -374,8 +378,10 @@ class MobileOAuthLogin {
           fail();
         }
       }, onError: (_) => fail());
+      final name = provider.trim();
       final url = Uri.parse('$target/auth/native/authorize').replace(
         queryParameters: {
+          if (name.isNotEmpty) 'provider': name,
           'code_challenge': pkce.challenge,
           'code_challenge_method': 'S256',
           'redirect_uri': callback.toString(),

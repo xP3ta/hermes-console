@@ -20,7 +20,7 @@ import '../design/hermes_design.dart'
         HermesDialogAction,
         HermesDialogActionStyle,
         HermesMenuButton,
-        HermesStickyControls,
+        HermesSpace,
         showHermesDialog;
 import '../feedback/feedback_policy.dart';
 
@@ -30,6 +30,10 @@ class AdminIntegrationsScreen extends StatefulWidget {
   final HermesDesktopControlGateway gateway;
   final bool readOnly;
   final AdminIntegrationsSection initialSection;
+
+  /// A title of the caller's own (the ⋯ entry that opens this page names it);
+  /// the screen's own title when null.
+  final String? title;
   final McpExternalUriLauncher? oauthLauncher;
   final List<Duration>? oauthPollDelays;
 
@@ -37,6 +41,7 @@ class AdminIntegrationsScreen extends StatefulWidget {
     required this.gateway,
     this.readOnly = false,
     this.initialSection = AdminIntegrationsSection.mcp,
+    this.title,
     this.oauthLauncher,
     this.oauthPollDelays,
     super.key,
@@ -380,7 +385,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
     return Scaffold(
       appBar: HermesAppBar(
         centerTitle: false,
-        title: Text(copy.screenTitle),
+        title: Text(widget.title ?? copy.screenTitle),
         actions: [
           IconButton(
             tooltip: copy.refresh,
@@ -390,24 +395,35 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
         ],
       ),
       body: SafeArea(
+        top: false,
         child: Column(
           children: [
             if (widget.readOnly)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
+                padding: const EdgeInsets.fromLTRB(
+                  HermesSpace.pageH,
+                  HermesSpace.pageTop,
+                  HermesSpace.pageH,
+                  0,
+                ),
                 child: _InlineNotice(
                   icon: Icons.lock_outline_rounded,
                   text: copy.readOnly,
                 ),
               ),
-            Expanded(
-              // The section switch floats in place; each section's list
-              // scrolls under it and under the header.
-              child: HermesStickyControls(
-                controls: ConstrainedBox(
+            // The section switch sits in the flow, below the header, with the
+            // page's own top and side insets; the lists start under it.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                HermesSpace.pageH,
+                HermesSpace.pageTop,
+                HermesSpace.pageH,
+                HermesSpace.x3,
+              ),
+              child: Center(
+                child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
                   child: HermesSegmentedControl<AdminIntegrationsSection>(
-                    floating: true,
                     value: _section,
                     semanticLabel: copy.sectionLabel,
                     onChanged: _selectSection,
@@ -430,18 +446,20 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
                     ],
                   ),
                 ),
-                child: AnimatedSwitcher(
-                  duration: reduceMotion
-                      ? Duration.zero
-                      : const Duration(milliseconds: 170),
-                  child: KeyedSubtree(
-                    key: ValueKey(_section),
-                    child: switch (_section) {
-                      AdminIntegrationsSection.mcp => _buildMcp(copy),
-                      AdminIntegrationsSection.webhooks => _buildWebhooks(copy),
-                      AdminIntegrationsSection.server => _buildServer(copy),
-                    },
-                  ),
+              ),
+            ),
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 170),
+                child: KeyedSubtree(
+                  key: ValueKey(_section),
+                  child: switch (_section) {
+                    AdminIntegrationsSection.mcp => _buildMcp(copy),
+                    AdminIntegrationsSection.webhooks => _buildWebhooks(copy),
+                    AdminIntegrationsSection.server => _buildServer(copy),
+                  },
                 ),
               ),
             ),
@@ -451,17 +469,17 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
     );
   }
 
-  /// With the read-only notice above them the lists end at their own edge;
-  /// otherwise they scroll under the floating switch and the header.
-  Clip get _listClip => widget.readOnly ? Clip.hardEdge : hermesUnderHeader;
+  /// The section switch is in the flow above the lists, so each list ends at
+  /// its own edge instead of scrolling under the switch.
+  Clip get _listClip => Clip.hardEdge;
 
   Widget _buildMcp(AdminIntegrationsCopy copy) => ListView(
     clipBehavior: _listClip,
     padding: const EdgeInsets.fromLTRB(
-      16,
-      8 + HermesStickyControls.extent,
-      16,
-      28,
+      HermesSpace.pageH,
+      0,
+      HermesSpace.pageH,
+      HermesSpace.pageBottom,
     ),
     children: [
       _IntroText(text: copy.mcpIntro),
@@ -503,10 +521,10 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
       return ListView(
         clipBehavior: _listClip,
         padding: const EdgeInsets.fromLTRB(
-          16,
-          8 + HermesStickyControls.extent,
-          16,
-          28,
+          HermesSpace.pageH,
+          0,
+          HermesSpace.pageH,
+          HermesSpace.pageBottom,
         ),
         children: [
           _IntroText(text: copy.webhooksIntro),
@@ -538,16 +556,15 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
       return const Center(child: ConsoleLoader.large());
     }
     return RefreshIndicator(
-      edgeOffset: HermesStickyControls.extent,
       onRefresh: () => _loadWebhooks(force: true),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         clipBehavior: _listClip,
         padding: const EdgeInsets.fromLTRB(
-          16,
-          8 + HermesStickyControls.extent,
-          16,
-          28,
+          HermesSpace.pageH,
+          0,
+          HermesSpace.pageH,
+          HermesSpace.pageBottom,
         ),
         children: [
           _IntroText(text: copy.webhooksIntro),
@@ -634,10 +651,10 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
       return ListView(
         clipBehavior: _listClip,
         padding: const EdgeInsets.fromLTRB(
-          16,
-          8 + HermesStickyControls.extent,
-          16,
-          28,
+          HermesSpace.pageH,
+          0,
+          HermesSpace.pageH,
+          HermesSpace.pageBottom,
         ),
         children: [
           _IntroText(text: copy.a2aIntro),
@@ -666,16 +683,15 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
     }
     final capability = _a2a;
     return RefreshIndicator(
-      edgeOffset: HermesStickyControls.extent,
       onRefresh: () => _loadA2a(force: true),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         clipBehavior: _listClip,
         padding: const EdgeInsets.fromLTRB(
-          16,
-          8 + HermesStickyControls.extent,
-          16,
-          28,
+          HermesSpace.pageH,
+          0,
+          HermesSpace.pageH,
+          HermesSpace.pageBottom,
         ),
         children: [
           _IntroText(text: copy.a2aIntro),

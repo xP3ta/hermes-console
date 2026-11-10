@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 
 import '../../../../l10n/app_localizations.dart';
+import '../../../design/tokens.dart' show HermesSpace, HermesType;
 import '../../../theme/app_theme.dart';
 import '../../../utils/responsive.dart';
 import '../../../widgets/hermes_premium_ui.dart';
+import '../../../widgets/hermes_ui.dart' show HermesCard;
 import '../../../widgets/mission_profile_avatar.dart';
 import '../../../widgets/room_mirror_avatar.dart';
+import '../bot_screen_access.dart';
 import 'dots_home_model.dart';
 import 'living_bot_face.dart';
 import 'roster_model.dart';
@@ -29,8 +33,17 @@ class DotsHomeView extends StatefulWidget {
   final List<RoomRosterEntry> rooms;
   final MissionProfileAvatarCache? avatarCache;
   final ValueNotifier<bool> searchOpen;
+
+  /// Where the "N working · M waiting for you" line goes when the page's
+  /// header shows it under its title. Without one the line stays in the list.
+  final ValueNotifier<String>? summary;
   final ValueChanged<BotRosterEntry> onOpenBot;
   final ValueChanged<BotRosterEntry> onBotActions;
+
+  /// Opens a bot's desktop. With [screenAccess], a small button on the face
+  /// of each bot that has one; bots without a desktop show nothing.
+  final ValueChanged<BotRosterEntry>? onOpenScreen;
+  final BotScreenAccess? screenAccess;
   final ValueChanged<RoomRosterEntry> onOpenRoom;
   final ValueChanged<RoomRosterEntry>? onRoomActions;
 
@@ -54,8 +67,11 @@ class DotsHomeView extends StatefulWidget {
     required this.rooms,
     required this.avatarCache,
     required this.searchOpen,
+    this.summary,
     required this.onOpenBot,
     required this.onBotActions,
+    this.onOpenScreen,
+    this.screenAccess,
     required this.onOpenRoom,
     this.onRoomActions,
     this.attentionSummary,
@@ -97,11 +113,29 @@ class _DotsHomeViewState extends State<DotsHomeView> {
   void initState() {
     super.initState();
     widget.searchOpen.addListener(_onSearchToggle);
+    _askScreens();
+  }
+
+  /// Asks, once per bot, which of them have a desktop. Cached and capped in
+  /// [BotScreenAccess]; never per rebuild.
+  void _askScreens() {
+    final access = widget.screenAccess;
+    if (access == null || widget.onOpenScreen == null) return;
+    final names = [
+      for (final entry in widget.bots) botScreenProfile(entry.profile),
+    ];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) access.ensure(names);
+    });
   }
 
   @override
   void didUpdateWidget(covariant DotsHomeView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.screenAccess, widget.screenAccess) ||
+        oldWidget.bots.length != widget.bots.length) {
+      _askScreens();
+    }
     if (!identical(oldWidget.searchOpen, widget.searchOpen)) {
       oldWidget.searchOpen.removeListener(_onSearchToggle);
       widget.searchOpen.addListener(_onSearchToggle);
@@ -161,6 +195,16 @@ class _DotsHomeViewState extends State<DotsHomeView> {
       if (layout.working > 0) s.dotsSummaryWorking(layout.working),
       if (layout.waiting > 0) s.dotsSummaryWaiting(layout.waiting),
     ].join(' · ');
+    final out = widget.summary;
+    if (out != null) {
+      final shown = query.trim().isEmpty ? summary : '';
+      if (out.value != shown) {
+        // After this frame: the header listening to it is built already.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && out.value != shown) out.value = shown;
+        });
+      }
+    }
     final items = <Widget>[
       ...widget.header,
       if (widget.searchOpen.value)
@@ -212,7 +256,7 @@ class _DotsHomeViewState extends State<DotsHomeView> {
         );
       }
     }
-    if (summary.isNotEmpty && query.trim().isEmpty) {
+    if (out == null && summary.isNotEmpty && query.trim().isEmpty) {
       items.add(
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
@@ -272,6 +316,10 @@ class _DotsHomeViewState extends State<DotsHomeView> {
                           now: widget.now,
                           onTap: () => widget.onOpenBot(entry),
                           onLongPress: () => widget.onBotActions(entry),
+                          screenAccess: widget.screenAccess,
+                          onScreen: widget.onOpenScreen == null
+                              ? null
+                              : () => widget.onOpenScreen!(entry),
                         ),
                       ),
                   ],
@@ -327,6 +375,10 @@ class _DotsHomeViewState extends State<DotsHomeView> {
             now: widget.now,
             onTap: () => widget.onOpenBot(entry),
             onLongPress: () => widget.onBotActions(entry),
+            screenAccess: widget.screenAccess,
+            onScreen: widget.onOpenScreen == null
+                ? null
+                : () => widget.onOpenScreen!(entry),
           ),
         ),
       );
@@ -373,14 +425,10 @@ class _DotsHomeViewState extends State<DotsHomeView> {
   }
 }
 
-/// Display name: the Desktop title, and "Hermes" (or the profile's display
-/// name) for the main bot instead of the raw `default`.
-String dotsTitle(BotRosterEntry entry) {
-  final profile = entry.profile;
-  if (profile.botTitle != null || !isMainBot(profile)) return entry.title;
-  final display = profile.displayName.trim();
-  return display.isEmpty ? 'Hermes' : display;
-}
+/// Display name of a bot: its title (the main bot, the one name the whole
+/// app uses for the profile, [AgentProfile.visibleName]: «Hermes» only when
+/// it has none) instead of the raw `default`.
+String dotsTitle(BotRosterEntry entry) => entry.title;
 
 bool _busy(BotFaceSignal signal) =>
     signal == BotFaceSignal.working ||
@@ -482,6 +530,8 @@ class _ActivityChip extends StatelessWidget {
   }
 }
 
+/// The approvals bar: one glass card with a shield, the summary and a
+/// chevron. Tapping opens the approvals (or the blocked tasks chooser).
 class _AttentionRow extends StatelessWidget {
   final String text;
   final VoidCallback onTap;
@@ -491,39 +541,35 @@ class _AttentionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: HermesSpace.x2),
+      child: HermesCard(
         key: const ValueKey('mission-attention'),
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: HermesSpace.x4,
+          vertical: HermesSpace.x3,
+        ),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.front_hand_outlined,
-                  color: colors.warning,
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    text,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
+          constraints: const BoxConstraints(minHeight: 24),
+          child: Row(
+            children: [
+              Icon(Icons.shield_outlined, color: colors.accentText, size: 22),
+              const SizedBox(width: HermesSpace.x3),
+              Expanded(
+                child: Text(
+                  text,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                Icon(Icons.chevron_right_rounded, color: colors.textDisabled),
-              ],
-            ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: colors.textSecondary),
+            ],
           ),
         ),
       ),
@@ -541,10 +587,10 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final style = TextStyle(
-      color: colors.success,
-      fontSize: 12,
-      fontWeight: FontWeight.w700,
-      letterSpacing: 1.6,
+      color: colors.textTertiary,
+      fontSize: HermesType.sectionSize,
+      fontWeight: FontWeight.w600,
+      letterSpacing: HermesType.sectionTracking + 0.3,
     );
     return Semantics(
       header: true,
@@ -563,7 +609,7 @@ class _SectionLabel extends StatelessWidget {
             Text(
               '$count',
               style: style.copyWith(
-                color: colors.textTertiary,
+                color: colors.accentText,
                 letterSpacing: 0,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
@@ -590,6 +636,11 @@ class _TeamTile extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
+  /// The desktop shortcut: shown on the face only when [screenAccess] says
+  /// this bot has one.
+  final BotScreenAccess? screenAccess;
+  final VoidCallback? onScreen;
+
   static const faceSize = 52.0;
   static const pinnedFaceSize = 64.0;
 
@@ -601,11 +652,26 @@ class _TeamTile extends StatelessWidget {
     required this.avatarCache,
     required this.onTap,
     required this.onLongPress,
+    this.screenAccess,
+    this.onScreen,
     this.now,
   });
 
   @override
   Widget build(BuildContext context) {
+    final access = screenAccess;
+    if (access == null || onScreen == null) return _tile(context, false);
+    return ListenableBuilder(
+      listenable: access,
+      builder: (context, _) => _tile(
+        context,
+        access.stateOf(botScreenProfile(entry.profile)) ==
+            BotScreenState.available,
+      ),
+    );
+  }
+
+  Widget _tile(BuildContext context, bool showScreen) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
     final name = dotsTitle(entry);
@@ -626,6 +692,9 @@ class _TeamTile extends StatelessWidget {
           : s.dotsA11yBot(name, _a11yStatus(s, entry)),
       onTap: onTap,
       onLongPress: onLongPress,
+      customSemanticsActions: {
+        if (showScreen) CustomSemanticsAction(label: s.bsaScreen): onScreen!,
+      },
       excludeSemantics: true,
       child: Material(
         key: ValueKey('mission-bot-row-${entry.profile.name}'),
@@ -644,15 +713,31 @@ class _TeamTile extends StatelessWidget {
                 children: [
                   SizedBox.square(
                     dimension: face + 12,
-                    child: Center(
-                      child: LivingBotFace(
-                        profileName: entry.profile.name,
-                        profile: entry.profile,
-                        avatarCache: avatarCache,
-                        signal: entry.signal,
-                        size: face,
-                        style: LivingBotFaceStyle.calm,
-                      ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      clipBehavior: Clip.none,
+                      children: [
+                        LivingBotFace(
+                          profileName: entry.profile.name,
+                          profile: entry.profile,
+                          avatarCache: avatarCache,
+                          signal: entry.signal,
+                          size: face,
+                          style: LivingBotFaceStyle.calm,
+                        ),
+                        if (showScreen)
+                          PositionedDirectional(
+                            top: -6,
+                            end: -6,
+                            child: _ScreenBadge(
+                              key: ValueKey(
+                                'roster-screen-${entry.profile.name}',
+                              ),
+                              label: s.bsaScreen,
+                              onTap: onScreen!,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -677,11 +762,55 @@ class _TeamTile extends StatelessWidget {
                       color: pinned
                           ? colors.textSecondary
                           : _statusColor(colors, entry.signal),
-                      fontSize: 11.5,
+                      fontSize: HermesType.subtitleSize,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The small "desktop" button on a bot's face: a 22 dp disc inside a 40 dp
+/// touch target, so it never covers the name below.
+class _ScreenBadge extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _ScreenBadge({super.key, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox.square(
+          dimension: 40,
+          child: Center(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: colors.surfaceVariant,
+                shape: BoxShape.circle,
+                border: Border.all(color: colors.divider),
+              ),
+              child: SizedBox.square(
+                dimension: 22,
+                child: Icon(
+                  Icons.desktop_windows_outlined,
+                  size: 13,
+                  color: colors.textPrimary,
+                ),
               ),
             ),
           ),
@@ -794,76 +923,67 @@ class _RoomCard extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         excludeSemantics: true,
-        child: Material(
+        child: HermesCard(
           key: ValueKey('roster-room-row-$id'),
-          color: colors.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(22),
-            side: BorderSide(color: colors.divider),
-          ),
-          child: InkWell(
-            onTap: onTap,
-            onLongPress: onLongPress,
-            customBorder: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          onTap: onTap,
+          onLongPress: onLongPress,
+          padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      if (entry.image case final image?)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: SizedBox.square(
-                            dimension: faceSize,
-                            child: RoomMirrorAvatar(
-                              image: image,
-                              fallback: _cluster(context),
-                            ),
-                          ),
-                        )
-                      else
-                        Flexible(child: _cluster(context)),
-                      if (entry.needsYou) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          key: ValueKey('roster-room-needs-you-$id'),
-                          width: 9,
-                          height: 9,
-                          decoration: BoxDecoration(
-                            color: colors.warning,
-                            shape: BoxShape.circle,
-                          ),
+                  if (entry.image case final image?)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox.square(
+                        dimension: faceSize,
+                        child: RoomMirrorAvatar(
+                          image: image,
+                          fallback: _cluster(context),
                         ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    entry.title,
-                    key: ValueKey('roster-room-title-$id'),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
+                      ),
+                    )
+                  else
+                    Flexible(child: _cluster(context)),
+                  if (entry.needsYou) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      key: ValueKey('roster-room-needs-you-$id'),
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: colors.warning,
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    line,
-                    key: ValueKey('roster-room-line-$id'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: lineColor, fontSize: 12.5),
-                  ),
+                  ],
                 ],
               ),
-            ),
+              const SizedBox(height: 12),
+              Text(
+                entry.title,
+                key: ValueKey('roster-room-title-$id'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                line,
+                key: ValueKey('roster-room-line-$id'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: lineColor,
+                  fontSize: HermesType.subtitleSize,
+                ),
+              ),
+            ],
           ),
         ),
       ),

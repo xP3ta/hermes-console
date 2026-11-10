@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/connection.dart';
 import 'package:hermes_android/core/navigation/instance_route_guard.dart';
-import 'package:hermes_android/core/screens/appearance_screen.dart';
+import 'package:hermes_android/core/screens/themes_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -32,9 +32,9 @@ Widget _host({
               InstanceRouteGuard.push<void>(
                 context,
                 connection: connection,
-                builder: (active) {
+                builder: (_) {
                   built();
-                  return AppearanceScreen(connection: active);
+                  return const ThemesScreen();
                 },
               );
             },
@@ -57,31 +57,31 @@ void main() {
     await tester.pump();
 
     expect(builds, 0);
-    expect(find.byType(AppearanceScreen), findsNothing);
+    expect(find.byType(ThemesScreen), findsNothing);
     expect(find.text('Configura una instancia primero'), findsOneWidget);
   });
 
-  testWidgets('con instancia pasa el objeto real a AppearanceScreen', (
-    tester,
-  ) async {
-    var builds = 0;
-    await tester.pumpWidget(
-      _host(connection: _connection, built: () => builds += 1),
-    );
+  testWidgets(
+    'con instancia abre Temas directamente, sin pantalla Apariencia',
+    (tester) async {
+      var builds = 0;
+      await tester.pumpWidget(
+        _host(connection: _connection, built: () => builds += 1),
+      );
 
-    await tester.tap(find.byKey(const ValueKey('open-gated-route')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('open-gated-route')));
+      await tester.pumpAndSettle();
 
-    expect(builds, 1);
-    expect(find.byType(AppearanceScreen), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('appearance-current-preview')),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Hermes QA'), findsOneWidget);
-    final screen = tester.widget<AppearanceScreen>(
-      find.byType(AppearanceScreen),
-    );
-    expect(identical(screen.connection, _connection), isTrue);
-  });
+      expect(builds, 1);
+      expect(find.byType(ThemesScreen), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('appearance-current-preview')),
+        findsNothing,
+      );
+      expect(find.textContaining('Hermes QA'), findsNothing);
+      // The Style and Glass selectors are gone from the screen.
+      expect(find.text('Estilo'), findsNothing);
+      expect(find.text('Cristal'), findsNothing);
+    },
+  );
 }

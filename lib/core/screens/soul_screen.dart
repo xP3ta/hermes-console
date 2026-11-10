@@ -103,10 +103,7 @@ class _SoulTemplate {
   final String id;
   final String content;
 
-  const _SoulTemplate({
-    required this.id,
-    required this.content,
-  });
+  const _SoulTemplate({required this.id, required this.content});
 }
 
 /// Etiqueta localizada de una plantilla SOUL (el `content` se deja tal cual).
@@ -175,10 +172,7 @@ Responde con la menor cantidad de palabras que transmita la información complet
 Sin preámbulos, sin despedidas, sin confirmaciones innecesarias.
 ''',
   ),
-  _SoulTemplate(
-    id: 'empty',
-    content: '',
-  ),
+  _SoulTemplate(id: 'empty', content: ''),
 ];
 
 /// Cómo se aplica una plantilla cuando ya hay contenido en el borrador.
@@ -658,6 +652,8 @@ class _SoulScreenState extends State<SoulScreen>
 
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): an editor, not a list, sits under it.
+        glass: false,
         title: const Text('SOUL'),
         // Whose SOUL this is, when it is not the default profile's; for the
         // local document, the mark that the draft was just saved.
@@ -881,7 +877,7 @@ class _TemplateTile extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, size: 16, color: colors.textDisabled),
+            Icon(Icons.chevron_right, size: 16, color: colors.textTertiary),
           ],
         ),
       ),

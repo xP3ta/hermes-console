@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/onboarding/onboarding_widgets.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/box_fill.dart';
+import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 
 double _ratio(Color a, Color b) {
@@ -85,24 +87,40 @@ void main() {
     });
   }
 
+  // The legibility pass: a dark palette's field and pill wear the same
+  // control border, derived from the divider (same hue, smallest step) to
+  // 3:1 on the page, the surfaces and the bodies of the boxes. Before, a
+  // dark field had no resting outline and its fill sat near 1.0:1 on the
+  // body of a group.
   for (final p in dark) {
-    testWidgets('${p.id} (dark): borders are still the divider', (
-      tester,
-    ) async {
+    testWidgets('${p.id} (dark): the field and the pill wear the derived '
+        'control border', (tester) async {
       await _host(tester, p.id);
       final theme = AppTheme.fromId(p.id);
       final c = theme.hermes;
-      expect(c.controlBorder, c.divider);
       expect(c.divider, p.colors.divider);
-      final outlined =
-          theme.hermesComponents.profile.border.outlinesRestingControls;
-      final side = _fieldSide(tester);
-      if (outlined) {
-        expect(side.color, c.divider);
-      } else {
-        expect(side, BorderSide.none, reason: 'same as the base');
+      final boxes = HermesBoxFill.of(c);
+      for (final back in [
+        c.background,
+        c.surface,
+        c.surfaceVariant,
+        boxes.group,
+        boxes.card,
+      ]) {
+        expect(
+          ThemeContrast.ratio(c.controlBorder, back),
+          greaterThanOrEqualTo(3.0),
+          reason: '${p.id} control border on $back',
+        );
       }
-      expect(_pillBorder(tester), c.divider);
+      final from = HSLColor.fromColor(c.divider);
+      final to = HSLColor.fromColor(c.controlBorder);
+      if (from.saturation > 0.08) {
+        final dh = (from.hue - to.hue).abs();
+        expect(dh < 8 || 360 - dh < 8, isTrue, reason: '${p.id} keeps hue');
+      }
+      expect(_fieldSide(tester).color, c.controlBorder);
+      expect(_pillBorder(tester), c.controlBorder);
     });
   }
 

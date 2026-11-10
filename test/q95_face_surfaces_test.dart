@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/home/board/home_board_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
@@ -5,7 +6,6 @@ import 'package:hermes_android/core/home/board/home_board_data.dart';
 import 'package:hermes_android/core/home/board/home_board_tiles.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/theme/soft_tokens.dart';
 import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/core/widgets/profile_face.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -59,23 +59,31 @@ void main() {
             List<ExpectedDot> Function(ThemeData theme, BuildContext ctx),
           )
         >{
-          // Home widgets: a face with its waiting dot.
+          // Home widgets: a working face with its plain state dot.
           'home-face': (
             () => HomeFace(
               profileName: 'astra',
               data: HomeBoardData(now: DateTime(2026, 10, 7)),
-              state: HomeBotState.waiting,
+              state: HomeBotState.working,
               size: 40,
             ),
             (theme, ctx) => [
               ExpectedDot(
                 find.byKey(const ValueKey('home-face-dot-astra')),
                 homeBotDotColor(
-                  SoftPalette.ofContext(ctx),
-                  HomeBotState.waiting,
+                  HomePalette.ofContext(ctx),
+                  HomeBotState.working,
                 )!,
               ),
             ],
+          ),
+          'home-face-idle': (
+            () => HomeFace(
+              profileName: 'astra',
+              data: HomeBoardData(now: DateTime(2026, 10, 7)),
+              size: 40,
+            ),
+            (theme, ctx) => const [],
           ),
           // Bots home grid and pinned row: the calm face and its dot.
           'bots-home-calm': (
@@ -167,8 +175,11 @@ void main() {
               saveAs: '${c.key}-$backing-${themeEntry.key}',
             );
             expect(report.checked, greaterThan(1000), reason: '$report');
-            expect(report.bad, lessThanOrEqualTo(report.checked ~/ 100),
-                reason: '$report');
+            expect(
+              report.bad,
+              lessThanOrEqualTo(report.checked ~/ 100),
+              reason: '$report',
+            );
             if (dots.isNotEmpty) {
               expect(report.dotChecked, greaterThan(60), reason: '$report');
               expect(
@@ -178,6 +189,41 @@ void main() {
               );
             }
           });
+        }
+      }
+    }
+  });
+
+  testWidgets('Home only paints an accent ring while waiting, never a glow', (
+    tester,
+  ) async {
+    for (final theme in _themes.values) {
+      for (final state in HomeBotState.values) {
+        await tester.pumpWidget(
+          _shell(
+            theme(),
+            HomeFace(
+              profileName: 'astra',
+              data: HomeBoardData(now: DateTime(2026, 10, 7)),
+              state: state,
+              size: 40,
+            ),
+          ),
+        );
+        await tester.pump(const Duration(seconds: 1));
+        final ring = find.byKey(const ValueKey('home-face-ring-astra'));
+        expect(
+          ring,
+          state == HomeBotState.waiting ? findsOneWidget : findsNothing,
+        );
+        if (state == HomeBotState.waiting) {
+          final decoration =
+              tester.widget<DecoratedBox>(ring).decoration as BoxDecoration;
+          expect(decoration.shape, BoxShape.circle);
+          expect(decoration.border, isNotNull);
+          expect(decoration.color, isNull);
+          expect(decoration.gradient, isNull);
+          expect(decoration.boxShadow, isNull);
         }
       }
     }

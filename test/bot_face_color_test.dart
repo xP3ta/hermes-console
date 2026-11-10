@@ -281,7 +281,7 @@ void main() {
       );
       await _tap(
         tester,
-        'profile-editor-identity-row',
+        'profile-editor-avatar',
         form: 'profile-editor-scroll',
       );
       await _tap(
@@ -291,6 +291,9 @@ void main() {
       );
       expect(tester.widget<HermesPrimaryButton>(save).onTap, isNotNull);
       _expectBlobColour(tester, 'profile-editor-blobatar-sun', _orange);
+      // «Listo» closes the sheet; its barrier would take the tap on Guardar.
+      await _tap(tester, 'profile-editor-sheet-done');
+      await pumpModelUi(tester);
       await tester.tap(save);
       await pumpModelUi(tester);
       final identity = gateway.identities.single as ProceduralFaceIdentity;
@@ -318,7 +321,7 @@ void main() {
       );
       await _tap(
         tester,
-        'profile-editor-identity-row',
+        'profile-editor-avatar',
         form: 'profile-editor-scroll',
       );
       await _tap(

@@ -23,13 +23,16 @@ import '../utils/api_error.dart';
 import '../services/pairing_link.dart';
 import '../theme/app_theme.dart';
 import '../utils/transport_privacy.dart';
+import 'onboarding/connect_method_cards.dart';
 import 'onboarding/manual_setup_page.dart';
+import 'onboarding_screen.dart';
 import '../companion/models/companion_mood.dart';
 import '../widgets/hermes_status_indicator.dart';
 import '../widgets/instance_kind_picker.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/secure_screen_scope.dart';
 import 'dashboard_setup_screen.dart';
 import 'dashboard_password_screen.dart';
 import 'qr_scan_screen.dart';
@@ -193,6 +196,49 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
   bool get _isNew => widget.initial == null;
   bool _signInFirstStarted = false;
 
+  /// What was typed through any of the three ways: going back to this editor
+  /// and opening another way keeps it.
+  final ConnectDraft _waysDraft = ConnectDraft();
+
+  /// Read once, for the recommended way (local interfaces only).
+  late final Future<bool> _onTailnet = phoneOnTailnet();
+
+  /// A plain new connection shows the same three ways in as the welcome, over
+  /// the form; an entry that already chose (a link, a prefill, a sign-in
+  /// first, the camera) does not.
+  bool get _showWays =>
+      _isNew &&
+      widget.simpleConnect &&
+      widget.prefill == null &&
+      widget.initialLink == null &&
+      !widget.signInFirst &&
+      !widget.autoScanQr;
+
+  /// One of the three ways, in the onboarding's own flow: a finished
+  /// connection closes this editor as a saved one would.
+  Future<void> _openWay(ConnectWay way) async {
+    final navigator = Navigator.of(context);
+    var done = false;
+    await navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => OnboardingScreen(
+          connManager: widget.connManager,
+          diagnostics: widget.diagnostics,
+          scanCode: widget.scanCode,
+          playOpening: false,
+          simpleConnectEnabled: widget.simpleConnect,
+          initialWay: way,
+          connectDraft: _waysDraft,
+          onDone: () {
+            done = true;
+            navigator.pop();
+          },
+        ),
+      ),
+    );
+    if (done && mounted) Navigator.of(context).pop(true);
+  }
+
   /// Sign-in, then the usual verified save. A cancelled or failed sign-in
   /// leaves the form as it is.
   Future<void> _signInThenSave() async {
@@ -318,6 +364,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
 
   @override
   void dispose() {
+    _waysDraft.dispose();
     _diag?.close();
     _releaseSetup();
     for (final c in [
@@ -1352,8 +1399,9 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
     return s.sReady;
   }
 
-  /// Cleartext is normal inside a private network (a quiet footnote) and
-  /// never allowed over the public internet (a warning, and the save refuses).
+  /// Plain http inside a private network (LAN, Tailscale, localhost) says
+  /// nothing but a small info icon here, with the explanation as its tooltip.
+  /// Over the public internet it is refused on save, so the reason is one line.
   Widget _transportNote(Strings s, HermesThemeColors colors) {
     if (_gatewayUrlCtrl.text.trim().isEmpty) return const SizedBox.shrink();
     switch (_gatewayTransport) {
@@ -1364,38 +1412,44 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
           key: const ValueKey('instance-cleartext-private'),
           padding: const EdgeInsets.fromLTRB(
             design.HermesSpace.x1,
-            design.HermesSpace.x2,
+            design.HermesSpace.x1,
             design.HermesSpace.x1,
             0,
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.lock_open_outlined,
-                size: 14,
-                color: colors.textSecondary,
-              ),
-              const SizedBox(width: design.HermesSpace.x2),
-              Expanded(
-                child: Text(
-                  s.commonCleartextPrivate,
-                  style: design.HermesType.support.copyWith(
-                    color: colors.textSecondary,
-                  ),
+          child: Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Tooltip(
+              message: s.krhPrivateHttpInfo,
+              triggerMode: TooltipTriggerMode.tap,
+              child: Semantics(
+                label: s.krhPrivateHttpInfo,
+                child: Icon(
+                  Icons.info_outline_rounded,
+                  size: 16,
+                  color: colors.textSecondary,
                 ),
               ),
-            ],
+            ),
           ),
         );
       case TransportPrivacyClass.publicCleartext:
         return Padding(
-          padding: const EdgeInsets.only(top: design.HermesSpace.x3),
-          child: HermesInfoBanner(
-            s.commonCleartextPublic,
-            key: const ValueKey('instance-cleartext-public'),
-            icon: Icons.warning_amber_outlined,
-            tone: colors.warning,
+          key: const ValueKey('instance-cleartext-public'),
+          padding: const EdgeInsets.only(top: design.HermesSpace.x2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.lock_open_outlined, size: 16, color: colors.warning),
+              const SizedBox(width: design.HermesSpace.x2),
+              Expanded(
+                child: Text(
+                  s.commonCleartextPublic,
+                  style: design.HermesType.support.copyWith(
+                    color: colors.warning,
+                  ),
+                ),
+              ),
+            ],
           ),
         );
     }
@@ -1414,8 +1468,12 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
     ),
   );
 
+  // H4: FLAG_SECURE mientras esta página está montada.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      SecureScreenScope(child: Builder(builder: _buildPage));
+
+  Widget _buildPage(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
     final user = _dashUserCtrl.text.trim();
@@ -1482,6 +1540,24 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             key: const ValueKey('pairing-link-summary'),
             icon: Icons.link,
           ),
+        if (_showWays) ...[
+          _question(s.nacWayPickTitle),
+          FutureBuilder<bool>(
+            future: _onTailnet,
+            builder: (context, tailnet) => ConnectWayCards(
+              key: const ValueKey('instance-ways'),
+              recommended: recommendedConnectWay(
+                pairingSeen: false,
+                onTailnet: tailnet.data ?? false,
+              ),
+              onPick: (way) => unawaited(_openWay(way)),
+              onWhich: () => unawaited(showConnectWayHelp(context)),
+              keyFor: (way) => ValueKey('instance-way-${way.name}'),
+              maxWidth: double.infinity,
+            ),
+          ),
+          _question(s.nacWayEditorForm),
+        ],
         design.HermesListGroup(
           children: [
             design.HermesListRow(

@@ -61,7 +61,11 @@ Future<void> _pumpScreen(WidgetTester tester, CompanionController c) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(
+    () => SharedPreferences.setMockInitialValues({
+      CompanionPreferences.enabledKey: true,
+    }),
+  );
 
   group('Modelo: origen y protección', () {
     test('base está protegida; imported no', () {

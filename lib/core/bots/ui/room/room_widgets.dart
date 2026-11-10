@@ -5,19 +5,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../l10n/app_localizations.dart';
+import '../../../feedback/feedback_policy.dart';
 import '../../../models/agent_profile.dart';
 import '../../../models/attachment_draft.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../services/artifact_export_service.dart';
+import '../../../services/save_to_device.dart' show SaveFailure;
 import '../../../theme/app_theme.dart';
+import '../../../theme/hermes_tokens.dart';
 import '../../../widgets/attachment_card.dart' show showImageViewer;
 import '../../../widgets/attachment_preview.dart';
 import '../../../widgets/chat/chat_markdown_body.dart';
 import '../../../widgets/chat/chat_message_frame.dart';
 import '../../../widgets/chat/chat_message_selection_area.dart';
+import '../../../widgets/chat/mention_chips.dart';
 import '../../../widgets/chat/quick_reaction_bar.dart';
 import '../../../widgets/hermes_notice.dart';
 import '../../../widgets/mission_profile_avatar.dart';
+import '../../../widgets/save_to_device_feedback.dart' show notifySaveFailure;
 import '../../../widgets/room_team_row.dart' show RoomMemberAvatar;
 import '../roster/living_bot_face.dart';
 import 'room_gateway.dart';
@@ -216,7 +221,12 @@ class RoomPendingMessageTile extends StatelessWidget {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
     return Padding(
-      padding: const EdgeInsets.only(left: 56, right: 12, top: 10, bottom: 2),
+      padding: const EdgeInsets.only(
+        left: 56,
+        right: HermesSpace.x3,
+        top: 10,
+        bottom: 2,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -277,7 +287,10 @@ class RoomPendingMessageTile extends StatelessWidget {
                 Text(
                   s.rs1215NotSent,
                   key: ValueKey('room-pending-failed-$id'),
-                  style: TextStyle(fontSize: 11.5, color: colors.error),
+                  style: TextStyle(
+                    fontSize: HermesType.captionSize,
+                    color: colors.error,
+                  ),
                 ),
                 TextButton(
                   key: ValueKey('room-pending-retry-$id'),
@@ -360,11 +373,13 @@ class RoomMessageTile extends StatelessWidget {
   Widget _markdown(BuildContext context) {
     final text = entry.body.text;
     if (text.trim().isEmpty) return const SizedBox.shrink();
-    // Mentions become accent links; selection is owned by the frame, so the
-    // body is not selectable on its own (never SelectableText, no inner
-    // scroll-into-view on tap).
+    // Under the room's [MentionChipScope] mentions are chips (the body reads
+    // the scope); without one they become accent links. Selection is owned
+    // by the frame, so the body is not selectable on its own (never
+    // SelectableText, no inner scroll-into-view on tap).
+    final chips = MentionChipScope.maybeOf(context) != null;
     return ChatMarkdownBody(
-      data: linkifyRoomMentions(text, mentionHandles),
+      data: chips ? text : linkifyRoomMentions(text, mentionHandles),
       selectable: false,
       onLinkTap: (href) => _onLink(context, href),
     );
@@ -483,7 +498,7 @@ class RoomMessageTile extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final last = thread.lastActor;
     return Padding(
-      padding: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.only(top: HermesSpace.x1),
       child: InkWell(
         key: ValueKey('room-thread-summary-${thread.threadId}'),
         borderRadius: BorderRadius.circular(10),
@@ -491,7 +506,10 @@ class RoomMessageTile extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 32),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: const EdgeInsets.symmetric(
+              horizontal: HermesSpace.x1,
+              vertical: 6,
+            ),
             child: Text.rich(
               TextSpan(
                 children: [
@@ -514,7 +532,7 @@ class RoomMessageTile extends StatelessWidget {
                     ),
                 ],
               ),
-              style: const TextStyle(fontSize: 11.5),
+              style: const TextStyle(fontSize: HermesType.captionSize),
             ),
           ),
         ),
@@ -537,7 +555,7 @@ class RoomMessageTile extends StatelessWidget {
           key: ValueKey('room-message-${event.eventId}'),
           padding: EdgeInsets.only(
             left: 56,
-            right: 12,
+            right: HermesSpace.x3,
             top: entry.firstOfRun ? 10 : 3,
             bottom: 2,
           ),
@@ -613,7 +631,7 @@ class RoomMessageTile extends StatelessWidget {
     final card = Container(
       key: ValueKey('room-member-card-${event.eventId}'),
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+      padding: const EdgeInsets.fromLTRB(HermesSpace.x3, 9, HermesSpace.x3, 10),
       decoration: BoxDecoration(
         color: colors.surface.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(14),
@@ -634,7 +652,7 @@ class RoomMessageTile extends StatelessWidget {
         padding: EdgeInsets.only(
           left: 10,
           right: 10,
-          top: entry.firstOfRun ? 12 : 4,
+          top: entry.firstOfRun ? HermesSpace.x3 : HermesSpace.x1,
         ),
         child: ChatMessageFrame(
           selectionIdentity: event.eventId,
@@ -737,7 +755,7 @@ class RoomPassesLine extends StatelessWidget {
         onPressed: onOpenActivity,
         style: TextButton.styleFrom(
           foregroundColor: colors.textSecondary,
-          textStyle: const TextStyle(fontSize: 11.5),
+          textStyle: const TextStyle(fontSize: HermesType.captionSize),
           minimumSize: const Size(0, 36),
         ),
         child: Text(label),
@@ -1124,7 +1142,7 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
     return InkWell(
       key: ValueKey('$keyPrefix-row-$id'),
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(HermesRadius.control),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 7),
         child: Row(
@@ -1148,7 +1166,7 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: HermesType.valueSize,
                       fontWeight: FontWeight.w700,
                       color: colors.textPrimary,
                     ),
@@ -1174,7 +1192,7 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: HermesType.captionSize,
                             color: colors.textSecondary,
                           ),
                         ),
@@ -1235,7 +1253,7 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 11.5,
+                        fontSize: HermesType.captionSize,
                         color: step.done
                             ? colors.textSecondary
                             : colors.textPrimary,
@@ -1280,7 +1298,12 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
     );
     return Padding(
       key: const ValueKey('room-round-sheet'),
-      padding: const EdgeInsets.fromLTRB(16, 14, 12, 8),
+      padding: const EdgeInsets.fromLTRB(
+        HermesSpace.x4,
+        14,
+        HermesSpace.x3,
+        HermesSpace.x2,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1319,7 +1342,10 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
           ),
           if (progress != null)
             Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 4),
+              padding: const EdgeInsets.only(
+                top: HermesSpace.x2,
+                bottom: HermesSpace.x1,
+              ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(2),
                 child: LinearProgressIndicator(
@@ -1353,7 +1379,7 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                       child: Text(
                         s.rat1215Previous(round.previous.length),
                         style: TextStyle(
-                          fontSize: 12.5,
+                          fontSize: HermesType.supportSize,
                           color: colors.textSecondary,
                         ),
                       ),
@@ -1376,7 +1402,7 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                   child: Text(
                     s.roomRoundLabel(past.round),
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: HermesType.captionSize,
                       fontWeight: FontWeight.w600,
                       color: colors.textSecondary,
                     ),
@@ -1395,7 +1421,7 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
           if (widget.onOpenMembers != null ||
               (widget.onStopAll != null && round.active))
             Padding(
-              padding: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.only(top: HermesSpace.x1),
               child: Row(
                 children: [
                   if (widget.onOpenMembers != null)
@@ -1404,7 +1430,9 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                       onPressed: widget.onOpenMembers,
                       style: TextButton.styleFrom(
                         foregroundColor: colors.textSecondary,
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: HermesSpace.x1,
+                        ),
                       ),
                       child: Text(s.roomMenuMembers),
                     ),
@@ -1417,7 +1445,9 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                         foregroundColor: colors.textSecondary,
                         side: BorderSide(color: colors.divider),
                         minimumSize: const Size(0, 34),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: HermesSpace.x3,
+                        ),
                         textStyle: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
@@ -1463,7 +1493,10 @@ class RoomNewPill extends StatelessWidget {
         customBorder: const StadiumBorder(),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: HermesSpace.x2,
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1530,8 +1563,18 @@ class RoomApprovalCard extends StatelessWidget {
     ];
     return Container(
       key: ValueKey('room-approval-${action.requestId}'),
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      margin: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        HermesSpace.x2,
+        HermesSpace.x3,
+        HermesSpace.x1,
+      ),
+      padding: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        10,
+        HermesSpace.x3,
+        10,
+      ),
       decoration: BoxDecoration(
         color: colors.surfaceVariant,
         borderRadius: BorderRadius.circular(14),
@@ -1555,12 +1598,18 @@ class RoomApprovalCard extends StatelessWidget {
                 TextSpan(text: ' ${s.roomApprovalWants}'),
               ],
             ),
-            style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
+            style: TextStyle(
+              fontSize: HermesType.supportSize,
+              color: colors.textPrimary,
+            ),
           ),
           if (command.isNotEmpty)
             Container(
               margin: const EdgeInsets.only(top: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              padding: const EdgeInsets.symmetric(
+                horizontal: HermesSpace.x2,
+                vertical: 6,
+              ),
               decoration: BoxDecoration(
                 color: colors.background,
                 borderRadius: BorderRadius.circular(8),
@@ -1571,7 +1620,7 @@ class RoomApprovalCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontFamily: 'monospace',
-                  fontSize: 11.5,
+                  fontSize: HermesType.captionSize,
                   color: colors.textPrimary,
                 ),
               ),
@@ -1631,11 +1680,11 @@ class _ChoiceButton extends StatelessWidget {
             ? colors.error
             : colors.textPrimary,
         disabledForegroundColor: colors.textDisabled,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: const StadiumBorder(),
         // App font (Inter) like every other button; a bare TextStyle here
         // dropped to the platform default family.
         textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
-          fontSize: 12.5,
+          fontSize: HermesType.supportSize,
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -1694,8 +1743,18 @@ class _RoomMemberClarifyCardState extends State<RoomMemberClarifyCard> {
     final enabled = !widget.busy && widget.onAnswer != null;
     return Container(
       key: ValueKey(id),
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      margin: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        HermesSpace.x2,
+        HermesSpace.x3,
+        HermesSpace.x1,
+      ),
+      padding: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        10,
+        HermesSpace.x3,
+        10,
+      ),
       decoration: BoxDecoration(
         color: colors.surfaceVariant,
         borderRadius: BorderRadius.circular(14),
@@ -1712,7 +1771,7 @@ class _RoomMemberClarifyCardState extends State<RoomMemberClarifyCard> {
                 child: Text(
                   s.rq1215ClarifyAsks(name),
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: HermesType.supportSize,
                     fontWeight: FontWeight.w700,
                     color: roomMemberColor(
                       widget.member?.handle ?? name,
@@ -1731,7 +1790,10 @@ class _RoomMemberClarifyCardState extends State<RoomMemberClarifyCard> {
           const SizedBox(height: 6),
           Text(
             prompt.question,
-            style: TextStyle(fontSize: 14, color: colors.textPrimary),
+            style: TextStyle(
+              fontSize: HermesType.textSize,
+              color: colors.textPrimary,
+            ),
           ),
           for (var i = 0; i < prompt.choices.length; i++)
             Padding(
@@ -1812,8 +1874,13 @@ class RoomMemberWaitingBanner extends StatelessWidget {
     final id = 'room-member-waiting-${member.memberId}';
     return Container(
       key: ValueKey(id),
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
+      margin: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        HermesSpace.x2,
+        HermesSpace.x3,
+        HermesSpace.x1,
+      ),
+      padding: const EdgeInsets.fromLTRB(HermesSpace.x3, 10, HermesSpace.x2, 6),
       decoration: BoxDecoration(
         color: colors.warning.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
@@ -1840,7 +1907,7 @@ class RoomMemberWaitingBanner extends StatelessWidget {
                         roomSpeakerName(member, null, profile),
                       ),
                       style: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: HermesType.supportSize,
                         color: colors.textPrimary,
                       ),
                     ),
@@ -1910,8 +1977,13 @@ class RoomMemberStallBanner extends StatelessWidget {
     final id = 'room-member-stall-${member.memberId}';
     return Container(
       key: ValueKey(id),
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
+      margin: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        HermesSpace.x2,
+        HermesSpace.x3,
+        HermesSpace.x1,
+      ),
+      padding: const EdgeInsets.fromLTRB(HermesSpace.x3, 10, HermesSpace.x2, 6),
       decoration: BoxDecoration(
         color: colors.warning.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
@@ -1934,7 +2006,7 @@ class RoomMemberStallBanner extends StatelessWidget {
                         roomSpeakerName(member, null, profile),
                       ),
                       style: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: HermesType.supportSize,
                         color: colors.textPrimary,
                       ),
                     ),
@@ -2007,8 +2079,13 @@ class RoomRetryCard extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     return Container(
       key: ValueKey('room-retry-$taskId'),
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+      margin: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        HermesSpace.x2,
+        HermesSpace.x3,
+        HermesSpace.x1,
+      ),
+      padding: const EdgeInsets.fromLTRB(HermesSpace.x3, 6, 6, 6),
       decoration: BoxDecoration(
         color: colors.error.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
@@ -2029,7 +2106,10 @@ class RoomRetryCard extends StatelessWidget {
                         ? s.roomRetryUnknownMember
                         : roomSpeakerName(member, null, profile),
                   ),
-                  style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
+                  style: TextStyle(
+                    fontSize: HermesType.supportSize,
+                    color: colors.textPrimary,
+                  ),
                 ),
                 if (onRetry == null)
                   Text(
@@ -2159,6 +2239,7 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
     if (actions == null || _busy) return;
     final s = Strings.of(context);
     final notice = HermesNotice.of(context);
+    final feedback = AppFeedback.of(context);
     setState(() => _busy = true);
     try {
       final file = _file ?? await actions.fetch(widget.attachment);
@@ -2180,7 +2261,18 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
         case _AttachmentOp.share:
           await actions.share(widget.attachment, file);
       }
-    } catch (_) {
+    } on SaveFailure catch (failure) {
+      // «Descargar»: why it was not saved, and «Reintentar».
+      notifySaveFailure(
+        feedback,
+        s,
+        failure,
+        retry: () {
+          if (mounted) unawaited(_run(op));
+        },
+      );
+    } catch (error) {
+      debugPrint('[room] attachment ${op.name} failed ${error.runtimeType}');
       notice.showSnackBar(
         SnackBar(content: Text(s.roomFileFailed)),
         kind: HermesNoticeKind.error,
@@ -2222,7 +2314,7 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
             height: AttachmentPreview.imageExtent,
             decoration: BoxDecoration(
               color: colors.surfaceVariant,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(HermesRadius.control),
             ),
           )
         : null;
@@ -2239,7 +2331,7 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
     // is the shared type card (badge, short name) instead of a bare name.
     final Widget leading = preview != null
         ? Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x3),
             child: Icon(
               _kind == AttachmentPreviewKind.video
                   ? Icons.movie_outlined
@@ -2252,7 +2344,7 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
           )
         : InkWell(
             key: ValueKey('room-attachment-preview-${ref.path}'),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(HermesRadius.control),
             onTap: enabled ? () => unawaited(_run(openOp)) : null,
             child: SizedBox(
               width: 48,
@@ -2286,7 +2378,10 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
                 middleEllipsis(ref.name),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
+                style: TextStyle(
+                  fontSize: HermesType.supportSize,
+                  color: colors.textPrimary,
+                ),
               ),
               // A fetch the server refused (403/404/not allowed) says so,
               // by name only: the server path is never shown.
@@ -2343,7 +2438,7 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
     return Container(
       decoration: BoxDecoration(
         color: colors.surfaceVariant.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(HermesRadius.control),
         border: Border.all(color: colors.divider.withValues(alpha: 0.45)),
       ),
       child: Column(

@@ -4,6 +4,10 @@ import 'dart:typed_data';
 
 import 'room_mirror.dart';
 
+/// What the main profile is called when it has no name of its own (the last
+/// resort of [AgentProfile.visibleName]).
+const String kMainProfileFallbackName = 'Hermes';
+
 /// Bounded roster projection returned by `profiles.list(include_sessions)`.
 ///
 /// This is deliberately not a raw JSON holder: profile rows can cross a
@@ -260,6 +264,31 @@ class AgentProfile {
   }
 
   String? get botTitle => _botMetaText('title', 128);
+
+  /// The connection's main profile (`default` on the server).
+  bool get isMainProfile => isDefault || name.trim() == 'default';
+
+  /// How the Bots views and lists name this profile: the main one by its
+  /// [visibleName], any other by its title, else its own name.
+  String get botListName => isMainProfile ? visibleName : (botTitle ?? name);
+
+  /// The one name the app shows for this profile wherever it is named (the
+  /// Bots list, the profile row of Conversations, the chat island, the reply
+  /// header, the composer hint, the voice capsule, the widgets): its title,
+  /// else its display name, else its own name. The main profile (`default`
+  /// on the server) falls back to [kMainProfileFallbackName] only when it
+  /// has no name configured at all.
+  String get visibleName {
+    final title = botTitle?.trim() ?? '';
+    if (title.isNotEmpty) return title;
+    final display = displayName.trim();
+    if (display.isNotEmpty) return display;
+    final own = name.trim();
+    if (isMainProfile || own.isEmpty) {
+      return kMainProfileFallbackName;
+    }
+    return own;
+  }
 
   String? get botGroup => _botMetaText('group', 128);
 

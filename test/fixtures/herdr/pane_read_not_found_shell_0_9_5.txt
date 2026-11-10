@@ -1,0 +1,3 @@
+demo@host:/tmp$ pi
+bash: pi: command not found
+demo@host:/tmp$

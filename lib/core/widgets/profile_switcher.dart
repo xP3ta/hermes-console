@@ -10,6 +10,8 @@ import '../services/active_profile_scope.dart';
 import '../services/bot_roster_store.dart';
 import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
+import '../design/tokens.dart' show HermesSpace;
+import 'hermes_notice.dart';
 import 'hermes_premium_ui.dart';
 import 'mission_profile_avatar.dart';
 import 'profile_face.dart';
@@ -52,6 +54,7 @@ class ProfileSwitcherButton extends StatelessWidget {
     required this.connection,
     required this.connManager,
     this.onManage,
+    this.onOpenProfile,
     this.compact = false,
     this.rosterRegistry,
     this.readRoster,
@@ -65,6 +68,11 @@ class ProfileSwitcherButton extends StatelessWidget {
 
   /// Opens the profile list (create, edit, delete).
   final VoidCallback? onManage;
+
+  /// Opens the active profile's page (its hub). The tap always opens the
+  /// switcher; this is offered as «Ver perfil» inside the sheet and, in the
+  /// app bar form, as the long press.
+  final VoidCallback? onOpenProfile;
 
   /// App bar form: the active profile's face in a round button, no name.
   final bool compact;
@@ -99,6 +107,7 @@ class ProfileSwitcherButton extends StatelessWidget {
             connection: connection,
             connManager: connManager,
             onManage: onManage,
+            onViewProfile: onOpenProfile,
             rosterRegistry: rosterRegistry,
             readRoster: readRoster,
             avatarLoader: avatarLoader,
@@ -118,22 +127,27 @@ class ProfileSwitcherButton extends StatelessWidget {
           // App bar form: the active profile's own face (custom avatar,
           // else its bot face, else Hermes; never a generic person icon)
           // in a round button, ringed in the accent colour, with a chevron
-          // badge on its edge. The name is spoken, not shown, so the tap
-          // is declared on the same node that carries it.
+          // badge on its edge (it is a selector, and says so). The name is
+          // spoken, not shown, so the tap is declared on the same node that
+          // carries it.
           final fill = Color.alphaBlend(
             colors.textPrimary.withValues(alpha: 0.06),
             colors.background,
           );
+          final opensProfile = onOpenProfile != null;
           return Semantics(
             button: true,
             label: strings.chaProfileChip(label),
             hint: strings.profileSwitcherHint,
             excludeSemantics: true,
             onTap: open,
+            onLongPress: onOpenProfile,
+            onLongPressHint: opensProfile ? strings.psfViewProfile : null,
             child: GestureDetector(
               key: const ValueKey('profile-switcher-compact'),
               behavior: HitTestBehavior.opaque,
               onTap: open,
+              onLongPress: onOpenProfile,
               child: SizedBox.square(
                 dimension: 48,
                 child: Stack(
@@ -209,21 +223,31 @@ class ProfileSwitcherButton extends StatelessWidget {
   }
 }
 
+/// More profiles than this and the sheet offers a search field.
+const profileSwitcherSearchThreshold = 8;
+
 /// Sheet listing every profile of [connection]; picking one makes it the
-/// active profile. Returns the picked name, or null.
+/// active profile (chats, Home, drawer and roster follow) and, unless
+/// [announce] is off, says so with a short notice. Returns the picked
+/// profile's owner (`default` for the main one), or null.
+///
+/// With [onViewProfile] the sheet also offers «Ver perfil», which closes it
+/// and opens the active profile's page.
 Future<String?> showProfileSwitcher(
   BuildContext context, {
   required SavedConnection connection,
   required ConnectionManager connManager,
   VoidCallback? onManage,
+  VoidCallback? onViewProfile,
   BotRosterRegistry? rosterRegistry,
   ProfileRosterReader? readRoster,
   MissionAvatarLoader? avatarLoader,
   ValueListenable<bool>? facesLocked,
-}) {
+  bool announce = true,
+}) async {
   final registry = rosterRegistry ?? BotRosterRegistry.shared;
   registry.hydrate(connection);
-  return showHermesFloatingSurface<String>(
+  final picked = await showHermesFloatingSurface<String>(
     context: context,
     surfaceKey: const ValueKey('profile-switcher-sheet'),
     builder: (sheetContext) => _ProfileSwitcherSheet(
@@ -248,8 +272,32 @@ Future<String?> showProfileSwitcher(
               Navigator.of(sheetContext).pop();
               onManage();
             },
+      onViewProfile: onViewProfile == null
+          ? null
+          : () {
+              Navigator.of(sheetContext).pop();
+              onViewProfile();
+            },
     ),
   );
+  if (picked != null && announce && context.mounted) {
+    final strings = Strings.of(context);
+    final label = activeProfileDisplayLabel(
+      strings,
+      picked,
+      registry.store(connection.id).profiles,
+    );
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(
+        content: Text(strings.navActiveProfileNotice(label)),
+        // Brief: the notice floats over the top of the screen, where the
+        // avatar is, and must not stand in the way of the next tap.
+        duration: const Duration(seconds: 2),
+      ),
+      kind: HermesNoticeKind.info,
+    );
+  }
+  return picked;
 }
 
 class _ProfileSwitcherSheet extends StatefulWidget {
@@ -259,6 +307,7 @@ class _ProfileSwitcherSheet extends StatefulWidget {
     required this.registry,
     required this.readRoster,
     required this.onManage,
+    required this.onViewProfile,
     this.avatarLoader,
     this.facesLocked,
   });
@@ -268,6 +317,7 @@ class _ProfileSwitcherSheet extends StatefulWidget {
   final BotRosterRegistry registry;
   final ProfileRosterReader readRoster;
   final VoidCallback? onManage;
+  final VoidCallback? onViewProfile;
   final MissionAvatarLoader? avatarLoader;
   final ValueListenable<bool>? facesLocked;
 
@@ -279,6 +329,7 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
   late final BotRosterStore _store = widget.registry.store(
     widget.connection.id,
   );
+  final TextEditingController _search = TextEditingController();
   bool _reading = false;
   bool _failed = false;
 
@@ -296,6 +347,7 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
   void dispose() {
     _store.removeListener(_changed);
     widget.scope.removeListener(_changed);
+    _search.dispose();
     super.dispose();
   }
 
@@ -331,7 +383,21 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
   Future<void> _pick(AgentProfile profile) async {
     final navigator = Navigator.of(context);
     await widget.scope.switchTo(profile.isDefault ? '' : profile.name);
-    if (navigator.mounted) navigator.pop(profile.name);
+    if (navigator.mounted) navigator.pop(_ownerOf(profile));
+  }
+
+  /// Name, state and (when the display name differs) the profile's own name.
+  String _subtitle(Strings strings, AgentProfile profile, bool active) {
+    final parts = <String>[
+      if (profileDisplayLabel(strings, profile) != profile.name) profile.name,
+      if (active)
+        strings.navProfileActive
+      else if (BotPresence.workerIsFresh(profile.workerSession, DateTime.now()))
+        strings.hwBotWorking
+      else
+        strings.hwBotIdle,
+    ];
+    return parts.join(' · ');
   }
 
   @override
@@ -339,7 +405,20 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
     final active = widget.scope.owner;
-    final profiles = _store.profiles;
+    final all = _store.profiles;
+    final searchable = all.length > profileSwitcherSearchThreshold;
+    final query = searchable ? _search.text.trim().toLowerCase() : '';
+    final profiles = query.isEmpty
+        ? all
+        : [
+            for (final profile in all)
+              if (profile.name.toLowerCase().contains(query) ||
+                  profileDisplayLabel(
+                    strings,
+                    profile,
+                  ).toLowerCase().contains(query))
+                profile,
+          ];
     final faces = ProfileFace.cacheFor(
       widget.connection,
       rosterTicket: _store.ticket,
@@ -359,15 +438,43 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          padding: const EdgeInsets.fromLTRB(
+            HermesSpace.x4,
+            0,
+            HermesSpace.x4,
+            HermesSpace.x2,
+          ),
           child: Text(
             strings.profileSwitcherBody,
             style: TextStyle(fontSize: 12, color: colors.textSecondary),
           ),
         ),
+        if (searchable)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              HermesSpace.x4,
+              0,
+              HermesSpace.x4,
+              HermesSpace.x2,
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: TextField(
+                key: const ValueKey('profile-switcher-search'),
+                controller: _search,
+                textInputAction: TextInputAction.search,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: strings.psfSearchHint,
+                  isDense: true,
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                ),
+              ),
+            ),
+          ),
         if (profiles.isEmpty && _reading)
           const Padding(
-            padding: EdgeInsets.all(16),
+            padding: EdgeInsets.all(HermesSpace.x4),
             child: Center(child: ConsoleLoader.medium()),
           ),
         if (profiles.isEmpty && _failed)
@@ -377,8 +484,19 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
             title: strings.profileSwitcherLoadFailed,
             onTap: _read,
           ),
+        if (profiles.isEmpty && query.isNotEmpty)
+          Padding(
+            key: const ValueKey('profile-switcher-no-match'),
+            padding: const EdgeInsets.all(HermesSpace.x4),
+            child: Text(
+              strings.psfNoMatch,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+            ),
+          ),
         Flexible(
           child: ListView(
+            key: const ValueKey('profile-switcher-list'),
             shrinkWrap: true,
             children: [
               for (final profile in profiles)
@@ -392,10 +510,11 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
                     locked: widget.facesLocked,
                   ),
                   title: profileDisplayLabel(strings, profile),
-                  subtitle:
-                      profileDisplayLabel(strings, profile) == profile.name
-                      ? null
-                      : profile.name,
+                  subtitle: _subtitle(
+                    strings,
+                    profile,
+                    _ownerOf(profile) == active,
+                  ),
                   selected: _ownerOf(profile) == active,
                   trailing: _ownerOf(profile) == active
                       ? Icon(Icons.check_rounded, color: colors.accent)
@@ -405,6 +524,13 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
             ],
           ),
         ),
+        if (widget.onViewProfile != null)
+          HermesListRow(
+            key: const ValueKey('profile-switcher-view-profile'),
+            icon: Icons.person_outline_rounded,
+            title: strings.psfViewProfile,
+            onTap: widget.onViewProfile,
+          ),
         if (widget.onManage != null)
           HermesListRow(
             key: const ValueKey('profile-switcher-manage'),

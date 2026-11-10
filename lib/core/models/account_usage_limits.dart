@@ -32,6 +32,7 @@ class AccountLimitLine {
     this.modelScoped = false,
     this.status,
     this.accountNumber,
+    this.providerSlug,
   });
 
   /// The line as Hermes sent it (heading lines lose the 📈 and `**`).
@@ -58,6 +59,9 @@ class AccountLimitLine {
   /// With [groupHeading]: the 1-based position of a pooled account that
   /// Hermes gave no usable label, shown as «Account N».
   final int? accountNumber;
+
+  /// Provider of a structured group, for ordering by the visible chat model.
+  final String? providerSlug;
 
   /// Text before the first ` • ` (the window and its numbers).
   String get primary {
@@ -225,7 +229,8 @@ class AccountUsageLimits {
   /// same shape `account_lines` had. The row of [sessionProvider] (the
   /// provider the session runs on) goes first and is the only one that
   /// feeds [level] and [accountIdentity]; every other provider with usage
-  /// follows under its own heading. When the route is not in the catalog
+  /// follows under its own heading; accounts without usage share one status
+  /// per provider. When the route is not in the catalog
   /// all of them are listed that way and none feeds the pill. A pool gets
   /// one heading per account, never a provider-wide figure. [skipProvider]
   /// leaves out a provider whose limits are already shown (Nous credits).
@@ -243,7 +248,7 @@ class AccountUsageLimits {
         (p.slug.trim().toLowerCase() == wanted || p.aliases.contains(wanted));
     final rows = [
       for (final p in providers)
-        if (p.usage != null &&
+        if ((p.usage != null || p.authenticated) &&
             p.slug.trim().isNotEmpty &&
             p.slug.trim().toLowerCase() != skip)
           p,
@@ -258,22 +263,61 @@ class AccountUsageLimits {
     }
     return AccountUsageLimits(
       lines: List.unmodifiable(lines),
-      accountIdentity: route == null
-          ? null
-          : AccountLimitIdentity(provider: route.slug.trim().toLowerCase()),
+      accountIdentity:
+          route != null &&
+              lines.any(
+                (line) =>
+                    line.inUse &&
+                    (line.usedPercent != null ||
+                        line.status == AccountLimitStatus.limited ||
+                        line.status == AccountLimitStatus.unavailable),
+              )
+          ? AccountLimitIdentity(provider: route.slug.trim().toLowerCase())
+          : null,
     );
   }
 
-  /// Puts [other]'s lines after these and fills what this block lacks.
-  AccountUsageLimits withProviderLines(AccountUsageLimits other) =>
-      AccountUsageLimits(
-        lines: List.unmodifiable([...other.lines, ...lines]),
-        bars: bars,
-        planName: planName,
-        renews: renews,
-        accountIdentity: accountIdentity ?? other.accountIdentity,
-        creditsIdentity: creditsIdentity,
-      );
+  /// Adds catalog groups without claiming missing data for an account the
+  /// session already reported. A catalog with no usage cannot identify it.
+  AccountUsageLimits withProviderLines(AccountUsageLimits other) {
+    bool hasLines(AccountLimitSource source) => lines.any(
+      (line) =>
+          line.source == source &&
+          !line.heading &&
+          AccountLimitIdentity.fromLine(line.text) == null,
+    );
+    final hasAccount = hasLines(AccountLimitSource.account);
+    final reported = <String>{
+      if (hasAccount && accountIdentity != null)
+        accountIdentity!.provider.trim().toLowerCase(),
+      if ((bars.isNotEmpty || hasLines(AccountLimitSource.credits)) &&
+          creditsIdentity != null)
+        creditsIdentity!.provider.trim().toLowerCase(),
+    };
+    final supplements = <AccountLimitLine>[];
+    for (final group in groupAccountLimitLines(other.lines)) {
+      final statuses = group.where((line) => !line.heading);
+      final unreported =
+          statuses.isNotEmpty &&
+          statuses.every((line) => line.status == AccountLimitStatus.unknown);
+      final alreadyReported =
+          (group.first.inUse && hasAccount) ||
+          group.any(
+            (line) =>
+                reported.contains(line.providerSlug?.trim().toLowerCase()),
+          );
+      if (unreported && alreadyReported) continue;
+      supplements.addAll(group);
+    }
+    return AccountUsageLimits(
+      lines: List.unmodifiable([...supplements, ...lines]),
+      bars: bars,
+      planName: planName,
+      renews: renews,
+      accountIdentity: accountIdentity ?? other.accountIdentity,
+      creditsIdentity: creditsIdentity,
+    );
+  }
 
   /// Hint for the status pill: the fullest unambiguous number among the
   /// parsed lines and the plan bar's `pct_used`.
@@ -357,27 +401,67 @@ AccountLimitIdentity? _identityOf(List<AccountLimitLine> lines) {
   return null;
 }
 
+/// Whole provider/source blocks. Both legacy and structured limits use the
+/// same boundaries, so sorting and supplementing never detach their windows.
+List<List<AccountLimitLine>> groupAccountLimitLines(
+  List<AccountLimitLine> lines,
+) {
+  final groups = <List<AccountLimitLine>>[];
+  for (final line in lines) {
+    final previous = groups.isEmpty ? null : groups.last.last;
+    if (previous == null ||
+        line.heading ||
+        line.source != previous.source ||
+        (line.providerSlug != null &&
+            previous.providerSlug != null &&
+            line.providerSlug != previous.providerSlug)) {
+      groups.add([]);
+    }
+    groups.last.add(line);
+  }
+  return groups;
+}
+
 Iterable<AccountLimitLine> _lines(
   Object? raw,
   AccountLimitSource source,
 ) sync* {
   if (raw is! List) return;
+  final blocks = <List<String>>[];
+  var hasProvider = false;
   for (final item in raw) {
-    if (item is! String) continue;
-    var text = item.trim();
-    if (text.isEmpty) continue;
-    final heading = text.startsWith('📈');
-    if (heading) {
-      text = text.substring('📈'.length).replaceAll('**', '').trim();
-      if (text.isEmpty) continue;
-      yield AccountLimitLine(text: text, source: source, heading: true);
-      continue;
+    if (item is! String || item.trim().isEmpty) continue;
+    final text = item.trim();
+    final identity = AccountLimitIdentity.fromLine(text);
+    if (blocks.isEmpty ||
+        text.startsWith('📈') ||
+        (identity != null && hasProvider)) {
+      blocks.add([]);
+      hasProvider = false;
     }
-    yield AccountLimitLine(
-      text: text,
-      source: source,
-      usedPercent: AccountUsageLimits.parseUsedPercent(text),
-    );
+    blocks.last.add(text);
+    if (identity != null) hasProvider = true;
+  }
+  for (final block in blocks) {
+    final provider = block
+        .map(AccountLimitIdentity.fromLine)
+        .whereType<AccountLimitIdentity>()
+        .firstOrNull
+        ?.provider;
+    for (var text in block) {
+      final heading = text.startsWith('📈');
+      if (heading) {
+        text = text.substring('📈'.length).replaceAll('**', '').trim();
+      }
+      if (text.isEmpty) continue;
+      yield AccountLimitLine(
+        text: text,
+        source: source,
+        heading: heading,
+        providerSlug: provider,
+        usedPercent: heading ? null : AccountUsageLimits.parseUsedPercent(text),
+      );
+    }
   }
 }
 
@@ -419,7 +503,7 @@ List<AccountLimitLine> _providerLines(
   required bool inUse,
   required DateTime now,
 }) {
-  final usage = provider.usage!;
+  final usage = provider.usage ?? const ProviderUsage();
   final slug = provider.slug.trim();
   final name = scrubProviderText(provider.name) ?? slug;
   final out = <AccountLimitLine>[];
@@ -431,22 +515,51 @@ List<AccountLimitLine> _providerLines(
       groupHeading: true,
       inUse: inUse,
       accountNumber: number,
+      providerSlug: provider.slug,
     ),
   );
   void windows(List<ProviderUsageWindow> list) {
     for (final w in list) {
-      final line = _windowLine(w, inUse: inUse, now: now);
+      final line = _windowLine(
+        w,
+        inUse: inUse,
+        now: now,
+        providerSlug: provider.slug,
+      );
       if (line != null) out.add(line);
     }
   }
 
-  if (usage.accounts.isEmpty) {
-    if (usage.windows.isEmpty) return const [];
+  void noData() {
     group(name);
-    windows(usage.windows);
+    out.add(
+      AccountLimitLine(
+        text: AccountLimitStatus.unknown.name,
+        source: AccountLimitSource.account,
+        inUse: inUse,
+        status: AccountLimitStatus.unknown,
+        providerSlug: provider.slug,
+      ),
+    );
+  }
+
+  if (usage.accounts.isEmpty) {
+    if (usage.windows.isEmpty) {
+      noData();
+    } else {
+      group(name);
+      windows(usage.windows);
+    }
     return out;
   }
+  var unreported = false;
   for (final (i, account) in usage.accounts.indexed) {
+    if (account.state == ProviderUsageState.unknown ||
+        (account.state == ProviderUsageState.ready &&
+            account.windows.isEmpty)) {
+      unreported = true;
+      continue;
+    }
     final label = account.label.isEmpty
         ? null
         : scrubProviderText(account.label);
@@ -472,20 +585,12 @@ List<AccountLimitLine> _providerLines(
           source: AccountLimitSource.account,
           inUse: inUse,
           status: status,
-        ),
-      );
-    } else if (account.windows.isEmpty) {
-      // "ready" without numbers is not a state Hermes sends: say so.
-      out.add(
-        AccountLimitLine(
-          text: AccountLimitStatus.unknown.name,
-          source: AccountLimitSource.account,
-          inUse: inUse,
-          status: AccountLimitStatus.unknown,
+          providerSlug: provider.slug,
         ),
       );
     }
   }
+  if (unreported) noData();
   return out;
 }
 
@@ -495,6 +600,7 @@ AccountLimitLine? _windowLine(
   ProviderUsageWindow w, {
   required bool inUse,
   required DateTime now,
+  required String providerSlug,
 }) {
   // The label rides in a `Label: N% remaining` line (and is mapped to a
   // localized name there): only plain words qualify, anything else is dropped.
@@ -508,6 +614,7 @@ AccountLimitLine? _windowLine(
     source: AccountLimitSource.account,
     usedPercent: AccountUsageLimits.parseUsedPercent(text),
     inUse: inUse,
+    providerSlug: providerSlug,
     modelScoped: w.scope == ProviderUsageScope.model,
   );
 }

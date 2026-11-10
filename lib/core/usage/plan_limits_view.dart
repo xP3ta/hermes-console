@@ -78,12 +78,13 @@ PlanLimitsView planLimitsView(
   AccountUsageLimits limits,
   Strings s, {
   required String languageCode,
+  String? preferredProvider,
 }) {
   final rows = <PlanLimitRow>[];
   final notes = <String>[];
   final details = <String>[];
   AccountLimitSource? block;
-  for (final line in limits.lines) {
+  for (final line in _orderedLines(limits.lines, preferredProvider)) {
     if (line.heading) {
       if (!line.groupHeading) continue;
       // A group heading names whose the rows below are; it stands in for
@@ -99,9 +100,7 @@ PlanLimitsView planLimitsView(
       rows.add(line.inUse ? heading : heading.notInUse());
       continue;
     }
-    final row = line.status != null
-        ? _statusRow(line, s)
-        : _row(line, s);
+    final row = line.status != null ? _statusRow(line, s) : _row(line, s);
     if (row != null) {
       if (block != line.source) {
         block = line.source;
@@ -173,17 +172,17 @@ String? _amountLabel(String raw, Strings s) => switch (raw.trim()) {
 };
 
 /// A pooled account's state row: no gauge, never a number Hermes did not send.
-PlanLimitRow _statusRow(
-  AccountLimitLine line,
-  Strings s,
-) => switch (line.status!) {
-  AccountLimitStatus.limited => PlanLimitRow(
-    label: s.hwLimReached,
-    detail: _tailDetail(line.text.trim(), s),
-  ),
-  AccountLimitStatus.unknown => PlanLimitRow(label: s.plv1215StateUnknown),
-  AccountLimitStatus.unavailable => PlanLimitRow(label: s.plv1215Unavailable),
-};
+PlanLimitRow _statusRow(AccountLimitLine line, Strings s) =>
+    switch (line.status!) {
+      AccountLimitStatus.limited => PlanLimitRow(
+        label: s.hwLimReached,
+        detail: _tailDetail(line.text.trim(), s),
+      ),
+      AccountLimitStatus.unknown => PlanLimitRow(label: s.msvProviderNoUsage),
+      AccountLimitStatus.unavailable => PlanLimitRow(
+        label: s.plv1215Unavailable,
+      ),
+    };
 
 /// The localized text of what follows a window's ` • `: credits left or when
 /// it resets. Null when it is neither, or its timestamp is not a real date.
@@ -313,4 +312,21 @@ String? _span({
   ];
   if (parts.isEmpty) return null;
   return parts.join(' ');
+}
+
+/// Reorder whole groups, keeping windows and statuses attached to their owner.
+/// An open draft can know its default before session.usage knows its route.
+Iterable<AccountLimitLine> _orderedLines(
+  List<AccountLimitLine> lines,
+  String? preferredProvider,
+) {
+  if (preferredProvider == null || preferredProvider.isEmpty) return lines;
+  final groups = groupAccountLimitLines(lines);
+  final wanted = preferredProvider.trim().toLowerCase();
+  bool active(List<AccountLimitLine> group) =>
+      group.any((line) => line.providerSlug?.trim().toLowerCase() == wanted);
+  return [
+    ...groups.where(active).expand((group) => group),
+    ...groups.where((group) => !active(group)).expand((group) => group),
+  ];
 }

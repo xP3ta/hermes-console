@@ -293,7 +293,7 @@ Future<void> _pumpEditor(
   // de ruta de forma acotada evita esperar a que un ticker infinito termine.
   await _pumpUi(tester);
   if (openIdentity) {
-    await _tapVisible(tester, const ValueKey('profile-editor-identity-row'));
+    await _tapVisible(tester, const ValueKey('profile-editor-avatar'));
     await _pumpUi(tester);
   }
 }
@@ -312,7 +312,19 @@ Future<void> _tapVisible(WidgetTester tester, Key key) async {
   await tester.pump();
 }
 
+/// «Listo» of the identity sheet, when it is open: its barrier would take the
+/// tap meant for the page behind.
+Future<void> _closeSheet(WidgetTester tester) async {
+  final done = find.byKey(const ValueKey('profile-editor-sheet-done'));
+  if (done.evaluate().isEmpty) return;
+  await tester.ensureVisible(done);
+  await tester.pump();
+  await tester.tap(done);
+  await _pumpUi(tester);
+}
+
 Future<void> _save(WidgetTester tester) async {
+  await _closeSheet(tester);
   await tester.tap(find.byKey(const ValueKey('profile-editor-save')));
   await _pumpUi(tester);
 }
@@ -645,8 +657,18 @@ void main() {
       );
 
       await tester.pumpAndSettle();
+      // The page's avatar is the one that animates; the sheet's copy is a
+      // still thumbnail.
+      final preview = find.byKey(const ValueKey('profile-editor-preview'));
       expect(
         find.byKey(const ValueKey('profile-editor-pet-animated-preview')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: preview,
+          matching: find.byType(SpritesheetRenderer),
+        ),
         findsOneWidget,
       );
       expect(find.byType(SpritesheetRenderer), findsOneWidget);
@@ -655,7 +677,12 @@ void main() {
       await _tapVisible(tester, const ValueKey('profile-editor-sprite-pixel'));
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey('profile-editor-pet-static-preview')),
+        find.descendant(
+          of: preview,
+          matching: find.byKey(
+            const ValueKey('profile-editor-pet-static-preview'),
+          ),
+        ),
         findsOneWidget,
       );
       expect(find.byType(SpritesheetRenderer), findsNothing);
@@ -747,7 +774,7 @@ void main() {
 
   testWidgets('Back confirma cuando hay cambios sin guardar', (tester) async {
     final assets = _FakeAssetsGateway();
-    await _pumpEditor(tester, assets: assets);
+    await _pumpEditor(tester, assets: assets, openIdentity: false);
 
     await tester.enterText(find.byType(TextField).first, 'Infra Lead');
     await tester.pump();
@@ -770,7 +797,7 @@ void main() {
   testWidgets('Guardar es single-flight', (tester) async {
     final gate = Completer<void>();
     final assets = _FakeAssetsGateway(saveGate: gate);
-    await _pumpEditor(tester, assets: assets);
+    await _pumpEditor(tester, assets: assets, openIdentity: false);
     await tester.enterText(find.byType(TextField).first, 'Infra Lead');
     await tester.pump();
 

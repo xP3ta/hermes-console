@@ -47,23 +47,23 @@ class EmbedSettingsScreen extends StatelessWidget {
                     key: ValueKey('embed-type-${type.name}'),
                     switchKey: ValueKey('embed-type-${type.name}-switch'),
                     title: type.label,
-                    value: consent.modeFor(type) != EmbedMode.off,
+                    value: consent.storedMode(type) != EmbedMode.off,
                     onChanged: (on) => consent.setMode(
                       type,
                       on ? EmbedMode.ask : EmbedMode.off,
                     ),
                   ),
-                  if (consent.modeFor(type) != EmbedMode.off)
+                  if (consent.storedMode(type) != EmbedMode.off)
                     HermesToggleRow(
                       key: ValueKey('embed-type-${type.name}-always'),
                       switchKey: ValueKey(
                         'embed-type-${type.name}-always-switch',
                       ),
                       title: s.embedSettingsAlways,
-                      subtitle: consent.modeFor(type) == EmbedMode.always
+                      subtitle: consent.storedMode(type) == EmbedMode.always
                           ? null
                           : s.embedSettingsAskEachTime,
-                      value: consent.modeFor(type) == EmbedMode.always,
+                      value: consent.storedMode(type) == EmbedMode.always,
                       onChanged: (on) => consent.setMode(
                         type,
                         on ? EmbedMode.always : EmbedMode.ask,

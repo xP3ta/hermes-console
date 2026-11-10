@@ -486,3 +486,42 @@ AgentProfile _copy(
     roomMirror: p.roomMirror,
   );
 }
+
+/// The main (`default`) profile as [roster] knows it, null when it does not
+/// know it yet.
+AgentProfile? mainProfileOf(BotRosterStore? roster) {
+  if (roster == null) return null;
+  final named = roster.profile('default');
+  if (named != null) return named;
+  for (final profile in roster.profiles) {
+    if (profile.isDefault) return profile;
+  }
+  return null;
+}
+
+/// The name of the main profile for every text that speaks of "the agent"
+/// (the composer hint, the voice, the steer and permission texts): the one of
+/// the Bots list, «Hermes» only without any configured name.
+String mainProfileVisibleName(BotRosterStore? roster) =>
+    mainProfileOf(roster)?.visibleName ?? kMainProfileFallbackName;
+
+/// The name of the profile [active] (null = the main one) of [roster].
+String profileVisibleNameOf(BotRosterStore? roster, String? active) {
+  final owner = active?.trim() ?? '';
+  if (owner.isEmpty || owner == 'default') {
+    return mainProfileVisibleName(roster);
+  }
+  return roster?.profile(owner)?.visibleName ?? owner;
+}
+
+/// The name of the agent behind [profile] (empty or `default` = the main
+/// one) for the generic texts that speak of "the agent" (notification titles,
+/// spoken prompts): its visible name, or null when [roster] does not know the
+/// profile, so the text keeps «Hermes».
+String? agentNameFor(BotRosterStore? roster, String? profile) {
+  final owner = profile?.trim() ?? '';
+  if (owner.isEmpty || owner == 'default') {
+    return mainProfileOf(roster)?.visibleName;
+  }
+  return roster?.profile(owner)?.visibleName;
+}

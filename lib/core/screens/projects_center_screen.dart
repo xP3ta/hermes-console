@@ -14,9 +14,11 @@ import '../services/new_session_factory.dart';
 import '../theme/app_theme.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/short_server_path.dart';
+import '../utils/server_path.dart';
 import '../widgets/adaptive_list_detail.dart';
 import '../shell/gesture_dock_state.dart' show GestureDockTab;
 import '../widgets/general_dock_shell.dart';
+import '../widgets/dock_scroll_clearance.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart'
@@ -370,7 +372,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
     final picked = await _pickServerFolder(context);
     if (!mounted || picked == null) return;
     final target = normalizeServerFolder(picked);
-    if (!target.startsWith('/')) return;
+    if (!isAbsoluteServerPath(target)) return;
     final existing = await _ownerOf(target);
     if (!mounted) return;
     if (existing != null) {
@@ -729,7 +731,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
         // Tablets: the open project lives beside the list (expanded) or in
         // place of it (medium) instead of on a route of its own.
         paneLayout: true,
-        body: AdaptiveListDetail(
+        bodyBuilder: (_, bottomClearance) => AdaptiveListDetail(
           key: _panes,
           placeholder: const _ProjectPanePlaceholder(),
           onCollapsedWithDetail: _reopenPaneProjectFullScreen,
@@ -762,7 +764,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
                       child: ListView(
                         clipBehavior: hermesUnderHeader,
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(0, 4, 0, 28),
+                        padding: EdgeInsets.fromLTRB(0, 4, 0, 28 + bottomClearance),
                         children: [
                           Padding(
                             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
@@ -1105,7 +1107,7 @@ final class _SubfolderModel {
   });
 }
 
-String _pathKey(String path) => path.trim().replaceAll(RegExp(r'[/\\]+$'), '');
+String _pathKey(String path) => serverPathKey(path);
 
 List<ProjectSessionPreview> _newestFirst(
   Iterable<ProjectSessionPreview> sessions,
@@ -1361,7 +1363,9 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
           child: ListView(
             clipBehavior: hermesUnderHeader,
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(0, 0, 0, 28),
+            padding: EdgeInsets.fromLTRB(
+              0, 0, 0, 28 + (DockScrollClearance.maybeOf(context) ?? 0),
+            ),
             children: [
               _FolderHeader(
                 path: root,
@@ -1496,7 +1500,9 @@ class _SubfolderScreenState extends State<_SubfolderScreen> {
           child: ListView(
             clipBehavior: hermesUnderHeader,
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(0, 0, 0, 28),
+            padding: EdgeInsets.fromLTRB(
+              0, 0, 0, 28 + (DockScrollClearance.maybeOf(context) ?? 0),
+            ),
             children: [
               _FolderHeader(path: folder.path),
               ..._FolderBody(
@@ -1750,7 +1756,7 @@ class _ProjectPanePlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return ColoredBox(
-      color: Theme.of(context).scaffoldBackgroundColor,
+      color: Theme.of(context).hermes.background,
       child: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),

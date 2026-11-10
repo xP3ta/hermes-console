@@ -1,0 +1,6 @@
+● Done. I added the tests for the session module and they pass.
+
+╭──────────────╮
+│ >            │
+╰──────────────╯
+  ? for shortcuts                 Context left until auto-compact: 12%

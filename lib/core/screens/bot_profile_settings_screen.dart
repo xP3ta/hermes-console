@@ -6,8 +6,9 @@ import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/console_loader.dart';
 import '../widgets/hermes_ui.dart';
-import '../widgets/bot_settings_group.dart';
+import '../widgets/profile_face.dart';
 import '../widgets/bot_capabilities.dart';
+import '../design/tokens.dart';
 import '../feedback/feedback_policy.dart';
 
 /// Only fields present in the server snapshot can become editable patches.
@@ -160,7 +161,8 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
   Widget _toggles(
     String field,
     String wire,
-    String title, {
+    String title,
+    IconData icon, {
     bool disabled = false,
   }) {
     final entries = (_snapshot![field] as List)
@@ -188,6 +190,7 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
     return BotCapabilitiesRow(
       key: ValueKey('bot-settings-$field-row'),
       title: title,
+      icon: icon,
       summary: botCapabilitySummary(context, options, inherited: inherited),
       keyPrefix: 'bot-settings-$field',
       entries: options,
@@ -218,6 +221,42 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
     );
   }
 
+  /// The bot at the top, as in its profile: its own face (the same one the
+  /// drawer and the switcher draw) large and centred, the name, and the
+  /// model when the server snapshot carries it.
+  Widget _hero(Map<String, dynamic> snapshot) {
+    final colors = Theme.of(context).hermes;
+    final model = snapshot['model'];
+    return Column(
+      children: [
+        ProfileFace(profileName: widget.profile, size: 92),
+        const SizedBox(height: HermesSpace.x3),
+        Text(
+          widget.profile,
+          key: const ValueKey('bot-settings-heading'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        if (model is String && model.trim().isNotEmpty) ...[
+          const SizedBox(height: HermesSpace.x1),
+          Text(
+            model.trim(),
+            key: const ValueKey('bot-settings-model'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: HermesType.supportSize,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
@@ -239,14 +278,8 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
                       clipBehavior: hermesUnderHeader,
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
                       children: [
-                        Text(
-                          widget.profile,
-                          key: const ValueKey('bot-settings-heading'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const SizedBox(height: 18),
+                        _hero(snapshot),
+                        const SizedBox(height: 22),
                         if (snapshot['description'] is String)
                           _text(
                             'description',
@@ -260,13 +293,14 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
                             snapshot['soul'] as String,
                             multiline: true,
                           ),
-                        BotSettingsGroup(
+                        HermesGroup(
                           children: [
                             if (snapshot['skills'] is List)
                               _toggles(
                                 'skills',
                                 'disabled_skills',
                                 s.botSkills,
+                                Icons.extension_outlined,
                                 disabled: true,
                               ),
                             if (snapshot['toolsets'] is List)
@@ -274,12 +308,14 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
                                 'toolsets',
                                 'enabled_toolsets',
                                 s.botTools,
+                                Icons.build_outlined,
                               ),
                             if (snapshot['mcp_servers'] is List)
                               _toggles(
                                 'mcp_servers',
                                 'enabled_mcp_servers',
                                 s.botMcp,
+                                Icons.power_outlined,
                               ),
                           ],
                         ),

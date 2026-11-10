@@ -25,6 +25,7 @@ Future<String?> openCreateProfile(
   required Set<String> existing,
   HermesDesktopBotCreationGateway? gateway,
   Future<List<ModelProvider>> Function(String profile)? modelOptionsLoader,
+  String? initialCloneFrom,
 }) => Navigator.of(context).push<String>(
   MaterialPageRoute(
     fullscreenDialog: true,
@@ -33,6 +34,7 @@ Future<String?> openCreateProfile(
       existing: existing,
       gateway: gateway,
       modelOptionsLoader: modelOptionsLoader,
+      initialCloneFrom: initialCloneFrom,
     ),
   ),
 );

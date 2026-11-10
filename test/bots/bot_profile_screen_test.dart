@@ -7,6 +7,7 @@ import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/services/bot_profile_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import '../support/reasoning_tap.dart';
 
 final class _FakeGateway implements BotModelGateway, BotProfileGateway {
   final configures = <(String, Map<String, dynamic>)>[];
@@ -232,8 +233,15 @@ void main() {
   testWidgets('reasoning is editable per bot', (tester) async {
     final gateway = await pumpProfile(tester);
     await tester.tap(find.byKey(const ValueKey('bot-profile-reasoning')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('bot-profile-reasoning-high')));
+    // The squares blink while the sheet is open: no settling.
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tapReasoningValue(
+      tester,
+      find.byKey(const ValueKey('bot-profile-reasoning-picker')),
+      'high',
+    );
     await tester.pumpAndSettle();
     expect(gateway.reasoningWrites.single, ('builder', 'high'));
     expect(find.text('High'), findsOneWidget);

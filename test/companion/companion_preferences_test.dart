@@ -6,11 +6,55 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('CompanionPreferences', () {
-    test('valores por defecto: enabled=true, sin mascota elegida', () async {
+    test('valores por defecto: apagada, sin mascota elegida', () async {
       SharedPreferences.setMockInitialValues({});
       final prefs = await CompanionPreferences.load();
-      expect(prefs.enabled, isTrue);
+      expect(prefs.enabled, isFalse);
+      expect(prefs.appEnabled, isFalse);
+      expect(prefs.enabledFor('conn-1', 'alpha'), isFalse);
       expect(prefs.selectedSlug, isNull);
+    });
+
+    test('un true guardado explicitamente se respeta', () async {
+      SharedPreferences.setMockInitialValues({
+        CompanionPreferences.appEnabledKey: true,
+        CompanionPreferences.enabledKey: true,
+      });
+      final prefs = await CompanionPreferences.load();
+      expect(prefs.appEnabled, isTrue);
+      expect(prefs.enabled, isTrue);
+      expect(prefs.enabledFor('conn-1', 'alpha'), isTrue);
+    });
+
+    test('la migracion no enciende lo que nunca se eligio', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await CompanionPreferences.load();
+      await prefs.migrateLegacyToScopeOnce('conn-1', 'alpha');
+      await prefs.migrateAppPet(
+        slug: null,
+        enabled: prefs.enabledFor('conn-1', 'alpha'),
+        size: 1,
+        presence: prefs.presenceLevel,
+      );
+      expect(prefs.appMigrated, isTrue);
+      expect(prefs.appEnabled, isFalse);
+      expect(prefs.enabledFor('conn-1', 'alpha'), isFalse);
+    });
+
+    test('la migracion conserva un true explicito del perfil', () async {
+      SharedPreferences.setMockInitialValues({
+        CompanionPreferences.enabledKey: true,
+      });
+      final prefs = await CompanionPreferences.load();
+      await prefs.migrateLegacyToScopeOnce('conn-1', 'alpha');
+      await prefs.migrateAppPet(
+        slug: null,
+        enabled: prefs.enabledFor('conn-1', 'alpha'),
+        size: 1,
+        presence: prefs.presenceLevel,
+      );
+      expect(prefs.enabledFor('conn-1', 'alpha'), isTrue);
+      expect(prefs.appEnabled, isTrue);
     });
 
     test('the two retired Inicio switches are neither read nor lost', () async {
@@ -20,7 +64,7 @@ void main() {
       });
       final store = await SharedPreferences.getInstance();
       final prefs = await CompanionPreferences.load();
-      expect(prefs.enabled, isTrue);
+      expect(prefs.enabled, isFalse);
       // A backup made by an older version still carries them.
       expect(store.getBool(CompanionPreferences.roamingEnabledKey), isTrue);
       expect(store.getBool(CompanionPreferences.showOnHomeKey), isFalse);

@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import 'compact_pill_text.dart';
-import 'frosted_backdrop.dart';
+import '../design/liquid_glass.dart';
+import '../design/liquid_sheen.dart';
 import '../models/agent_profile.dart';
 import '../models/room_summary.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart' show HermesMotion;
 import 'mission_profile_avatar.dart';
 import 'room_member_status.dart';
 
@@ -74,13 +76,17 @@ class _RoomSummaryPillState extends State<RoomSummaryPill> {
     final expanded = _expanded && !widget.compact;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
-      child: FrostedBackdrop(
-        sigma: 12,
-        tint: colors.surfaceVariant.withValues(alpha: .65),
-        borderRadius: BorderRadius.circular(20),
-        builder: (context, fill) => Material(
+      child: HermesSheen(
+        liquid: HermesLiquid.pill,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Material(
           key: const ValueKey('room-summary-pill'),
-          color: fill,
+          color: Color.alphaBlend(
+            colors.surfaceVariant.withValues(alpha: .65),
+            colors.background,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          clipBehavior: Clip.antiAlias,
           child: _transition(
             ConstrainedBox(
               constraints: BoxConstraints(maxHeight: widget.maxHeight),
@@ -195,7 +201,7 @@ class _RoomSummaryPillState extends State<RoomSummaryPill> {
     // Removing the animation also makes IME compaction immediate and bounded.
     if (widget.compact || MediaQuery.disableAnimationsOf(context)) return child;
     return AnimatedSize(
-      duration: const Duration(milliseconds: 200),
+      duration: HermesMotion.base,
       curve: Curves.easeInOut,
       alignment: Alignment.topCenter,
       child: child,

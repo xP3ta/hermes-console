@@ -78,7 +78,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      CompanionPreferences.enabledKey: true,
+    });
     debugMascotSpritesStill = true;
   });
 
@@ -228,9 +230,15 @@ void main() {
       expect(pet.shown, isTrue);
     });
 
+    test('nothing stored: it does not float', () async {
+      SharedPreferences.setMockInitialValues({});
+      expect(CompanionFloatingPet(await _controller()).shown, isFalse);
+    });
+
     test('the old stored choices', () async {
       Future<bool> shownWith(String? stored) async {
         SharedPreferences.setMockInitialValues({
+          CompanionPreferences.enabledKey: true,
           CompanionPreferences.presenceLevelKey: ?stored,
         });
         return CompanionFloatingPet(await _controller()).shown;
