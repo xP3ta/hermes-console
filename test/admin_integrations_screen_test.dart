@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/select.dart';
+import 'package:hermes_android/core/design/tokens.dart' show HermesSpace;
 import 'package:hermes_android/core/models/admin_integrations.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/screens/admin_integrations_screen.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/mcp_provisioning_surface.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -429,9 +431,14 @@ void main() {
     await tester.scrollUntilVisible(
       find.byKey(const ValueKey('admin-add-mcp')),
       200,
-      // The section switch floats over the list and scrolls sideways at
-      // this text size: the page's own list is the first scrollable.
-      scrollable: find.byType(Scrollable).first,
+      // The section switch scrolls sideways at this text size: the scrollable
+      // to use is the one of the section's own list.
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     await tester.tap(find.byKey(const ValueKey('admin-add-mcp')));
     await tester.pumpAndSettle();
@@ -476,6 +483,52 @@ void main() {
       expect(find.byType(FilledButton), findsNothing);
     },
   );
+
+  for (final (width, scale) in [
+    for (final width in const [360.0, 840.0])
+      for (final scale in const [1.0, 2.0]) (width, scale),
+  ]) {
+    testWidgets(
+      'spacing at ${width.toInt()} dp, 2x pixels, ${scale}x text: the switch '
+      'is below the header and the list below the switch, in every section',
+      (tester) async {
+        tester.view.devicePixelRatio = 2;
+        tester.view.physicalSize = Size(width * 2, 1600);
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await tester.pumpWidget(
+          _app(AdminIntegrationsScreen(gateway: _AdminGateway())),
+        );
+        await tester.pumpAndSettle();
+        for (final key in const [
+          'admin-integrations-mcp',
+          'admin-integrations-webhooks',
+          'admin-integrations-server',
+        ]) {
+          await tester.tap(find.byKey(ValueKey(key)));
+          await tester.pumpAndSettle();
+          final header = tester.getRect(find.byType(HermesAppBar));
+          final control = tester.getRect(
+            find.byType(HermesSegmentedControl<AdminIntegrationsSection>),
+          );
+          expect(
+            control.top,
+            greaterThanOrEqualTo(header.bottom + HermesSpace.x2),
+            reason: '$key: switch under the header, never flush or over it',
+          );
+          final list = tester.getRect(find.byType(ListView).first);
+          expect(
+            list.top,
+            greaterThanOrEqualTo(control.bottom + HermesSpace.x3 - 0.5),
+            reason: '$key: list starts below the switch',
+          );
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets('legacy gateway degrades honestly without fake empty data', (
     tester,

@@ -7,7 +7,11 @@ import 'package:hermes_android/core/companion/state/companion_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(
+    () => SharedPreferences.setMockInitialValues({
+      CompanionPreferences.enabledKey: true,
+    }),
+  );
 
   testWidgets('CompanionView expone Semantics "Companion animado"', (
     tester,
@@ -21,6 +25,7 @@ void main() {
   ) async {
     final prefs = await CompanionPreferences.load();
     final controller = CompanionController(CompanionRepository(), prefs);
+    await controller.setEnabled(true);
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(

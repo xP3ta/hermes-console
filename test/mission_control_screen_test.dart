@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' show Tristate;
 
 import 'package:hermes_android/core/bots/state/bot_chat_target.dart';
+import 'package:hermes_android/core/bots/ui/profile/profile_hub_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -32,6 +33,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/fake_bot_chat_title_lookup.dart';
+import 'support/profile_model_fakes.dart' show FakeModelGateway;
 
 final _connection = SavedConnection(
   id: 'mission-widget',
@@ -407,6 +409,30 @@ Future<void> _openAgentDetail(WidgetTester tester, String profile) async {
   await tester.pumpAndSettle();
   await tester.tap(item);
   await tester.pumpAndSettle();
+  await _openCardFromProfilePage(tester);
+}
+
+/// The long-press «Perfil» opens the bot's profile page (1.4.0); the bot's
+/// card (what it is doing, rooms, duplicate, delete) is its Advanced ›
+/// «Ficha del bot» row.
+Future<void> _openCardFromProfilePage(WidgetTester tester) async {
+  final list = find
+      .descendant(
+        of: find.byKey(const ValueKey('profile-hub-list')),
+        matching: find.byType(Scrollable),
+      )
+      .first;
+  final advanced = find.byKey(const ValueKey('profile-hub-advanced'));
+  await tester.scrollUntilVisible(advanced, 200, scrollable: list);
+  await tester.ensureVisible(advanced);
+  await tester.tap(advanced);
+  await tester.pumpAndSettle();
+  final card = find.byKey(const ValueKey('tool-bot-card'));
+  await tester.scrollUntilVisible(card, 200, scrollable: list);
+  await tester.ensureVisible(card);
+  await tester.pumpAndSettle();
+  await tester.tap(card);
+  await tester.pumpAndSettle();
 }
 
 Future<void> _openRosterActions(WidgetTester tester, String profile) async {
@@ -438,8 +464,16 @@ Future<void> _pullToRefresh(WidgetTester tester) async {
 }
 
 /// Spec 070 S1: tocar una fila de bot abre su Bot Chat canónico.
+/// Tapping a bot opens its profile page (1.4.0); its Chat pill opens the Bot
+/// Chat. The page is closed again, so what follows finds Mission Control as
+/// it was when the row opened the chat directly.
 Future<void> _openBotChat(WidgetTester tester, String profile) async {
   await tester.tap(find.byKey(ValueKey('mission-bot-$profile')));
+  await tester.pumpAndSettle();
+  expect(find.byType(ProfileHubScreen), findsOneWidget);
+  await tester.tap(find.byKey(const ValueKey('profile-hub-chat')));
+  await tester.pumpAndSettle();
+  Navigator.of(tester.element(find.byType(ProfileHubScreen))).pop();
   await tester.pumpAndSettle();
 }
 
@@ -509,6 +543,8 @@ void main() {
   var secureDeletes = 0;
 
   setUp(() {
+    // The profile page a tapped bot opens has no server to ask here.
+    ProfileHubScreen.debugGateway = FakeModelGateway();
     // Confirmed roster writes are replayed from the shared registry.
     BotRosterRegistry.shared.clear();
     secureStore.clear();
@@ -542,6 +578,7 @@ void main() {
   });
 
   tearDown(() {
+    ProfileHubScreen.debugGateway = null;
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -839,7 +876,7 @@ void main() {
     final hubFinder = find.byType(CapabilitiesHub, skipOffstage: false);
     final hub = tester.widget<CapabilitiesHub>(hubFinder);
     expect(hub.profile, 'infra');
-    expect(hub.advancedBuilder, isNull);
+    expect(hub.runtimeSessionId, isEmpty);
     Navigator.of(tester.element(hubFinder)).pop();
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
@@ -2299,6 +2336,12 @@ void main() {
     expect(find.byKey(const ValueKey('roster-action-section')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('roster-action-profile')));
     await tester.pumpAndSettle();
+    expect(find.byType(ProfileHubScreen), findsOneWidget);
+    // A read-only server cannot edit the profile from the page's header.
+    await tester.tap(find.byKey(const ValueKey('profile-hub-edit')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProfileHubScreen), findsOneWidget);
+    await _openCardFromProfilePage(tester);
     expect(find.byKey(const ValueKey('bot-profile')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('bot-profile-edit-identity')),
@@ -2532,6 +2575,9 @@ void main() {
       // en la cabecera de identidad como `@handle` (ficha rediseñada).
       expect(find.text('@agent_00'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      // The card, then the profile page under it.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
@@ -3195,6 +3241,30 @@ void main() {
     await tester.pumpAndSettle();
     expect(_scopeBadge('infra'), findsOneWidget);
     expect(_scopeBadge('ana'), findsNothing);
+  });
+
+  testWidgets('the + menu of Bots offers «Gestionar perfiles»: the one screen '
+      'of the server\'s profiles, not a second list', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openNewMenu(tester);
+    final item = find.byKey(const ValueKey('mission-create-chooser-profiles'));
+    await tester.ensureVisible(item);
+    expect(find.text('Gestionar perfiles'), findsOneWidget);
+    await tester.tap(item);
+    for (var frame = 0; frame < 6; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(ProfilesScreen), findsOneWidget);
   });
 
   testWidgets('deleting a bot deletes its profile in place, with the same '

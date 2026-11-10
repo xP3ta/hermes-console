@@ -360,7 +360,7 @@ Future<void> _openMascotaFromBotCard(
   await _pumpUi(tester);
   await tester.tap(find.byKey(const ValueKey('bot-profile-edit-identity')));
   await _pumpUi(tester);
-  await _tapVisible(tester, const ValueKey('profile-editor-identity-row'));
+  await _tapVisible(tester, const ValueKey('profile-editor-avatar'));
   await _tapVisible(tester, const ValueKey('profile-editor-mode-pet'));
 }
 
@@ -463,6 +463,8 @@ void main() {
       expect(pets.thumbs, contains(('chibi-zoro', _zoroSheet)));
       expect(pets.selected, isEmpty);
 
+      await _tapVisible(tester, const ValueKey('profile-editor-sheet-done'));
+      await _pumpUi(tester);
       await tester.tap(find.byKey(const ValueKey('profile-editor-save')));
       await _pumpUi(tester);
 

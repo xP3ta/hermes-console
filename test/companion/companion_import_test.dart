@@ -147,7 +147,9 @@ void main() {
   final service = const CompanionImportService();
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      CompanionPreferences.enabledKey: true,
+    });
     root = await Directory.systemTemp.createTemp('companion_import_test');
   });
 

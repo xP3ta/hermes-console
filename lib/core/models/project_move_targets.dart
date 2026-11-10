@@ -1,3 +1,4 @@
+import '../utils/server_path.dart';
 import 'desktop_control_center.dart';
 
 /// A project a session may be moved to.
@@ -63,6 +64,10 @@ bool sessionInProjectFolder(String folder, {String? cwd, String? gitRepoRoot}) {
   bool inside(String? path) {
     if (path == null || path.trim().isEmpty) return false;
     final value = _clean(path);
+    // Server paths follow the server's rules (drives, UNC, case on Windows).
+    if (isAbsoluteServerPath(root) && isAbsoluteServerPath(value)) {
+      return serverPathIsWithin(root, value);
+    }
     return value == root || value.startsWith('$root/');
   }
 

@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/active_profile_scope.dart';
 import 'package:hermes_android/core/services/models_snapshot.dart';
 import 'package:hermes_android/core/widgets/console_loader.dart';
+import 'support/reasoning_tap.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/models_server.dart';
@@ -158,8 +159,19 @@ void main() {
     await pumpModels(tester, server, scope);
     await tester.pumpAndSettle();
     expect(inRow('models-main-reasoning', 'Medium'), findsOneWidget);
-    await tapOn(tester, modelsKey('models-main-reasoning'));
-    await tapOn(tester, modelsKey('models-reasoning-high'));
+    await tester.ensureVisible(modelsKey('models-main-reasoning'));
+    await tester.pumpAndSettle();
+    await tester.tap(modelsKey('models-main-reasoning'));
+    // The squares blink while the sheet is open: no settling.
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tapReasoningValue(
+      tester,
+      modelsKey('reasoning-pill-surface'),
+      'high',
+    );
+    await tester.pumpAndSettle();
 
     final put = server.of('PUT', '/api/config').single;
     expect(put.profile, 'ana');
@@ -207,6 +219,27 @@ void main() {
       'task': 'compression',
     });
     expect(inRow('models-aux-compression', 'Automatic'), findsOneWidget);
+  });
+
+  testWidgets('an auxiliary task can inherit the main model explicitly', (
+    tester,
+  ) async {
+    final server = ModelsServer();
+    await pumpModels(tester, server, scope);
+    await tester.pumpAndSettle();
+    await openAux(tester);
+    await tapOn(tester, modelsKey('models-aux-compression'));
+    expect(find.text('Inherit main'), findsOneWidget);
+    expect(find.text('Uses the model of the main slot'), findsOneWidget);
+    await tapOn(tester, modelsKey('models-picker-inherit'));
+
+    final set = server.of('POST', '/api/model/set').single;
+    expect(set.body, {
+      'provider': 'main',
+      'model': '',
+      'scope': 'auxiliary',
+      'task': 'compression',
+    });
   });
 
   testWidgets('"Reset all to main" asks once', (tester) async {

@@ -148,6 +148,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       final settings = CompanionPreferences(prefs);
       await settings.setSelectedSlugFor('c1', 'default', 'nimbus');
+      await settings.setEnabledFor('c1', 'default', true);
       final source = CompanionController(
         _Repo(),
         settings,
@@ -193,6 +194,30 @@ void main() {
       app.dispose();
       restored.dispose();
       changes.dispose();
+    },
+  );
+
+  test(
+    'the app pet starts off, and the profile identity is unaffected',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final settings = CompanionPreferences(prefs);
+      final source = CompanionController(
+        _Repo(),
+        settings,
+        publishProfileIdentity: true,
+      );
+      await source.init();
+      final app = CompanionController(_Repo(), settings, appPet: true);
+      await app.initAppFromProfile(source);
+      expect(app.enabled, isFalse);
+      expect(settings.appEnabled, isFalse);
+      expect(source.enabled, isTrue);
+      await app.setVisibilityLevel(CompanionPresenceLevel.full);
+      expect(app.enabled, isTrue);
+      expect(settings.appEnabled, isTrue);
+      source.dispose();
+      app.dispose();
     },
   );
 

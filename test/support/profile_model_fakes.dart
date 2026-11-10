@@ -98,7 +98,7 @@ base class FakeIdentityGateway
 }
 
 /// A Hermes with `model.options` and `profiles.configure`.
-final class FakeModelGateway extends FakeIdentityGateway
+base class FakeModelGateway extends FakeIdentityGateway
     implements BotModelGateway, BotProfileGateway {
   /// `model.options` stays on the wire until [pending] is completed.
   bool hang = false;

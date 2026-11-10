@@ -4,7 +4,10 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 
 import '../models/agent_profile.dart';
-import '../models/profile_identity.dart';
+import '../characters/profile_identity_resolver.dart';
+import '../models/profile_identity.dart' show ProfileIdentities;
+import '../characters/bot_character_store.dart';
+import '../characters/character_face.dart';
 import 'profile_pet_avatar.dart';
 import '../theme/app_theme.dart';
 import 'hermes_bot_face.dart';
@@ -51,7 +54,23 @@ final class MissionProfileAvatarCache {
     this.connectionId,
   ) : assert(maxEntries > 0),
       assert(maxConcurrent > 0),
-      super();
+      super() {
+    _readableCaches.removeWhere((entry) => entry.target == null);
+    _readableCaches.add(WeakReference(this));
+  }
+
+  static final _readableCaches = <WeakReference<MissionProfileAvatarCache>>[];
+
+  /// Reads already resolved bytes only; never starts a photo request.
+  static AgentProfileAvatar? cachedAvatar(String connection, String profile) {
+    for (final entry in _readableCaches.reversed) {
+      final cache = entry.target;
+      if (cache?.connectionId == connection && cache!.hasResolved(profile)) {
+        return cache.resolved(profile);
+      }
+    }
+    return null;
+  }
 
   Future<AgentProfileAvatar?> load(String profileName) {
     final profile = profileName.trim();
@@ -149,6 +168,10 @@ class MissionProfileAvatar extends StatelessWidget {
   final String profileName;
   final bool hasAvatar;
   final MissionProfileAvatarCache? cache;
+
+  /// Connection that owns [profileName] when no [cache] is passed (a profile
+  /// without a photo): it keys the saved character. A [cache] wins.
+  final String? connectionId;
   final double size;
   final bool manager;
   final String? shape;
@@ -163,6 +186,7 @@ class MissionProfileAvatar extends StatelessWidget {
     required this.profileName,
     required this.hasAvatar,
     required this.cache,
+    this.connectionId,
     this.size = 40,
     this.manager = false,
     this.shape,
@@ -175,7 +199,10 @@ class MissionProfileAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: ProfileIdentities.instance,
+    listenable: Listenable.merge([
+      ProfileIdentities.instance,
+      BotCharacterStore.shared,
+    ]),
     builder: (context, _) => _buildIdentity(context),
   );
 
@@ -186,24 +213,37 @@ class MissionProfileAvatar extends StatelessWidget {
     // continue through the native Blobatar renderer instead of becoming a
     // frozen raster in Android.
     final avatarCache = cache;
+    final owner = avatarCache?.connectionId ?? connectionId;
     if (allowPet) {
-      ProfileIdentities.instance.requestAfterPaint(avatarCache?.connectionId, profileName);
+      ProfileIdentities.instance.requestAfterPaint(owner, profileName);
     }
-    final identity = profileIdentityFor(
+    final identity = resolveProfileIdentity(
       profileName: profileName,
-      connectionId: avatarCache?.connectionId,
+      connectionId: owner,
       hasAvatar: hasAvatar,
       imageKind: imageKind,
       shape: shape,
+      canLoadPhoto: avatarCache != null,
     );
     if (allowPet && identity.pet != null) {
-      final pet = identity.pet!;
-      return ProfilePetAvatar(pet: pet, size: size);
+      return ProfilePetAvatar(pet: identity.pet!, size: size);
     }
     final shouldLoadAvatar =
-        identity.kind == ProfileIdentityKind.image && avatarCache != null;
+        identity.source == ProfileIdentitySource.photo && avatarCache != null;
     final Widget content;
-    if (!shouldLoadAvatar) {
+    final character = identity.character;
+    if (!shouldLoadAvatar && character != null) {
+      // A saved character replaces the seeded face of a profile that has no
+      // photo of its own.
+      content = CharacterFace(
+        key: ValueKey('mission-avatar-character-$profileName'),
+        profileName: profileName,
+        character: character,
+        size: size,
+        animate: working,
+        motionState: HermesBotFaceMotionState.thinking,
+      );
+    } else if (!shouldLoadAvatar) {
       content = _AvatarFace(
         profileName: profileName,
         size: size,

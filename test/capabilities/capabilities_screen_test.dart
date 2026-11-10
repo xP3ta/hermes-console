@@ -17,8 +17,10 @@ Future<void> _pumpHub(
   WidgetTester tester,
   ScriptedRest rest, {
   bool readOnly = false,
-  WidgetBuilder? advanced,
+  WidgetBuilder? tools,
   CapabilitiesRpc? rpc,
+  ExtensionsTab? tab,
+  CapabilitiesSegment segment = CapabilitiesSegment.installed,
 }) async {
   await setPhone(tester);
   await tester.pumpWidget(
@@ -26,7 +28,9 @@ Future<void> _pumpHub(
       CapabilitiesScreen(
         repository: repoOf(rest, rpc: rpc),
         readOnly: readOnly,
-        advancedBuilder: advanced,
+        toolsBuilder: tools,
+        initialTab: tab,
+        initialSegment: segment,
         searchDebounce: Duration.zero,
       ),
     ),
@@ -34,14 +38,22 @@ Future<void> _pumpHub(
   await tester.pumpAndSettle();
 }
 
+Future<void> _tab(WidgetTester tester, ExtensionsTab tab) async {
+  await tester.tap(find.byKey(ValueKey('exu-tab-${tab.name}')));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   setUpAll(loadInterFont);
 
   testWidgets('catalog groups rows by kind with inline status', (tester) async {
-    await _pumpHub(tester, populatedServer());
+    await _pumpHub(
+      tester,
+      populatedServer(),
+      segment: CapabilitiesSegment.catalog,
+    );
 
     expect(find.text('Capacidades'), findsOneWidget);
-    expect(find.text('Catálogo'), findsOneWidget);
     expect(find.text('SKILLS'), findsOneWidget);
     expect(find.text('PLUGINS'), findsOneWidget);
     expect(find.text('arxiv'), findsOneWidget);
@@ -80,7 +92,11 @@ void main() {
   testWidgets('search filters locally and the filter menu narrows by kind', (
     tester,
   ) async {
-    await _pumpHub(tester, populatedServer());
+    await _pumpHub(
+      tester,
+      populatedServer(),
+      segment: CapabilitiesSegment.catalog,
+    );
 
     await tester.enterText(find.byKey(const ValueKey('cph-search')), 'dock');
     await tester.pumpAndSettle();
@@ -103,33 +119,46 @@ void main() {
     expect(find.text('docker'), findsOneWidget);
   });
 
-  testWidgets('installed segment lists only installed items', (tester) async {
-    await _pumpHub(tester, populatedServer());
-    await tester.tap(find.byKey(const ValueKey('cph-seg-installed')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('arxiv'), findsOneWidget);
-    expect(find.text('notes'), findsOneWidget);
-    expect(find.text('Weather'), findsOneWidget);
-    expect(find.text('docker'), findsNothing);
-    expect(find.text('Desactivada'), findsOneWidget);
-  });
-
-  testWidgets('connectors segment shows MCP servers and an honest note', (
+  testWidgets('each tab lists only the installed items of its kind', (
     tester,
   ) async {
     await _pumpHub(tester, populatedServer());
-    await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
-    await tester.pumpAndSettle();
+
+    expect(find.text('arxiv'), findsOneWidget);
+    expect(find.text('notes'), findsOneWidget);
+    expect(find.text('Weather'), findsNothing);
+    expect(find.text('docker'), findsNothing);
+    // The state is the switch: the hand-made skill is off.
+    expect(
+      tester
+          .widget<Switch>(
+            find.byKey(const ValueKey('spp-switch-skill:installed:notes')),
+          )
+          .value,
+      isFalse,
+    );
+    await _tab(tester, ExtensionsTab.plugins);
+    expect(find.text('Weather'), findsOneWidget);
+    expect(find.text('arxiv'), findsNothing);
+  });
+
+  testWidgets('the MCP tab shows the servers and an honest accounts note', (
+    tester,
+  ) async {
+    await _pumpHub(tester, populatedServer());
+    await _tab(tester, ExtensionsTab.mcp);
 
     expect(find.text('docs'), findsOneWidget);
-    expect(find.text('Activa'), findsOneWidget);
+    expect(
+      find.text('0 herramientas · Activa · https://mcp.example.com/docs'),
+      findsOneWidget,
+    );
     // No RPC in this repository → hosted connectors are unsupported.
     expect(
       find.text('Este servidor no ofrece conectores de cuenta.'),
       findsOneWidget,
     );
-    // The filter only applies to catalog/installed.
+    // The tabs search what is installed: the facet filter is for the hubs.
     expect(find.byTooltip('Filtrar'), findsNothing);
   });
 
@@ -161,19 +190,18 @@ void main() {
         throw TuiGatewayRpcError(method, 'nope', code: -32601);
       },
     );
-    await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
-    await tester.pumpAndSettle();
+    await _tab(tester, ExtensionsTab.mcp);
 
     final row = find.byKey(const ValueKey('cph-row-mcp:server:docs'));
     expect(
-      find.descendant(of: row, matching: find.text('Conectado')),
+      find.descendant(of: row, matching: find.textContaining('Conectado')),
       findsOneWidget,
     );
     expect(
       find.descendant(of: row, matching: find.textContaining('4 herramientas')),
       findsOneWidget,
     );
-    expect(find.text('Activa'), findsNothing);
+    expect(find.textContaining('Activa'), findsNothing);
     expect(methods.where((m) => m == 'mcp.servers.status'), hasLength(1));
   });
 
@@ -186,11 +214,10 @@ void main() {
       rpc: (method, params) async =>
           throw TuiGatewayRpcError(method, 'nope', code: -32601),
     );
-    await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
-    await tester.pumpAndSettle();
+    await _tab(tester, ExtensionsTab.mcp);
 
-    expect(find.text('Activa'), findsOneWidget);
-    expect(find.textContaining('herramientas'), findsNothing);
+    expect(find.textContaining('Activa ·'), findsOneWidget);
+    expect(find.textContaining('0 herramientas · Activa ·'), findsOneWidget);
   });
 
   group('hosted connector rows', () {
@@ -237,8 +264,7 @@ void main() {
         populatedServer(),
         rpc: (m, p) => hosted(m, p, policy: true),
       );
-      await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
-      await tester.pumpAndSettle();
+      await _tab(tester, ExtensionsTab.mcp);
       await tester.tap(find.byKey(const ValueKey('cph-account-github')));
       await tester.pumpAndSettle();
 
@@ -253,8 +279,7 @@ void main() {
         populatedServer(),
         rpc: (m, p) => hosted(m, p, policy: false),
       );
-      await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
-      await tester.pumpAndSettle();
+      await _tab(tester, ExtensionsTab.mcp);
       expect(find.byKey(const ValueKey('cph-account-github')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('cph-account-github')));
       await tester.pumpAndSettle();
@@ -269,10 +294,10 @@ void main() {
       ..gets['skills/hub/official'] = {'skills': <Object>[]};
     await _pumpHub(tester, rest);
 
-    expect(find.byKey(const ValueKey('cph-empty-catalog')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('cph-seg-installed')));
-    await tester.pumpAndSettle();
     expect(find.text('Aún no hay nada instalado'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await _pumpHub(tester, rest, segment: CapabilitiesSegment.catalog);
+    expect(find.byKey(const ValueKey('cph-empty-catalog')), findsOneWidget);
   });
 
   testWidgets('offline server: error state with a working retry', (
@@ -319,7 +344,7 @@ void main() {
     expect(find.text('arxiv'), findsOneWidget);
   });
 
-  testWidgets('read-only: notice, no update-skills entry, detail fenced', (
+  testWidgets('read-only: notice, no write entries, detail fenced', (
     tester,
   ) async {
     final rest = populatedServer();
@@ -327,21 +352,28 @@ void main() {
       tester,
       rest,
       readOnly: true,
-      advanced: (_) => const Scaffold(body: Text('advanced-screen')),
+      tools: (_) => const Scaffold(body: Text('tools-screen')),
     );
 
     expect(find.byKey(const ValueKey('cph-readonly')), findsOneWidget);
+    // The hub is only navigation: it stays; creating and updating do not.
+    await tester.tap(find.byKey(const ValueKey('exu-add')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('exu-add-skill-hub')), findsOneWidget);
+    expect(find.byKey(const ValueKey('cph-menu-update-skills')), findsNothing);
+    expect(find.byKey(const ValueKey('spp-menu-new-skill')), findsNothing);
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pumpAndSettle();
+
     await tester.tap(find.byTooltip('Más opciones'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('cph-menu-update-skills')), findsNothing);
-    expect(find.byKey(const ValueKey('cph-menu-advanced')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('cph-menu-advanced')));
+    await tester.tap(find.byKey(const ValueKey('exu-more-tools')));
     await tester.pumpAndSettle();
-    expect(find.text('advanced-screen'), findsOneWidget);
+    expect(find.text('tools-screen'), findsOneWidget);
     tester.state<NavigatorState>(find.byType(Navigator)).pop();
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('docker'));
+    await tester.tap(find.text('arxiv'));
     await tester.pumpAndSettle();
     expect(find.byType(CapabilityDetailScreen), findsOneWidget);
     expect(find.byKey(const ValueKey('cph-primary')), findsNothing);
@@ -349,9 +381,11 @@ void main() {
     expect(rest.mutations, isEmpty);
   });
 
-  testWidgets('menu has no bridge-only classic skills entry', (tester) async {
+  testWidgets('the Skills «+» has no bridge-only classic skills entry', (
+    tester,
+  ) async {
     await _pumpHub(tester, populatedServer());
-    await tester.tap(find.byTooltip('Más opciones'));
+    await tester.tap(find.byKey(const ValueKey('exu-add')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('cph-menu-update-skills')),
@@ -374,7 +408,7 @@ void main() {
         {'name': 'skills-update', 'running': false, 'exit_code': 0},
       ]);
     await _pumpHub(tester, rest);
-    await tester.tap(find.byTooltip('Más opciones'));
+    await tester.tap(find.byKey(const ValueKey('exu-add')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('cph-menu-update-skills')));
     await tester.pumpAndSettle();

@@ -116,8 +116,8 @@ void main() {
         );
         await tester.pumpAndSettle();
         final s = onboardingStrings(tester);
-        expect(find.text(s.o2WelcomeTitle), findsOneWidget);
-        expect(find.text(s.onb4WelcomeBody), findsOneWidget);
+        expect(find.text(s.onbFlowTitle), findsOneWidget);
+        expect(find.text(s.onbFlowBody), findsOneWidget);
         expect(find.byKey(const ValueKey('console-mark')), findsOneWidget);
         expect(find.byType(PageView), findsNothing);
         expect(find.text('Saltar'), findsNothing);

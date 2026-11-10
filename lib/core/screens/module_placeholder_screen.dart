@@ -28,6 +28,8 @@ class ModulePlaceholderScreen extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): nothing scrolls under it.
+        glass: false,
         title: Text(title),
       ),
       body: Center(

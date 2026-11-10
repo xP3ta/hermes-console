@@ -151,7 +151,7 @@ void main() {
           ),
           theme,
         );
-        await _open(tester, 'profile-editor-identity-row');
+        await _open(tester, 'profile-editor-avatar');
         await Scrollable.ensureVisible(
           tester.element(find.byKey(const ValueKey('bot-face-color-palette'))),
           alignment: 1,

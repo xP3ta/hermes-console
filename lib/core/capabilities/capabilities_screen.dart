@@ -1,6 +1,10 @@
-// Capabilities hub: one place for skills, plugins, MCP servers and account
-// connectors, read from the profile's own server. Catalog · Installed ·
-// Connectors; search + facet filter; each row opens an action-first detail.
+// Extensions: ONE screen for skills, plugins and MCP servers (with the account
+// connectors under MCP), read from the profile's own server. Three tabs, each
+// self-sufficient: search, «N installed · M active», the status filter, flat
+// rows with the switch at the end, and a «+» menu with the tab's own actions.
+// The hubs (Skill Hub, Plugin Hub, MCP catalog) open as a stacked page whose
+// back button returns to the same tab. The ⋯ menu of the header carries what
+// is about the whole server: Tools and Webhooks / server status.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -15,6 +19,20 @@ import '../theme/app_theme.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl;
+import '../widgets/hermes_premium_ui.dart'
+    as premium
+    show HermesListRow, HermesListSection;
+import '../widgets/form_page.dart' show pushHermesFormPage;
+import '../widgets/hermes_row_switch.dart';
+import '../widgets/mcp_provisioning_surface.dart'
+    show McpServerDraftSurface, showMcpOAuthFlowSurface;
+import '../screens/admin_integrations_screen.dart'
+    show AdminIntegrationsScreen, AdminIntegrationsSection;
+import '../screens/extensions_tools_screen.dart' show ExtensionsToolsScreen;
+import '../models/admin_integrations.dart'
+    show McpAuthMode, McpOAuthFlow, McpServerDraft;
+import '../services/desktop_control_gateway.dart'
+    show DesktopControlFailure, DesktopControlFailureKind;
 import 'capabilities_adapters.dart';
 import 'capabilities_repository.dart';
 import 'capability_detail_screen.dart';
@@ -22,10 +40,45 @@ import 'capability_models.dart';
 import 'capability_ui.dart';
 import 'connector_detail_screen.dart';
 import 'mcp_runtime_status.dart';
+import 'capability_plain_rows.dart';
+import 'las_chat.dart' show LasChatLauncher;
+import 'las_learn_screen.dart';
+import 'las_request.dart';
+import 'plugin_source_install.dart';
+import 'skill_create_screen.dart';
+import 'spp_copy.dart';
+import 'spp_safety.dart';
 import '../widgets/console_loader.dart';
 import '../feedback/feedback_policy.dart';
 
+/// The three tabs of the Extensions screen.
+enum ExtensionsTab { skills, plugins, mcp }
+
+/// Where the screens that used to be separate now live. Kept so that every
+/// older caller still lands in the right place:
+///
+/// * `installed` opens the tab of [CapabilitiesScreen.initialKind] (Skills
+///   when none),
+/// * `connectors` opens the MCP tab (the accounts are listed under the
+///   servers),
+/// * `catalog` opens the hub page of that kind (a stacked page over a tab).
 enum CapabilitiesSegment { catalog, installed, connectors }
+
+extension on CapabilityKind {
+  ExtensionsTab get tab => switch (this) {
+    CapabilityKind.skill => ExtensionsTab.skills,
+    CapabilityKind.plugin => ExtensionsTab.plugins,
+    CapabilityKind.mcp => ExtensionsTab.mcp,
+  };
+}
+
+extension on ExtensionsTab {
+  CapabilityKind get kind => switch (this) {
+    ExtensionsTab.skills => CapabilityKind.skill,
+    ExtensionsTab.plugins => CapabilityKind.plugin,
+    ExtensionsTab.mcp => CapabilityKind.mcp,
+  };
+}
 
 /// Everything the hub shows, loaded in one pass. Sources that the server
 /// does not publish are simply absent; sources that failed are counted so
@@ -37,6 +90,7 @@ final class CapabilitiesSnapshot {
 
   /// Live MCP state by server name; empty when the server lacks it.
   final Map<String, McpRuntimeRow> mcpRuntime;
+  final Map<String, int> mcpToolCounts;
   final HostedConnectorsSnapshot? connectors;
 
   /// `connectors.policy.get` answered: hosted rows may open their detail.
@@ -54,6 +108,7 @@ final class CapabilitiesSnapshot {
     this.installed = const [],
     this.mcpServers = const [],
     this.mcpRuntime = const {},
+    this.mcpToolCounts = const {},
     this.connectors,
     this.connectorPolicyReadable = false,
     this.connectorsFailed = false,
@@ -61,6 +116,37 @@ final class CapabilitiesSnapshot {
     this.skillsUpdatable = false,
     this.complete = true,
   });
+
+  /// The same snapshot with the enabled flag of every installed [kind] item
+  /// named [installedName] set to [enabled]: a confirmed switch is patched in
+  /// place, without reading everything again.
+  CapabilitiesSnapshot withEnabled(
+    CapabilityKind kind,
+    String installedName,
+    bool enabled,
+  ) {
+    List<CapabilityItem> patch(List<CapabilityItem> items) => [
+      for (final item in items)
+        item.kind == kind &&
+                item.installed &&
+                item.installedName == installedName
+            ? item.copyWith(enabled: enabled)
+            : item,
+    ];
+    return CapabilitiesSnapshot(
+      catalog: patch(catalog),
+      installed: patch(installed),
+      mcpServers: patch(mcpServers),
+      mcpRuntime: mcpRuntime,
+      mcpToolCounts: mcpToolCounts,
+      connectors: connectors,
+      connectorPolicyReadable: connectorPolicyReadable,
+      connectorsFailed: connectorsFailed,
+      partial: partial,
+      skillsUpdatable: skillsUpdatable,
+      complete: complete,
+    );
+  }
 
   /// Loads every source. [onSkills] receives an early, incomplete snapshot
   /// as soon as both skill sources answered, so skills never wait for the
@@ -170,6 +256,23 @@ final class CapabilitiesSnapshot {
         mcpRuntime = await repo.mcpRuntimeStatus();
       } catch (_) {}
     }
+    final mcpToolCounts = <String, int>{};
+    if (lists[5].isNotEmpty) {
+      try {
+        final names = lists[5].map((server) => server.installedName).toSet();
+        for (final toolset in await repo.toolsets()) {
+          final name = toolset.mcpServerName(names);
+          if (name == null || !names.contains(name)) continue;
+          // Bare aliases and registry names can describe the same tools.
+          final previous = mcpToolCounts[name] ?? 0;
+          if (toolset.toolCount >= previous) {
+            mcpToolCounts[name] = toolset.toolCount;
+          }
+        }
+      } catch (_) {
+        // Optional enrichment: static rows and runtime counts remain usable.
+      }
+    }
     HostedConnectorsSnapshot? connectors;
     var connectorsFailed = false;
     var connectorPolicyReadable = false;
@@ -230,6 +333,7 @@ final class CapabilitiesSnapshot {
       installed: installed,
       mcpServers: lists[5],
       mcpRuntime: mcpRuntime,
+      mcpToolCounts: mcpToolCounts,
       connectors: connectors,
       connectorPolicyReadable: connectorPolicyReadable,
       connectorsFailed: connectorsFailed,
@@ -286,6 +390,12 @@ final class CapabilitiesSnapshot {
             installedName: row.name,
             installedKey: row.key,
             canRemove: local?.canRemove ?? true,
+            origin: row.source.isNotEmpty ? row.source : local?.origin,
+            version: row.version.isNotEmpty
+                ? row.version
+                : (local?.version.isNotEmpty ?? false)
+                ? local!.version
+                : null,
           ),
         );
         continue;
@@ -299,6 +409,8 @@ final class CapabilitiesSnapshot {
             enabled: local.enabled,
             canRemove: local.canRemove,
             installedKey: local.installedKey,
+            origin: local.origin,
+            version: local.version.isNotEmpty ? local.version : null,
           ),
         );
       } else {
@@ -316,13 +428,33 @@ final class CapabilitiesSnapshot {
 class CapabilitiesHub extends StatelessWidget {
   final SavedConnection connection;
   final String profile;
-  final WidgetBuilder? advancedBuilder;
+
+  /// The tab shown first. Null falls back to the legacy [initialSegment] /
+  /// [initialKind] pair (see [CapabilitiesSegment]).
+  final ExtensionsTab? initialTab;
+
+  /// Legacy way to say where to land; see [CapabilitiesSegment].
+  final CapabilitiesSegment initialSegment;
+
+  /// A type the legacy pair is about (the Plugin Hub is `catalog` + `plugin`).
+  final CapabilityKind? initialKind;
+
+  /// Opens the chat that learns a skill; null leaves the entry out.
+  final LasChatLauncher? learnLauncher;
+
+  /// The live conversation, when the screen was opened from one: its tool
+  /// groups are then the conversation's, not the instance's.
+  final String runtimeSessionId;
 
   const CapabilitiesHub({
     super.key,
     required this.connection,
     this.profile = '',
-    this.advancedBuilder,
+    this.initialTab,
+    this.initialSegment = CapabilitiesSegment.installed,
+    this.initialKind,
+    this.learnLauncher,
+    this.runtimeSessionId = '',
   });
 
   // Transports, repository and loaded state belong to one (connection,
@@ -337,20 +469,32 @@ class CapabilitiesHub extends StatelessWidget {
     )),
     connection: connection,
     profile: profile,
-    advancedBuilder: advancedBuilder,
+    initialTab: initialTab,
+    initialSegment: initialSegment,
+    initialKind: initialKind,
+    learnLauncher: learnLauncher,
+    runtimeSessionId: runtimeSessionId,
   );
 }
 
 class _CapabilitiesHubBody extends StatefulWidget {
   final SavedConnection connection;
   final String profile;
-  final WidgetBuilder? advancedBuilder;
+  final ExtensionsTab? initialTab;
+  final CapabilitiesSegment initialSegment;
+  final CapabilityKind? initialKind;
+  final LasChatLauncher? learnLauncher;
+  final String runtimeSessionId;
 
   const _CapabilitiesHubBody({
     super.key,
     required this.connection,
     required this.profile,
-    this.advancedBuilder,
+    required this.initialSegment,
+    required this.runtimeSessionId,
+    this.initialTab,
+    this.initialKind,
+    this.learnLauncher,
   });
 
   @override
@@ -383,6 +527,8 @@ class _CapabilitiesHubState extends State<_CapabilitiesHubBody> {
     super.dispose();
   }
 
+  // The ⋯ menu and the install-from-source flow talk to the server itself,
+  // through the same shared gateway (never closed by the pages that use it).
   @override
   Widget build(BuildContext context) => CapabilitiesScreen(
     repository: _repository,
@@ -395,7 +541,22 @@ class _CapabilitiesHubState extends State<_CapabilitiesHubBody> {
     instanceId: widget.connection.id,
     destinationLabel:
         '${widget.connection.label} · ${widget.profile.trim().isEmpty ? 'default' : widget.profile.trim()}',
-    advancedBuilder: widget.advancedBuilder,
+    initialTab: widget.initialTab,
+    initialSegment: widget.initialSegment,
+    initialKind: widget.initialKind,
+    learnLauncher: widget.learnLauncher,
+    toolsBuilder: (_) => ExtensionsToolsScreen(
+      gateway: _gatewayLease.client,
+      runtimeSessionId: widget.runtimeSessionId,
+      readOnly: widget.connection.readOnly,
+    ),
+    serverBuilder: (context) => AdminIntegrationsScreen(
+      gateway: _gatewayLease.client,
+      readOnly: widget.connection.readOnly,
+      initialSection: AdminIntegrationsSection.webhooks,
+      title: Strings.of(context).exuMoreServer,
+    ),
+    sourceInstaller: _gatewayLease.client.installPlugin,
   );
 }
 
@@ -445,9 +606,33 @@ class CapabilitiesScreen extends StatefulWidget {
 
   /// `<server label> · <profile>` shown in install confirmations.
   final String destinationLabel;
-  final WidgetBuilder? advancedBuilder;
+
+  /// The tab shown first. Null falls back to the legacy pair below.
+  final ExtensionsTab? initialTab;
+
+  /// Legacy way to say where to land; see [CapabilitiesSegment]. `catalog`
+  /// makes this a hub page (no tabs); the default opens the Skills tab.
   final CapabilitiesSegment initialSegment;
+
+  /// With the `installed` segment, the tab to open; with `catalog`, the kind
+  /// of the hub (`plugin` is the Plugin Hub, `mcp` the MCP catalog).
+  final CapabilityKind? initialKind;
   final Duration searchDebounce;
+
+  /// Opens the chat of the profile's agent that learns a skill; null (a
+  /// read-only connection) leaves the menu entry out.
+  final LasChatLauncher? learnLauncher;
+
+  /// The tool groups page, under the ⋯ menu; null leaves the entry out.
+  final WidgetBuilder? toolsBuilder;
+
+  /// The webhooks and server status page, under the ⋯ menu; null leaves the
+  /// entry out.
+  final WidgetBuilder? serverBuilder;
+
+  /// Installs a plugin from an owner/repo or Git URL; null leaves the entry
+  /// out of the Plugins «+» menu.
+  final PluginSourceInstaller? sourceInstaller;
 
   const CapabilitiesScreen({
     super.key,
@@ -457,16 +642,35 @@ class CapabilitiesScreen extends StatefulWidget {
     this.readOnly = false,
     this.instanceId = '',
     this.destinationLabel = '',
-    this.advancedBuilder,
-    this.initialSegment = CapabilitiesSegment.catalog,
+    this.initialTab,
+    this.initialSegment = CapabilitiesSegment.installed,
+    this.initialKind,
     this.searchDebounce = const Duration(milliseconds: 450),
+    this.learnLauncher,
+    this.toolsBuilder,
+    this.serverBuilder,
+    this.sourceInstaller,
   });
 
   @override
   State<CapabilitiesScreen> createState() => _CapabilitiesScreenState();
 }
 
-enum _MenuAction { updateSkills, advanced }
+enum _AddAction {
+  skillHub,
+  newSkill,
+  learnSkill,
+  updateSkills,
+  pluginHub,
+  installFromSource,
+  mcpCatalog,
+  addMcp,
+}
+
+enum _MoreAction { tools, server }
+
+/// Which installed items a tab lists.
+enum _StatusFilter { all, active, inactive }
 
 /// Facet values offered by the filter surface.
 sealed class _Facet {
@@ -498,26 +702,90 @@ final class _ActiveFacets extends _Facet {
 
 class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
   static const int _groupCap = 30;
+  static const int _revealStep = 60;
 
-  late CapabilitiesSegment _segment = widget.initialSegment;
+  /// A hub page: the catalog of one kind (or of every kind), stacked over a
+  /// tab. Without it this is the Extensions screen with its three tabs.
+  late final bool _isHub =
+      widget.initialTab == null &&
+      widget.initialSegment == CapabilitiesSegment.catalog;
+
+  late ExtensionsTab _tab =
+      widget.initialTab ??
+      (widget.initialSegment == CapabilitiesSegment.connectors
+          ? ExtensionsTab.mcp
+          : (widget.initialKind?.tab ?? ExtensionsTab.skills));
   CapabilitiesSnapshot? _snapshot;
   Object? _error;
   bool _loading = true;
-  CapabilityFilter _filter = const CapabilityFilter();
+  late CapabilityFilter _filter = CapabilityFilter(
+    kind: _isHub ? widget.initialKind : null,
+  );
   final TextEditingController _search = TextEditingController();
   final GlobalKey _moreKey = GlobalKey(debugLabel: 'cph-more');
+  final GlobalKey _addKey = GlobalKey(debugLabel: 'exu-add');
   final GlobalKey _filterKey = GlobalKey(debugLabel: 'cph-filter');
-  final Set<CapabilityKind> _expanded = {};
+
+  /// How many rows of a kind are on screen beyond the first [_groupCap]; a
+  /// long list grows in steps, so opening 153 skills never builds them all.
+  final Map<CapabilityKind, int> _shownRows = {};
   Timer? _debounce;
   List<CapabilityItem> _hubResults = const [];
   bool _hubFailed = false;
+  bool _hubSearching = false;
   int _hubGeneration = 0;
   bool _busy = false;
+
+  /// Switches with a request in flight, and what each one shows meanwhile.
+  /// A failed request removes its entry, which is the rollback.
+  final Set<String> _toggling = {};
+  final Map<String, bool> _shown = {};
+
+  /// Each tab keeps its own search text and status filter.
+  final Map<ExtensionsTab, String> _queries = {};
+  final Map<ExtensionsTab, _StatusFilter> _statuses = {};
+
+  /// One scroll position per tab: switching tabs never lands the reader in
+  /// the middle of another list.
+  final ScrollController _scroll = ScrollController();
+  final Map<ExtensionsTab, double> _offsets = {};
 
   /// A cached snapshot is on screen while the server answers again.
   bool _revalidating = false;
 
+  /// Skills that appeared while the learn chat was open: shown tinted for a
+  /// few seconds, once.
+  Set<String> _learned = const {};
+  Timer? _learnedTimer;
+
   CapabilitiesRepository get _repo => widget.repository;
+
+  _StatusFilter get _status => _statuses[_tab] ?? _StatusFilter.all;
+
+  /// The catalog filtered to plugins: the Plugin Hub.
+  bool get _hubMode => _isHub && _filter.kind == CapabilityKind.plugin;
+
+  /// Opens the hub of [kind] as its own page over this tab; back returns to
+  /// the same tab and reads the lists again, as something may have been
+  /// installed there.
+  Future<void> _openHub(CapabilityKind kind) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CapabilitiesScreen(
+          repository: _repo,
+          snapshotCache: widget.snapshotCache,
+          snapshotKey: widget.snapshotKey,
+          readOnly: widget.readOnly,
+          instanceId: widget.instanceId,
+          destinationLabel: widget.destinationLabel,
+          initialSegment: CapabilitiesSegment.catalog,
+          initialKind: kind,
+          searchDebounce: widget.searchDebounce,
+        ),
+      ),
+    );
+    if (mounted) _reloadAfterChange();
+  }
 
   /// A change was made: the cached read no longer describes the server.
   void _dropCached() => widget.snapshotCache?.remove(widget.snapshotKey);
@@ -542,7 +810,9 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _learnedTimer?.cancel();
     _search.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -601,16 +871,28 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
 
   void _onQuery(String value) {
     setState(() => _filter = _filter.copyWith(query: value));
+    if (!_isHub) {
+      // A tab searches what is installed, on the phone, for each keystroke.
+      _queries[_tab] = value;
+      return;
+    }
     _debounce?.cancel();
     final q = value.trim();
-    if (q.length < 3 || _repo.supports(CapabilityFeature.hubSearch) == false) {
+    // The skills hub search never lists plugins: a plugin search is local, over
+    // the catalog the server published.
+    if (q.length < 3 ||
+        _filter.kind == CapabilityKind.plugin ||
+        _repo.supports(CapabilityFeature.hubSearch) == false) {
+      _hubGeneration++;
       setState(() {
         _hubResults = const [];
         _hubFailed = false;
+        _hubSearching = false;
       });
       return;
     }
     final generation = ++_hubGeneration;
+    setState(() => _hubSearching = true);
     _debounce = Timer(widget.searchDebounce, () async {
       try {
         final results = await _repo.searchHub(q);
@@ -618,10 +900,12 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         setState(() {
           _hubResults = results;
           _hubFailed = false;
+          _hubSearching = false;
         });
       } catch (error) {
         if (!mounted || generation != _hubGeneration) return;
         setState(() {
+          _hubSearching = false;
           _hubResults = const [];
           _hubFailed =
               capabilityFailureKindOf(error) !=
@@ -647,20 +931,22 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         _ActiveFacets() => false,
       },
       options: [
-        HermesOption(
-          key: const ValueKey('cph-filter-kind-all'),
-          value: const _KindFacet(null),
-          label: s.cphFilterAllTypes,
-          group: kindGroup,
-        ),
-        for (final kind in CapabilityKind.values)
+        if (widget.initialKind == null)
           HermesOption(
-            key: ValueKey('cph-filter-kind-${kind.name}'),
-            value: _KindFacet(kind),
-            label: capabilityKindGroupLabel(s, kind),
-            icon: capabilityKindIcon(kind),
+            key: const ValueKey('cph-filter-kind-all'),
+            value: const _KindFacet(null),
+            label: s.cphFilterAllTypes,
             group: kindGroup,
           ),
+        if (widget.initialKind == null)
+          for (final kind in CapabilityKind.values)
+            HermesOption(
+              key: ValueKey('cph-filter-kind-${kind.name}'),
+              value: _KindFacet(kind),
+              label: capabilityKindGroupLabel(s, kind),
+              icon: capabilityKindIcon(kind),
+              group: kindGroup,
+            ),
         HermesOption(
           key: const ValueKey('cph-filter-trust-all'),
           value: const _TrustFacet(null),
@@ -697,38 +983,166 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
     });
   }
 
-  Future<void> _openMenu() async {
+  /// The actions of the «+» of the current tab. The hubs are navigation, so
+  /// they stay available on a read-only connection (installing there is what
+  /// is refused, in the detail).
+  List<HermesAction<_AddAction>> _addActions() {
     final s = Strings.of(context);
-    final snapshot = _snapshot;
-    final chosen = await showHermesMenu<_MenuAction>(
-      context: context,
-      anchorKey: _moreKey,
-      actions: [
-        if (!widget.readOnly && (snapshot?.skillsUpdatable ?? false))
+    final writable = !widget.readOnly;
+    return switch (_tab) {
+      ExtensionsTab.skills => [
+        HermesAction(
+          key: const ValueKey('exu-add-skill-hub'),
+          value: _AddAction.skillHub,
+          label: s.exuMenuSkillHub,
+          icon: Icons.storefront_outlined,
+        ),
+        if (writable && _repo.supports(CapabilityFeature.skillCreate) != false)
+          HermesAction(
+            key: const ValueKey('spp-menu-new-skill'),
+            value: _AddAction.newSkill,
+            label: s.sppMenuNewSkill,
+            icon: Icons.add_rounded,
+          ),
+        if (_canLearn)
+          HermesAction(
+            key: const ValueKey('las-menu-learn-skill'),
+            value: _AddAction.learnSkill,
+            label: s.lasMenuLearn,
+            icon: Icons.auto_awesome_rounded,
+          ),
+        if (writable && (_snapshot?.skillsUpdatable ?? false))
           HermesAction(
             key: const ValueKey('cph-menu-update-skills'),
-            value: _MenuAction.updateSkills,
+            value: _AddAction.updateSkills,
             label: s.cphMenuUpdateSkills,
             icon: Icons.system_update_alt_rounded,
           ),
-        if (widget.advancedBuilder != null)
+      ],
+      ExtensionsTab.plugins => [
+        if (_repo.supports(CapabilityFeature.pluginCatalog) != false)
           HermesAction(
-            key: const ValueKey('cph-menu-advanced'),
-            value: _MenuAction.advanced,
-            label: s.cphMenuAdvanced,
-            icon: Icons.tune_rounded,
+            key: const ValueKey('exu-add-plugin-hub'),
+            value: _AddAction.pluginHub,
+            label: s.exuMenuPluginHub,
+            icon: Icons.storefront_outlined,
+          ),
+        if (writable && widget.sourceInstaller != null)
+          HermesAction(
+            key: const ValueKey('exu-add-plugin-source'),
+            value: _AddAction.installFromSource,
+            label: s.exuMenuInstallSource,
+            icon: Icons.download_rounded,
+          ),
+      ],
+      ExtensionsTab.mcp => [
+        HermesAction(
+          key: const ValueKey('exu-add-mcp-catalog'),
+          value: _AddAction.mcpCatalog,
+          label: s.exuMenuMcpCatalog,
+          icon: Icons.storefront_outlined,
+        ),
+        if (writable && _repo.supports(CapabilityFeature.mcpServers) != false)
+          HermesAction(
+            key: const ValueKey('spp-menu-add-mcp'),
+            value: _AddAction.addMcp,
+            label: s.sppMenuAddMcp,
+            icon: Icons.hub_outlined,
+          ),
+      ],
+    };
+  }
+
+  Future<void> _openAdd() async {
+    final actions = _addActions();
+    if (actions.isEmpty) return;
+    final chosen = await showHermesMenu<_AddAction>(
+      context: context,
+      anchorKey: _addKey,
+      actions: actions,
+    );
+    if (!mounted || chosen == null) return;
+    switch (chosen) {
+      case _AddAction.skillHub:
+        await _openHub(CapabilityKind.skill);
+      case _AddAction.newSkill:
+        await _newSkill();
+      case _AddAction.learnSkill:
+        await _learnSkill();
+      case _AddAction.updateSkills:
+        await _updateSkills();
+      case _AddAction.pluginHub:
+        await _openHub(CapabilityKind.plugin);
+      case _AddAction.installFromSource:
+        await _installFromSource();
+      case _AddAction.mcpCatalog:
+        await _openHub(CapabilityKind.mcp);
+      case _AddAction.addMcp:
+        await _addMcp();
+    }
+  }
+
+  /// The ⋯ of the header: what concerns the whole server, not one tab.
+  Future<void> _openMore() async {
+    final s = Strings.of(context);
+    final chosen = await showHermesMenu<_MoreAction>(
+      context: context,
+      anchorKey: _moreKey,
+      actions: [
+        if (widget.toolsBuilder != null)
+          HermesAction(
+            key: const ValueKey('exu-more-tools'),
+            value: _MoreAction.tools,
+            label: s.exuToolGroupsTitle,
+            icon: Icons.handyman_outlined,
+          ),
+        if (widget.serverBuilder != null)
+          HermesAction(
+            key: const ValueKey('exu-more-server'),
+            value: _MoreAction.server,
+            label: s.exuMoreServer,
+            icon: Icons.admin_panel_settings_outlined,
           ),
       ],
     );
     if (!mounted || chosen == null) return;
-    switch (chosen) {
-      case _MenuAction.updateSkills:
-        await _updateSkills();
-      case _MenuAction.advanced:
-        await Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: widget.advancedBuilder!));
-        if (mounted) _reloadAfterChange();
+    final builder = switch (chosen) {
+      _MoreAction.tools => widget.toolsBuilder!,
+      _MoreAction.server => widget.serverBuilder!,
+    };
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
+    // The server pages can change what the tabs list (an MCP added or
+    // authorised there): read again on the way back.
+    if (mounted) _reloadAfterChange();
+  }
+
+  /// Plugin from an owner/repo or Git URL: validated, confirmed, then asked
+  /// of the server's own installer. It lands where every plugin lands:
+  /// switched off unless the person chose otherwise in the form.
+  Future<void> _installFromSource() async {
+    final install = widget.sourceInstaller;
+    if (_busy || widget.readOnly || install == null) return;
+    final s = Strings.of(context);
+    final notices = AppFeedback.of(context);
+    setState(() => _busy = true);
+    try {
+      final result = await installPluginFromSource(context, install: install);
+      if (result == null || !mounted) return;
+      final withNotice = result.notices.isNotEmpty;
+      notices.notify(
+        withNotice ? FeedbackKind.critical : FeedbackKind.routine,
+        withNotice
+            ? s.extensionsCenterPluginInstalledWithNotice
+            : s.extensionsCenterPluginInstalled,
+        warning: withNotice,
+      );
+      _reloadAfterChange();
+    } catch (error) {
+      if (mounted) {
+        notices.notify(FeedbackKind.error, _installFailureText(s, error));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -762,6 +1176,250 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _newSkill() async {
+    if (_busy || widget.readOnly) return;
+    final created = await pushHermesFormPage<String>(
+      context,
+      name: 'skill-create',
+      builder: (_) => SkillCreateScreen(
+        repository: _repo,
+        instanceId: widget.instanceId,
+        readOnly: widget.readOnly,
+        destinationLabel: widget.destinationLabel,
+      ),
+    );
+    if (!mounted) return;
+    if (created != null) {
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        Strings.of(context).sppSkillCreated(created),
+      );
+      _reloadAfterChange();
+    } else {
+      // A server without the route learned it while trying: the entry goes.
+      setState(() {});
+    }
+  }
+
+  bool get _canLearn => !widget.readOnly && widget.learnLauncher != null;
+
+  Set<String> _installedSkillNames(CapabilitiesSnapshot snapshot) => {
+    for (final item in snapshot.installed)
+      if (item.kind == CapabilityKind.skill) item.installedName,
+  };
+
+  /// Learn a skill: the form words the request, the profile's agent does the
+  /// work in a chat of its own, and on the way back the list is read again.
+  /// A skill that was not there before is tinted once. The agent may still be
+  /// working when the user comes back; a later pull to refresh shows it.
+  Future<void> _learnSkill() async {
+    final launch = widget.learnLauncher;
+    if (_busy || !_canLearn || launch == null) return;
+    final request = await pushHermesFormPage<String>(
+      context,
+      name: 'skill-learn',
+      builder: (_) => LasLearnScreen(destinationLabel: widget.destinationLabel),
+    );
+    if (!mounted || request == null) return;
+    final known = _snapshot;
+    final before = known == null ? null : _installedSkillNames(known);
+    await launch(context, LasRequest.buildPrompt(request));
+    if (!mounted) return;
+    _dropCached();
+    await _load();
+    final fresh = _snapshot;
+    if (!mounted || before == null || fresh == null) return;
+    final added = _installedSkillNames(fresh).difference(before);
+    if (added.isEmpty) return;
+    _learnedTimer?.cancel();
+    setState(() => _learned = added);
+    _learnedTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted) setState(() => _learned = const {});
+    });
+  }
+
+  String _controlFailureText(Strings s, Object error) =>
+      switch (error is DesktopControlFailure
+      ? error.kind
+      : DesktopControlFailureKind.unavailable) {
+        DesktopControlFailureKind.unsupported => s.cphFailUnsupported,
+        DesktopControlFailureKind.forbidden => s.cphFailForbidden,
+        DesktopControlFailureKind.rejected => s.sppMcpAddRejected,
+        DesktopControlFailureKind.invalidResponse => s.cphFailInvalid,
+        DesktopControlFailureKind.unavailable => s.cphFailUnavailable,
+      };
+
+  /// Adds an MCP server through the shared form: the phone only sends the
+  /// description; the server stores it and nothing runs here.
+  Future<void> _addMcp() async {
+    if (_busy || widget.readOnly) return;
+    final draft = await pushHermesFormPage<McpServerDraft>(
+      context,
+      name: 'mcp-manual-create',
+      builder: (_) => McpServerDraftSurface(
+        connectionId: widget.instanceId.isEmpty ? null : widget.instanceId,
+      ),
+    );
+    if (!mounted || draft == null) return;
+    final s = Strings.of(context);
+    final notices = AppFeedback.of(context);
+    final approved = await confirmMutatingAction(
+      context,
+      instanceId: widget.instanceId,
+      readOnlyInstance: widget.readOnly,
+      risk: CommandRisk.high,
+      title: s.sppMcpAddConfirmTitle(draft.name),
+      detail: s.sppMcpAddConfirmBody,
+    );
+    if (!approved || !mounted) return;
+    setState(() => _busy = true);
+    var created = false;
+    try {
+      await _repo.addMcpServer(draft);
+      created = true;
+      if (mounted) {
+        notices.notify(FeedbackKind.routine, s.sppMcpAdded(draft.name));
+      }
+    } catch (error) {
+      if (mounted) {
+        notices.notify(FeedbackKind.error, _controlFailureText(s, error));
+      }
+    }
+    McpOAuthFlow? flow;
+    if (created && draft.auth == McpAuthMode.oauth) {
+      try {
+        flow = await _repo.startMcpOAuth(draft.name);
+      } catch (error) {
+        if (mounted) {
+          notices.notify(FeedbackKind.error, _controlFailureText(s, error));
+        }
+      }
+    }
+    if (mounted) setState(() => _busy = false);
+    if (created && mounted) _dropCached();
+    if (mounted && flow != null) {
+      await showMcpOAuthFlowSurface(
+        context: context,
+        gateway: _repo,
+        initialFlow: flow,
+      );
+    }
+    if (created && mounted) unawaited(_load());
+  }
+
+  // ── Switches ────────────────────────────────────────────────────────────
+
+  bool _switchable(CapabilityItem item) =>
+      item.installed &&
+      !item.stateUnknown &&
+      item.enabled != null &&
+      item.installedName.isNotEmpty &&
+      (item.kind != CapabilityKind.plugin || item.installedKey.isNotEmpty);
+
+  bool _isOn(CapabilityItem item) => _shown[item.id] ?? item.enabled ?? false;
+
+  /// Flips [item] on screen first and asks the server; a refusal, a timeout
+  /// or a lost connection puts the switch back and says why. A second tap
+  /// while the first is in flight does nothing.
+  Future<void> _toggle(CapabilityItem item, bool value) async {
+    if (widget.readOnly || _toggling.contains(item.id) || !_switchable(item)) {
+      return;
+    }
+    final s = Strings.of(context);
+    final notices = AppFeedback.of(context);
+    setState(() => _toggling.add(item.id));
+    try {
+      final approved = await confirmMutatingAction(
+        context,
+        instanceId: widget.instanceId,
+        readOnlyInstance: widget.readOnly,
+        risk: CommandRisk.low,
+        title: value ? s.cphActionEnable : s.cphActionDisable,
+        detail: item.name,
+      );
+      if (!approved || !mounted) return;
+      setState(() => _shown[item.id] = value);
+      var restart = false;
+      switch (item.kind) {
+        case CapabilityKind.skill:
+          await _repo.setSkillEnabled(item.installedName, value);
+        case CapabilityKind.plugin:
+          final result = await _repo.setPluginEnabled(
+            item.installedName,
+            value,
+            key: item.installedKey,
+          );
+          restart = result.restartRequired;
+        case CapabilityKind.mcp:
+          await _repo.setMcpEnabled(item.installedName, value);
+      }
+      if (!mounted) return;
+      _dropCached();
+      final snapshot = _snapshot;
+      if (snapshot != null) {
+        setState(
+          () => _snapshot = snapshot.withEnabled(
+            item.kind,
+            item.installedName,
+            value,
+          ),
+        );
+      }
+      final done = value
+          ? s.cphDoneEnabled(item.name)
+          : s.cphDoneDisabled(item.name);
+      if (restart) {
+        // The change is saved but not live: the user has something to do.
+        notices.notify(
+          FeedbackKind.critical,
+          '$done\n${s.cphRestartRequired}',
+          warning: true,
+        );
+      } else {
+        notices.notify(FeedbackKind.routine, done);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (capabilityFailureKindOf(error) == CapabilityFailureKind.uncertain) {
+        // It may have landed: read the truth, never retry.
+        notices.notify(
+          FeedbackKind.error,
+          s.cphUncertainRefreshed,
+          warning: true,
+        );
+        _reloadAfterChange();
+      } else {
+        notices.notify(
+          FeedbackKind.error,
+          '${s.sppToggleFailed(item.name)}\n${capabilityFailureMessage(s, error)}',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _toggling.remove(item.id);
+          _shown.remove(item.id);
+        });
+      }
+    }
+  }
+
+  void _selectTab(ExtensionsTab value) {
+    if (value == _tab) return;
+    if (_scroll.hasClients) _offsets[_tab] = _scroll.offset;
+    final query = _queries[value] ?? '';
+    setState(() {
+      _tab = value;
+      _filter = _filter.copyWith(query: query);
+      _search.text = query;
+    });
+    final target = _offsets[value] ?? 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      _scroll.jumpTo(target.clamp(0.0, _scroll.position.maxScrollExtent));
+    });
   }
 
   Future<void> _openDetail(CapabilityItem item) async {
@@ -804,36 +1462,146 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
 
   // ── Building ────────────────────────────────────────────────────────────
 
+  /// A catalog row of a hub page: where it comes from and what it is, and
+  /// the state in words at the end. The detail does the installing.
   Widget _row(CapabilityItem item) {
     final s = Strings.of(context);
     final status = capabilityRowStatus(s, item);
-    return HermesListRow(
+    // A catalog plugin card: publisher, version and tier above the text.
+    final cardMeta = item.kind == CapabilityKind.plugin
+        ? [
+            if (item.author.isNotEmpty) item.author,
+            if (item.version.isNotEmpty) s.sppVersion(item.version),
+            capabilityTrustLabel(s, item.trust),
+          ].join(' · ')
+        : '';
+    final description = item.description == 'oauth' ? '' : item.description;
+    final subtitle = [
+      cardMeta,
+      description,
+    ].where((part) => part.isNotEmpty).join('\n');
+    return premium.HermesListRow(
       key: ValueKey('cph-row-${item.id}'),
       icon: capabilityKindIcon(item.kind),
       title: item.name,
-      subtitle: item.description == 'oauth' ? null : item.description,
+      subtitle: subtitle.isEmpty ? null : subtitle,
       onTap: () => _openDetail(item),
       trailing: status == null
           ? null
-          : Padding(
-              padding: const EdgeInsets.only(left: 10),
-              child: HermesStatusText(
-                label: status.label,
-                tone: status.tone,
-                maxLines: 1,
-              ),
+          : HermesStatusText(
+              label: status.label,
+              tone: status.tone,
+              maxLines: 1,
             ),
     );
   }
 
+  /// Version, origin and a pending update, in that order.
+  String _metaLine(Strings s, CapabilityItem item) => [
+    if (item.kind == CapabilityKind.plugin && item.version.isNotEmpty)
+      s.sppVersion(item.version),
+    sppOriginLabel(s, item),
+    if (item.updateAvailable) s.cphStatusUpdateShort,
+  ].where((part) => part.isNotEmpty).join(' · ');
+
+  /// What a tab row says under the name: a skill its description, a plugin
+  /// its version and origin over the description, an MCP server how it is
+  /// doing, where it points (credentials hidden) and how many tools it has.
+  String _tabDescription(
+    Strings s,
+    CapabilityItem item,
+    McpRuntimeRow? runtime,
+  ) {
+    final description = item.description == 'oauth' ? '' : item.description;
+    switch (item.kind) {
+      case CapabilityKind.skill:
+        return description.isNotEmpty ? description : _metaLine(s, item);
+      case CapabilityKind.plugin:
+        return [
+          _metaLine(s, item),
+          description,
+        ].where((part) => part.isNotEmpty).join('\n');
+      case CapabilityKind.mcp:
+        final target = item.url.isNotEmpty
+            ? item.url
+            : item.command.isNotEmpty
+            ? item.command
+            : null;
+        final live = runtime == null
+            ? null
+            : mcpRuntimeStatusLabel(s, runtime.status);
+        final count =
+            _snapshot?.mcpToolCounts[item.installedName] ??
+            runtime?.tools ??
+            item.tools.length;
+        final tools = s.extensionsCenterToolCount(count);
+        final state =
+            live?.label ??
+            (item.enabled == false ? s.cphStatusDisabled : s.cphStatusEnabled);
+        return [
+          tools,
+          state,
+          if (target != null) sppSafeTarget(target),
+        ].join(' · ');
+    }
+  }
+
+  /// A row of a tab: no card and no icon, the name in bold over at most two
+  /// lines, and the switch in the same slot on every row of every tab.
+  Widget _tabRow(CapabilityItem item, {McpRuntimeRow? runtime}) {
+    final s = Strings.of(context);
+    final switchable =
+        item.installed && !item.stateUnknown && item.enabled != null;
+    final status = switchable ? null : capabilityRowStatus(s, item);
+    return CapabilityPlainRow(
+      key: ValueKey('cph-row-${item.id}'),
+      title: sppRedactHostText(item.name, s),
+      description: sppRedactHostText(_tabDescription(s, item, runtime), s),
+      highlighted: _learned.contains(item.installedName),
+      semanticHint: s.pghOpenDetail,
+      onTap: () => _openDetail(item),
+      trailing: switchable
+          ? HermesRowSwitch(
+              switchKey: ValueKey('spp-switch-${item.id}'),
+              label: s.sppSwitchLabel(item.name),
+              value: _isOn(item),
+              enabled:
+                  !widget.readOnly &&
+                  !_toggling.contains(item.id) &&
+                  _switchable(item),
+              onChanged: (value) => _toggle(item, value),
+            )
+          : status == null
+          ? null
+          : HermesStatusText(
+              label: status.label,
+              tone: status.tone,
+              maxLines: 1,
+            ),
+    );
+  }
+
+  /// The rows of a hub page, grouped by kind.
   List<Widget> _groups(List<CapabilityItem> items) {
     final s = Strings.of(context);
     final out = <Widget>[];
     for (final kind in CapabilityKind.values) {
       final rows = items.where((item) => item.kind == kind).toList();
       if (rows.isEmpty) continue;
-      final expanded = _expanded.contains(kind) || rows.length <= _groupCap;
-      final visible = expanded ? rows : rows.take(_groupCap).toList();
+      final limit = _groupCap + (_shownRows[kind] ?? 0);
+      final visible = rows.length <= limit ? rows : rows.take(limit).toList();
+      final hidden = rows.length - visible.length;
+      final children = <Widget>[
+        for (final item in visible) _row(item),
+        if (hidden > 0)
+          premium.HermesListRow(
+            key: ValueKey('cph-show-all-${kind.name}'),
+            title: s.sppShowMore(hidden < _revealStep ? hidden : _revealStep),
+            onTap: () => setState(
+              () => _shownRows[kind] = (_shownRows[kind] ?? 0) + _revealStep,
+            ),
+          ),
+      ];
       out
         ..add(
           HermesSectionHeader(
@@ -847,24 +1615,94 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
           ),
         )
         ..add(
-          HermesListGroup(
-            children: [
-              for (final item in visible) _row(item),
-              if (!expanded)
-                HermesListRow(
-                  key: ValueKey('cph-show-all-${kind.name}'),
-                  title: s.cphShowAll(rows.length),
-                  muted: true,
-                  onTap: () => setState(() => _expanded.add(kind)),
-                ),
-            ],
+          premium.HermesListSection(
+            margin: EdgeInsets.zero,
+            children: children,
           ),
         );
     }
     return out;
   }
 
+  /// Plugin Hub: the curated catalog the server publishes, with the installed
+  /// plugins that have a newer version first. The server offers no search,
+  /// update-check or validate route for plugins: the search here is local and
+  /// the update flag is the one the server last computed.
+  List<Widget> _pluginHub(CapabilitiesSnapshot snapshot) {
+    final s = Strings.of(context);
+    final catalogPlugins = snapshot.catalog
+        .where((item) => item.kind == CapabilityKind.plugin)
+        .toList(growable: false);
+    final intro = Padding(
+      padding: const EdgeInsets.only(top: HermesSpace.x3),
+      child: Text(
+        s.pghHubIntro,
+        key: const ValueKey('pgh-hub-intro'),
+        style: HermesType.support.copyWith(
+          color: Theme.of(context).hermes.textSecondary,
+        ),
+      ),
+    );
+    if (!snapshot.complete) {
+      return [
+        intro,
+        const Padding(
+          padding: EdgeInsets.only(top: HermesSpace.x8 + HermesSpace.x8),
+          child: Center(
+            child: ConsoleLoader.large(key: ValueKey('cph-loading-catalog')),
+          ),
+        ),
+      ];
+    }
+    if (catalogPlugins.isEmpty) {
+      return [
+        intro,
+        HermesEmptyStateView(
+          key: const ValueKey('pgh-no-catalog'),
+          icon: Icons.storefront_outlined,
+          title: s.pghNoCatalogTitle,
+          body: s.pghNoCatalogBody,
+        ),
+      ];
+    }
+    final matching = filterCapabilities(snapshot.catalog, _filter);
+    final updates = matching
+        .where((item) => item.installed && item.updateAvailable)
+        .toList(growable: false);
+    final rest = matching
+        .where((item) => !(item.installed && item.updateAvailable))
+        .toList(growable: false);
+    return [
+      intro,
+      if (updates.isNotEmpty) ...[
+        HermesSectionHeader(
+          s.pghUpdatesGroup,
+          trailing: Text(
+            '${updates.length}',
+            style: HermesType.caption.copyWith(
+              color: Theme.of(context).hermes.textSecondary,
+            ),
+          ),
+        ),
+        premium.HermesListSection(
+          key: const ValueKey('pgh-updates'),
+          margin: EdgeInsets.zero,
+          children: [for (final item in updates) _row(item)],
+        ),
+      ],
+      ..._groups(rest),
+      if (matching.isEmpty)
+        HermesEmptyStateView(
+          key: const ValueKey('cph-empty-catalog'),
+          icon: Icons.search_off_rounded,
+          title: s.cphEmptyCatalog,
+          body: s.cphEmptyCatalogBody,
+        ),
+    ];
+  }
+
   List<Widget> _catalog(CapabilitiesSnapshot snapshot) {
+    if (_hubMode) return _pluginHub(snapshot);
     final s = Strings.of(context);
     final items = filterCapabilities(snapshot.catalog, _filter);
     final known = snapshot.catalog.map((item) => item.installId).toSet();
@@ -887,12 +1725,38 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
       ..._groups(items),
       if (hub.isNotEmpty) ...[
         HermesSectionHeader(s.cphHubResults),
-        HermesListGroup(children: [for (final item in hub) _row(item)]),
+        premium.HermesListSection(
+          margin: EdgeInsets.zero,
+          children: [for (final item in hub) _row(item)],
+        ),
       ],
+      // The hub is still answering: say so instead of "no results".
+      if (_hubSearching)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: HermesSpace.x4),
+          child: Row(
+            key: const ValueKey('spp-hub-searching'),
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const ConsoleLoader.small(),
+              const SizedBox(width: HermesSpace.x3),
+              Flexible(
+                child: Text(
+                  s.sppSearchingHub,
+                  style: HermesType.support.copyWith(
+                    color: Theme.of(context).hermes.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       // Sources still answering: never claim that nothing matches.
-      if (items.isEmpty && hub.isEmpty && !snapshot.complete)
+      if (items.isEmpty && hub.isEmpty && _hubSearching)
+        const SizedBox.shrink()
+      else if (items.isEmpty && hub.isEmpty && !snapshot.complete)
         const Padding(
-          padding: EdgeInsets.only(top: 64),
+          padding: EdgeInsets.only(top: HermesSpace.x8 + HermesSpace.x8),
           child: Center(
             child: ConsoleLoader.large(key: ValueKey('cph-loading-catalog')),
           ),
@@ -907,40 +1771,180 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
     ];
   }
 
-  List<Widget> _installed(CapabilitiesSnapshot snapshot) {
+  /// What the tab lists: the installed skills or plugins of its kind, or the
+  /// MCP servers the server has configured.
+  List<CapabilityItem> _tabItems(CapabilitiesSnapshot snapshot) =>
+      _tab == ExtensionsTab.mcp
+      ? snapshot.mcpServers
+      : snapshot.installed.where((item) => item.kind == _tab.kind).toList();
+
+  /// The body of a tab: «N installed · M active», the status filter and one
+  /// flat list, plus, under MCP, the connected accounts.
+  List<Widget> _tabBody(CapabilitiesSnapshot snapshot) {
     final s = Strings.of(context);
-    final items = filterCapabilities(snapshot.installed, _filter);
-    if (items.isEmpty && snapshot.installed.isEmpty && !snapshot.complete) {
-      // The installed list has not answered yet: never claim it is empty.
-      return const [
-        Padding(
-          padding: EdgeInsets.only(top: 64),
+    final all = _tabItems(snapshot);
+    final out = <Widget>[];
+    if (all.isEmpty && !snapshot.complete) {
+      // The list has not answered yet: never claim it is empty.
+      out.add(
+        const Padding(
+          padding: EdgeInsets.only(top: HermesSpace.x8 + HermesSpace.x8),
           child: Center(
             child: ConsoleLoader.large(key: ValueKey('cph-loading-installed')),
           ),
         ),
-      ];
+      );
+    } else if (all.isEmpty) {
+      out.add(
+        _tab == ExtensionsTab.mcp
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: HermesSpace.x1,
+                      top: HermesSpace.x3,
+                      bottom: HermesSpace.x2,
+                    ),
+                    child: Text(
+                      s.cphNoMcpServers,
+                      key: const ValueKey('cph-no-mcp'),
+                      style: HermesType.support.copyWith(
+                        color: Theme.of(context).hermes.textSecondary,
+                      ),
+                    ),
+                  ),
+                  if (!widget.readOnly &&
+                      _repo.supports(CapabilityFeature.mcpServers) != false)
+                    TextButton(
+                      key: const ValueKey('spp-add-mcp-empty'),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(
+                          HermesSpace.tap,
+                          HermesSpace.tap,
+                        ),
+                      ),
+                      onPressed: _busy ? null : _addMcp,
+                      child: Text(s.sppMenuAddMcp),
+                    ),
+                ],
+              )
+            : HermesEmptyStateView(
+                key: const ValueKey('cph-empty-installed'),
+                icon: Icons.inventory_2_outlined,
+                title: s.cphEmptyInstalled,
+                body: s.cphEmptyInstalledBody,
+              ),
+      );
+    } else {
+      final on = all.where((item) => item.enabled != false).length;
+      var items = filterCapabilities(all, _filter)
+          .where(
+            (item) => switch (_status) {
+              _StatusFilter.all => true,
+              _StatusFilter.active => item.enabled != false,
+              _StatusFilter.inactive => item.enabled == false,
+            },
+          )
+          .toList(growable: false);
+      if (_tab == ExtensionsTab.skills && _learned.isNotEmpty) {
+        // What was just learned leads the list, so a long list never hides it.
+        items = [
+          ...items.where((item) => _learned.contains(item.installedName)),
+          ...items.where((item) => !_learned.contains(item.installedName)),
+        ];
+      }
+      out
+        ..add(
+          Padding(
+            padding: const EdgeInsets.only(
+              left: HermesSpace.x1,
+              top: HermesSpace.x1,
+              bottom: HermesSpace.x2,
+            ),
+            child: Semantics(
+              liveRegion: true,
+              child: Text(
+                s.sppInstalledSummary(all.length, on),
+                key: const ValueKey('spp-installed-summary'),
+                style: HermesType.support.copyWith(
+                  color: Theme.of(context).hermes.textSecondary,
+                ),
+              ),
+            ),
+          ),
+        )
+        ..add(
+          HermesSegmentedControl<_StatusFilter>(
+            value: _status,
+            semanticLabel: s.sppStatusFilter,
+            onChanged: (value) => setState(() => _statuses[_tab] = value),
+            segments: [
+              HermesSegment(
+                key: const ValueKey('spp-status-all'),
+                value: _StatusFilter.all,
+                label: s.sppFilterAll,
+              ),
+              HermesSegment(
+                key: const ValueKey('spp-status-active'),
+                value: _StatusFilter.active,
+                label: s.sppFilterActive,
+              ),
+              HermesSegment(
+                key: const ValueKey('spp-status-inactive'),
+                value: _StatusFilter.inactive,
+                label: s.sppFilterInactive,
+              ),
+            ],
+          ),
+        )
+        ..add(const SizedBox(height: HermesSpace.x3));
+      if (items.isEmpty) {
+        out.add(
+          HermesEmptyStateView(
+            key: const ValueKey('cph-empty-installed'),
+            icon: Icons.search_off_rounded,
+            title: s.cphEmptyCatalog,
+            body: s.cphEmptyCatalogBody,
+          ),
+        );
+      } else {
+        final limit = _groupCap + (_shownRows[_tab.kind] ?? 0);
+        final visible = items.length <= limit
+            ? items
+            : items.take(limit).toList();
+        final hidden = items.length - visible.length;
+        out.add(
+          CapabilityPlainList(
+            children: [
+              for (final item in visible)
+                _tabRow(item, runtime: snapshot.mcpRuntime[item.name]),
+              if (hidden > 0)
+                premium.HermesListRow(
+                  key: ValueKey('cph-show-all-${_tab.kind.name}'),
+                  title: s.sppShowMore(
+                    hidden < _revealStep ? hidden : _revealStep,
+                  ),
+                  onTap: () => setState(
+                    () => _shownRows[_tab.kind] =
+                        (_shownRows[_tab.kind] ?? 0) + _revealStep,
+                  ),
+                ),
+            ],
+          ),
+        );
+      }
     }
-    if (items.isEmpty) {
-      final none = snapshot.installed.isEmpty;
-      return [
-        HermesEmptyStateView(
-          key: const ValueKey('cph-empty-installed'),
-          icon: none ? Icons.inventory_2_outlined : Icons.search_off_rounded,
-          title: none ? s.cphEmptyInstalled : s.cphEmptyCatalog,
-          body: none ? s.cphEmptyInstalledBody : s.cphEmptyCatalogBody,
-        ),
-      ];
+    if (_tab == ExtensionsTab.mcp && snapshot.complete) {
+      out.addAll(_accountsBlock(snapshot));
     }
-    return _groups(items);
+    return out;
   }
 
-  List<Widget> _connectorsSection(CapabilitiesSnapshot snapshot) {
+  /// The accounts of the hosted connectors, under the MCP servers: what used
+  /// to be a tab of its own.
+  List<Widget> _accountsBlock(CapabilitiesSnapshot snapshot) {
     final s = Strings.of(context);
-    final servers = filterCapabilities(
-      snapshot.mcpServers,
-      _filter.copyWith(clearKind: true, clearTrust: true),
-    );
     final hosted = snapshot.connectors;
     final q = _filter.query.trim().toLowerCase();
     final accounts = (hosted?.connectors ?? const <HostedConnector>[])
@@ -967,34 +1971,16 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
       };
     }
     return [
-      HermesSectionHeader(s.cphKindMcp),
-      if (servers.isEmpty)
-        Padding(
-          padding: const EdgeInsets.only(left: 6, bottom: 4),
-          child: Text(
-            s.cphNoMcpServers,
-            key: const ValueKey('cph-no-mcp'),
-            style: HermesType.support.copyWith(
-              color: Theme.of(context).hermes.textSecondary,
-            ),
-          ),
-        )
-      else
-        HermesListGroup(
-          children: [
-            for (final server in servers)
-              _mcpRow(server, snapshot.mcpRuntime[server.name]),
-          ],
-        ),
       HermesSectionHeader(s.cphConnectorsAccounts),
       if (accounts.isNotEmpty)
-        HermesListGroup(
+        premium.HermesListSection(
+          margin: EdgeInsets.zero,
           children: [
             // Rows open the policy detail only when the server answers
             // `connectors.policy.get`; connecting accounts is not wired in
             // Console yet, so otherwise they carry state without a tap.
             for (final connector in accounts)
-              HermesListRow(
+              premium.HermesListRow(
                 key: ValueKey('cph-account-${connector.slug}'),
                 icon: Icons.account_circle_outlined,
                 title: connector.name,
@@ -1004,17 +1990,14 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
                 subtitle: connector.statusReason.isNotEmpty
                     ? connector.statusReason
                     : connector.description,
-                trailing: Padding(
-                  padding: const EdgeInsets.only(left: 10),
-                  child: HermesStatusText(
-                    label: connector.connected
-                        ? s.cphConnected
-                        : s.cphNotConnected,
-                    tone: connector.connected
-                        ? HermesStatusTone.ok
-                        : HermesStatusTone.neutral,
-                    maxLines: 1,
-                  ),
+                trailing: HermesStatusText(
+                  label: connector.connected
+                      ? s.cphConnected
+                      : s.cphNotConnected,
+                  tone: connector.connected
+                      ? HermesStatusTone.ok
+                      : HermesStatusTone.neutral,
+                  maxLines: 1,
                 ),
               ),
           ],
@@ -1029,48 +2012,6 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
     ];
   }
 
-  Widget _mcpRow(CapabilityItem server, McpRuntimeRow? runtime) {
-    final s = Strings.of(context);
-    final target = server.url.isNotEmpty
-        ? server.url
-        : server.command.isNotEmpty
-        ? server.command
-        : null;
-    final live = runtime == null
-        ? null
-        : mcpRuntimeStatusLabel(s, runtime.status);
-    final tools = runtime == null || runtime.tools == 0
-        ? null
-        : s.cphMcpToolCount(runtime.tools);
-    final status =
-        live ??
-        (
-          label: server.enabled == false
-              ? s.cphStatusDisabled
-              : s.cphStatusEnabled,
-          tone: server.enabled == false
-              ? HermesStatusTone.neutral
-              : HermesStatusTone.ok,
-        );
-    return HermesListRow(
-      key: ValueKey('cph-row-${server.id}'),
-      icon: capabilityKindIcon(server.kind),
-      title: server.name,
-      subtitle: [?target, ?tools].isEmpty
-          ? null
-          : [?target, ?tools].join(' · '),
-      onTap: () => _openDetail(server),
-      trailing: Padding(
-        padding: const EdgeInsets.only(left: 10),
-        child: HermesStatusText(
-          label: status.label,
-          tone: status.tone,
-          maxLines: 1,
-        ),
-      ),
-    );
-  }
-
   String _errorBody(Strings s, Object error) =>
       switch (capabilityFailureKindOf(error)) {
         CapabilityFailureKind.forbidden => s.cphErrorForbidden,
@@ -1078,35 +2019,61 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         _ => s.cphErrorOffline,
       };
 
+  /// What the title says: the three tabs are «Extensions»; a hub page is
+  /// named after what it browses.
+  String _title(Strings s) {
+    if (!_isHub) return s.extensionsCenterTitle;
+    return switch (widget.initialKind) {
+      CapabilityKind.skill => s.exuHubSkillTitle,
+      CapabilityKind.plugin => s.pghHubTitle,
+      CapabilityKind.mcp => s.extensionsCenterMcpCatalogTitle,
+      null => s.cphTitle,
+    };
+  }
+
+  String _searchHint(Strings s) => _isHub
+      ? s.cphSearchHint
+      : switch (_tab) {
+          ExtensionsTab.skills => s.exuSearchSkills,
+          ExtensionsTab.plugins => s.exuSearchPlugins,
+          ExtensionsTab.mcp => s.exuSearchMcp,
+        };
+
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final snapshot = _snapshot;
     final filtersActive = _filter.kind != null || _filter.trust != null;
+    final addActions = _isHub
+        ? const <HermesAction<_AddAction>>[]
+        : _addActions();
 
     final header = <Widget>[
-      HermesSegmentedControl<CapabilitiesSegment>(
-        value: _segment,
-        onChanged: (value) => setState(() => _segment = value),
-        segments: [
-          HermesSegment(
-            key: const ValueKey('cph-seg-catalog'),
-            value: CapabilitiesSegment.catalog,
-            label: s.cphSegCatalog,
-          ),
-          HermesSegment(
-            key: const ValueKey('cph-seg-installed'),
-            value: CapabilitiesSegment.installed,
-            label: s.cphSegInstalled,
-          ),
-          HermesSegment(
-            key: const ValueKey('cph-seg-connectors'),
-            value: CapabilitiesSegment.connectors,
-            label: s.cphSegConnectors,
-          ),
-        ],
-      ),
-      const SizedBox(height: HermesSpace.x3),
+      if (!_isHub) ...[
+        HermesSegmentedControl<ExtensionsTab>(
+          value: _tab,
+          semanticLabel: s.exuTabsLabel,
+          onChanged: _selectTab,
+          segments: [
+            HermesSegment(
+              key: const ValueKey('exu-tab-skills'),
+              value: ExtensionsTab.skills,
+              label: s.cphKindSkills,
+            ),
+            HermesSegment(
+              key: const ValueKey('exu-tab-plugins'),
+              value: ExtensionsTab.plugins,
+              label: s.cphKindPlugins,
+            ),
+            HermesSegment(
+              key: const ValueKey('exu-tab-mcp'),
+              value: ExtensionsTab.mcp,
+              label: s.navMcp,
+            ),
+          ],
+        ),
+        const SizedBox(height: HermesSpace.x3),
+      ],
       Row(
         children: [
           Expanded(
@@ -1117,7 +2084,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
               textInputAction: TextInputAction.search,
               decoration: InputDecoration(
                 isDense: true,
-                hintText: s.cphSearchHint,
+                hintText: _searchHint(s),
                 prefixIcon: const Icon(Icons.search_rounded, size: 20),
                 filled: true,
                 fillColor: Theme.of(
@@ -1130,19 +2097,37 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
               ),
             ),
           ),
-          if (_segment != CapabilitiesSegment.connectors) ...[
+          if (_isHub) ...[
             const SizedBox(width: HermesSpace.x1),
             IconButton(
               key: _filterKey,
               tooltip: s.cphFilter,
               isSelected: filtersActive,
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              constraints: const BoxConstraints(
+                minWidth: HermesSpace.tap,
+                minHeight: HermesSpace.tap,
+              ),
               icon: Badge(
                 isLabelVisible: filtersActive,
                 smallSize: 7,
                 child: const Icon(Icons.tune_rounded),
               ),
               onPressed: _openFilter,
+            ),
+          ] else if (addActions.isNotEmpty) ...[
+            const SizedBox(width: HermesSpace.x1),
+            KeyedSubtree(
+              key: _addKey,
+              child: IconButton(
+                key: const ValueKey('exu-add'),
+                tooltip: s.exuAddTooltip,
+                constraints: const BoxConstraints(
+                  minWidth: HermesSpace.tap,
+                  minHeight: HermesSpace.tap,
+                ),
+                icon: const Icon(Icons.add_rounded),
+                onPressed: _busy ? null : _openAdd,
+              ),
             ),
           ],
         ],
@@ -1186,7 +2171,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
     if (_loading) {
       body = const [
         Padding(
-          padding: EdgeInsets.only(top: 64),
+          padding: EdgeInsets.only(top: HermesSpace.x8 + HermesSpace.x8),
           child: Center(
             child: ConsoleLoader.large(key: ValueKey('cph-loading')),
           ),
@@ -1203,46 +2188,56 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         Center(
           child: TextButton(
             key: const ValueKey('cph-retry'),
-            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(HermesSpace.tap, HermesSpace.tap),
+            ),
             onPressed: _load,
             child: Text(s.commonRetry),
           ),
         ),
       ];
     } else {
-      body = switch (_segment) {
-        CapabilitiesSegment.catalog => _catalog(snapshot),
-        CapabilitiesSegment.installed => _installed(snapshot),
-        CapabilitiesSegment.connectors when !snapshot.complete => const [
-          Padding(
-            padding: EdgeInsets.only(top: 64),
-            child: Center(
-              child: ConsoleLoader.large(key: ValueKey('cph-loading')),
-            ),
-          ),
-        ],
-        CapabilitiesSegment.connectors => _connectorsSection(snapshot),
-      };
+      body = _isHub ? _catalog(snapshot) : _tabBody(snapshot);
     }
 
-    final hasMenu =
-        widget.advancedBuilder != null ||
-        (!widget.readOnly && (snapshot?.skillsUpdatable ?? false));
+    // The ⋯ exists only when it would have something in it.
+    final hasMore =
+        !_isHub &&
+        (widget.toolsBuilder != null || widget.serverBuilder != null);
 
     return HermesPage(
       listKey: const ValueKey('cph-list'),
-      title: s.cphTitle,
+      controller: _scroll,
+      title: _title(s),
       onRefresh: snapshot == null ? null : _load,
       actions: [
-        if (hasMenu)
+        if (hasMore)
           IconButton(
             key: _moreKey,
             tooltip: s.cphMore,
             icon: const Icon(Icons.more_vert_rounded),
-            onPressed: _busy ? null : _openMenu,
+            onPressed: _openMore,
           ),
       ],
       children: [...header, ...body],
     );
   }
+}
+
+String _installFailureText(Strings s, Object error) {
+  if (error is DesktopControlFailure) {
+    return switch (error.kind) {
+      DesktopControlFailureKind.unsupported =>
+        s.extensionsCenterMutationFailureUnsupported,
+      DesktopControlFailureKind.forbidden =>
+        s.extensionsCenterMutationFailureForbidden,
+      DesktopControlFailureKind.invalidResponse =>
+        s.extensionsCenterMutationFailureInvalidResponse,
+      DesktopControlFailureKind.unavailable =>
+        s.extensionsCenterMutationFailureUnavailable,
+      DesktopControlFailureKind.rejected =>
+        s.extensionsCenterMutationFailureRejected,
+    };
+  }
+  return s.extensionsCenterMutationFailureUnknown;
 }

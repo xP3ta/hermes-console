@@ -83,11 +83,13 @@ String activeProfileDisplayLabel(
   return ProfileScopeLabel.display(strings, owner);
 }
 
-/// Name of [profile] as listed: its `display_name`, else its name.
+/// Name of [profile] as listed: the main profile by [AgentProfile.visibleName]
+/// (its title, else its display name, «Hermes» only when it has none), any
+/// other by its `display_name`, else its name.
 String profileDisplayLabel(Strings strings, AgentProfile profile) {
+  if (profile.isMainProfile) return profile.visibleName;
   final display = profile.displayName.trim();
-  if (display.isNotEmpty) return display;
-  return ProfileScopeLabel.display(strings, profile.name);
+  return display.isNotEmpty ? display : profile.name;
 }
 
 /// Names the profile a screen reads and edits, as a word inside the title

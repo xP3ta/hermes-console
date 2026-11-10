@@ -5,8 +5,12 @@ import 'bot_profile_settings_screen.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show LengthLimitingTextInputFormatter;
 import 'package:image_picker/image_picker.dart';
 
+import '../characters/bot_character.dart';
+import '../characters/bot_character_store.dart';
+import '../characters/character_face.dart';
 import '../models/agent_profile.dart';
 import '../models/bot_visual_identity.dart';
 import '../models/profile_identity.dart';
@@ -18,15 +22,20 @@ import '../services/profile_pet_visual_adapter.dart';
 import '../services/profile_image_normalizer.dart';
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
+import '../theme/lines.dart';
+import '../theme/theme_contrast.dart';
+import '../bots/ui/profile/bot_profile_screen.dart' show reasoningLabel;
 import '../bots/ui/profile/profile_model_picker.dart';
 import '../companion/data/petdex_remote_service.dart';
 import '../companion/models/companion_animation_state.dart';
 import '../companion/render/spritesheet_renderer.dart';
-import '../widgets/bot_settings_group.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_bot_face.dart';
 import '../widgets/bot_face_options.dart';
+import '../widgets/hermes_reasoning_pill.dart';
 import '../widgets/hermes_ui.dart';
+import 'characters/character_studio_screen.dart';
 import 'companion/petdex_gallery_screen.dart';
 import 'mission_control_copy.dart';
 import '../widgets/console_loader.dart';
@@ -35,8 +44,11 @@ import '../design/hermes_design.dart'
         HermesDialogAction,
         HermesDialogActionStyle,
         HermesFadedEnd,
+        HermesListGroup,
         HermesListRow,
-        showHermesDialog;
+        HermesSurfaceHeader,
+        showHermesDialog,
+        showHermesSurface;
 import '../feedback/feedback_policy.dart';
 
 typedef ProfileEditorImagePicker = Future<XFile?> Function();
@@ -45,10 +57,21 @@ typedef ProfileEditorImageNormalizer =
 
 enum _IdentityMode { pet, image, face }
 
+/// The tab of the identity sheet. [character] is a face drawn by the
+/// Studio: it is the `face` mode of the server identity plus a device-local
+/// character on top, so it has its own tab but no mode of its own.
+enum _IdentityPanel { pet, image, character, face }
+
 final class _ProfileEditorSaveFailure implements Exception {
   final bool uncertain;
 
-  const _ProfileEditorSaveFailure({required this.uncertain});
+  /// The description write is what the server refused.
+  final bool description;
+
+  const _ProfileEditorSaveFailure({
+    required this.uncertain,
+    this.description = false,
+  });
 }
 
 /// Editor de identidad de Bot Mode.
@@ -113,8 +136,32 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
   TuiGatewayClient? _ownedGateway;
 
   late final TextEditingController _titleCtrl;
+  late final TextEditingController _descCtrl;
   late final TextEditingController _searchCtrl;
   late final String _initialTitle;
+
+  /// The description the server has (what the field started with, or what
+  /// the last successful save wrote).
+  late String _savedDescription;
+
+  /// Bumped on every state change so the identity sheet, which lives in its
+  /// own route, repaints the live preview with the page.
+  final ValueNotifier<int> _tick = ValueNotifier<int>(0);
+
+  /// The character the Studio drew for this profile (device-local), as a
+  /// draft: [BotCharacterStore.shared] is only written on «Guardar».
+  BotCharacter? _character;
+  BotCharacter? _characterBaseline;
+  _IdentityPanel? _panelOverride;
+
+  /// The reasoning level of the profile (`agent.reasoning_effort`); applied
+  /// as soon as it is picked, like the model.
+  String? _reasoning;
+  bool _reasoningLoaded = false;
+  bool _reasoningBusy = false;
+
+  /// A server refusal, written in the save bar.
+  String? _error;
 
   late _IdentityMode _mode;
   late String _dormantColorHex;
@@ -172,7 +219,33 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
 
   bool get _identityDirty =>
       _identityTouched && _identitySignature != _baselineIdentitySignature;
-  bool get _dirty => _titleDirty || _identityDirty;
+  bool get _descriptionWritable => _gateway is BotProfileGateway;
+  bool get _descriptionDirty =>
+      _descriptionWritable && _descCtrl.text.trim() != _savedDescription;
+  bool get _characterDirty => _character != _characterBaseline;
+  bool get _dirty =>
+      _titleDirty || _identityDirty || _descriptionDirty || _characterDirty;
+
+  /// Whether the fields and the identity can be changed at all: not on a
+  /// read-only connection, not while saving.
+  bool get _canEdit => !widget.connection.readOnly && !_saving;
+
+  String get _connectionId => widget.connection.id;
+
+  _IdentityPanel get _panel =>
+      _panelOverride ??
+      switch (_mode) {
+        _IdentityMode.pet => _IdentityPanel.pet,
+        _IdentityMode.image => _IdentityPanel.image,
+        _IdentityMode.face =>
+          _character != null ? _IdentityPanel.character : _IdentityPanel.face,
+      };
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _tick.value++;
+  }
 
   Strings get _strings => Strings.of(context);
 
@@ -213,7 +286,15 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     _initialTitle = widget.profile.botTitle ?? '';
     _titleCtrl = TextEditingController(text: _initialTitle)
       ..addListener(_onTitleChanged);
+    _savedDescription = widget.profile.description.trim();
+    _descCtrl = TextEditingController(text: _savedDescription)
+      ..addListener(_onTitleChanged);
     _searchCtrl = TextEditingController();
+    _characterBaseline = BotCharacterStore.shared.characterFor(
+      _connectionId,
+      _profileName,
+    );
+    _character = _characterBaseline;
 
     final blobatar = BlobatarShapeWire.tryParse(widget.profile.botShape);
     _blobatar = blobatar ?? BlobatarShapeWire.parse('blobatar');
@@ -241,10 +322,16 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
 
     _avatarFuture = _loadAvatar();
     _galleryFuture = _loadGallery();
+    unawaited(_loadReasoning());
   }
 
   void _onTitleChanged() {
-    if (mounted) setState(() => _uncertain = false);
+    if (mounted) {
+      setState(() {
+        _uncertain = false;
+        _error = null;
+      });
+    }
   }
 
   @override
@@ -252,7 +339,11 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     _titleCtrl
       ..removeListener(_onTitleChanged)
       ..dispose();
+    _descCtrl
+      ..removeListener(_onTitleChanged)
+      ..dispose();
     _searchCtrl.dispose();
+    _tick.dispose();
     if (_ownedGateway != null) unawaited(_ownedGateway!.close());
     _ownedDashboard?.close();
     super.dispose();
@@ -370,6 +461,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     if (pet == null || !mounted) return;
     _changeIdentity(() {
       _mode = _IdentityMode.pet;
+      _panelOverride = _IdentityPanel.pet;
       _selectedSlug = pet.slug;
       _petdexPick = ProfilePetGalleryEntry(
         slug: pet.slug,
@@ -384,6 +476,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       mutation();
       _identityTouched = true;
       _uncertain = false;
+      _error = null;
     });
   }
 
@@ -392,7 +485,127 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       _selectedSlug =
           _baselinePetSlug ?? _resolvedGallery?.pets.firstOrNull?.slug;
     }
-    _changeIdentity(() => _mode = mode);
+    _changeIdentity(() {
+      _mode = mode;
+      // «Cara» is the other way round from «Personaje»: picking it asks for a
+      // plain face, so the character stops covering it.
+      if (mode == _IdentityMode.face) _character = null;
+      _panelOverride = switch (mode) {
+        _IdentityMode.pet => _IdentityPanel.pet,
+        _IdentityMode.image => _IdentityPanel.image,
+        _IdentityMode.face => _IdentityPanel.face,
+      };
+    });
+  }
+
+  /// The Studio, on a draft store seeded with this profile's character: what
+  /// is chosen there comes back as the draft and only reaches the saved
+  /// characters on «Guardar».
+  Future<void> _openStudio() async {
+    if (!_canEdit) return;
+    final store = BotCharacterStore.detached();
+    final current = _character;
+    if (current != null) {
+      await store.save(_connectionId, _profileName, current);
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => CharacterStudioScreen(
+          profileName: _profileName,
+          connectionId: _connectionId,
+          store: store,
+        ),
+      ),
+    );
+    final picked = store.characterFor(_connectionId, _profileName);
+    store.dispose();
+    if (!mounted) return;
+    // A character only shows over a face: a photo or a pet would hide it.
+    if (picked != _character ||
+        (picked != null && _mode != _IdentityMode.face)) {
+      _changeIdentity(() {
+        _character = picked;
+        if (picked != null) _mode = _IdentityMode.face;
+        _panelOverride = _IdentityPanel.character;
+      });
+    }
+  }
+
+  /// Back to the plain seeded face: no photo, no pet, no character, no colour.
+  void _resetIdentity() => _changeIdentity(() {
+    _mode = _IdentityMode.face;
+    _character = null;
+    _classic = null;
+    _blobatar = BlobatarShapeWire.parse('blobatar');
+    _useShapeColor = false;
+    _panelOverride = _IdentityPanel.face;
+  });
+
+  bool get _isDefaultIdentity =>
+      _mode == _IdentityMode.face &&
+      _character == null &&
+      _classic == null &&
+      !_useShapeColor &&
+      _blobatar.wire == BlobatarShapeWire.parse('blobatar').wire;
+
+  Future<void> _loadReasoning() async {
+    final gateway = _gateway;
+    if (gateway is! BotModelGateway) return;
+    try {
+      final value = await (gateway as BotModelGateway).botReasoning(
+        _profileName,
+      );
+      if (!mounted) return;
+      setState(() {
+        _reasoning = value;
+        _reasoningLoaded = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _reasoningLoaded = true);
+    }
+  }
+
+  /// Unknown counts as supported: only a catalog that says «no reasoning»
+  /// for the profile's model hides the row.
+  bool get _reasoningSupported {
+    final catalogs = widget.modelCatalogs ?? ProfileModelCatalogs.shared;
+    final option = catalogs
+        .peek(_connectionId, _profileName)
+        ?.optionFor(widget.profile.provider, widget.profile.model);
+    return option?.capabilities.reasoning != false;
+  }
+
+  Future<void> _pickReasoning() async {
+    final gateway = _gateway;
+    if (gateway is! BotModelGateway || !_canEdit || _reasoningBusy) return;
+    final s = _strings;
+    final picked = await showHermesReasoningPicker(
+      context: context,
+      surfaceKey: const ValueKey('profile-editor-reasoning-picker'),
+      title: s.pexReasoning,
+      selected: _reasoning,
+      defaultLabel: s.botProfileReasoningDefault,
+      levels: [
+        for (final effort in BotProfileClient.reasoningEfforts)
+          HermesReasoningLevel(effort, reasoningLabel(s, effort)),
+      ],
+    );
+    if (picked == null || !mounted || picked == _reasoning) return;
+    setState(() {
+      _reasoningBusy = true;
+      _error = null;
+    });
+    try {
+      await (gateway as BotModelGateway).setBotReasoning(_profileName, picked);
+      if (!mounted) return;
+      setState(() => _reasoning = picked);
+      widget.onChanged?.call();
+    } catch (_) {
+      if (mounted) setState(() => _error = s.pexReasoningFailed);
+    } finally {
+      if (mounted) setState(() => _reasoningBusy = false);
+    }
   }
 
   Future<void> _pickImage() async {
@@ -414,6 +627,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
         _pickedAvatar = avatar;
         _pickedAvatarDataUri = dataUri;
         _mode = _IdentityMode.image;
+        _panelOverride = _IdentityPanel.image;
         _identityTouched = true;
         _uncertain = false;
       });
@@ -444,9 +658,26 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     setState(() {
       _saving = true;
       _uncertain = false;
+      _error = null;
     });
 
     try {
+      // The description goes first: it is one plain write, so when it fails
+      // nothing else has changed yet.
+      if (_descriptionDirty) {
+        final text = _descCtrl.text.trim();
+        final result = await (_gateway as BotProfileGateway)
+            .configureBotProfile(_profileName, {'description': text});
+        final applied = result['applied'];
+        if (applied is! Map || applied['description'] != true) {
+          throw const _ProfileEditorSaveFailure(
+            uncertain: false,
+            description: true,
+          );
+        }
+        _savedDescription = text;
+        widget.onChanged?.call();
+      }
       final newTitle = _titleCtrl.text.trim();
       final title = _titleDirty ? newTitle : null;
       BotVisualIdentity? identity;
@@ -499,19 +730,35 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       if (identity == null && title != null) {
         await _gateway.saveProfileBotMeta(profile: _profileName, title: title);
       }
+      // The character lives on this device: it is written once the server
+      // has taken the rest, so a refusal never leaves it half applied.
+      if (_characterDirty) {
+        await BotCharacterStore.shared.save(
+          _connectionId,
+          _profileName,
+          _character ?? BotCharacter.standard,
+        );
+      }
       if (!mounted) return;
       messenger.notify(FeedbackKind.routine, copy.botEditorSaved);
       _allowPop = true;
       Navigator.of(context).pop(true);
     } catch (error) {
       if (!mounted) return;
+      final uncertain = switch (error) {
+        final _ProfileEditorSaveFailure failure => failure.uncertain,
+        FormatException() || ArgumentError() => false,
+        _ => true,
+      };
       setState(() {
         _saving = false;
-        _uncertain = switch (error) {
-          final _ProfileEditorSaveFailure failure => failure.uncertain,
-          FormatException() || ArgumentError() => false,
-          _ => true,
-        };
+        _uncertain = uncertain;
+        // The «uncertain» line already says it; a refusal is written once.
+        _error = uncertain
+            ? null
+            : error is _ProfileEditorSaveFailure && error.description
+            ? _strings.pexDescriptionFailed
+            : _strings.pexSaveFailed;
       });
       messenger.notify(FeedbackKind.error, copy.botEditorSaveFailed);
     }
@@ -558,63 +805,66 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     }
   }
 
+  Future<void> _openIdentitySheet() async {
+    if (!_canEdit) return;
+    await showHermesSurface<void>(
+      context: context,
+      surfaceKey: const ValueKey('profile-editor-identity-sheet'),
+      maxHeightFactor: 0.92,
+      builder: (sheet) => ValueListenableBuilder<int>(
+        valueListenable: _tick,
+        builder: (context, tick, child) => _identitySheet(sheet),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final copy = MissionControlCopy.of(context);
+    final s = _strings;
+    final model = _gateway;
     return PopScope(
       canPop: _allowPop || (!_dirty && !_saving),
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) unawaited(_confirmDiscard());
       },
       child: Scaffold(
-        appBar: HermesAppBar(
-          title: Text(copy.editBotTitle),
-          actions: [
-            if (_dirty)
-              Padding(
-                padding: const EdgeInsets.only(right: 16),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colors.warning.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    _strings.i18n131ProfileUnsaved,
-                    style: TextStyle(
-                      color: colors.warning,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+        appBar: HermesAppBar(title: Text(copy.editBotTitle)),
         body: Column(
           children: [
             Expanded(
               child: HermesFadedEnd(
                 child: ListView(
                   key: const ValueKey('profile-editor-scroll'),
-                  clipBehavior: hermesUnderHeader,
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 44),
+                  // Hard edge: what scrolls up stops at the header instead of
+                  // passing under its title, where the avatar used to show
+                  // cut in half.
+                  clipBehavior: Clip.hardEdge,
+                  padding: const EdgeInsets.fromLTRB(
+                    HermesSpace.x5,
+                    HermesSpace.x2,
+                    HermesSpace.x5,
+                    HermesSpace.x6,
+                  ),
                   children: [
-                    Center(child: _buildPreview()),
-                    const SizedBox(height: 18),
+                    _buildAvatarHero(colors),
+                    const SizedBox(height: HermesSpace.x4),
                     HermesField(
                       label: copy.botDisplayName,
                       controller: _titleCtrl,
                       hint: copy.botDisplayNameHint,
+                      enabled: _canEdit,
                     ),
                     Padding(
-                      padding: const EdgeInsets.only(left: 4, top: 4),
+                      padding: const EdgeInsets.only(
+                        left: HermesSpace.x1,
+                        top: HermesSpace.x1,
+                      ),
                       child: Text(
-                        _strings.i18n131ProfileTheProfilenameIdentifierDoesNotChange(_profileName),
+                        s.i18n131ProfileTheProfilenameIdentifierDoesNotChange(
+                          _profileName,
+                        ),
                         style: TextStyle(
                           color: colors.textTertiary,
                           fontSize: 12,
@@ -622,56 +872,32 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 22),
-                    Text(
-                      _strings.i18n131ProfileCustomize,
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14.5,
-                      ),
+                    const SizedBox(height: HermesSpace.x4),
+                    HermesField(
+                      label: s.pexDescription,
+                      controller: _descCtrl,
+                      hint: s.pexDescriptionHint,
+                      fieldKey: const ValueKey('profile-editor-description'),
+                      enabled: _canEdit && _descriptionWritable,
+                      minLines: 2,
+                      maxLines: 4,
+                      keyboardType: TextInputType.multiline,
+                      inputFormatters: [LengthLimitingTextInputFormatter(2048)],
                     ),
-                    const SizedBox(height: 10),
-                    BotSettingsGroup(
+                    const SizedBox(height: HermesSpace.x4),
+                    HermesListGroup(
                       children: [
-                        BotSettingsRow(
-                          rowKey: const ValueKey('profile-editor-identity-row'),
-                          initiallyExpanded: false,
-                          label: _strings.i18n131ProfileVisualIdentity,
-                          summary: switch (_mode) {
-                            _IdentityMode.pet => _strings.i18n131ProfilePet,
-                            _IdentityMode.image => _strings.i18n131ProfileImage,
-                            _IdentityMode.face => _strings.i18n131ProfileFace,
-                          },
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _identitySelector(colors),
-                              const SizedBox(height: 8),
-                              switch (_mode) {
-                                _IdentityMode.pet => _buildPetSection(
-                                  copy,
-                                  colors,
-                                ),
-                                _IdentityMode.image => _buildImageSection(
-                                  colors,
-                                ),
-                                _IdentityMode.face => _buildFaceSection(colors),
-                              },
-                            ],
-                          ),
-                        ),
                         // El modelo se elige de lo que el perfil puede usar.
                         ProfileModelPicker(
                           profile: _profileName,
                           scope: widget.connection.id,
                           provider: widget.profile.provider,
                           model: widget.profile.model,
-                          catalogGateway: _gateway is BotModelGateway
-                              ? _gateway as BotModelGateway
+                          catalogGateway: model is BotModelGateway
+                              ? model as BotModelGateway
                               : null,
-                          writer: _gateway is BotProfileGateway
-                              ? _gateway as BotProfileGateway
+                          writer: model is BotProfileGateway
+                              ? model as BotProfileGateway
                               : null,
                           readOnly: widget.connection.readOnly,
                           keyPrefix: 'profile-editor-model',
@@ -681,27 +907,36 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                             key: const ValueKey('profile-editor-model-row'),
                             label: copy.modelLabel,
                             value: row.model.trim().isEmpty
-                                ? _strings.i18n131ProfileAutomatic
+                                ? s.i18n131ProfileAutomatic
                                 : row.model,
                             onTap: row.onTap,
                             busy: row.busy,
                           ),
                         ),
-                        _infoRow(label: _strings.i18n131ProfileDescription,
-                          value: widget.profile.description.trim().isEmpty
-                              ? _strings.i18n131ProfileNoDescription
-                              : widget.profile.description,
-                        ),
+                        if (model is BotModelGateway && _reasoningSupported)
+                          _navRow(
+                            key: const ValueKey('profile-editor-reasoning-row'),
+                            label: s.pexReasoning,
+                            value: !_reasoningLoaded
+                                ? '…'
+                                : _reasoning == null
+                                ? s.botProfileReasoningDefault
+                                : reasoningLabel(s, _reasoning!),
+                            onTap: _canEdit && _reasoningLoaded
+                                ? _pickReasoning
+                                : null,
+                            busy: _reasoningBusy,
+                          ),
                         _navRow(
                           key: const ValueKey('profile-editor-skills-row'),
                           label: copy.skills,
-                          value: _strings.i18n131ProfileViewSkills,
+                          value: s.i18n131ProfileViewSkills,
                           onTap: widget.onOpenSkills,
                         ),
-                        if (_gateway is BotProfileGateway)
+                        if (model is BotProfileGateway)
                           _navRow(
                             key: const ValueKey('profile-editor-advanced-row'),
-                            label: Strings.of(context).botAdvanced,
+                            label: s.botAdvanced,
                             value: '',
                             onTap: _saving
                                 ? null
@@ -709,7 +944,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                                     MaterialPageRoute(
                                       builder: (_) => BotProfileSettingsScreen(
                                         profile: _profileName,
-                                        gateway: _gateway as BotProfileGateway,
+                                        gateway: model as BotProfileGateway,
                                       ),
                                     ),
                                   ),
@@ -727,16 +962,9 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     );
   }
 
-  /// Fila de solo lectura dentro de "Personalizar": muestra un dato del bot
-  /// que no se edita en esta pantalla (la descripción), sin fingir un control
-  /// interactivo que no lleva a ningún sitio.
-  Widget _infoRow({required String label, required String value}) =>
-      HermesListRow(title: label, value: value);
-
-  /// Fila de navegación dentro de "Personalizar" hacia una pantalla ya
-  /// existente (p. ej. Skills): la misma fila que el resto de la app. Sin
-  /// `onTap` se degrada a informativa: nunca muestra una flecha que no lleve
-  /// a ningún sitio.
+  /// Fila de navegación hacia una pantalla ya existente (p. ej. Skills): la
+  /// misma fila que el resto de la app. Sin `onTap` se degrada a
+  /// informativa: nunca muestra una flecha que no lleve a ningún sitio.
   Widget _navRow({
     required Key key,
     required String label,
@@ -751,31 +979,166 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     trailing: busy ? const ConsoleLoader.small() : null,
   );
 
+  /// The big avatar at the top, the same faces the Bots list paints, and the
+  /// one way into the identity sheet: the avatar itself or «Cambiar».
+  Widget _buildAvatarHero(HermesThemeColors colors) {
+    final open = _canEdit ? _openIdentitySheet : null;
+    return Column(
+      children: [
+        Semantics(
+          button: true,
+          enabled: open != null,
+          label: _strings.pexAvatarLabel(
+            widget.profile.botTitle ?? _profileName,
+          ),
+          excludeSemantics: true,
+          onTap: open,
+          child: InkResponse(
+            key: const ValueKey('profile-editor-avatar'),
+            onTap: open,
+            radius: 84,
+            child: SizedBox(
+              width: 156,
+              height: 156,
+              child: Center(child: _buildPreview()),
+            ),
+          ),
+        ),
+        TextButton(
+          key: const ValueKey('profile-editor-change'),
+          style: TextButton.styleFrom(minimumSize: const Size(96, 48)),
+          onPressed: open,
+          child: Text(_strings.pexChange),
+        ),
+      ],
+    );
+  }
+
+  /// Everything about the profile's look, in one place: the live preview, the
+  /// four kinds of identity as tabs and, under them, the options of the one
+  /// chosen. Every change shows at once, on the sheet and on the page behind.
+  Widget _identitySheet(BuildContext sheet) {
+    final colors = Theme.of(sheet).hermes;
+    final s = _strings;
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          HermesSurfaceHeader(title: s.i18n131ProfileVisualIdentity),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              HermesSpace.x4,
+              HermesSpace.x1,
+              HermesSpace.x4,
+              HermesSpace.x4,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: SizedBox(
+                    key: const ValueKey('profile-editor-sheet-preview'),
+                    width: 112,
+                    height: 112,
+                    child: Center(
+                      child: _identityVisual(size: 96, still: true),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: HermesSpace.x3),
+                _identitySelector(colors),
+                const SizedBox(height: HermesSpace.x3),
+                switch (_panel) {
+                  _IdentityPanel.pet => _buildPetSection(
+                    MissionControlCopy.of(context),
+                    colors,
+                  ),
+                  _IdentityPanel.image => _buildImageSection(colors),
+                  _IdentityPanel.character => _buildCharacterSection(colors),
+                  _IdentityPanel.face => _buildFaceSection(colors),
+                },
+                const SizedBox(height: HermesSpace.x4),
+                HermesPrimaryButton(
+                  key: const ValueKey('profile-editor-sheet-done'),
+                  label: s.pexDone,
+                  onTap: () => Navigator.of(sheet).pop(),
+                ),
+                const SizedBox(height: HermesSpace.x1),
+                Center(
+                  child: TextButton(
+                    key: const ValueKey('profile-editor-reset'),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(96, 48),
+                    ),
+                    onPressed: _isDefaultIdentity || !_canEdit
+                        ? null
+                        : _resetIdentity,
+                    child: Text(s.pexReset),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCharacterSection(HermesThemeColors colors) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        _strings.pexCharacterNote,
+        style: TextStyle(
+          color: colors.textSecondary,
+          fontSize: HermesType.supportSize,
+        ),
+      ),
+      const SizedBox(height: HermesSpace.x3),
+      OutlinedButton(
+        key: const ValueKey('profile-editor-open-studio'),
+        style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+        onPressed: _canEdit ? _openStudio : null,
+        child: Text(_strings.pexCharacterOpen),
+      ),
+    ],
+  );
+
   Widget _identitySelector(HermesThemeColors colors) => Wrap(
     spacing: 8,
     runSpacing: 8,
     children: [
       _modeTile(
-        key: const ValueKey('profile-editor-mode-pet'),
-        label: _strings.i18n131ProfilePet,
-        icon: Icons.pets_outlined,
-        selected: _mode == _IdentityMode.pet,
-        onTap: () => _selectMode(_IdentityMode.pet),
+        key: const ValueKey('profile-editor-mode-image'),
+        label: _strings.pexPhoto,
+        selected: _panel == _IdentityPanel.image,
+        onTap: () => _selectMode(_IdentityMode.image),
         colors: colors,
       ),
       _modeTile(
-        key: const ValueKey('profile-editor-mode-image'),
-        label: _strings.i18n131ProfileImage,
-        icon: Icons.image_outlined,
-        selected: _mode == _IdentityMode.image,
-        onTap: () => _selectMode(_IdentityMode.image),
+        key: const ValueKey('profile-editor-mode-character'),
+        label: _strings.pexCharacter,
+        selected: _panel == _IdentityPanel.character,
+        // The Studio opens at once: choosing «Personaje» is choosing one.
+        onTap: () {
+          setState(() => _panelOverride = _IdentityPanel.character);
+          unawaited(_openStudio());
+        },
+        colors: colors,
+      ),
+      _modeTile(
+        key: const ValueKey('profile-editor-mode-pet'),
+        label: _strings.i18n131ProfilePet,
+        selected: _panel == _IdentityPanel.pet,
+        onTap: () => _selectMode(_IdentityMode.pet),
         colors: colors,
       ),
       _modeTile(
         key: const ValueKey('profile-editor-mode-face'),
         label: _strings.i18n131ProfileFace,
-        icon: Icons.face_outlined,
-        selected: _mode == _IdentityMode.face,
+        selected: _panel == _IdentityPanel.face,
         onTap: () => _selectMode(_IdentityMode.face),
         colors: colors,
       ),
@@ -785,25 +1148,26 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
   Widget _modeTile({
     required Key key,
     required String label,
-    required IconData icon,
     required bool selected,
     required VoidCallback onTap,
     required HermesThemeColors colors,
   }) => Semantics(
     selected: selected,
     button: true,
+    enabled: _canEdit,
     child: InkWell(
       key: key,
-      borderRadius: BorderRadius.circular(999),
-      onTap: onTap,
+      borderRadius: BorderRadius.circular(HermesRadius.tag),
+      onTap: _canEdit ? onTap : null,
       child: Container(
-        constraints: const BoxConstraints(minHeight: 40, minWidth: 86),
+        constraints: const BoxConstraints(minHeight: 48, minWidth: 86),
+        alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: selected
               ? colors.accent.withValues(alpha: 0.16)
               : colors.surfaceVariant.withValues(alpha: 0.9),
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(HermesRadius.tag),
           border: Border.all(
             color: selected
                 ? colors.accent.withValues(alpha: 0.38)
@@ -811,69 +1175,96 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
             width: 1,
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 19,
-              color: selected ? colors.accent : colors.textSecondary,
-            ),
-            const SizedBox(width: 7),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? colors.textPrimary : colors.textSecondary,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                fontSize: 13,
-              ),
-            ),
-          ],
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? colors.textPrimary : colors.textSecondary,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            fontSize: HermesType.valueSize,
+          ),
         ),
       ),
     ),
   );
 
+  /// The profile's identity as it stands in this draft. The same faces the
+  /// Bots list paints: a pet, the photo, a Studio character over the face, or
+  /// the face itself. [still] paints it without motion (the sheet's copy).
+  Widget _identityVisual({required double size, bool still = false}) =>
+      switch (_mode) {
+        _IdentityMode.pet => _petPreview(size, still: still),
+        _IdentityMode.image => _imagePreview(size),
+        _IdentityMode.face =>
+          _character != null
+              ? CharacterFace(
+                  profileName: _profileName,
+                  character: _character!,
+                  size: size,
+                  animate: !still,
+                  semanticLabel: _strings.i18n131ProfileProfileFace,
+                )
+              : _facePreview(size: size, animate: !still),
+      };
+
   Widget _buildPreview() {
-    final accent = Theme.of(context).hermes.accent;
+    final colors = Theme.of(context).hermes;
+    final accent = colors.accent;
+    final withBackdrop = _mode != _IdentityMode.face || _character != null;
+    // The frame is always drawn, a contour on the page: the place to tap
+    // stays visible while an avatar loads or when a face paints nothing
+    // (on the device «Cambiar» floated over an empty space).
+    final frame = HermesLines.of(colors).contourOn(
+      withBackdrop
+          ? ThemeContrast.composite(
+              colors.surfaceVariant.withValues(alpha: 0.28),
+              colors.background,
+            )
+          : colors.background,
+    );
     return Container(
       key: const ValueKey('profile-editor-preview'),
-      width: 120,
-      height: 120,
+      width: 140,
+      height: 140,
       alignment: Alignment.center,
-      decoration: _mode == _IdentityMode.face
-          ? null
-          : BoxDecoration(
-              color: Theme.of(
-                context,
-              ).hermes.surfaceVariant.withValues(alpha: 0.28),
-              borderRadius: BorderRadius.circular(28),
-              boxShadow: [
+      decoration: BoxDecoration(
+        color: withBackdrop
+            ? colors.surfaceVariant.withValues(alpha: 0.28)
+            : null,
+        borderRadius: BorderRadius.circular(HermesRadius.pane),
+        border: Border.all(color: frame),
+        boxShadow: !withBackdrop
+            ? null
+            : [
                 BoxShadow(
                   color: accent.withValues(alpha: 0.28),
                   blurRadius: 18,
                   spreadRadius: -2,
                 ),
               ],
-            ),
-      child: switch (_mode) {
-        _IdentityMode.pet => _petPreview(),
-        _IdentityMode.image => _imagePreview(),
-        _IdentityMode.face => _facePreview(size: 96),
-      },
+      ),
+      child: _identityVisual(size: 120),
     );
   }
 
-  Widget _petPreview() {
+  Widget _petPreview(double size, {bool still = false}) {
     final slug = _selectedSlug;
     if (slug == null) {
       return Icon(
         Icons.pets_outlined,
-        size: 42,
+        size: size * 0.45,
         color: Theme.of(context).hermes.textDisabled,
       );
     }
     final entry = _galleryEntry(slug);
+    // The sheet's copy is a still thumbnail: the page behind already runs the
+    // pet's animation, and two sprite tickers would only cost.
+    if (still) {
+      return _petThumbPreview(
+        entry,
+        size,
+        key: const ValueKey('profile-editor-sheet-pet-preview'),
+      );
+    }
     final activeVisual = slug == _baselinePetSlug
         ? _activePetVisualFuture
         : null;
@@ -887,17 +1278,21 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
               key: const ValueKey('profile-editor-pet-animated-preview'),
               companion: visual.companion,
               state: CompanionAnimationState.idle,
-              size: 96,
+              size: size,
             );
           }
-          return _petThumbPreview(entry);
+          return _petThumbPreview(entry, size);
         },
       );
     }
-    return _petThumbPreview(entry);
+    return _petThumbPreview(entry, size);
   }
 
-  Widget _petThumbPreview(ProfilePetGalleryEntry entry) {
+  Widget _petThumbPreview(
+    ProfilePetGalleryEntry entry,
+    double size, {
+    Key key = const ValueKey('profile-editor-pet-static-preview'),
+  }) {
     return FutureBuilder<String?>(
       future: _thumbFuture(entry),
       builder: (context, snapshot) {
@@ -910,12 +1305,12 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
           );
         }
         return ClipRRect(
-          key: const ValueKey('profile-editor-pet-static-preview'),
-          borderRadius: BorderRadius.circular(22),
+          key: key,
+          borderRadius: BorderRadius.circular(HermesRadius.card),
           child: Image.memory(
             avatar.bytes,
-            width: 96,
-            height: 96,
+            width: size,
+            height: size,
             cacheWidth: 288,
             fit: BoxFit.contain,
             gaplessPlayback: true,
@@ -925,14 +1320,14 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     );
   }
 
-  Widget _imagePreview() {
+  Widget _imagePreview(double size) {
     final picked = _pickedAvatar;
-    if (picked != null) return _avatarImage(picked);
+    if (picked != null) return _avatarImage(picked, size);
     return FutureBuilder<AgentProfileAvatar?>(
       future: _avatarFuture,
       builder: (context, snapshot) {
         final avatar = snapshot.data;
-        if (avatar != null) return _avatarImage(avatar);
+        if (avatar != null) return _avatarImage(avatar, size);
         return Icon(
           Icons.add_photo_alternate_outlined,
           size: 42,
@@ -942,19 +1337,19 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     );
   }
 
-  Widget _avatarImage(AgentProfileAvatar avatar) => ClipRRect(
-    borderRadius: BorderRadius.circular(22),
+  Widget _avatarImage(AgentProfileAvatar avatar, double size) => ClipRRect(
+    borderRadius: BorderRadius.circular(HermesRadius.card),
     child: Image.memory(
       avatar.bytes,
-      width: 96,
-      height: 96,
+      width: size,
+      height: size,
       cacheWidth: 288,
       fit: BoxFit.cover,
       gaplessPlayback: true,
     ),
   );
 
-  Widget _facePreview({required double size}) {
+  Widget _facePreview({required double size, bool animate = true}) {
     final visual = _classic != null
         ? HermesClassicFaceVisual.tryParse(
             shape: _classic!.shape,
@@ -969,7 +1364,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       visual: visual,
       size: size,
       semanticLabel: _strings.i18n131ProfileProfileFace,
-      animate: true,
+      animate: animate,
     );
   }
 
@@ -978,7 +1373,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     children: [
       Text(
         _strings.i18n131ProfilePngJpegWebpOrGifCenterCropped,
-        style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+        style: TextStyle(
+          color: colors.textSecondary,
+          fontSize: HermesType.supportSize,
+        ),
       ),
       const SizedBox(height: 12),
       OutlinedButton.icon(
@@ -1002,16 +1400,21 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     colorHex: _useShapeColor ? _dormantColorHex : null,
     fallbackColorHex: _dormantColorHex,
     enabled: !_saving,
+    // A shape or a colour is a request for a plain face: the character that
+    // would cover it goes (it comes back with «Personaje»).
     onBlob: (value) => _changeIdentity(() {
+      _character = null;
       _classic = null;
       _blobatar = value;
     }),
     onClassic: (value) => _changeIdentity(() {
+      _character = null;
       _classic = value;
       _dormantColorHex = value.colorHex;
       _useShapeColor = true;
     }),
     onColor: (color) => _changeIdentity(() {
+      _character = null;
       _dormantColorHex = color;
       _useShapeColor = true;
       if (_classic != null) {
@@ -1027,7 +1430,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
+              padding: EdgeInsets.symmetric(vertical: HermesSpace.x6),
               child: Center(child: ConsoleLoader.medium(showLabel: true)),
             );
           }
@@ -1035,7 +1438,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
           if (gallery == null && !_galleryFailed) {
             return Text(
               copy.botSpriteUnsupported,
-              style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: HermesType.supportSize,
+              ),
             );
           }
           final listed = gallery?.pets ?? const <ProfilePetGalleryEntry>[];
@@ -1058,7 +1464,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
             children: [
               Text(
                 copy.botSpriteHint,
-                style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: HermesType.supportSize,
+                ),
               ),
               if (_petPhotoConflict) _buildConflictCard(colors),
               const SizedBox(height: 10),
@@ -1086,7 +1495,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
               ],
               if (visible.isEmpty && listed.isNotEmpty)
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: HermesSpace.x4),
                   child: Text(
                     copy.botSpriteEmpty,
                     textAlign: TextAlign.center,
@@ -1115,11 +1524,16 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                   },
                 ),
               const SizedBox(height: 12),
-              OutlinedButton.icon(
+              OutlinedButton(
                 key: const ValueKey('profile-editor-petdex'),
-                onPressed: _saving ? null : _pickFromPetdex,
-                icon: const Icon(Icons.travel_explore_outlined),
-                label: Text(Strings.of(context).petdexGalleryTitle),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                ),
+                onPressed: _canEdit ? _pickFromPetdex : null,
+                child: Text(
+                  Strings.of(context).petdexGalleryTitle,
+                  textAlign: TextAlign.center,
+                ),
               ),
             ],
           );
@@ -1127,16 +1541,19 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       );
 
   /// La lista del perfil no está: lo dice en una línea, con el reintento.
-  Widget _buildPetListNotice(String line, HermesThemeColors colors) => Row(
+  Widget _buildPetListNotice(String line, HermesThemeColors colors) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Expanded(
-        child: Text(
-          line,
-          style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+      Text(
+        line,
+        style: TextStyle(
+          color: colors.textSecondary,
+          fontSize: HermesType.supportSize,
         ),
       ),
       TextButton(
         key: const ValueKey('profile-editor-pets-retry'),
+        style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
         onPressed: _retryGallery,
         child: Text(Strings.of(context).commonRetry),
       ),
@@ -1145,11 +1562,11 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
 
   Widget _buildConflictCard(HermesThemeColors colors) => Container(
     key: const ValueKey('profile-editor-pet-image-conflict'),
-    margin: const EdgeInsets.only(top: 12),
-    padding: const EdgeInsets.all(12),
+    margin: const EdgeInsets.only(top: HermesSpace.x3),
+    padding: const EdgeInsets.all(HermesSpace.x3),
     decoration: BoxDecoration(
       color: colors.warning.withValues(alpha: 0.1),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(HermesRadius.control),
       border: Border.all(color: colors.warning.withValues(alpha: 0.5)),
     ),
     child: Column(
@@ -1157,14 +1574,20 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       children: [
         Text(
           _strings.i18n131ProfileASavedImageAlsoExistsThePet,
-          style: TextStyle(color: colors.textPrimary, fontSize: 12.5),
+          style: TextStyle(
+            color: colors.textPrimary,
+            fontSize: HermesType.supportSize,
+          ),
         ),
         const SizedBox(height: 4),
         TextButton(
           key: const ValueKey('profile-editor-use-image'),
           onPressed: _remoteAvatar == null
               ? null
-              : () => _changeIdentity(() => _mode = _IdentityMode.image),
+              : () => _changeIdentity(() {
+                  _mode = _IdentityMode.image;
+                  _panelOverride = _IdentityPanel.image;
+                }),
           child: Text(_strings.i18n131ProfileUseImage),
         ),
       ],
@@ -1179,9 +1602,10 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       label: pet.displayName,
       child: InkWell(
         key: ValueKey('profile-editor-sprite-${pet.slug}'),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(HermesRadius.control),
         onTap: () => _changeIdentity(() {
           _mode = _IdentityMode.pet;
+          _panelOverride = _IdentityPanel.pet;
           _selectedSlug = pet.slug;
         }),
         child: Column(
@@ -1192,7 +1616,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
               height: 56,
               padding: const EdgeInsets.all(3),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(HermesRadius.control),
                 border: Border.all(
                   color: selected ? colors.accent : colors.divider,
                   width: selected ? 1.8 : 1,
@@ -1248,7 +1672,12 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
         child: SafeArea(
           top: false,
           child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 9, 20, 12),
+            padding: const EdgeInsets.fromLTRB(
+              HermesSpace.x5,
+              9,
+              HermesSpace.x5,
+              HermesSpace.x3,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1274,18 +1703,31 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                         : _dirty
                         ? colors.accent
                         : colors.textSecondary,
-                    fontSize: 11.5,
+                    fontSize: HermesType.captionSize,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: HermesSpace.x1),
+                    child: Text(
+                      _error!,
+                      key: const ValueKey('profile-editor-error'),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.error,
+                        fontSize: HermesType.captionSize,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 7),
                 HermesPrimaryButton(
                   key: const ValueKey('profile-editor-save'),
-                  label: _saving
-                      ? _strings.i18n131ProfileSaving
-                      : copy.save,
+                  label: _saving ? _strings.i18n131ProfileSaving : copy.save,
                   icon: _saving ? Icons.sync : Icons.check,
-                  onTap: _saving || !_dirty ? null : _save,
+                  onTap: !_canEdit || !_dirty ? null : _save,
                 ),
               ],
             ),

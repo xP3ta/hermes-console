@@ -51,7 +51,7 @@ final class BotRosterEntry extends RosterEntry {
   String get key => 'bot:${profile.name}';
 
   @override
-  String get title => profile.botTitle ?? profile.name;
+  String get title => profile.botListName;
 
   @override
   bool get needsYou => signal == BotFaceSignal.attention;

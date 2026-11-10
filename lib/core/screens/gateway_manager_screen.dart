@@ -80,7 +80,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
     setState(() {
       _connections = _visibleConnections();
       _defaultId = widget.connManager.defaultConnectionId;
-      _activeId = widget.connManager.activeConnectionId.value;
+      _activeId = widget.connManager.resolveActiveConnectionId();
       for (final c in _connections) {
         if (!_statuses.containsKey(c.id)) {
           _statuses[c.id] = InstanceStatus.unknown;
@@ -276,7 +276,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
       connManager: widget.connManager,
       pet: false,
       onCreate: _showAddDialog,
-      body: body,
+      bodyBuilder: (_, _) => body,
     );
   }
 

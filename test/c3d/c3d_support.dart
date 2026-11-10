@@ -56,6 +56,10 @@ class Dash {
   );
 
   bool ready;
+
+  /// `GET /api/providers/oauth` rows; null answers 404 (an older server).
+  List<Map<String, dynamic>>? oauthRows;
+  int oauthReads = 0;
   int modelStatus = 200;
   Completer<void>? hang;
   final List<Uri> modelCalls = [];
@@ -78,6 +82,12 @@ class Dash {
       return http.Response.fromStream(await _real.send(out));
     }
     switch (r.url.path) {
+      case '/api/providers/oauth':
+        oauthReads++;
+        final rows = oauthRows;
+        return rows == null
+            ? http.Response('{"detail":"Not Found"}', 404)
+            : http.Response(jsonEncode({'providers': rows}), 200);
       case '/api/status':
         return http.Response('{"auth_required":true}', 200);
       case '/api/auth/providers':

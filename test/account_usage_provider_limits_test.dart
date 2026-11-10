@@ -90,9 +90,10 @@ void main() {
       final fromLines = AccountUsageLimits.fromGateway(
         fx.usage(account: fx.codexLines),
       ).lines.where((l) => l.usedPercent != null).map((l) => l.usedPercent);
-      final fromCatalog = _build([_codex], route: 'openai-codex').lines
-          .where((l) => l.usedPercent != null)
-          .map((l) => l.usedPercent);
+      final fromCatalog = _build(
+        [_codex],
+        route: 'openai-codex',
+      ).lines.where((l) => l.usedPercent != null).map((l) => l.usedPercent);
       expect(fromCatalog, fromLines);
     });
 
@@ -134,9 +135,17 @@ void main() {
       expect(_texts(limits).join(), isNot(contains('9f8e')));
     });
 
-    test('rows without usage, or with an empty one, give nothing', () {
-      expect(_build([_p('p', 'P', null)]).lines, isEmpty);
-      expect(_build([_p('p', 'P', {'windows': <Object>[]})]).lines, isEmpty);
+    test('authenticated providers without usage have one no-data status', () {
+      for (final usage in [
+        null,
+        {'windows': <Object>[]},
+      ]) {
+        final lines = _build([_p('p', 'Provider', usage)]).lines;
+        expect(lines, hasLength(2));
+        expect(lines.first.text, 'Provider');
+        expect(lines.last.status, AccountLimitStatus.unknown);
+        expect(lines.last.usedPercent, isNull);
+      }
       expect(_build(const []).lines, isEmpty);
       expect(_build(const []).isEmpty, isTrue);
     });
@@ -172,9 +181,14 @@ void main() {
       );
       expect(
         _build([
-          _p('mine', 'Mine', {
-            'windows': [_window('Weekly', 5)],
-          }, aliases: const ['custom:mine']),
+          _p(
+            'mine',
+            'Mine',
+            {
+              'windows': [_window('Weekly', 5)],
+            },
+            aliases: const ['custom:mine'],
+          ),
         ], route: 'custom:mine').accountIdentity?.provider,
         'mine',
       );
@@ -201,12 +215,14 @@ void main() {
       expect(limits.lines.every((l) => !l.inUse), isTrue);
     });
 
-    test('a route without usage still shows the other providers labelled', () {
+    test('a route without usage shows its status before other providers', () {
       final limits = _build([
         _p('openrouter', 'OpenRouter', null),
         _codex,
       ], route: 'openrouter');
-      expect(limits.lines.first.text, 'OpenAI Codex');
+      expect(limits.lines.first.text, 'OpenRouter');
+      expect(limits.lines[1].status, AccountLimitStatus.unknown);
+      expect(limits.lines[2].text, 'OpenAI Codex');
       expect(limits.accountIdentity, isNull);
       expect(limits.level, SubscriptionLimitLevel.none);
     });
@@ -275,11 +291,26 @@ void main() {
       expect(headings.map((l) => l.text), [
         'OpenAI Codex · Work',
         'OpenAI Codex',
-        'OpenAI Codex',
         'OpenAI Codex · Old',
+        'OpenAI Codex',
       ]);
-      expect(headings.map((l) => l.accountNumber), [null, 2, 3, null]);
+      expect(headings.map((l) => l.accountNumber), [null, 2, null, null]);
       expect(headings.every((l) => l.groupHeading), isTrue);
+    });
+
+    test('many unknown accounts share a single provider status', () {
+      final lines = _build([
+        _p('p', 'Provider', {
+          'accounts': [
+            for (var i = 0; i < 5; i++)
+              {'id': 'synthetic-$i', 'state': i == 0 ? 'ready' : 'unknown'},
+          ],
+        }),
+      ]).lines;
+      expect(lines, hasLength(2));
+      expect(lines.first.text, 'Provider');
+      expect(lines.first.accountNumber, isNull);
+      expect(lines.last.status, AccountLimitStatus.unknown);
     });
 
     test('a private label (an email) is not shown', () {
@@ -296,7 +327,10 @@ void main() {
       expect(limited.text, contains('resets in 2h 13m ('));
       expect(limited.usedPercent, isNull);
       final at = lines.indexOf(limited);
-      expect(lines[at - 1].text, startsWith('Session: 0% remaining (100% used)'));
+      expect(
+        lines[at - 1].text,
+        startsWith('Session: 0% remaining (100% used)'),
+      );
     });
 
     test('unknown and unavailable: a status row, no number, no window', () {
@@ -310,10 +344,10 @@ void main() {
         expect(row.text, isNot(contains('%')));
       }
       // 20 % (ready), 100 % (limited): the unknown account's 77 % is absent.
-      expect(
-        lines.map((l) => l.usedPercent).whereType<double>().toList(),
-        [20, 100],
-      );
+      expect(lines.map((l) => l.usedPercent).whereType<double>().toList(), [
+        20,
+        100,
+      ]);
       expect(lines.any((l) => l.text.contains('77')), isFalse);
     });
 
@@ -348,7 +382,72 @@ void main() {
     });
   });
 
+  test('review M2: unknown pool accounts do not identify an account', () {
+    final limits = _build([
+      _p('openai-codex', 'OpenAI Codex', {
+        'accounts': [
+          {'id': 'synthetic-unknown', 'state': 'unknown'},
+        ],
+      }),
+    ], route: 'openai-codex');
+    expect(limits.accountIdentity, isNull);
+    expect(limits.lines.last.status, AccountLimitStatus.unknown);
+  });
+
   group('withProviderLines', () {
+    test(
+      'review M2: reported session limits suppress the route no-data group',
+      () {
+        final session = AccountUsageLimits.fromGateway(
+          fx.usage(account: fx.codexLines),
+        );
+        final merged = session.withProviderLines(
+          _build([
+            _p('openai-codex', 'OpenAI Codex', null),
+            _p('anthropic', 'Anthropic', null),
+          ], route: 'openai-codex'),
+        );
+        expect(
+          merged.lines.where((l) => l.groupHeading).map((l) => l.providerSlug),
+          ['anthropic'],
+        );
+        expect(
+          merged.lines.where((l) => l.status == AccountLimitStatus.unknown),
+          hasLength(1),
+        );
+        expect(merged.accountIdentity, session.accountIdentity);
+        expect(
+          merged.lines
+              .where((l) => l.usedPercent != null)
+              .map((l) => l.usedPercent),
+          [28, 91],
+        );
+      },
+    );
+
+    test(
+      'review M2: real credit bars suppress no-data for their owner only',
+      () {
+        final session = AccountUsageLimits.fromGateway(
+          fx.usage(),
+          usageBars: fx.barsAvailable,
+        );
+        final merged = session.withProviderLines(
+          _build([
+            _p('nous', 'Nous', null),
+            _p('anthropic', 'Anthropic', null),
+          ], route: 'nous'),
+        );
+        expect(
+          merged.lines.where((l) => l.groupHeading).map((l) => l.providerSlug),
+          ['anthropic'],
+        );
+        expect(merged.bars, session.bars);
+        expect(merged.creditsIdentity, session.creditsIdentity);
+        expect(merged.accountIdentity, isNull);
+      },
+    );
+
     test('keeps Nous credits and bars, puts provider windows first', () {
       final credits = AccountUsageLimits.fromGateway(
         fx.usage(credits: fx.nousLines),
@@ -410,11 +509,11 @@ void main() {
       final all = texts(tester);
       expect(all, contains('OpenAI Codex · Work'));
       expect(all, contains('OpenAI Codex · Cuenta 2'));
-      expect(all, contains('OpenAI Codex · Cuenta 3'));
+      expect(all, isNot(contains('OpenAI Codex · Cuenta 3')));
       expect(all, contains('OpenAI Codex · Old'));
       expect(all, contains('Límite alcanzado'));
       expect(all, contains('Se reinicia en 2 h 13 min'));
-      expect(all, contains('Uso aún sin informar'));
+      expect(all, contains('Sin datos de este proveedor'));
       expect(all, contains('No disponible'));
       expect(all, isNot(contains('Cuenta'))); // no generic heading
       expect(bars, findsNWidgets(2));
@@ -431,8 +530,8 @@ void main() {
       await tester.pumpWidget(
         app(AccountLimitsSection(limits: limits), locale: const Locale('en')),
       );
-      expect(texts(tester), contains('Prov · Account 1'));
-      expect(texts(tester), contains('Usage not reported yet'));
+      expect(texts(tester), contains('Prov'));
+      expect(texts(tester), contains('No usage data from this provider'));
     });
 
     testWidgets('a single provider is headed by its name', (tester) async {
@@ -449,8 +548,9 @@ void main() {
       expect(all, isNot(contains('Cuenta')));
     });
 
-    testWidgets('legacy account_lines still render without any group heading',
-        (tester) async {
+    testWidgets('legacy account_lines still render without any group heading', (
+      tester,
+    ) async {
       final limits = AccountUsageLimits.fromGateway(
         fx.usage(account: fx.codexLines),
       );

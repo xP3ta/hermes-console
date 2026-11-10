@@ -123,6 +123,238 @@ void main() {
       expect(source.loads, 1, reason: 'never periodic');
     });
 
+    testWidgets('homeNeedsIt: the board has Bots/Salas, no flag needed', (
+      tester,
+    ) async {
+      final prefs = await prefsWith(opened: false);
+      final cache = MissionSnapshotCache();
+      final source = _CountingSource()..gate.complete();
+      final warm = MissionSnapshotPrewarm(
+        cache: cache,
+        sourceFactory: (_) => source,
+      );
+      warm.schedule(
+        prefs: prefs,
+        connection: _connection,
+        stillIdle: () => true,
+        homeNeedsIt: true,
+      );
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(source.loads, 1);
+      expect(cache.read(_connection), isNotNull);
+    });
+
+    testWidgets('a failed warm read does not use up the process', (
+      tester,
+    ) async {
+      final prefs = await prefsWith(opened: true);
+      final cache = MissionSnapshotCache();
+      final source = _CountingSource(fails: true)..gate.complete();
+      var clock = DateTime(2026, 1, 1, 12);
+      final warm = MissionSnapshotPrewarm(
+        cache: cache,
+        sourceFactory: (_) => source,
+        now: () => clock,
+      );
+      warm.schedule(
+        prefs: prefs,
+        connection: _connection,
+        stillIdle: () => true,
+      );
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(source.loads, 1);
+      expect(cache.read(_connection), isNull);
+      // Same limiter as Home: a failing server is not re-read 2 s later.
+      clock = clock.add(const Duration(seconds: 10));
+      warm.schedule(
+        prefs: prefs,
+        connection: _connection,
+        stillIdle: () => true,
+      );
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(source.loads, 1, reason: 'inside the minute');
+      clock = clock.add(const Duration(minutes: 1));
+      warm.schedule(
+        prefs: prefs,
+        connection: _connection,
+        stillIdle: () => true,
+      );
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(source.loads, 2, reason: 'the failure left the next try open');
+    });
+
+    group('Home refresh: schedule() then refreshForHome() each time', () {
+      // Mirrors home_dashboard_screen: _scheduleMissionPrewarm followed by
+      // _refreshBoardExtras on every ~10 s status refresh.
+      Future<void> homeRefresh(
+        WidgetTester tester,
+        MissionSnapshotPrewarm warm,
+        SharedPreferences prefs,
+        DateTime Function() clock,
+      ) async {
+        warm.schedule(
+          prefs: prefs,
+          connection: _connection,
+          stillIdle: () => true,
+          homeNeedsIt: true,
+        );
+        warm.refreshForHome(connection: _connection, now: clock);
+        await tester.pump(const Duration(seconds: 10));
+      }
+
+      testWidgets('a slow read finishes and is not relaunched', (tester) async {
+        final prefs = await prefsWith(opened: false);
+        final cache = MissionSnapshotCache();
+        final sources = <_CountingSource>[];
+        var clock = DateTime(2026, 1, 1, 12);
+        final warm = MissionSnapshotPrewarm(
+          cache: cache,
+          sourceFactory: (_) {
+            final source = _CountingSource();
+            sources.add(source);
+            return source;
+          },
+          now: () => clock,
+        );
+        for (var i = 0; i < 5; i++) {
+          await homeRefresh(tester, warm, prefs, () => clock);
+          clock = clock.add(const Duration(seconds: 10));
+        }
+        expect(sources, hasLength(1), reason: 'one read, never relaunched');
+        expect(sources.single.closes, 0, reason: 'never cancelled');
+        sources.single.gate.complete();
+        await tester.pump();
+        expect(cache.read(_connection), isNotNull, reason: 'it finished');
+        await homeRefresh(tester, warm, prefs, () => clock);
+        expect(sources, hasLength(1), reason: 'still inside the minute');
+      });
+
+      testWidgets('a failing server is read at most once a minute', (
+        tester,
+      ) async {
+        final prefs = await prefsWith(opened: false);
+        final source = _CountingSource(fails: true)..gate.complete();
+        var clock = DateTime(2026, 1, 1, 12);
+        final warm = MissionSnapshotPrewarm(
+          cache: MissionSnapshotCache(),
+          sourceFactory: (_) => source,
+          now: () => clock,
+        );
+        for (var i = 0; i < 6; i++) {
+          await homeRefresh(tester, warm, prefs, () => clock);
+          clock = clock.add(const Duration(seconds: 10));
+        }
+        expect(source.loads, 1, reason: 'no 2 s idle-timer retry either');
+        await homeRefresh(tester, warm, prefs, () => clock);
+        expect(source.loads, 2, reason: 'a minute later');
+      });
+    });
+
+    group('refreshForHome', () {
+      test('reads, then waits a minute, then reads again', () async {
+        final cache = MissionSnapshotCache();
+        final source = _CountingSource()..gate.complete();
+        final warm = MissionSnapshotPrewarm(
+          cache: cache,
+          sourceFactory: (_) => source,
+        );
+        var clock = DateTime(2026, 1, 1, 12);
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        expect(source.loads, 1);
+        expect(cache.read(_connection), isNotNull);
+
+        clock = clock.add(const Duration(seconds: 30));
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        expect(source.loads, 1, reason: 'inside the minute');
+
+        clock = clock.add(const Duration(seconds: 31));
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          source.loads,
+          2,
+          reason: 'the snapshot is old and a minute passed',
+        );
+      });
+
+      test('a fresh cached snapshot (Bot Mode just read) is not re-read', () {
+        final cache = MissionSnapshotCache();
+        final source = _CountingSource()..gate.complete();
+        final warm = MissionSnapshotPrewarm(
+          cache: cache,
+          sourceFactory: (_) => source,
+        );
+        final clock = DateTime(2026, 1, 1, 12);
+        cache.write(
+          _connection,
+          MissionBackendSnapshot(
+            profiles: spec070Profiles(),
+            profilesCapability: MissionCapabilityState.available,
+            loadedAt: clock.subtract(const Duration(seconds: 20)),
+          ),
+        );
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        expect(source.loads, 0);
+      });
+
+      test('a failed read is retried only after the minute', () async {
+        final source = _CountingSource(fails: true)..gate.complete();
+        final warm = MissionSnapshotPrewarm(
+          cache: MissionSnapshotCache(),
+          sourceFactory: (_) => source,
+        );
+        var clock = DateTime(2026, 1, 1, 12);
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        clock = clock.add(const Duration(seconds: 10));
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        expect(source.loads, 1, reason: 'no read every 10 s while offline');
+        clock = clock.add(const Duration(seconds: 55));
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        expect(source.loads, 2);
+      });
+
+      test('a read in flight is not started twice', () async {
+        final source = _CountingSource();
+        final warm = MissionSnapshotPrewarm(
+          cache: MissionSnapshotCache(),
+          sourceFactory: (_) => source,
+        );
+        var clock = DateTime(2026, 1, 1, 12);
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        clock = clock.add(const Duration(minutes: 5));
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        expect(source.loads, 1);
+        source.gate.complete();
+        await Future<void>.delayed(Duration.zero);
+      });
+
+      test('cancel (background) lets the next refresh retry at once', () async {
+        final source = _CountingSource();
+        final warm = MissionSnapshotPrewarm(
+          cache: MissionSnapshotCache(),
+          sourceFactory: (_) => source,
+        );
+        final clock = DateTime(2026, 1, 1, 12);
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        warm.cancel();
+        source.gate.complete();
+        warm.refreshForHome(connection: _connection, now: () => clock);
+        await Future<void>.delayed(Duration.zero);
+        expect(source.loads, 2);
+      });
+    });
+
     testWidgets('not idle when the timer fires (background/other screen)', (
       tester,
     ) async {

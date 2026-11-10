@@ -36,9 +36,13 @@ Companion _companion() => Companion(
 );
 
 Future<_FakeController> _fake(Companion? active) async {
-  SharedPreferences.setMockInitialValues({});
+  SharedPreferences.setMockInitialValues({
+    CompanionPreferences.enabledKey: true,
+  });
   final prefs = await CompanionPreferences.load();
-  return _FakeController(active, CompanionRepository(), prefs);
+  final controller = _FakeController(active, CompanionRepository(), prefs);
+  await controller.setEnabled(true);
+  return controller;
 }
 
 void main() {

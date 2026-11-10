@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "server_not_running",
+    "message": "no herdr server is running at /home/demo/.config/herdr/herdr.sock; run `herdr` to start or attach it"
+  },
+  "id": "cli:api:snapshot"
+}

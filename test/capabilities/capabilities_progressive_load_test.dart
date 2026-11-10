@@ -87,7 +87,7 @@ void main() {
     );
     expect(methods, isNotEmpty);
     expect(find.text('arxiv'), findsOneWidget);
-    expect(find.text('docker'), findsOneWidget);
+    expect(find.text('notes'), findsOneWidget);
     rpcGate.completeError(StateError('synthetic gateway closed'));
     await tester.pumpAndSettle();
     expect(find.text('arxiv'), findsOneWidget);
@@ -102,6 +102,7 @@ void main() {
       tester,
       CapabilitiesScreen(
         repository: repoOf(rest),
+        initialSegment: CapabilitiesSegment.catalog,
         searchDebounce: Duration.zero,
       ),
     );
@@ -127,7 +128,6 @@ void main() {
         searchDebounce: Duration.zero,
       ),
     );
-    await tester.tap(find.byKey(const ValueKey('cph-seg-installed')));
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('arxiv'), findsOneWidget);
     expect(find.text('notes'), findsOneWidget);
@@ -147,6 +147,7 @@ void main() {
         tester,
         CapabilitiesScreen(
           repository: repoOf(rest),
+          initialSegment: CapabilitiesSegment.catalog,
           searchDebounce: Duration.zero,
         ),
       );
@@ -172,6 +173,7 @@ void main() {
       tester,
       CapabilitiesScreen(
         repository: repoOf(rest),
+        initialSegment: CapabilitiesSegment.catalog,
         searchDebounce: Duration.zero,
       ),
     );

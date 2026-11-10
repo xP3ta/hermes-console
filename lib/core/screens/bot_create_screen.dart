@@ -46,6 +46,7 @@ import '../design/hermes_design.dart'
         HermesDialogActionStyle,
         HermesFadedEnd,
         HermesOption,
+        HermesRadius,
         HermesSelectField,
         HermesSpace,
         HermesType,
@@ -62,6 +63,12 @@ final class _BotCreateIdentityFailure implements Exception {
   final bool uncertain;
 
   const _BotCreateIdentityFailure({required this.uncertain});
+}
+
+/// `profiles.create` ended without an answer (timeout or lost connection):
+/// the profile may or may not exist.
+final class _BotCreateUnconfirmed implements Exception {
+  const _BotCreateUnconfirmed();
 }
 
 /// Slug de profile con la misma normalización que `slugify` de Desktop.
@@ -128,9 +135,14 @@ class BotCreateScreen extends StatefulWidget {
   @visibleForTesting
   final DashboardClient? dashboardForTesting;
 
+  /// The profile to clone from, preselected (the «Clonar» action of a
+  /// profile in Perfiles). Null keeps the default source.
+  final String? initialCloneFrom;
+
   const BotCreateScreen({
     required this.connection,
     required this.existing,
+    this.initialCloneFrom,
     this.gateway,
     this.modelOptionsLoader,
     this.assetsGateway,
@@ -167,10 +179,10 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
   final _descCtrl = TextEditingController();
   final _soulCtrl = TextEditingController();
 
-  String _cloneFrom = 'default';
+  late String _cloneFrom = widget.initialCloneFrom ?? 'default';
   bool _shareAuth = true;
   bool _noSkills = false;
-  bool _advanced = false;
+  late bool _advanced = widget.initialCloneFrom != null;
   bool _busy = false;
   bool _profileCreated = false;
   bool _identityApplied = false;
@@ -291,7 +303,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       _descCtrl.text.isNotEmpty ||
       _soulCtrl.text.isNotEmpty ||
       _model != null ||
-      _cloneFrom != 'default' ||
+      _cloneFrom != (widget.initialCloneFrom ?? 'default') ||
       !_shareAuth ||
       _noSkills ||
       _skillsTouched ||
@@ -776,7 +788,12 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
             noSkills: _noSkills,
             shareAuth: _shareAuth,
           );
+        } on TimeoutException {
+          throw const _BotCreateUnconfirmed();
         } on TuiGatewayRpcError catch (error) {
+          // No answer at all: the profile may exist, so never offer a blind
+          // retry (the list tells).
+          if (error.failureKind != null) throw const _BotCreateUnconfirmed();
           // -32601: this Gateway predates `profiles.create`.
           if (error.code != -32601) rethrow;
           await _createLegacy(
@@ -859,10 +876,12 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         _busy = false;
         _uncertain = switch (error) {
           final _BotCreateIdentityFailure failure => failure.uncertain,
+          _BotCreateUnconfirmed() => true,
           _ => false,
         };
         _error = switch (error) {
           final _BotCreateIdentityFailure failure when failure.uncertain => _strings.i18n131CreateTheProfileExistsButItsIdentityIs,
+          _BotCreateUnconfirmed() => _strings.modelsBotCreateUnconfirmed,
           _BotCreateIdentityFailure() => _strings.i18n131CreateTheProfileExistsButItsIdentityCould,
           FormatException() => _strings.i18n131CreateChooseAValidIdentityBeforeCreatingThe,
           _ => copy.createAgentError(localizedApiError(Strings.of(context), error)),
@@ -921,13 +940,18 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                 child: ListView(
                   key: const ValueKey('bot-create-form'),
                   clipBehavior: hermesUnderHeader,
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 44),
+                  padding: const EdgeInsets.fromLTRB(
+                    HermesSpace.x5,
+                    HermesSpace.x4,
+                    HermesSpace.x5,
+                    44,
+                  ),
                   children: [
                     Text(
                       copy.createAgentSubtitle,
                       style: TextStyle(
                         color: colors.textSecondary,
-                        fontSize: 13,
+                        fontSize: HermesType.valueSize,
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -963,7 +987,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                             style: TextStyle(
                               color: colors.textPrimary,
                               fontWeight: FontWeight.w800,
-                              fontSize: 14.5,
+                              fontSize: HermesType.bodySize,
                             ),
                           ),
                         ),
@@ -971,7 +995,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                           _strings.i18n131CreateOptional,
                           style: TextStyle(
                             color: colors.textTertiary,
-                            fontSize: 12.5,
+                            fontSize: HermesType.supportSize,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -1044,9 +1068,9 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                         Padding(
                           padding: const EdgeInsets.fromLTRB(
                             HermesSpace.rowH,
-                            HermesSpace.rowV + 4,
+                            HermesSpace.rowV + HermesSpace.x1,
                             HermesSpace.rowH,
-                            HermesSpace.rowV + 4,
+                            HermesSpace.rowV + HermesSpace.x1,
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1163,7 +1187,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                                     : copy.shareAuthHint,
                                 style: TextStyle(
                                   color: colors.textTertiary,
-                                  fontSize: 11.5,
+                                  fontSize: HermesType.captionSize,
                                 ),
                               ),
                               HermesSwitchTile(
@@ -1195,7 +1219,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                         key: const ValueKey('bot-create-error'),
                         style: TextStyle(
                           color: _uncertain ? colors.warning : colors.error,
-                          fontSize: 12.5,
+                          fontSize: HermesType.supportSize,
                         ),
                       ),
                     ],
@@ -1258,7 +1282,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     button: true,
     child: InkWell(
       key: key,
-      borderRadius: BorderRadius.circular(999),
+      borderRadius: BorderRadius.circular(HermesRadius.tag),
       onTap: _busy || _identityLocked ? null : onTap,
       child: Container(
         constraints: const BoxConstraints(minHeight: 40, minWidth: 86),
@@ -1267,7 +1291,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
           color: selected
               ? colors.accent.withValues(alpha: 0.16)
               : colors.surfaceVariant.withValues(alpha: 0.9),
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(HermesRadius.tag),
           border: Border.all(
             color: selected
                 ? colors.accent.withValues(alpha: 0.38)
@@ -1289,7 +1313,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
               style: TextStyle(
                 color: selected ? colors.textPrimary : colors.textSecondary,
                 fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                fontSize: 13,
+                fontSize: HermesType.valueSize,
               ),
             ),
           ],
@@ -1311,7 +1335,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
               color: Theme.of(
                 context,
               ).hermes.surfaceVariant.withValues(alpha: 0.28),
-              borderRadius: BorderRadius.circular(28),
+              borderRadius: BorderRadius.circular(HermesRadius.pane),
               boxShadow: [
                 BoxShadow(
                   color: accent.withValues(alpha: 0.28),
@@ -1349,7 +1373,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
           );
         }
         return ClipRRect(
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(HermesRadius.card),
           child: Image.memory(
             avatar.bytes,
             width: 96,
@@ -1373,7 +1397,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       );
     }
     return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(HermesRadius.card),
       child: Image.memory(
         avatar.bytes,
         width: 96,
@@ -1410,7 +1434,10 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     children: [
       Text(
         _strings.i18n131CreatePngJpegWebpOrGifCenterCropped,
-        style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+        style: TextStyle(
+          color: colors.textSecondary,
+          fontSize: HermesType.supportSize,
+        ),
       ),
       const SizedBox(height: 12),
       OutlinedButton.icon(
@@ -1459,7 +1486,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
+              padding: EdgeInsets.symmetric(vertical: HermesSpace.x6),
               child: Center(child: ConsoleLoader.medium(showLabel: true)),
             );
           }
@@ -1467,7 +1494,10 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
           if (gallery == null && !_galleryFailed) {
             return Text(
               copy.botSpriteUnsupported,
-              style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: HermesType.supportSize,
+              ),
             );
           }
           final listed = gallery?.pets ?? const <ProfilePetGalleryEntry>[];
@@ -1482,7 +1512,10 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
             children: [
               Text(
                 copy.botSpriteHint,
-                style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: HermesType.supportSize,
+                ),
               ),
               const SizedBox(height: 12),
               if (_galleryFailed)
@@ -1528,7 +1561,10 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       Expanded(
         child: Text(
           line,
-          style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+          style: TextStyle(
+            color: colors.textSecondary,
+            fontSize: HermesType.supportSize,
+          ),
         ),
       ),
       TextButton(
@@ -1547,7 +1583,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       label: pet.displayName,
       child: InkWell(
         key: ValueKey('bot-create-sprite-${pet.slug}'),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(HermesRadius.control),
         onTap: _busy
             ? null
             : () => _changeIdentity(() {
@@ -1562,7 +1598,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
               height: 56,
               padding: const EdgeInsets.all(3),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(HermesRadius.control),
                 border: Border.all(
                   color: selected ? colors.accent : colors.divider,
                   width: selected ? 1.8 : 1,
@@ -1618,7 +1654,12 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         child: SafeArea(
           top: false,
           child: Container(
-            padding: const EdgeInsets.fromLTRB(20, 9, 20, 12),
+            padding: const EdgeInsets.fromLTRB(
+              HermesSpace.x5,
+              9,
+              HermesSpace.x5,
+              HermesSpace.x3,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1639,7 +1680,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: _uncertain ? colors.warning : colors.textSecondary,
-                      fontSize: 11.5,
+                      fontSize: HermesType.captionSize,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -1670,16 +1711,19 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       color: Colors.transparent,
       child: InkWell(
         key: const ValueKey('bot-create-model-tile'),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(HermesRadius.control),
         onTap: loading || _busy
             ? null
             : _modelFailed
             ? _retryModels
             : _pickModel,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          padding: const EdgeInsets.symmetric(
+            horizontal: HermesSpace.x3,
+            vertical: HermesSpace.x3,
+          ),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(HermesRadius.control),
             border: Border.all(color: colors.divider),
           ),
           child: Row(

@@ -35,6 +35,7 @@ class _Gateway
   final payloads = <String>[];
   final ids = <String>[];
   int uploads = 0;
+  bool loseFirstAck = false;
   @override
   bool get isConnected => true;
   @override
@@ -65,6 +66,13 @@ class _Gateway
   ) async {
     payloads.add(text);
     ids.add(clientTurnId);
+    if (loseFirstAck && ids.length == 1) {
+      throw const TuiGatewayRpcError(
+        'prompt.submit',
+        'Connection lost before acknowledgement',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    }
     return DesktopTurnAck(
       accepted: true,
       clientTurnId: clientTurnId,
@@ -192,6 +200,8 @@ void main() {
         ],
       );
       final delivery = ActiveTurnDelivery(prepared: prepared, store: store);
+      await subject.loadMessages(passiveOnly: true);
+      gateway.loseFirstAck = true;
       expect(
         await subject.send(
           fullText: 'ignored',
@@ -199,8 +209,9 @@ void main() {
           history: [],
           delivery: delivery,
         ),
-        isTrue,
+        isFalse,
       );
+      expect(delivery.current.state, PreparedTurnState.ambiguous);
       final expected =
           '[📎 file.pdf]\n@ops\n\n@file:.hermes/file.pdf${prepared.mentionAnnotation}';
       expect(gateway.payloads, [expected]);
@@ -210,8 +221,9 @@ void main() {
             .single['content'],
         prepared.fullText,
       );
+      // The same durable batch restored after background/process death.
       final restored = PreparedTurn.fromJson(delivery.current.toJson());
-      subject.state = ChatPipelineState.idle;
+      await subject.reconcileAfterResume();
       BotMentionRoster.shared.replace('local', 'Local', const [
         AgentProfile(name: 'different'),
       ]);
@@ -225,7 +237,9 @@ void main() {
         isTrue,
       );
       expect(gateway.payloads, [expected, expected]);
-      expect(gateway.ids, ['turn', 'turn']);
+      // The transcript proved the first attempt absent, so the replay is a
+      // plain re-submit of the identical payload; only the first used the id.
+      expect(gateway.ids, ['turn']);
       expect(gateway.uploads, 1);
     },
   );

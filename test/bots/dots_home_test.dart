@@ -385,6 +385,20 @@ void main() {
   group('DotsHomeView', () {
     // QA 9493 (owner): the big main-bot hero on top is gone. Hermes is one
     // more member of Your team, always its first tile, drawn like the rest.
+    testWidgets('at 200 % text the tiles, their status lines, the rooms and '
+        'the section labels do not overflow', (tester) async {
+      await _phone(tester);
+      await tester.pumpWidget(
+        _app(
+          _view(_busyTeam(), rooms: [_room('r1', working: true), _room('r2')]),
+          textScale: 2,
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(_tile('default'), findsOneWidget);
+    });
+
     testWidgets('no hero: Hermes is the first team tile, then waiting, '
         'working; summary and rooms', (tester) async {
       await _phone(tester);
@@ -887,6 +901,66 @@ void main() {
       expect(_tile('radar'), findsOneWidget);
       expect(_tile('astra'), findsNothing);
       expect(_tile('default'), findsNothing);
+    });
+
+    testWidgets('the summary goes to the header notifier when one is given, '
+        'not into the list', (tester) async {
+      await _phone(tester);
+      final out = ValueNotifier('');
+      await tester.pumpWidget(
+        _app(
+          DotsHomeView(
+            bots: _busyTeam(),
+            rooms: const [],
+            avatarCache: null,
+            searchOpen: ValueNotifier(false),
+            summary: out,
+            onOpenBot: (_) {},
+            onBotActions: (_) {},
+            onOpenRoom: (_) {},
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(out.value, '3 working · 1 waiting for you');
+      expect(find.byKey(const ValueKey('dots-summary')), findsNothing);
+    });
+
+    testWidgets('the approvals bar is one card with a shield, the summary '
+        'and a chevron; it opens on tap', (tester) async {
+      await _phone(tester);
+      var opened = 0;
+      await tester.pumpWidget(
+        _app(
+          DotsHomeView(
+            bots: _busyTeam(),
+            rooms: const [],
+            avatarCache: null,
+            searchOpen: ValueNotifier(false),
+            attentionSummary: '1 approval · 1 blocked',
+            onAttention: () => opened++,
+            onOpenBot: (_) {},
+            onBotActions: (_) {},
+            onOpenRoom: (_) {},
+          ),
+        ),
+      );
+      final bar = find.byKey(const ValueKey('mission-attention'));
+      expect(bar, findsOneWidget);
+      expect(
+        find.descendant(of: bar, matching: find.byIcon(Icons.shield_outlined)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: bar,
+          matching: find.byIcon(Icons.chevron_right_rounded),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.getSize(bar).height, greaterThanOrEqualTo(48));
+      await tester.tap(bar);
+      expect(opened, 1);
     });
 
     testWidgets('hidden toggle shows hidden bots in the grid', (tester) async {

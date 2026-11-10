@@ -206,10 +206,11 @@ void main() {
     await settle(tester);
   }
 
-  /// The destructive action of the open confirmation.
-  Finder dialogButton(String _) => find.descendant(
+  /// The destructive action of the open confirmation: a Nous Portal account
+  /// is disconnected, a key is removed.
+  Finder dialogButton(String provider) => find.descendant(
     of: find.byKey(const ValueKey('hermes-dialog')),
-    matching: find.text('Remove'),
+    matching: find.text(provider == 'Nous' ? 'Disconnect' : 'Remove'),
   );
 
   Finder key(String value) => find.byKey(ValueKey(value));

@@ -5,6 +5,8 @@
 //   /api/logs?file=agent&lines=200&level=ERROR&search=...
 //   → {"file": "agent", "lines": ["2026-06-11 03:31:41,093 INFO gateway.run: ...", ...]}
 // Archivos: agent, errors, gateway, gui, desktop. Niveles: DEBUG..CRITICAL.
+// Además `component` (gateway, agent, tools, cli, cron, gui) y `profile`
+// (servidores que lo admiten) filtran en el servidor.
 // El filtrado de nivel/búsqueda se delega al servidor; el parsing local es
 // defensivo: una línea que no matchea el formato se muestra cruda.
 //
@@ -16,6 +18,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
 import '../design/edges.dart';
+import '../design/tokens.dart' show HermesRadius, HermesSpace, HermesType;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../widgets/hermes_pill.dart';
@@ -29,8 +32,13 @@ class ActivityScreen extends StatelessWidget {
   /// Test seam: replaces the Dashboard client used to read the logs.
   final DashboardClient? clientOverride;
 
+  /// Profile whose logs open first (a bot's profile page); null or `default`
+  /// is the server's own.
+  final String? initialProfile;
+
   const ActivityScreen({
     required this.connection,
+    this.initialProfile,
     @visibleForTesting this.clientOverride,
     super.key,
   });
@@ -39,7 +47,11 @@ class ActivityScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: HermesAppBar(title: Text(Strings.of(context).actTitle)),
-      body: _LogsTab(connection: connection, clientOverride: clientOverride),
+      body: _LogsTab(
+        connection: connection,
+        clientOverride: clientOverride,
+        initialProfile: initialProfile,
+      ),
     );
   }
 }
@@ -103,7 +115,12 @@ class _LogEntry {
 class _LogsTab extends StatefulWidget {
   final SavedConnection connection;
   final DashboardClient? clientOverride;
-  const _LogsTab({required this.connection, this.clientOverride});
+  final String? initialProfile;
+  const _LogsTab({
+    required this.connection,
+    this.clientOverride,
+    this.initialProfile,
+  });
 
   @override
   State<_LogsTab> createState() => _LogsTabState();
@@ -127,6 +144,23 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
   ];
   String? _level;
 
+  /// Server-side component ids (hermes_logging.COMPONENT_PREFIXES); null is
+  /// "all". Only these are sent: any other value is a 400.
+  static const _components = [
+    'gateway',
+    'agent',
+    'tools',
+    'cli',
+    'cron',
+    'gui',
+  ];
+  String? _component;
+
+  /// Profile whose logs are read; null is the server's own. The choices come
+  /// from the profile list and show only when there is a profile besides it.
+  List<String> _profiles = const [];
+  String? _profile;
+
   final _searchCtrl = TextEditingController();
   String _localFilter = '';
 
@@ -137,7 +171,29 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
   void initState() {
     super.initState();
     _client = widget.clientOverride ?? DashboardClient.lazy(widget.connection);
+    // The server's own profile is what no filter reads.
+    final first = widget.initialProfile?.trim();
+    _profile = first == null || first.isEmpty || first == 'default'
+        ? null
+        : first;
     _load();
+    _loadProfiles();
+  }
+
+  Future<void> _loadProfiles() async {
+    try {
+      final profiles = await _client.getProfiles();
+      if (!mounted) return;
+      setState(() {
+        // The server's own profile is what "all" reads; the rest are choices.
+        _profiles = [
+          for (final p in profiles)
+            if (p.name != 'default') p.name,
+        ];
+      });
+    } catch (_) {
+      // No profile list: the profile filter is simply not offered.
+    }
   }
 
   @override
@@ -147,7 +203,11 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
     super.dispose();
   }
 
+  int _generation = 0;
+
   Future<void> _load() async {
+    // A slower answer for a filter the user has already left is dropped.
+    final generation = ++_generation;
     setState(() {
       _loading = true;
       _error = null;
@@ -157,15 +217,17 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
         file: _file,
         lines: 300,
         level: _level,
+        component: _component,
+        profile: _profile,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         // Más reciente arriba.
         _entries = lines.reversed.map(_LogEntry.parse).toList();
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _error = e;
         _loading = false;
@@ -216,47 +278,57 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
           padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
           child: Row(
             children: [
-              for (final f in _files) ...[
-                PressableScale(
-                  onTap: () {
-                    if (_file == f) return;
-                    setState(() => _file = f);
-                    _load();
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _file == f
-                          ? colors.accent.withValues(alpha: 0.10)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(7),
-                      border: Border.all(
-                        color: _file == f
-                            ? colors.accent.withValues(alpha: 0.55)
-                            : colors.divider,
-                      ),
-                    ),
-                    child: Text(
-                      f,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: _file == f
-                            ? FontWeight.w600
-                            : FontWeight.w400,
-                        color: _file == f
-                            ? colors.accentHover
-                            : colors.textSecondary,
-                      ),
-                    ),
+              // The files scroll sideways in what the two buttons leave: at
+              // 360 dp or with large text they no longer fit beside them.
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final f in _files) ...[
+                        PressableScale(
+                          onTap: () {
+                            if (_file == f) return;
+                            setState(() => _file = f);
+                            _load();
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 160),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _file == f
+                                  ? colors.accent.withValues(alpha: 0.10)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(7),
+                              border: Border.all(
+                                color: _file == f
+                                    ? colors.accent.withValues(alpha: 0.55)
+                                    : colors.divider,
+                              ),
+                            ),
+                            child: Text(
+                              f,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: _file == f
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                                color: _file == f
+                                    ? colors.accentHover
+                                    : colors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                    ],
                   ),
                 ),
-                const SizedBox(width: 6),
-              ],
-              const Spacer(),
+              ),
               IconButton(
                 icon: const Icon(Icons.copy_all_outlined, size: 18),
                 tooltip: Strings.of(context).actCopyVisibleLines,
@@ -322,6 +394,31 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
             ],
           ),
         ),
+        _FilterChipRow(
+          idPrefix: 'logs-component',
+          label: Strings.of(context).kluLogComponent,
+          allLabel: Strings.of(context).commonAll,
+          values: _components,
+          selected: _component,
+          onSelected: (value) {
+            if (_component == value) return;
+            setState(() => _component = value);
+            _load();
+          },
+        ),
+        if (_profiles.isNotEmpty)
+          _FilterChipRow(
+            idPrefix: 'logs-profile',
+            label: Strings.of(context).kluProfileLabel,
+            allLabel: Strings.of(context).kluProfileDefault,
+            values: _profiles,
+            selected: _profile,
+            onSelected: (value) {
+              if (_profile == value) return;
+              setState(() => _profile = value);
+              _load();
+            },
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
           child: TextField(
@@ -442,10 +539,104 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
                     : Strings.of(context).actLogEmpty(_file)) +
                 (_level != null
                     ? Strings.of(context).actForLevel(_level!)
+                    : '') +
+                (_component != null
+                    ? Strings.of(context).kluLogForComponent(_component!)
                     : ''),
             style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A labelled row of choices ("all" first) that filters the log on the
+/// server. Each choice is a 48 dp target; the chosen one reads as selected.
+class _FilterChipRow extends StatelessWidget {
+  const _FilterChipRow({
+    required this.idPrefix,
+    required this.label,
+    required this.allLabel,
+    required this.values,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String idPrefix;
+  final String label;
+  final String allLabel;
+  final List<String> values;
+  final String? selected;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    Widget chip(String? value, String text) {
+      final on = selected == value;
+      return Semantics(
+        button: true,
+        selected: on,
+        label: text,
+        excludeSemantics: true,
+        onTap: () => onSelected(value),
+        child: InkWell(
+          key: ValueKey('$idPrefix-${value ?? 'all'}'),
+          borderRadius: BorderRadius.circular(HermesRadius.chip),
+          onTap: () => onSelected(value),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: HermesSpace.x3,
+                  vertical: HermesSpace.x1,
+                ),
+                decoration: BoxDecoration(
+                  color: on ? colors.surfaceVariant : Colors.transparent,
+                  borderRadius: BorderRadius.circular(HermesRadius.chip),
+                  border: Border.all(
+                    color: on
+                        ? colors.textSecondary.withValues(alpha: 0.5)
+                        : colors.divider,
+                  ),
+                ),
+                child: Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: HermesType.captionSize,
+                    color: on ? colors.textPrimary : colors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 48,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x3),
+        child: Row(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: HermesSpace.x2),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: HermesType.captionSize,
+                  color: colors.textSecondary,
+                ),
+              ),
+            ),
+            chip(null, allLabel),
+            for (final value in values) chip(value, value),
+          ],
+        ),
       ),
     );
   }

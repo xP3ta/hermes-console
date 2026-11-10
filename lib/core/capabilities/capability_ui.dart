@@ -11,6 +11,7 @@ import '../theme/app_theme.dart';
 import 'capabilities_repository.dart';
 import 'capability_models.dart';
 import 'mcp_runtime_status.dart';
+import 'spp_safety.dart' show sppSafeEndpoint;
 
 IconData capabilityKindIcon(CapabilityKind kind) => switch (kind) {
   CapabilityKind.skill => Icons.auto_awesome_outlined,
@@ -129,9 +130,9 @@ String capabilityTrustBody(Strings s, CapabilityTrust trust) => switch (trust) {
   String destination = '',
 }) {
   final source = item.disclosure.repo.isNotEmpty
-      ? item.disclosure.repo
+      ? sppSafeEndpoint(item.disclosure.repo)
       : item.disclosure.installUrl.isNotEmpty
-      ? item.disclosure.installUrl
+      ? sppSafeEndpoint(item.disclosure.installUrl)
       : capabilityLabel(item.source);
   final lines = [
     if (item.author.isNotEmpty) s.cphConfirmPublisher(item.author),

@@ -40,7 +40,11 @@ Future<CompanionController> _controller(List<Companion> pets) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(
+    () => SharedPreferences.setMockInitialValues({
+      CompanionPreferences.enabledKey: true,
+    }),
+  );
 
   test('init carga disponibles y aplica defaults', () async {
     final c = await _controller([_nimbus()]);
@@ -49,9 +53,23 @@ void main() {
     expect(c.enabled, isTrue);
     expect(c.selectedSlug, isNull);
     expect(c.activeCompanion, isNull); // sin selección → fallback
-    // On, everywhere, for whoever never touched the setting.
     expect(c.presence, CompanionPresenceLevel.full);
   });
+
+  test(
+    'nothing stored: the mascot is off until the user turns it on',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final c = await _controller([_nimbus()]);
+      await c.init();
+      await c.select('nimbus');
+      expect(c.enabled, isFalse);
+      expect(c.activeCompanion, isNull);
+      await c.setEnabled(true);
+      expect(c.enabled, isTrue);
+      expect(c.activeCompanion?.slug, 'nimbus');
+    },
+  );
 
   test('seleccionar activa la mascota', () async {
     final c = await _controller([_nimbus()]);

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/onboarding_screen.dart';
+import 'package:hermes_android/core/screens/onboarding/connect_method_cards.dart';
+import 'package:hermes_android/core/design/tokens.dart';
 import 'package:hermes_android/core/services/connection_diagnostics.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/pairing_link.dart';
@@ -163,3 +165,69 @@ Future<void> tapOnboarding(WidgetTester tester, String key) async {
 
 Strings onboardingStrings(WidgetTester tester) =>
     Strings.of(tester.element(find.byType(OnboardingScreen)));
+
+/// The three connection cards keep the same order, reach and semantics under
+/// either legacy switch value. Setup help remains a separate trailing link.
+void expectOnboardingWays(WidgetTester tester, Strings s) {
+  final ways = find.byKey(const ValueKey('onboarding-ways'));
+  expect(ways, findsOneWidget);
+  final cards = tester.widget<ConnectWayCards>(ways);
+  expect(cards.recommended, ConnectWay.scan);
+  expect(find.byKey(const ValueKey('onboarding-way-ssh')), findsNothing);
+  const keys = ['onboarding-way-nous', 'onboarding-manual', 'onboarding-scan'];
+  Rect? previous;
+  for (final (i, key) in keys.indexed) {
+    final card = find.byKey(ValueKey(key));
+    expect(find.descendant(of: ways, matching: card), findsOneWidget);
+    final rect = tester.getRect(card);
+    expect(rect.height, greaterThanOrEqualTo(HermesSpace.tap));
+    if (previous != null) {
+      expect(rect.top, greaterThanOrEqualTo(previous.bottom));
+      expect(rect.width, previous.width);
+    }
+    final way = ConnectWayCards.order[i];
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text(ConnectWayCards.titleOf(s, way)),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text(ConnectWayCards.bodyOf(s, way)),
+      ),
+      findsOneWidget,
+    );
+    final semantics = find.descendant(
+      of: card,
+      matching: find.byWidgetPredicate(
+        (w) =>
+            w is Semantics &&
+            w.properties.button == true &&
+            w.properties.label != null,
+      ),
+    );
+    expect(semantics, findsOneWidget);
+    expect(
+      tester.widget<Semantics>(semantics).properties.selected,
+      way == cards.recommended,
+    );
+    previous = rect;
+  }
+  expect(
+    tester.getRect(find.byKey(const ValueKey('onboarding-help'))).top,
+    greaterThanOrEqualTo(previous!.bottom),
+  );
+  expect(find.byKey(const ValueKey('onboarding-simple-connect')), findsNothing);
+}
+
+/// A card can be taller than the viewport at large text sizes. Centre it
+/// before tapping, so its centre remains inside the screen as a real tap is.
+Future<void> revealOnboarding(WidgetTester tester, String key) async {
+  final control = find.byKey(ValueKey(key));
+  await Scrollable.ensureVisible(tester.element(control), alignment: .5);
+  await tester.pump();
+  expect(control.hitTestable(), findsOneWidget);
+}

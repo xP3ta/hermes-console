@@ -1,0 +1,7 @@
+{
+  "id": "cli:agent:prompt",
+  "error": {
+    "code": "agent_blocked",
+    "message": "agent w1:p2 is blocked on an approval; nothing was sent"
+  }
+}

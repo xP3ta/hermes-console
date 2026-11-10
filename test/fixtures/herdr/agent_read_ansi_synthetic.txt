@@ -1,0 +1,8 @@
+[2J[H[1;36m● Reading lib/main.dart[0m
+[32m✓[0m 3 files read
+
+[1mDo you want to run `flutter test`?[0m
+  ❯ 1. Yes
+    2. No, and tell the agent what to do instead (esc)
+
+

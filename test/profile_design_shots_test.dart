@@ -285,7 +285,8 @@ void main() {
         width: width,
         textScale: scale,
       );
-      expect(find.text('console-builder'), findsOneWidget);
+      // The row says the visible name and, under it, the server's name.
+      expect(find.textContaining('console-builder'), findsWidgets);
       final overflow = tester.takeException();
       await _shot(tester, 'profiles-list-$tag');
       expect(overflow, isNull);

@@ -77,6 +77,10 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
   bool? _authRequired;
   bool _passwordSupported = false;
   bool _nativeSupported = false;
+
+  /// The providers the browser can sign in with, as the server lists them
+  /// (`/api/auth/providers`): one button each, named after the provider.
+  List<DashboardAuthProviderInfo> _browserProviders = const [];
   bool _showPasswordForm = false;
   MobileOAuthLogin? _oauth;
   NativePasswordLogin? _pwLogin;
@@ -184,6 +188,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
       _authRequired = null;
       _passwordSupported = false;
       _nativeSupported = false;
+      _browserProviders = const [];
       _noPasswordRoute = false;
       _showPasswordForm = false;
     });
@@ -221,6 +226,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
       final required = payload['auth_required'] as bool;
       bool password = false;
       bool native = false;
+      var browser = const <DashboardAuthProviderInfo>[];
       if (required) {
         final providersRequest = http.Request(
           'GET',
@@ -261,18 +267,28 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
                 p['name'] == 'basic' &&
                 p['supports_password'] == true,
           );
-          native =
-              payload['auth_flows'] is List &&
-              (payload['auth_flows'] as List).contains('native_pkce') &&
-              (providers['providers'] as List).any(
-                (p) =>
-                    p is Map &&
+          browser = [
+            if (payload['auth_flows'] is List &&
+                (payload['auth_flows'] as List).contains('native_pkce'))
+              for (final p in providers['providers'] as List)
+                if (p is Map &&
                     p['supports_session'] != false &&
                     (widget.browserFirst || (p['supports_password'] != true)) &&
                     p['name'] is String &&
                     p['name'] != 'drain' &&
-                    (p['name'] as String).isNotEmpty,
-              );
+                    (p['name'] as String).isNotEmpty)
+                  DashboardAuthProviderInfo.fromJson(p),
+          ];
+          // A password provider gets a browser button of its own only when
+          // it is the only one: beside Nous or an identity provider it keeps
+          // its form, and the browser buttons are theirs.
+          if (browser.any((p) => !p.supportsPassword)) {
+            browser = [
+              for (final p in browser)
+                if (!p.supportsPassword) p,
+            ];
+          }
+          native = browser.isNotEmpty;
         }
       }
       if (!_valid(epoch)) {
@@ -283,6 +299,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
         _authRequired = required;
         _passwordSupported = password;
         _nativeSupported = native;
+        _browserProviders = browser;
         _loading = false;
       });
     } catch (error) {
@@ -500,7 +517,22 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
     ),
   ];
 
-  Future<void> _loginOAuth() async {
+  /// The browser buttons: one per provider the server lists, named after
+  /// it ("Continue with Nous"); the generic label when it lists just one
+  /// without a name of its own.
+  String _browserLabel(Strings s, DashboardAuthProviderInfo? provider) {
+    final browserFirst = widget.browserFirst && _nativeSupported;
+    if (provider == null || _browserProviders.length < 2 && !provider.isNous) {
+      return browserFirst
+          ? s.dashboardSetupBrowserSignIn
+          : s.dashboardSetupOAuthBrowser;
+    }
+    return provider.isNous
+        ? s.nacContinueWithNous
+        : s.nacContinueWithProvider(provider.displayName);
+  }
+
+  Future<void> _loginOAuth({DashboardAuthProviderInfo? provider}) async {
     final epoch = _epoch;
     if (!_valid(epoch) ||
         _busy ||
@@ -523,6 +555,11 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
         baseUrl: widget.connection.effectiveDashboardUrl,
         authorityCurrent: () => _valid(epoch),
         allowPrivateHttp: _consent,
+        // Named when the server lists several, so it never asks again in
+        // the browser which one the person meant.
+        provider: _browserProviders.length > 1 || provider?.isNous == true
+            ? (provider?.name ?? '')
+            : '',
       );
       if (!_valid(epoch)) {
         _expireAuthority(epoch);
@@ -637,23 +674,34 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
               ),
             if (credFirst && _authRequired != null) ..._credentialsForm(s),
             if (_nativeSupported && credFirst)
-              HermesListRow(
-                key: const ValueKey('dashboard-oauth-browser'),
-                title: s.dashboardSetupBrowserSignIn,
-                onTap: _busy || (_requiresConsent && !_consent)
-                    ? null
-                    : _loginOAuth,
-              )
+              for (final (i, provider) in _browserProviders.indexed)
+                HermesListRow(
+                  key: ValueKey(
+                    i == 0
+                        ? 'dashboard-oauth-browser'
+                        : 'dashboard-oauth-browser-${provider.name}',
+                  ),
+                  title: _browserLabel(s, provider),
+                  onTap: _busy || (_requiresConsent && !_consent)
+                      ? null
+                      : () => unawaited(_loginOAuth(provider: provider)),
+                )
             else if (_nativeSupported)
-              HermesPrimaryButton(
-                key: const ValueKey('dashboard-oauth-browser'),
-                label: browserFirst
-                    ? s.dashboardSetupBrowserSignIn
-                    : s.dashboardSetupOAuthBrowser,
-                onTap: _busy || (_requiresConsent && !_consent)
-                    ? null
-                    : _loginOAuth,
-              ),
+              for (final (i, provider) in _browserProviders.indexed)
+                Padding(
+                  padding: EdgeInsets.only(top: i == 0 ? 0 : HermesSpace.x3),
+                  child: HermesPrimaryButton(
+                    key: ValueKey(
+                      i == 0
+                          ? 'dashboard-oauth-browser'
+                          : 'dashboard-oauth-browser-${provider.name}',
+                    ),
+                    label: _browserLabel(s, provider),
+                    onTap: _busy || (_requiresConsent && !_consent)
+                        ? null
+                        : () => unawaited(_loginOAuth(provider: provider)),
+                  ),
+                ),
             if (browserFirst && !credFirst && !_noPasswordRoute)
               Padding(
                 padding: const EdgeInsets.only(top: HermesSpace.x2),
@@ -755,4 +803,33 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
       ),
     );
   }
+}
+
+/// One entry of `GET /api/auth/providers`: the id the sign-in routes take
+/// and the name the person sees.
+class DashboardAuthProviderInfo {
+  const DashboardAuthProviderInfo({
+    required this.name,
+    required this.displayName,
+    required this.supportsPassword,
+  });
+
+  factory DashboardAuthProviderInfo.fromJson(Map<dynamic, dynamic> json) {
+    final name = (json['name'] as String).trim();
+    final display = json['display_name'];
+    return DashboardAuthProviderInfo(
+      name: name,
+      displayName: display is String && display.trim().isNotEmpty
+          ? display.trim()
+          : name,
+      supportsPassword: json['supports_password'] == true,
+    );
+  }
+
+  final String name;
+  final String displayName;
+  final bool supportsPassword;
+
+  /// The Nous Portal sign-in of a Nous-hosted or Nous-configured Dashboard.
+  bool get isNous => name == 'nous';
 }

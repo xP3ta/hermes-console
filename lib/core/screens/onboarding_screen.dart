@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../config/flavor.dart';
+import '../design/tokens.dart' show HermesSpace;
 import '../services/active_profile_scope.dart';
 import '../services/connection_diagnostics.dart';
 import '../services/connection_manager.dart';
@@ -16,10 +16,12 @@ import '../services/dashboard_address.dart';
 import '../services/dashboard_login_capabilities.dart';
 import '../services/hermes_setup_commands.dart';
 import '../services/official_dashboard_command.dart';
+import '../services/mobile_oauth.dart';
 import '../services/model_readiness.dart';
 import '../services/native_password_login.dart';
 import '../services/onboarding_arrival.dart';
 import '../services/pairing_link.dart';
+import '../services/ssh_tunnel_connector.dart';
 import '../theme/app_theme.dart';
 import '../utils/transport_privacy.dart';
 import '../widgets/dashboard_password_help.dart';
@@ -28,12 +30,16 @@ import '../widgets/hermes_ui.dart' show HermesField;
 import 'dashboard_setup_screen.dart';
 import 'recover_access_page.dart';
 import 'instance_edit_screen.dart';
+import '../models/oauth_account.dart';
 import 'models_screen.dart';
+import 'nous_account_screen.dart' show NousAccountScreen;
+import 'onboarding/connect_method_cards.dart';
 import 'onboarding/halloween.dart';
 import 'onboarding/manual_connect_page.dart';
 import 'onboarding/onboarding_motion.dart';
 import 'onboarding/onboarding_scanner.dart';
 import 'onboarding/onboarding_widgets.dart';
+import '../feedback/haptics.dart';
 
 enum _Step {
   welcome,
@@ -77,7 +83,12 @@ class OnboardingScreen extends StatefulWidget {
     this.playOpening,
     this.simpleConnectEnabled = kSimpleConnectEnabled,
     this.probe,
+    this.openOAuthBrowser,
+    this.sshTunnels,
     this.guided = false,
+    this.initialWay,
+    this.connectDraft,
+    this.tailnetProbe,
     super.key,
   });
   final ConnectionManager connManager;
@@ -97,9 +108,29 @@ class OnboardingScreen extends StatefulWidget {
 
   final Future<HostProbeResult> Function(DiscoveryTarget)? probe;
 
+  /// Opens the system browser for the Browser sign-in; tests replace it.
+  final Future<bool> Function(Uri)? openOAuthBrowser;
+
+  /// The SSH tunnel of Connect's SSH tab; the app's own when null.
+  final SshTunnelOpener? sshTunnels;
+
   /// For a connection that already exists and cannot reach its Dashboard:
   /// opens on the setup help (no opening, no welcome) and leaves on «back».
   final bool guided;
+
+  /// Opened from a screen that already offered the three ways (the connection
+  /// editor): goes straight into that way's flow and leaves on «back» instead
+  /// of showing the welcome a second time.
+  final ConnectWay? initialWay;
+
+  /// What was typed on Connect, when the screen that offered the ways keeps
+  /// it across several visits (the connection editor); this screen's own
+  /// otherwise. A given draft is never disposed here.
+  final ConnectDraft? connectDraft;
+
+  /// Whether this phone is on a tailnet, for the recommended way; a read of
+  /// the local interfaces by default ([phoneOnTailnet]).
+  final Future<bool> Function()? tailnetProbe;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -126,6 +157,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   SavedConnection? _updating;
   late final ConnectionDiagnostics _diagnostics;
   late final VoidCallback _releaseSetup;
+
+  /// What was typed on Connect, through whichever door: switching ways on
+  /// the welcome keeps it; it goes with this screen unless the caller owns
+  /// it.
+  late final ConnectDraft _connectDraft = widget.connectDraft ?? ConnectDraft();
   bool _consent = false;
   bool _busy = false;
   String Function(Strings)? _issue;
@@ -154,6 +190,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   /// A connection by hand with a good sign-in: the chat opens by itself, as in
   /// Desktop, once the model state allows it.
   bool _autoOpen = false;
+
+  /// «Connected»: the server offers a Nous Portal account that is not signed
+  /// in, so the screen offers to connect it (skippable). One read, on
+  /// arrival; nothing is shown when it fails.
+  bool _nousOffered = false;
+  bool _nousChecked = false;
 
   // Motion.
   late final AnimationController _open = AnimationController(
@@ -217,8 +259,22 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _receive(widget.initialLink!);
       });
+    } else if (widget.initialWay != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _pick(widget.initialWay!);
+      });
+    }
+    if (widget.initialWay == null) {
+      unawaited(
+        (widget.tailnetProbe ?? phoneOnTailnet)().then((on) {
+          if (mounted && on != _onTailnet) setState(() => _onTailnet = on);
+        }),
+      );
     }
   }
+
+  /// This phone is on a tailnet: the find-my-server door is the likely one.
+  bool _onTailnet = false;
 
   bool get _reduced => OnboardingMotion.reduced(context);
 
@@ -254,6 +310,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   @override
   void dispose() {
+    _browserLogin?.cancel();
     for (final c in [
       _open,
       _ambient,
@@ -269,6 +326,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
     _tick.dispose();
     _v2Pass.dispose();
+    if (widget.connectDraft == null) _connectDraft.dispose();
     _diagnostics.close();
     _releaseSetup();
     super.dispose();
@@ -308,7 +366,25 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       unawaited(Navigator.of(context).maybePop());
       return;
     }
-    _go(_history.isEmpty ? _Step.welcome : _history.removeLast(), back: true);
+    final target = _history.isEmpty ? _Step.welcome : _history.removeLast();
+    // Opened on one way from a screen that showed the choice: back out of
+    // that way leaves, instead of a second welcome.
+    if (target == _Step.welcome && widget.initialWay != null) {
+      // A plain pop: `maybePop` would ask this screen's own PopScope, which
+      // refuses off the welcome and calls back here again, endlessly.
+      Navigator.of(context).pop();
+      return;
+    }
+    _go(target, back: true);
+  }
+
+  /// A flow pushed over the welcome came back without a connection: with
+  /// [OnboardingScreen.initialWay] this screen leaves with it.
+  void _leaveIfEntered() {
+    if (!mounted || widget.initialWay == null || _step != _Step.welcome) {
+      return;
+    }
+    unawaited(Navigator.of(context).maybePop());
   }
 
   void _shakeIcon() {
@@ -527,10 +603,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       allowPrivateHttp: consent,
     );
     if (!mounted) return null;
+    return _saveSession(draft, session.encode());
+  }
+
+  /// The Dashboard-only connection with its session, saved and active.
+  Future<SavedConnection?> _saveSession(
+    SavedConnection draft,
+    String session,
+  ) async {
+    if (!mounted) return null;
     final connection = draft.copyWith(dashboardAuthMode: AuthMode.sessionToken);
     await widget.connManager.setDashboardSecrets(
       connection.id,
-      sessionToken: session.encode(),
+      sessionToken: session,
     );
     await _saveForBrowser(connection);
     await widget.connManager.saveCapabilities(
@@ -540,6 +625,29 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       ),
     );
     return mounted ? connection : null;
+  }
+
+  /// A pasted session token, proved against the Dashboard before it is kept.
+  Future<SavedConnection?> _tokenAndSave(
+    SavedConnection draft,
+    String token,
+  ) async {
+    final target = draft.copyWith(dashboardAuthMode: AuthMode.sessionToken);
+    final client = DashboardClient.forConnection(
+      target,
+      secrets: DashboardSecrets(sessionToken: token),
+    );
+    try {
+      final verified = await client.apiGet('profiles');
+      if (verified['profiles'] is! List) {
+        throw const DashboardAuthException(
+          DashboardAuthFailureCode.invalidCredentials,
+        );
+      }
+    } finally {
+      client.close();
+    }
+    return _saveSession(draft, token);
   }
 
   Future<void> _saveForBrowser(SavedConnection connection) async {
@@ -567,35 +675,123 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _needsConsent(SavedConnection connection) =>
       needsCleartextConsent(connection.effectiveDashboardUrl);
 
-  /// Connect by hand: one address, user and password, Dashboard alone.
-  Future<void> _manualConnect() async {
+  MobileOAuthLogin? _browserLogin;
+
+  SshTunnelOpener? get _sshTunnels =>
+      widget.sshTunnels ?? SshTunnelConnector.current;
+
+  /// Connect by hand: an address and how to sign in, Dashboard alone. The
+  /// same page serves the Nous, Dashboard and SSH doors, turned towards
+  /// [way]; what was typed survives a change of door.
+  Future<void> _manualConnect({ConnectWay way = ConnectWay.manual}) async {
     SavedConnection? done;
     var browser = false;
+    String? tunnelId;
+    _connectDraft.orient(way);
     final connected = await Navigator.of(context).push<bool>(
       OnbRoute<bool>(
         builder: (_) => ManualConnectPage(
           probe: widget.probe,
+          tunnels: widget.sshTunnels,
+          draft: _connectDraft,
+          way: way,
           onHelp: () {
             Navigator.of(context).pop();
             if (_step != _Step.help) _go(_Step.help);
           },
-          connect: (url, user, pass, consent) async {
-            final draft = _dashboardDraft(
-              url,
-              null,
-            ).copyWith(kind: suggestInstanceKind(Uri.parse(url).host));
+          onScan: () {
+            Navigator.of(context).pop();
+            unawaited(_scan());
+          },
+          onCancel: () => _browserLogin?.cancel(),
+          connect: (request) async {
+            final tunnel = request.tunnel;
+            tunnelId = tunnel == null ? null : request.connectionId;
+            final draft =
+                _dashboardDraft(
+                  request.url,
+                  request.name.isEmpty ? null : request.name,
+                ).copyWith(
+                  // A tunnel's connection is born with the id its SSH data and
+                  // server key already use, and its loopback is this phone's.
+                  id: request.connectionId,
+                  onDeviceLoopback: tunnel != null,
+                  kind: suggestInstanceKind(
+                    tunnel?.sshHost ?? Uri.parse(request.url).host,
+                  ),
+                );
             if (_v2Public(draft)) return NativePasswordFailure.failed;
             try {
-              done = await _signInAndSave(draft, user, pass, consent);
-              return null;
+              switch (request.method) {
+                case ConnectMethod.password:
+                  done = await _signInAndSave(
+                    draft,
+                    request.user,
+                    request.secret,
+                    request.consent,
+                  );
+                  if (request.remember && done != null) {
+                    await widget.connManager.setDashboardSecrets(
+                      done!.id,
+                      username: request.user,
+                      password: request.secret,
+                    );
+                  }
+                case ConnectMethod.browser:
+                  final attempt = MobileOAuthLogin(
+                    openBrowser: widget.openOAuthBrowser,
+                    retainRefresh: widget.simpleConnectEnabled,
+                  );
+                  _browserLogin = attempt;
+                  // The browser reaches the Dashboard through the tunnel
+                  // while this app waits in the background.
+                  final release = tunnel == null
+                      ? null
+                      : _sshTunnels?.hold(draft.id);
+                  try {
+                    final session = await attempt.run(
+                      connectionId: draft.id,
+                      baseUrl: draft.effectiveDashboardUrl,
+                      authorityCurrent: () => mounted,
+                      allowPrivateHttp: request.consent,
+                    );
+                    done = await _saveSession(draft, session.encode());
+                  } finally {
+                    release?.call();
+                    attempt.cancel();
+                    if (identical(_browserLogin, attempt)) {
+                      _browserLogin = null;
+                    }
+                  }
+                case ConnectMethod.token:
+                  done = await _tokenAndSave(draft, request.secret);
+              }
+              final signedIn = done;
+              if (signedIn != null && tunnel != null) {
+                await _sshTunnels?.persist(
+                  signedIn.id,
+                  remember: tunnel.remember,
+                );
+              }
+              return signedIn == null ? NativePasswordFailure.failed : null;
             } on NativePasswordLoginException catch (e) {
-              if (e.failure != NativePasswordFailure.unsupported) {
+              if (request.method != ConnectMethod.password ||
+                  e.failure != NativePasswordFailure.unsupported) {
                 return e.failure;
               }
               await _saveForBrowser(draft);
               done = draft;
               browser = true;
+              if (tunnel != null) {
+                await _sshTunnels?.persist(draft.id, remember: tunnel.remember);
+              }
               return null;
+            } on DashboardAuthException {
+              return NativePasswordFailure.invalidCredentials;
+            } on DashboardHttpException catch (e) {
+              return e.statusCode == 401 || e.statusCode == 403
+                  ? NativePasswordFailure.invalidCredentials
+                  : NativePasswordFailure.failed;
             } catch (_) {
               return NativePasswordFailure.failed;
             }
@@ -603,12 +799,25 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         ),
       ),
     );
+    // Backing out of a browser sign-in that is still waiting ends it: a late
+    // callback must not save anything.
+    _browserLogin?.cancel();
     final saved = done;
-    if (!mounted || connected != true || saved == null) return;
+    if (!mounted || connected != true || saved == null) {
+      _leaveIfEntered();
+      return;
+    }
     if (!browser) return _signedIn(saved);
     _saved = saved;
     setState(() => _checks = const [OnbCheck.ok, OnbCheck.wait, OnbCheck.wait]);
-    await _signIn();
+    // The browser of this sign-in reaches the Dashboard through the tunnel.
+    final id = tunnelId;
+    final release = id == null ? null : _sshTunnels?.hold(id);
+    try {
+      await _signIn();
+    } finally {
+      release?.call();
+    }
   }
 
   SavedConnection _draft(PairingLink link) => link.toDraftConnection().copyWith(
@@ -756,7 +965,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   void _celebrate() {
-    unawaited(HapticFeedback.mediumImpact().catchError((_) {}));
+    HermesHaptics.confirm();
     if (!_reduced) _burst.forward(from: 0);
   }
 
@@ -820,6 +1029,35 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
   }
 
+  /// One of the four doors of the welcome, each to its own existing flow.
+  void _pick(ConnectWay way) {
+    switch (way) {
+      case ConnectWay.nous:
+        unawaited(_manualConnect(way: ConnectWay.nous));
+      case ConnectWay.manual:
+        unawaited(_manual());
+      case ConnectWay.ssh:
+        unawaited(_manualConnect(way: ConnectWay.ssh));
+      case ConnectWay.scan:
+        unawaited(_scan());
+    }
+  }
+
+  /// The door the welcome marks: the code / find-my-server one once a
+  /// pairing result was seen in this flow or the phone is on a tailnet, the
+  /// Nous account otherwise.
+  ConnectWay get _recommended => recommendedConnectWay(
+    pairingSeen: widget.initialLink != null || _link != null || _v2 != null,
+    onTailnet: _onTailnet,
+  );
+
+  /// The keys the welcome's doors have always had, for the two that existed.
+  static Key _wayKey(ConnectWay way) => switch (way) {
+    ConnectWay.manual => const ValueKey('onboarding-manual'),
+    ConnectWay.scan => const ValueKey('onboarding-scan'),
+    _ => ValueKey('onboarding-way-${way.name}'),
+  };
+
   Future<void> _manual({SavedConnection? initial}) async {
     if (widget.simpleConnectEnabled && initial == null) {
       return _manualConnect();
@@ -834,7 +1072,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         ),
       ),
     );
-    if (!mounted || saved != true) return;
+    if (!mounted || saved != true) {
+      _leaveIfEntered();
+      return;
+    }
     final connection = widget.connManager
         .getConnections()
         .where(
@@ -918,6 +1159,58 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     return result;
   }
 
+  /// One read of the new connection's accounts: whether Nous Portal is
+  /// offered and not signed in. Silent on any failure (an older server, no
+  /// network): the offer simply does not appear.
+  Future<void> _checkNousOffer() async {
+    final connection = _saved;
+    if (connection == null || connection.readOnly || !mounted) return;
+    final profile = ActiveProfileScope.of(
+      widget.connManager,
+      connection.id,
+    ).name;
+    final client = DashboardClient.lazy(connection);
+    var offered = false;
+    try {
+      final rows = OAuthAccount.listFromJson(
+        await client
+            .getOAuthProviders(profile: profile.isEmpty ? null : profile)
+            .timeout(const Duration(seconds: 4)),
+      );
+      offered = rows.any((a) => a.isNous && !a.signedIn && a.canSignInHere);
+    } catch (_) {
+      offered = false;
+    } finally {
+      client.close();
+    }
+    if (!mounted || _saved?.id != connection.id) return;
+    if (offered != _nousOffered) setState(() => _nousOffered = offered);
+  }
+
+  /// The offer, taken: the account page over the onboarding; on return the
+  /// offer and the model state are read again.
+  Future<void> _connectNous() async {
+    final connection = _saved;
+    if (connection == null) return;
+    _successTapped = true;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => NousAccountScreen(
+          connection: connection,
+          profileScope: ActiveProfileScope.of(
+            widget.connManager,
+            connection.id,
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    unawaited(_checkNousOffer());
+    if (widget.simpleConnectEnabled && !connection.readOnly) {
+      await _checkModel();
+    }
+  }
+
   /// Opens the model settings over the onboarding and checks again on return.
   Future<void> _chooseModel() async {
     final connection = _saved;
@@ -968,9 +1261,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       // and called [_back] again: an endless microtask loop (ANR on 1.3.0).
       canPop:
           (_step == _Step.welcome ||
-              (widget.guided &&
-                  _history.isEmpty &&
-                  _step != _Step.success)) &&
+              (widget.guided && _history.isEmpty && _step != _Step.success)) &&
           !_busy &&
           !_exiting,
       onPopInvokedWithResult: (didPop, _) {
@@ -1493,16 +1784,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
+  /// The welcome: the three ways in as cards, the recommended one marked, a
+  /// line for whoever cannot tell them apart, and the setup command for
+  /// whoever has no Hermes yet.
   Widget _welcome(BuildContext context) {
     final s = Strings.of(context);
     final c = Theme.of(context).hermes;
-    final heroSize = _slotSize(0.17, 72, 140);
+    final heroSize = _slotSize(0.14, 64, 120);
     return _frame(
       children: [
         // The hero's place: the logo glides into it.
         Expanded(
           child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: heroSize + 16),
+            constraints: BoxConstraints(minHeight: heroSize + 12),
             child: Align(
               alignment: const Alignment(0, 0.3),
               child: SizedBox.square(
@@ -1517,63 +1811,43 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           Semantics(
             header: true,
             child: Text(
-              s.o2WelcomeTitle,
+              s.onbFlowTitle,
               textAlign: TextAlign.center,
               textScaler: onbTitleScaler(context),
               style: onbTitle(c),
             ),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: HermesSpace.x3),
         _rise(
           1,
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x4),
             child: Text(
-              s.onb4WelcomeBody,
+              s.onbFlowBody,
               textAlign: TextAlign.center,
               style: onbBody(c),
             ),
           ),
         ),
-        const SizedBox(height: 30),
-        AnimatedBuilder(
-          animation: _open,
-          builder: (_, _) {
-            final e = _opening
-                ? ivl(_open.value, 1700 / _openMs, 1, Curves.easeInOutCubic)
-                : 1.0;
-            final shown = _opening
-                ? ivl(_open.value, 1450 / _openMs, 1700 / _openMs)
-                : 1.0;
-            return Opacity(
-              opacity: shown,
-              child: OnbPrimary(
-                key: const ValueKey('onboarding-scan'),
-                label: s.onb4HaveHermes,
-                icon: Icons.qr_code_scanner_rounded,
-                expand: e,
-                onTap: _scan,
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 12),
+        const SizedBox(height: HermesSpace.x6),
         _rise(
           2,
-          OnbSecondary(
-            key: const ValueKey('onboarding-help'),
-            label: s.onb4NoHermes,
-            onTap: () => _go(_Step.help),
+          ConnectWayCards(
+            key: const ValueKey('onboarding-ways'),
+            recommended: _recommended,
+            onPick: _pick,
+            onWhich: () => unawaited(showConnectWayHelp(context)),
+            keyFor: _wayKey,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: HermesSpace.x1),
         _rise(
           3,
           OnbTextButton(
-            key: const ValueKey('onboarding-manual'),
-            label: s.o2Manual,
-            onTap: _manual,
+            key: const ValueKey('onboarding-help'),
+            label: s.onbFlowPair,
+            onTap: () => _go(_Step.help),
           ),
         ),
       ],
@@ -1743,7 +2017,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         ),
         const SizedBox(height: 10),
         Text(
-          widget.guided ? s.leg3SetupBody : s.onb4HelpIntro,
+          widget.guided ? s.onbFlowGuidedBody : s.onb4HelpIntro,
           style: TextStyle(fontSize: 15, height: 1.4, color: c.textSecondary),
         ),
         const SizedBox(height: 18),
@@ -2206,6 +2480,27 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
+  /// «Connect your Nous Portal account to use its models»: a secondary
+  /// action; going home or to the chat skips it.
+  Widget _nousOfferButton(Strings s) => Column(
+    key: const ValueKey('onboarding-nous-offer-block'),
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        s.nacOnboardingOffer,
+        key: const ValueKey('onboarding-nous-offer-text'),
+        textAlign: TextAlign.center,
+        style: onbBody(Theme.of(context).hermes),
+      ),
+      const SizedBox(height: HermesSpace.x2),
+      OnbSecondary(
+        key: const ValueKey('onboarding-nous-offer'),
+        label: s.nacCardConnect,
+        onTap: () => unawaited(_connectNous()),
+      ),
+    ],
+  );
+
   Widget _success(BuildContext context) {
     final s = Strings.of(context);
     final c = Theme.of(context).hermes;
@@ -2216,6 +2511,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       WidgetsBinding.instance.addPostFrameCallback((_) => _checkModel());
     }
     final needsModel = simple && _readiness == ModelReadiness.needsModel;
+    if (!readOnly && !_nousChecked && _saved != null) {
+      _nousChecked = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_checkNousOffer());
+      });
+    }
+    final nousOffer = _nousOffered && !readOnly;
     return _frame(
       children: [
         _slot(_Step.success, min: 84, max: 120),
@@ -2271,6 +2573,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       );
                     },
                   ),
+                  if (nousOffer) ...[
+                    const SizedBox(height: HermesSpace.x2),
+                    _nousOfferButton(s),
+                  ],
                   const SizedBox(height: 6),
                   OnbTextButton(
                     key: const ValueKey('onboarding-done'),
@@ -2280,13 +2586,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       unawaited(_finish());
                     },
                   ),
-                ] else
+                ] else ...[
                   OnbPrimary(
                     key: const ValueKey('onboarding-done'),
                     label: s.o2GoHome,
                     icon: Icons.home_outlined,
                     onTap: _finish,
                   ),
+                  if (nousOffer) ...[
+                    const SizedBox(height: HermesSpace.x2),
+                    _nousOfferButton(s),
+                  ],
+                ],
               ],
             ),
           ),

@@ -27,12 +27,14 @@ import '../../../widgets/floating_chat_header.dart';
 import '../../../widgets/hermes_app_bar.dart';
 import '../../../feedback/feedback_policy.dart';
 import '../../../widgets/hermes_notice.dart';
+import '../../../widgets/chat/mention_chips.dart';
 import '../../../widgets/hermes_premium_ui.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../../data/room_log_cursor.dart';
 import 'room_dictation.dart';
 import 'room_gateway.dart';
 import 'room_header.dart';
+import 'room_mention_chips.dart';
 import 'room_mentions.dart';
 import 'room_models.dart';
 import 'room_prefs.dart';
@@ -2554,6 +2556,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                   recording: dictation.recording,
                   transcribing: dictation.transcribing,
                   level: dictation.level,
+                  partial: dictation.partial,
                   cancelEnabled: !dictation.transcribing,
                   sendEnabled: false,
                   onStart: () => unawaited(
@@ -2824,10 +2827,16 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   /// Key of the newest history row in the last built transcript.
   String? _lastHistoryKey;
 
+  /// Newest log seq that transcript was built from. A read can land (and
+  /// move [_log] on) before the next build: reading that starts in that
+  /// frame takes its ceiling from what is on screen, so the rows it has
+  /// not built yet count as new under the pill instead of as seen.
+  int _builtThroughSeq = 0;
+
   void _startReading() {
     final boundary = _lastHistoryKey;
     if (boundary == null) return;
-    _reading = (boundary: boundary, ceiling: _log?.latestSeq ?? 0);
+    _reading = (boundary: boundary, ceiling: _builtThroughSeq);
   }
 
   void _unfreeze() {
@@ -2918,6 +2927,31 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   /// Handles whose mention opens something: members with a local profile
   /// when the host can open them (same rule as the members sheet). Peers,
   /// `@all` and `@everyone` stay plain text rather than dead links.
+  /// The room's mention chips, kept while the members, what can be opened
+  /// and the faces stay the same: a new message must not re-parse the
+  /// messages already on screen.
+  RoomMentionChips _mentionChips(List<String> openable) {
+    final inputs = [
+      _room.members,
+      openable.join('\u0000'),
+      widget.profileFor,
+      widget.avatarCache,
+    ];
+    final cached = _chips;
+    if (cached != null && _sameInputs(_chipsInputs, inputs)) return cached;
+    _chipsInputs = inputs;
+    return _chips = RoomMentionChips(
+      members: _room.members,
+      profileFor: widget.profileFor,
+      avatarCache: widget.avatarCache,
+      openable: openable,
+      onOpen: _openMention,
+    );
+  }
+
+  List<Object?>? _chipsInputs;
+  RoomMentionChips? _chips;
+
   List<String> _openableHandles() => [
     if (widget.onOpenMember != null)
       for (final m in _room.members)
@@ -3096,6 +3130,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     ];
     _lastItemKeys = [for (final i in items) i.key];
     _lastHistoryKey = transcript.isEmpty ? null : transcript.last.key;
+    _builtThroughSeq = _log?.latestSeq ?? 0;
     if (_landPending && _lastSeenLoaded && _log != null) {
       // Entry (or return after leaving) with news from while away: open
       // with the divider at the top, the history above it in the center.
@@ -3161,64 +3196,69 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             onNotification: _onScroll,
             child: KeyedSubtree(
               key: _transcriptKey,
-              child: ValueListenableBuilder<double>(
-                valueListenable: _composerExtent,
-                builder: (context, composerExtent, _) {
-                  // The last message rests above the notch tab, which sits
-                  // on the composer's top edge.
-                  final bottomInset = composerExtent + kChatNotchHeight;
-                  _transcriptScroll.centerReserve = newer.isEmpty
-                      ? bottomInset
-                      : 0;
-                  return CustomScrollView(
-                    key: const ValueKey('room-transcript'),
-                    controller: _transcriptScroll,
-                    reverse: true,
-                    center: _centerKey,
-                    slivers: [
-                      // Under the floating composer: the newest row rests
-                      // above it and scrolls under it, never behind a band.
-                      // The reserve is the bottom-most thing in the list: below
-                      // the newer rows when there are any, else the leading
-                      // edge of the center sliver (so a short room has no slack
-                      // to drag its last message under the composer).
-                      if (newer.isNotEmpty)
-                        SliverToBoxAdapter(
-                          key: const ValueKey('room-bottom-inset'),
-                          child: SizedBox(height: bottomInset),
-                        ),
-                      // Newer than what the user is
-                      // reading: grows below it.
-                      SliverList(
-                        delegate: SliverChildBuilderDelegate(
-                          (context, index) => newer[index].build(),
-                          childCount: newer.length,
-                        ),
-                      ),
-                      SliverPadding(
-                        key: _centerKey,
-                        // Reverse list: `bottom` is the leading (lowest) edge.
-                        padding: EdgeInsets.only(
-                          top: 8,
-                          bottom: newer.isEmpty ? bottomInset : 0,
-                        ),
-                        sliver: SliverList(
+              child: MentionChipScope(
+                resolver: _mentionChips(handles),
+                child: ValueListenableBuilder<double>(
+                  valueListenable: _composerExtent,
+                  builder: (context, composerExtent, _) {
+                    // The last message rests above the notch tab, which sits
+                    // on the composer's top edge.
+                    final bottomInset = composerExtent + kChatNotchHeight;
+                    _transcriptScroll.centerReserve = newer.isEmpty
+                        ? bottomInset
+                        : 0;
+                    return CustomScrollView(
+                      key: const ValueKey('room-transcript'),
+                      controller: _transcriptScroll,
+                      reverse: true,
+                      center: _centerKey,
+                      slivers: [
+                        // Under the floating composer: the newest row rests
+                        // above it and scrolls under it, never behind a band.
+                        // The reserve is the bottom-most thing in the list:
+                        // below the newer rows when there are any, else the
+                        // leading edge of the center sliver (so a short room
+                        // has no slack to drag its last message under the
+                        // composer).
+                        if (newer.isNotEmpty)
+                          SliverToBoxAdapter(
+                            key: const ValueKey('room-bottom-inset'),
+                            child: SizedBox(height: bottomInset),
+                          ),
+                        // Newer than what the user is
+                        // reading: grows below it.
+                        SliverList(
                           delegate: SliverChildBuilderDelegate(
-                            (context, index) =>
-                                anchored[anchored.length - 1 - index].build(),
-                            childCount: anchored.length,
+                            (context, index) => newer[index].build(),
+                            childCount: newer.length,
                           ),
                         ),
-                      ),
-                      // Under the floating header: the oldest row is never
-                      // hidden behind it.
-                      SliverToBoxAdapter(
-                        key: const ValueKey('room-top-inset'),
-                        child: SizedBox(height: _headerInset),
-                      ),
-                    ],
-                  );
-                },
+                        SliverPadding(
+                          key: _centerKey,
+                          // Reverse list: `bottom` is the leading (lowest)
+                          // edge.
+                          padding: EdgeInsets.only(
+                            top: 8,
+                            bottom: newer.isEmpty ? bottomInset : 0,
+                          ),
+                          sliver: SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) =>
+                                  anchored[anchored.length - 1 - index].build(),
+                              childCount: anchored.length,
+                            ),
+                          ),
+                        ),
+                        // Under the floating header: the oldest row is never
+                        // hidden behind it.
+                        SliverToBoxAdapter(
+                          key: const ValueKey('room-top-inset'),
+                          child: SizedBox(height: _headerInset),
+                        ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           );
@@ -3511,7 +3551,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
 }
 
 /// Thread sheet page: the thread's messages with the same group layout.
-class _RoomThreadPage extends StatelessWidget {
+class _RoomThreadPage extends StatefulWidget {
   final List<HostedGroupEvent> messages;
   final List<HostedGroupMember> members;
   final RoomProfileResolver profileFor;
@@ -3535,8 +3575,57 @@ class _RoomThreadPage extends StatelessWidget {
   });
 
   @override
+  State<_RoomThreadPage> createState() => _RoomThreadPageState();
+}
+
+class _RoomThreadPageState extends State<_RoomThreadPage> {
+  /// Kept while the members, what can be opened and the faces stay the
+  /// same: the keyboard or a turn of the phone rebuilds the page and must
+  /// not re-parse every message of the thread (REVIEW-R5-B #17).
+  RoomMentionChips? _chips;
+  List<Object?>? _chipsInputs;
+
+  RoomMentionChips get _mentionChips {
+    final inputs = [
+      widget.members,
+      widget.mentionHandles.join('\u0000'),
+      widget.profileFor,
+      widget.avatarCache,
+    ];
+    final cached = _chips;
+    if (cached != null && _sameChipInputs(_chipsInputs, inputs)) return cached;
+    _chipsInputs = inputs;
+    return _chips = RoomMentionChips(
+      members: widget.members,
+      profileFor: widget.profileFor,
+      avatarCache: widget.avatarCache,
+      openable: widget.mentionHandles,
+      // The newest callback, without a new resolver for a new closure.
+      onOpen: (handle) => widget.onMention(handle),
+    );
+  }
+
+  static bool _sameChipInputs(List<Object?>? a, List<Object?> b) {
+    if (a == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final same = a[i] is String ? a[i] == b[i] : identical(a[i], b[i]);
+      if (!same) return false;
+    }
+    return true;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
+    final messages = widget.messages;
+    final members = widget.members;
+    final profileFor = widget.profileFor;
+    final avatarCache = widget.avatarCache;
+    final attachmentActions = widget.attachmentActions;
+    final canReply = widget.canReply;
+    final mentionHandles = widget.mentionHandles;
+    final onMention = widget.onMention;
+    final onReply = widget.onReply;
     final entries = buildRoomTranscript(
       events: messages,
       members: members,
@@ -3548,23 +3637,26 @@ class _RoomThreadPage extends StatelessWidget {
         child: Column(
           children: [
             Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.only(bottom: 12),
-                itemCount: entries.length,
-                itemBuilder: (_, index) => RoomMessageTile(
-                  entry: RoomMessageEntry(
-                    event: entries[index].event,
-                    body: entries[index].body,
-                    member: entries[index].member,
-                    firstOfRun: entries[index].firstOfRun,
+              child: MentionChipScope(
+                resolver: _mentionChips,
+                child: ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  itemCount: entries.length,
+                  itemBuilder: (_, index) => RoomMessageTile(
+                    entry: RoomMessageEntry(
+                      event: entries[index].event,
+                      body: entries[index].body,
+                      member: entries[index].member,
+                      firstOfRun: entries[index].firstOfRun,
+                    ),
+                    profile: entries[index].member == null
+                        ? null
+                        : profileFor(entries[index].member!),
+                    avatarCache: avatarCache,
+                    mentionHandles: mentionHandles,
+                    attachmentActions: attachmentActions,
+                    onMention: onMention,
                   ),
-                  profile: entries[index].member == null
-                      ? null
-                      : profileFor(entries[index].member!),
-                  avatarCache: avatarCache,
-                  mentionHandles: mentionHandles,
-                  attachmentActions: attachmentActions,
-                  onMention: onMention,
                 ),
               ),
             ),

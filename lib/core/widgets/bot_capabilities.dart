@@ -80,8 +80,12 @@ class BotCapabilitiesRow extends StatelessWidget {
   final void Function(String name, bool enabled) onChanged;
   final bool enabled;
 
+  /// Monochrome icon at the start of the row; none keeps the plain row.
+  final IconData? icon;
+
   const BotCapabilitiesRow({
     super.key,
+    this.icon,
     required this.title,
     required this.summary,
     required this.keyPrefix,
@@ -96,6 +100,7 @@ class BotCapabilitiesRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => HermesListRow(
+    icon: icon,
     title: title,
     value: summary,
     onTap: !enabled

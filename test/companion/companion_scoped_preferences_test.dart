@@ -27,6 +27,7 @@ void main() {
 
         await prefs.setSelectedSlugFor('conn-1', 'alpha', 'nimbus');
         await prefs.setSelectedSlugFor('conn-1', 'beta', 'jinx');
+        await prefs.setEnabledFor('conn-1', 'alpha', true);
         await prefs.setEnabledFor('conn-1', 'beta', false);
 
         expect(prefs.selectedSlugFor('conn-1', 'alpha'), 'nimbus');

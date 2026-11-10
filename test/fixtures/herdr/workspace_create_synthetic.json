@@ -1,0 +1,28 @@
+{
+  "id": "cli:workspace:create",
+  "result": {
+    "type": "workspace_created",
+    "workspace": {
+      "workspace_id": "w4",
+      "label": "app",
+      "number": 4,
+      "focused": false,
+      "pane_count": 1,
+      "tab_count": 1,
+      "agent_status": "unknown"
+    },
+    "tab": {
+      "tab_id": "w4:t1",
+      "workspace_id": "w4",
+      "label": "1",
+      "number": 1
+    },
+    "root_pane": {
+      "pane_id": "w4:p1",
+      "workspace_id": "w4",
+      "tab_id": "w4:t1",
+      "focused": false,
+      "agent_status": "unknown"
+    }
+  }
+}

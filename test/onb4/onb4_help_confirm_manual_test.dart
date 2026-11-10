@@ -156,7 +156,8 @@ void main() {
     ) async {
       final s = await _open(tester, language);
       await tapOnboarding(tester, 'onboarding-manual');
-      expect(find.text(s.onb4ManualBody), findsOneWidget);
+      expect(find.text(s.cnxAddressNote), findsOneWidget);
+      expect(find.text(s.cnxScanQr), findsOneWidget);
       expect(find.text(s.onb4AddressLabel), findsWidgets);
       expect(find.text(s.onb3DontKnow), findsOneWidget);
       // «I don't know these» goes to the install help.

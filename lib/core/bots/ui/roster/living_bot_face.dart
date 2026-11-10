@@ -7,6 +7,10 @@ import '../../../models/agent_profile.dart';
 import '../../../models/profile_identity.dart';
 import '../../../widgets/profile_pet_avatar.dart';
 import '../../../theme/app_theme.dart';
+import '../../../characters/bot_character_store.dart';
+import '../../../characters/bot_motion.dart';
+import '../../../characters/character_face.dart';
+import '../../../characters/profile_identity_resolver.dart';
 import '../../../widgets/bot_avatar_motion.dart';
 import '../../../widgets/hermes_bot_face.dart';
 import '../../../widgets/mission_profile_avatar.dart';
@@ -286,7 +290,7 @@ class _LivingBotFaceState extends State<LivingBotFace>
     _motion =
         widget.animate &&
         !debugLivingBotFacesStill &&
-        !MediaQuery.disableAnimationsOf(context) &&
+        botMotionAllowed(context) &&
         TickerMode.valuesOf(context).enabled;
     if (_motion && !_entered) {
       _entered = true;
@@ -658,7 +662,10 @@ class _Face extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: ProfileIdentities.instance,
+    listenable: Listenable.merge([
+      ProfileIdentities.instance,
+      BotCharacterStore.shared,
+    ]),
     builder: (context, _) => _buildIdentity(context),
   );
 
@@ -667,18 +674,17 @@ class _Face extends StatelessWidget {
     final cache = avatarCache;
     final connection = cache?.connectionId ?? connectionId;
     ProfileIdentities.instance.requestAfterPaint(connection, profileName);
-    final identity = profileIdentityFor(
+    final identity = resolveProfileIdentity(
       profileName: profileName,
       profile: profile,
       connectionId: connection,
+      canLoadPhoto: cache != null,
     );
     if (identity.pet case final pet?) {
       return ProfilePetAvatar(pet: pet, size: size);
     }
     final raster =
-        profile != null &&
-        identity.kind == ProfileIdentityKind.image &&
-        cache != null;
+        profile != null && identity.source == ProfileIdentitySource.photo;
     if (raster) {
       final busy =
           signal == BotFaceSignal.working || signal == BotFaceSignal.speaking;
@@ -699,6 +705,20 @@ class _Face extends StatelessWidget {
           colorHex: profile.botFaceColorHex,
           imageKind: profile.botImageKind,
         ),
+      );
+    }
+    final character = identity.character;
+    if (character != null) {
+      return CharacterFace(
+        profileName: profileName,
+        character: character,
+        size: size,
+        animate: motion,
+        clock: clock,
+        motionState: signal.motionState,
+        motionGain: gain,
+        eyeGain: LivingBotFace.eyeGainFor(gain),
+        finish: matte ? HermesBotFaceFinish.matte : HermesBotFaceFinish.flat,
       );
     }
     final visual =

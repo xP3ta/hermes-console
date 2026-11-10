@@ -17,6 +17,9 @@ import '../models/companion_scale.dart';
 /// perfil activo una sola vez. Los ajustes de presentación de la app
 /// (velocidad por slug, nivel de presencia) siguen siendo globales.
 class CompanionPreferences {
+  /// Value when the user never chose: the mascot is off by default.
+  static const bool defaultEnabled = false;
+
   static const appMigrationKey = 'companion.app.migrated.v1';
   static const appSlugKey = 'companion.app.selected_slug';
   static const appEnabledKey = 'companion.app.enabled';
@@ -28,7 +31,10 @@ class CompanionPreferences {
 
   bool get appMigrated => _prefs.getBool(appMigrationKey) == true;
   String? get appSlug => _prefs.getString(appSlugKey);
-  bool get appEnabled => _prefs.getBool(appEnabledKey) ?? true;
+
+  /// Off until the user turns it on: with no stored choice the floating
+  /// mascot stays hidden. An explicit stored `true` is kept.
+  bool get appEnabled => _prefs.getBool(appEnabledKey) ?? defaultEnabled;
   double get appSize => CompanionDisplaySettings.clampSizeMultiplier(
     _prefs.getDouble(appSizeKey) ??
         CompanionDisplaySettings.defaultSizeMultiplier,
@@ -98,8 +104,9 @@ class CompanionPreferences {
   /// Slug seleccionado, o `null` (→ mascota por defecto).
   String? get selectedSlug => _prefs.getString(slugKey);
 
-  /// Si la mascota está activada. Default: `true`.
-  bool get enabled => _prefs.getBool(enabledKey) ?? true;
+  /// Si la mascota está activada. Default: `false` (apagada hasta que el
+  /// usuario la enciende); un `true` guardado explícitamente se respeta.
+  bool get enabled => _prefs.getBool(enabledKey) ?? defaultEnabled;
 
   /// Preset de escala de la mascota. Default/valor inválido → `medium`.
   CompanionScale get scale => CompanionScale.fromId(_prefs.getString(scaleKey));
@@ -276,7 +283,7 @@ class CompanionPreferences {
   bool enabledFor(String connId, String profileId) =>
       _prefs.getBool(_scopedEnabledKey(connId, profileId)) ??
       _prefs.getBool(enabledKey) ??
-      true;
+      defaultEnabled;
 
   Future<void> setEnabledFor(
     String connId,

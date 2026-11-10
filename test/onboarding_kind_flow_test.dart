@@ -217,6 +217,12 @@ void main() {
       'and a typed address picks the default',
       (tester) async {
         final handle = tester.ensureSemantics();
+        // The three ways sit above the form now: a tall page keeps the whole
+        // form built.
+        tester.view.physicalSize = const Size(412, 3200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
         final manager = await onboardingManager();
         await tester.pumpWidget(
           onboardingHost(
@@ -225,6 +231,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('instance-way-ssh')), findsNothing);
         // Advanced is folded and the row is there anyway.
         expect(find.byKey(const ValueKey('instance-chat-port')), findsNothing);
         expect(find.byKey(const ValueKey('instance-icon')), findsOneWidget);

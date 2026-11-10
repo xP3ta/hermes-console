@@ -30,6 +30,7 @@ import 'package:hermes_android/core/shell/gesture_dock_state.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/scroll_behavior.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
+import 'package:hermes_android/core/widgets/kanban_skin_style.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -102,7 +103,7 @@ MockClient _client() => MockClient((request) async {
 });
 
 Future<ConnectionManager> _dockManager() async {
-  SharedPreferences.setMockInitialValues({});
+  SharedPreferences.setMockInitialValues({kKanbanNewSkinPrefKey: false});
   TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(
         const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -128,6 +129,8 @@ Future<void> _pumpBoard(
   String themeId = 'classic-dark',
 }) async {
   await loadDesignFonts();
+  // This test describes the previous skin, kept as the fallback.
+  SharedPreferences.setMockInitialValues({kKanbanNewSkinPrefKey: false});
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   tester.view.padding = const FakeViewPadding(top: _top, bottom: _bottom);
@@ -185,7 +188,11 @@ final _column = find.byKey(const ValueKey('kanban-board-column-attention'));
 final _header = find.byKey(const ValueKey('kanban-board-header-attention'));
 final _switch = find.byKey(const ValueKey('hermes-segmented-floating'));
 final _filter = find.byKey(const ValueKey('kanban-filter-button'));
-final _title = find.byKey(const ValueKey('hermes-app-bar-title'));
+final _title = find.byWidgetPredicate(
+  (w) =>
+      w.key == const ValueKey('hermes-app-bar-title') ||
+      w.key == const ValueKey('hermes-app-bar-plain-title'),
+);
 
 Finder _card(String id) =>
     find.byKey(ValueKey('kanban-board-task-$id'), skipOffstage: false);

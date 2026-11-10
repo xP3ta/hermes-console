@@ -27,6 +27,7 @@ class _Repo extends CompanionRepository {
 /// face in the pet's place.
 Future<CompanionController> _build({String? stored = 'full'}) async {
   SharedPreferences.setMockInitialValues({
+    CompanionPreferences.enabledKey: true,
     CompanionPreferences.presenceLevelKey: ?stored,
   });
   final prefs = CompanionPreferences(await SharedPreferences.getInstance());

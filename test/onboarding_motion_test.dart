@@ -59,7 +59,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    final title = find.text('Conecta con tu Hermes');
+    final title = find.text('Conectar un agente');
     expect(_opacityOf(tester, title).value, lessThan(1));
     // Anywhere on the screen.
     await tester.tapAt(const Offset(10, 300));
@@ -67,16 +67,21 @@ void main() {
     await tester.pump(const Duration(milliseconds: 16));
     expect(_opacityOf(tester, title).value, 1);
     expect(find.text('CONSOLE'), findsNothing);
-    // The scan button is the full pill.
-    final primary = tester.widget<OnbPrimary>(
-      find.byKey(const ValueKey('onboarding-scan')),
-    );
-    expect(primary.expand, 1);
+    // The three ways are on the page, whole, once the opening has ended.
+    expect(find.byKey(const ValueKey('onboarding-manual')), findsOneWidget);
+    expect(find.byKey(const ValueKey('onboarding-way-nous')), findsOneWidget);
+    expect(find.byKey(const ValueKey('onboarding-way-ssh')), findsNothing);
+    expect(find.byKey(const ValueKey('onboarding-scan')), findsOneWidget);
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('the scan button works from the first frame', (tester) async {
+    // The three ways stack: a tall page keeps the scan card on screen.
+    tester.view.physicalSize = const Size(412, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final manager = await onboardingManager();
     var scans = 0;
     await tester.pumpWidget(
@@ -120,13 +125,13 @@ void main() {
 
     await mount();
     expect(
-      _opacityOf(tester, find.text('Conecta con tu Hermes')).value,
+      _opacityOf(tester, find.text('Conectar un agente')).value,
       lessThan(1),
     );
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpWidget(const SizedBox.shrink());
     await mount();
-    expect(_opacityOf(tester, find.text('Conecta con tu Hermes')).value, 1);
+    expect(_opacityOf(tester, find.text('Conectar un agente')).value, 1);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -144,7 +149,7 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(_opacityOf(tester, find.text('Conecta con tu Hermes')).value, 1);
+    expect(_opacityOf(tester, find.text('Conectar un agente')).value, 1);
     expect(find.text('CONSOLE'), findsNothing);
     await tester.pump(const Duration(milliseconds: 300));
     expect(tester.hasRunningAnimations, isFalse);

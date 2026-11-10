@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab
 
 // ONB7: «Conectado» stays on screen long enough to be seen before the chat
-// opens by itself, even when the model check answers at once (José, 9622:
+// opens by itself, even when the model check answers at once (the owner, 9622:
 // "entra ultrarrápido y no se llega a ver la animación").
 import 'dart:io';
 

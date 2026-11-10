@@ -131,6 +131,14 @@ final class ModelPickerCache {
     _entries[key] = (at: entry.at, result: entry.result, stale: true);
   }
 
+  /// [invalidate] for every profile of [connectionId].
+  void invalidateConnection(String connectionId) {
+    final prefix = '$connectionId\u0000';
+    for (final key in [..._entries.keys]) {
+      if (key.startsWith(prefix)) invalidate(key);
+    }
+  }
+
   /// [slugs] were removed from the profile: the entry stops listing them at
   /// once and is stale, so the next open paints the rest and asks the server
   /// again instead of offering a provider that is gone.

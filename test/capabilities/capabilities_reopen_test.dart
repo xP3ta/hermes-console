@@ -50,6 +50,7 @@ Widget _screen(
   repository: repoOf(rest),
   snapshotCache: cache,
   snapshotKey: key,
+  initialSegment: CapabilitiesSegment.catalog,
   searchDebounce: Duration.zero,
 );
 

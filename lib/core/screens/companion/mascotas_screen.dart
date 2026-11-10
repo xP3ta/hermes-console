@@ -20,6 +20,7 @@ import 'petdex_gallery_screen.dart';
 import '../../companion/render/spritesheet_renderer.dart';
 import '../../companion/state/companion_controller.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/hermes_tokens.dart';
 import '../../widgets/hermes_app_bar.dart';
 import '../../widgets/mascot/float/mascot_prefs.dart';
 import '../../widgets/hermes_ui.dart';
@@ -321,12 +322,14 @@ class _MascotasBodyState extends State<_MascotasBody> {
         : CompanionPresenceLevel.off;
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      // Q9-CRISTAL: the page passes under the glass header.
+      clipBehavior: hermesUnderHeader,
+      padding: const EdgeInsets.all(HermesSpace.x4),
       children: [
         // Una única preview grande. Antes se repetía una mascota pequeña sobre
         // esta misma superficie sin aportar información adicional.
         Container(
-          padding: const EdgeInsets.symmetric(vertical: 24),
+          padding: const EdgeInsets.symmetric(vertical: HermesSpace.x6),
           decoration: BoxDecoration(
             color: colors.surfaceVariant,
             borderRadius: BorderRadius.circular(20),
@@ -431,14 +434,19 @@ class _MascotasBodyState extends State<_MascotasBody> {
         Material(
           key: const ValueKey('pet-advanced-options'),
           color: colors.surfaceVariant,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(HermesRadius.row),
           clipBehavior: Clip.antiAlias,
           child: ExpansionTile(
             onExpansionChanged: (expanded) {
               if (!expanded) _stopTest();
             },
-            tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            tilePadding: const EdgeInsets.symmetric(horizontal: HermesSpace.x4),
+            childrenPadding: const EdgeInsets.fromLTRB(
+              HermesSpace.x4,
+              0,
+              HermesSpace.x4,
+              14,
+            ),
             iconColor: colors.accent,
             collapsedIconColor: colors.textSecondary,
             title: Text(
@@ -684,7 +692,10 @@ class _MascotasBodyState extends State<_MascotasBody> {
   // compacto original de esta pantalla (spec 028 A-213).
   Widget _sectionLabel(String text) => HermesSectionHeader(
     text,
-    padding: const EdgeInsets.only(left: 4, bottom: 8),
+    padding: const EdgeInsets.only(
+      left: HermesSpace.x1,
+      bottom: HermesSpace.x2,
+    ),
   );
 }
 
@@ -728,7 +739,12 @@ class _CompanionSlider extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
         ),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
+          padding: const EdgeInsets.fromLTRB(
+            HermesSpace.x3,
+            9,
+            HermesSpace.x3,
+            HermesSpace.x2,
+          ),
           child: Column(
             children: [
               Row(
@@ -805,7 +821,7 @@ class _PresenceChoices extends StatelessWidget {
     return Material(
       key: const ValueKey('pet-presence-choices'),
       color: colors.surfaceVariant,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(HermesRadius.row),
       clipBehavior: Clip.antiAlias,
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -829,7 +845,9 @@ class _PresenceChoices extends StatelessWidget {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minHeight: 52),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: HermesSpace.x4,
+                    ),
                     child: Row(
                       children: [
                         _RadioMark(colors: colors, selected: level == current),
@@ -958,7 +976,10 @@ class _AnimationTester extends StatelessWidget {
       children: [
         if (pet == null)
           Padding(
-            padding: const EdgeInsets.only(left: 4, bottom: 8),
+            padding: const EdgeInsets.only(
+              left: HermesSpace.x1,
+              bottom: HermesSpace.x2,
+            ),
             child: Text(
               Strings.of(context).petTryHint,
               style: TextStyle(color: colors.textSecondary, fontSize: 12),
@@ -986,7 +1007,7 @@ class _AnimationTester extends StatelessWidget {
                         color: reduceMotion
                             ? colors.textDisabled
                             : colors.textPrimary,
-                        fontSize: 13,
+                        fontSize: HermesType.valueSize,
                       ),
                     ),
                   ],
@@ -1095,12 +1116,15 @@ class _TesterChip extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: HermesSpace.x2,
+            ),
             child: Text(
               label,
               style: TextStyle(
                 color: fg,
-                fontSize: 13,
+                fontSize: HermesType.valueSize,
                 fontWeight: active && enabled
                     ? FontWeight.w700
                     : FontWeight.w500,
@@ -1142,7 +1166,7 @@ class _MascotaTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: HermesSpace.x2),
       child: Material(
         color: colors.surface,
         clipBehavior: Clip.antiAlias,
@@ -1318,7 +1342,7 @@ class _UnavailableState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(HermesSpace.x8),
         child: Text(
           Strings.of(context).petsUnavailable,
           textAlign: TextAlign.center,

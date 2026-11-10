@@ -30,6 +30,9 @@ class _FakeCreationGateway implements HermesDesktopBotCreationGateway {
   final List<Map<String, Object?>> created = [];
   final List<Map<String, Object?>> stamped = [];
 
+  /// Throws this from `profiles.create` instead of answering.
+  Object? createFailure;
+
   @override
   Future<void> createProfileNative({
     required String name,
@@ -43,6 +46,7 @@ class _FakeCreationGateway implements HermesDesktopBotCreationGateway {
   }) async {
     createCalls++;
     log.add('create');
+    if (createFailure case final failure?) throw failure;
     created.add({
       'name': name,
       'cloneFrom': cloneFrom,
@@ -608,6 +612,44 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('bot-create-submit')));
     await tester.pumpAndSettle();
     expect(creation.createCalls, 1);
+  });
+
+  testWidgets('a create that got no answer says so and offers no blind retry', (
+    tester,
+  ) async {
+    final log = <String>[];
+    final creation = _FakeCreationGateway(log: log)
+      ..createFailure = const TuiGatewayRpcError(
+        'profiles.create',
+        'connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    await _pumpCreate(
+      tester,
+      creation: creation,
+      assets: _FakeAssetsGateway(log: log),
+      pets: _FakePetGateway(log: log),
+      materializer: _FakePetVisualMaterializer(log: log),
+    );
+
+    await _enterName(tester, 'vision');
+    await _tapVisible(tester, const ValueKey('bot-create-identity-row'));
+    await _tapVisible(tester, const ValueKey('bot-create-blobatar-sun'));
+    await tester.tap(find.byKey(const ValueKey('bot-create-submit')));
+    // The failed create may leave a looping animation: step, don't settle.
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    expect(creation.createCalls, 1);
+    expect(find.byType(BotCreateScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('bot-create-uncertain')), findsOneWidget);
+    expect(
+      find.text(
+        'No se confirmó la creación. Revisa la lista de bots antes de crear otro.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('Back confirma cambios y 320dp mantiene CTA con teclado', (

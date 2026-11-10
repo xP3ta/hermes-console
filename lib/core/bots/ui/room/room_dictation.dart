@@ -22,6 +22,10 @@ abstract class RoomDictation extends ChangeNotifier {
   bool get transcribing;
   ValueListenable<double>? get level;
 
+  /// Live text of the take while it is spoken; empty when the engine does
+  /// not stream it (only Hermes live dictation does).
+  String get partial => '';
+
   Future<void> start({
     required String currentText,
     required ValueChanged<String> onText,
@@ -58,6 +62,8 @@ final class VoiceRoomDictation extends RoomDictation {
   bool get transcribing => _transcribing;
   @override
   ValueListenable<double>? get level => voice.micLevel;
+  @override
+  String get partial => voice.hermesServerLiveDictationReady ? _partial : '';
 
   static String _join(String base, String segment) {
     final b = base.trimRight();
@@ -128,7 +134,9 @@ final class VoiceRoomDictation extends RoomDictation {
             var text = result.text.trim();
             if (VoiceResponsePolicy.isLikelySttHallucination(text)) text = '';
             if (!result.isFinal) {
+              if (text == _partial) return;
               _partial = text;
+              if (voice.hermesServerLiveDictationReady) _notify();
               return;
             }
             _partial = '';

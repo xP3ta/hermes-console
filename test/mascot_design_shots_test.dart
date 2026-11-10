@@ -364,15 +364,24 @@ const _casa = MascotPlace(connId: 'c2', connLabel: 'Casa');
 
 void main() {
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      CompanionPreferences.enabledKey: true,
+    });
     // The pet's real drawing, one still frame: the shots show where it
     // stands, not how it moves.
     debugMascotSpritesStill = true;
   });
 
-  /// Where the bar rests on this screen (14 px side margin, 14 px above
-  /// the 24 px navigation inset, 60 px tall).
-  final bar = Rect.fromLTWH(14, 844 - 24 - 14 - 60, 362, 60);
+  /// Where the dock rests on this screen, 14 px above the 24 px
+  /// navigation inset. QA 9709 (dock-final): the pill of four 64 px places
+  /// and the round «+» beside it, 56 px tall, centred: 4 * 64 + 8 + 10 + 56
+  /// = 330 px wide.
+  final bar = Rect.fromLTWH(30, 844 - 24 - 14 - 56, 330, 56);
+
+  /// Without a dock, the column of the screen's right corner. It was the
+  /// dock's own right end while the bar spanned the screen; the dock-final
+  /// one is centred and ends short of it.
+  const corner = 390.0 - MascotFloatPhysics.cornerInset;
 
   testWidgets('Inicio: standing on the dock\'s right end', (tester) async {
     final stage = await _pump(
@@ -391,9 +400,10 @@ void main() {
     );
     // Over none of the dock's five items.
     for (final tab in GestureDockTab.defaultLayout) {
-      final item = tester.getRect(
-        find.byKey(ValueKey('gesture-dock-tab-${tab.name}')),
-      );
+      final found = find.byKey(ValueKey('gesture-dock-tab-${tab.name}'));
+      // «Agentes» is in the dock only with an SSH profile.
+      if (found.evaluate().isEmpty) continue;
+      final item = tester.getRect(found);
       expect(box.intersect(item.deflate(1)).height, lessThanOrEqualTo(2));
     }
     expect(tester.takeException(), isNull);
@@ -423,11 +433,7 @@ void main() {
       (s) => s.page(Builder(builder: _homeBody), withDock: false),
     );
     final box = tester.getRect(find.byKey(_sprite));
-    expect(
-      box.right,
-      bar.right - MascotFloatPhysics.dockEndInset,
-      reason: 'the same column',
-    );
+    expect(box.right, corner, reason: 'the screen\'s corner');
     expect(box.bottom, 844 - 24 - 12, reason: 'above the navigation inset');
     await _save(tester, '03-sin-dock');
     await _close(tester);
@@ -444,7 +450,7 @@ void main() {
     final handle = stage.geometry.rect.value!;
     expect(stage.geometry.hidden.value, isTrue);
     expect(box.overlaps(handle), isFalse);
-    expect(box.right, bar.right - MascotFloatPhysics.dockEndInset);
+    expect(box.right, corner);
     await _save(tester, '04-dock-escondido');
     await _close(tester);
   });

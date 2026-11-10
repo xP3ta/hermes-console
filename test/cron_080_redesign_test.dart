@@ -139,7 +139,7 @@ void main() {
       expect(find.text(header), findsOneWidget, reason: header);
     }
     expect(find.text('Weekdays at 18:30'), findsOneWidget);
-    expect(find.text('Notify me when it finishes'), findsOneWidget);
+    expect(find.text('Follow the mode in Settings'), findsOneWidget);
     expect(find.text('Only if it fails'), findsOneWidget);
     expect(find.text('Show all'), findsOneWidget);
     // Exactly one vertical scrollable on the detail route.
@@ -189,7 +189,7 @@ void main() {
     await tester.tap(find.text('Daily news summary'));
     await tester.pumpAndSettle();
     expect(find.text('Laborables a las 18:30'), findsOneWidget);
-    expect(find.text('Notificarme al terminar'), findsOneWidget);
+    expect(find.text('Seguir el modo de Ajustes'), findsOneWidget);
     expect(find.text('Solo si falla'), findsOneWidget);
     expect(find.text('QUÉ HACE'), findsOneWidget);
   });

@@ -12,6 +12,7 @@ import '../support/onboarding_fakes.dart';
 import 'onb5_support.dart';
 
 Future<void> _manualWithConsent(WidgetTester tester) async {
+  await revealOnboarding(tester, 'onboarding-manual');
   await tester.tap(find.byKey(const ValueKey('onboarding-manual')));
   await tester.pumpAndSettle();
   await tester.enterText(
@@ -36,7 +37,7 @@ void main() {
         },
         'camera': (t) async {
           await openOnboarding(t, size: small, scale: scale, theme: theme);
-          await t.ensureVisible(find.byKey(const ValueKey('onboarding-scan')));
+          await revealOnboarding(t, 'onboarding-scan');
           await t.tap(find.byKey(const ValueKey('onboarding-scan')));
           await t.pump();
           await t.pump(const Duration(seconds: 2));
@@ -96,9 +97,12 @@ void main() {
     ) async {
       await loadDesignFonts();
       await openOnboarding(tester);
+      await revealOnboarding(tester, 'onboarding-manual');
       await tester.tap(find.byKey(const ValueKey('onboarding-manual')));
       await tester.pumpAndSettle();
       keyboard(tester);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('manual-password')));
       await tester.tap(find.byKey(const ValueKey('manual-password')));
       await tester.pumpAndSettle();
       expect(find.byType(ManualConnectPage), findsOneWidget);
@@ -111,6 +115,7 @@ void main() {
         'the keyboard', (tester) async {
       await loadDesignFonts();
       await openOnboarding(tester, size: const Size(390, 640));
+      await revealOnboarding(tester, 'onboarding-manual');
       await tester.tap(find.byKey(const ValueKey('onboarding-manual')));
       await tester.pumpAndSettle();
       tester.view.viewInsets = const FakeViewPadding(bottom: 320);

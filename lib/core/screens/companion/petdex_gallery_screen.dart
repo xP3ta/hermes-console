@@ -222,6 +222,8 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
     final colors = Theme.of(context).hermes;
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): its search field sits above the list.
+        glass: false,
         title: Text(Strings.of(context).petdexGalleryTitle),
         actions: [
           IconButton(
