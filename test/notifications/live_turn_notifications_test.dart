@@ -1,3 +1,4 @@
+import 'dart:async';
 // The live row of a chat turn: plain-word phases, the counts a turn has, a
 // rail (one segment per task when there is a list), the lock-screen version,
 // when it is posted, renewed and withdrawn, and its Stop.
@@ -346,13 +347,164 @@ void main() {
         live.update('k', turn(phase: LiveTurnPhase.responding), show: true);
         async.flushMicrotasks();
         expect(sink.live, hasLength(1));
-        async.elapse(const Duration(seconds: 1));
+        async.elapse(const Duration(seconds: 5));
         expect(sink.live, hasLength(2));
         expect(sink.live.last['text'], 'Respondiendo');
         async.elapse(const Duration(minutes: 1));
         expect(sink.live, hasLength(2));
       });
     });
+
+    test(
+      'effective presentation ignores hidden titles and unused tool ids',
+      () async {
+        final live = presenter();
+        await live.update(
+          'k',
+          turn(title: 'secret one', tool: 'terminal'),
+          show: true,
+          hideSensitive: true,
+        );
+        now = now.add(const Duration(seconds: 6));
+        await live.update(
+          'k',
+          turn(title: 'secret two', tool: 'read_file'),
+          show: true,
+          hideSensitive: true,
+        );
+        expect(sink.live, hasLength(1));
+        await live.clear();
+        await live.update(
+          'k',
+          turn(phase: LiveTurnPhase.thinking, tool: 'terminal'),
+          show: true,
+        );
+        now = now.add(const Duration(seconds: 6));
+        await live.update(
+          'k',
+          turn(phase: LiveTurnPhase.thinking, tool: 'read_file'),
+          show: true,
+        );
+        expect(sink.live, hasLength(2));
+      },
+    );
+
+    test(
+      'privacy, actions and destination apply immediately inside the window',
+      () async {
+        final live = presenter();
+        await live.update('k', turn(), show: true);
+        await live.refresh((_) => true, hideSensitive: true);
+        expect(sink.live, hasLength(2));
+        expect(sink.live.last['title'], 'Hermes está trabajando');
+        await live.update(
+          'k',
+          turn(readOnly: true),
+          show: true,
+          hideSensitive: true,
+        );
+        expect(sink.live, hasLength(3));
+        expect(sink.live.last.containsKey('actionPayload'), isFalse);
+        await live.update(
+          'k',
+          turn(readOnly: true, sessionId: 'next'),
+          show: true,
+          hideSensitive: true,
+        );
+        expect(sink.live, hasLength(4));
+        expect(sink.cancelled, hasLength(1));
+      },
+    );
+
+    test('ending cancels a queued update, with a fake clock', () {
+      fakeAsync((async) {
+        final live = LiveTurnNotifications(
+          sink: sink,
+          strings: () => es,
+          now: () => now.add(async.elapsed),
+        );
+        live.update('k', turn(), show: true);
+        async.flushMicrotasks();
+        live.update('k', turn(phase: LiveTurnPhase.responding), show: true);
+        async.flushMicrotasks();
+        live.update('k', null, show: false);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 10));
+        expect(sink.live, hasLength(1));
+        expect(sink.cancelled, hasLength(1));
+      });
+    });
+
+    test('a shorter requested window is clamped to five seconds', () {
+      fakeAsync((async) {
+        final live = LiveTurnNotifications(
+          sink: sink,
+          strings: () => es,
+          minInterval: const Duration(milliseconds: 1),
+          now: () => now.add(async.elapsed),
+        );
+        live.update('k', turn(), show: true);
+        async.flushMicrotasks();
+        for (var i = 0; i < 4; i++) {
+          async.elapse(const Duration(seconds: 1));
+          live.update('k', turn(tools: i + 1), show: true);
+          async.flushMicrotasks();
+          expect(sink.live, hasLength(1));
+        }
+        async.elapse(const Duration(seconds: 1));
+        expect(sink.live, hasLength(2));
+        expect(sink.live.last['text'], contains('4 herramientas'));
+      });
+    });
+
+    test(
+      'a delayed face cannot restore content after privacy changes',
+      () async {
+        final face = Completer<String?>();
+        var calls = 0;
+        final live = LiveTurnNotifications(
+          sink: sink,
+          strings: () => es,
+          now: () => now,
+          iconFor: (_) => ++calls == 1 ? face.future : Future.value(null),
+        );
+        final first = live.update('k', turn(), show: true);
+        await live.refresh((_) => true, hideSensitive: true);
+        face.complete(null);
+        await first;
+        expect(sink.live, hasLength(1));
+        expect(sink.live.single['title'], 'Hermes está trabajando');
+      },
+    );
+
+    test(
+      'five seconds are measured from publication after a slow face lookup',
+      () {
+        fakeAsync((async) {
+          final face = Completer<String?>();
+          var calls = 0;
+          final live = LiveTurnNotifications(
+            sink: sink,
+            strings: () => es,
+            now: () => now.add(async.elapsed),
+            iconFor: (_) => ++calls == 1 ? face.future : Future.value(null),
+          );
+          live.update('k', turn(), show: true);
+          async.flushMicrotasks();
+          async.elapse(const Duration(seconds: 1));
+          live.update('k', turn(phase: LiveTurnPhase.responding), show: true);
+          async.flushMicrotasks();
+          async.elapse(const Duration(seconds: 3));
+          face.complete(null);
+          async.flushMicrotasks();
+          expect(sink.live, hasLength(1));
+          async.elapse(const Duration(seconds: 4));
+          expect(sink.live, hasLength(1));
+          async.elapse(const Duration(seconds: 1));
+          expect(sink.live, hasLength(2));
+        });
+      },
+    );
 
     test('an unchanged row is renewed when an event arrives late', () async {
       final live = presenter();
@@ -489,7 +641,10 @@ void main() {
     late Directory dir;
 
     setUp(() async {
-      SharedPreferences.setMockInitialValues({'app_locale': 'es'});
+      SharedPreferences.setMockInitialValues({
+        'app_locale': 'es',
+        'notif_hide_sensitive_content': false, // these tests read the text of the notices
+      });
       prefs = await SharedPreferences.getInstance();
       dir = await Directory.systemTemp.createTemp('live-turn-');
       sink = _Sink();

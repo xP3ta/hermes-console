@@ -1,10 +1,12 @@
 package com.hermesagent.hermes_android
 
+import android.app.ActivityManager
 import android.app.KeyguardManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,6 +17,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -119,6 +122,62 @@ internal object HermesRichNotifications {
     /** Rows a tap just acted on: (tag, id) -> elapsed time until which a re-post waits. */
     private val liveHolds = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private const val EXTRA_OWNER_BOUND = "hermes.ownerBound"
+    private const val EXTRA_LIVE_SESSION = "hermes.liveSessionId"
+
+    /** A chat turn's live row (not a room's, not a summary). */
+    fun isChatLiveRow(notification: android.app.Notification): Boolean =
+        notification.extras.getString(EXTRA_LIVE_SESSION) != null
+
+    /**
+     * The (tag, id) Dart knows a tray entry by. The turn keep-alive's card
+     * stands for the chat row it carries (drawn at the service's id while it
+     * holds); with no row carried it is the service's own card: null.
+     */
+    private fun trayAddress(sbn: android.service.notification.StatusBarNotification): Pair<String?, Int>? {
+        if (!HermesTurnKeepAliveService.isServiceCard(sbn.tag, sbn.id)) return sbn.tag to sbn.id
+        val tag = HermesTurnKeepAliveService.carriedTag ?: return null
+        return tag to HermesTurnKeepAliveService.LIVE_ROW_ID
+    }
+
+    /** A chat turn row in the tray, its chat and the engine that owns it (null: none). */
+    data class LiveTurnRow(
+        val tag: String?,
+        val id: Int,
+        val owner: MethodChannel?,
+        val sessionId: String? = null,
+    )
+
+    /** The chat turn rows in the tray now. */
+    fun liveTurnRows(context: Context): List<LiveTurnRow> =
+        try {
+            val active =
+                context.getSystemService(NotificationManager::class.java)?.activeNotifications
+                    ?: emptyArray()
+            active
+                .filter { it.notification.extras.getString(EXTRA_LIVE_SESSION) != null }
+                .mapNotNull { sbn ->
+                    // The keep-alive's card is listed as the row it carries.
+                    val (tag, id) = trayAddress(sbn) ?: return@mapNotNull null
+                    LiveTurnRow(
+                        tag,
+                        id,
+                        liveOwners[liveKey(tag, id)],
+                        sbn.notification.extras.getString(EXTRA_LIVE_SESSION),
+                    )
+                }
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+    /** An engine-bound row whose engine is gone: nobody can update or end it. */
+    fun cancelLiveTurnRow(context: Context, row: LiveTurnRow) {
+        liveOwners.remove(liveKey(row.tag, row.id))
+        noteCancelled(row.tag, row.id)
+        try {
+            NotificationManagerCompat.from(context).cancel(row.tag, row.id)
+        } catch (_: Exception) {
+        }
+    }
     private const val LIVE_HOLD_MS = 20_000L
 
     private fun liveKey(tag: String?, id: Int): String = "${tag ?: ""}\u0000$id"
@@ -126,6 +185,33 @@ internal object HermesRichNotifications {
     /** A button of the row at tag + id was tapped: its confirmation stays. */
     fun holdLive(tag: String?, id: Int) {
         liveHolds[liveKey(tag, id)] = android.os.SystemClock.elapsedRealtime() + LIVE_HOLD_MS
+    }
+
+    /** Rows Dart (or an end) just took down: key -> elapsed time of the cancel. */
+    private val recentCancels = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private const val RECENT_CANCEL_MS = 5_000L
+
+    private fun noteCancelled(tag: String?, id: Int) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        for ((key, at) in recentCancels.entries.toList()) {
+            if (now - at > RECENT_CANCEL_MS) recentCancels.remove(key)
+        }
+        recentCancels[liveKey(tag, id)] = now
+        // The keep-alive's card showed this row: it shows the next chat row,
+        // or its own copy (never the row Dart just took down).
+        HermesTurnKeepAliveService.rowCancelled(tag, id)
+    }
+
+    /**
+     * True when the row at tag + id was cancelled a moment ago: the system
+     * applies a cancel asynchronously, so [activeNotifications] can still list
+     * it, and re-filing it (the keep-alive stop does) would bring it back.
+     */
+    fun cancelledRecently(tag: String?, id: Int): Boolean {
+        val at = recentCancels[liveKey(tag, id)] ?: return false
+        if (android.os.SystemClock.elapsedRealtime() - at <= RECENT_CANCEL_MS) return true
+        recentCancels.remove(liveKey(tag, id))
+        return false
     }
 
     private fun liveHeld(tag: String?, id: Int): Boolean {
@@ -145,6 +231,7 @@ internal object HermesRichNotifications {
             val split = key.lastIndexOf('\u0000')
             val tag = key.substring(0, split).ifEmpty { null }
             val id = key.substring(split + 1).toIntOrNull() ?: continue
+            noteCancelled(tag, id)
             try {
                 manager.cancel(tag, id)
             } catch (_: Exception) {
@@ -161,8 +248,12 @@ internal object HermesRichNotifications {
             val manager = NotificationManagerCompat.from(context)
             for (sbn in active) {
                 if (!sbn.notification.extras.getBoolean(EXTRA_OWNER_BOUND)) continue
-                if (liveOwners.containsKey(liveKey(sbn.tag, sbn.id))) continue
-                manager.cancel(sbn.tag, sbn.id)
+                // The keep-alive's card is the row it carries (it cannot be
+                // cancelled itself: noting the row releases the card).
+                val (tag, id) = trayAddress(sbn) ?: continue
+                if (liveOwners.containsKey(liveKey(tag, id))) continue
+                noteCancelled(tag, id)
+                manager.cancel(tag, id)
             }
         } catch (_: Exception) {
         }
@@ -214,6 +305,7 @@ internal object HermesRichNotifications {
                 "cancel" -> {
                     val args = call.arguments.asMap()
                     liveOwners.remove(liveKey(args.str("tag"), args.int("id") ?: 0))
+                    noteCancelled(args.str("tag"), args.int("id") ?: 0)
                     NotificationManagerCompat.from(context)
                         .cancel(args.str("tag"), args.int("id") ?: 0)
                     syncGroupSummary(context, args.str("tag"))
@@ -247,7 +339,22 @@ internal object HermesRichNotifications {
                     result.success(true)
                 }
                 "drainFinished" -> result.success(true)
+                "scheduleLiveTurnCheck" -> {
+                    HermesLiveTurnCheckScheduler.start(
+                        context,
+                        (call.argument<Number>("delayMs"))?.toLong() ?: 30_000L,
+                    )
+                    result.success(true)
+                }
+                "cancelLiveTurnCheck" -> {
+                    HermesLiveTurnCheckScheduler.cancel(context)
+                    result.success(true)
+                }
                 "openPromotionSettings" -> result.success(openPromotionSettings(context))
+                "batteryStatus" -> result.success(batteryStatus(context))
+                "openBatterySettings" -> result.success(openBatterySettings(context))
+                "assistantStatus" -> result.success(assistantStatus(context))
+                "openAssistantSettings" -> result.success(openAssistantSettings(context))
                 "openChannelSettings" ->
                     result.success(openChannelSettings(context, call.argument<String>("channel")))
                 "removeConversationShortcut" -> {
@@ -322,6 +429,71 @@ internal object HermesRichNotifications {
                 context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 return true
             } catch (_: Exception) {
+            }
+        }
+        return false
+    }
+
+    // M6: whether Android may hold the app back in the background. Read only;
+    // the app never asks for REQUEST_IGNORE_BATTERY_OPTIMIZATIONS.
+    private fun batteryStatus(context: Context): Map<String, Boolean> {
+        val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val activity = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        return mapOf(
+            "ignoringOptimizations" to (power?.isIgnoringBatteryOptimizations(context.packageName) ?: false),
+            "backgroundRestricted" to
+                (Build.VERSION.SDK_INT >= 28 && activity?.isBackgroundRestricted == true),
+        )
+    }
+
+    // The app's own page holds «Battery» (Samsung, Pixel); the system list of
+    // optimised apps is the fallback. Neither needs a permission.
+    private fun openBatterySettings(context: Context): Boolean {
+        val intents =
+            listOf(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.fromParts("package", context.packageName, null)),
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+            )
+        for (intent in intents) {
+            try {
+                context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            } catch (_: Exception) {
+                // Next one.
+            }
+        }
+        return false
+    }
+
+    // Issue #217: is Console the chosen digital assistant? Read only. The
+    // setting holds the flattened component of the selected assistant.
+    private fun assistantStatus(context: Context): Map<String, Boolean> {
+        val selected =
+            try {
+                Settings.Secure.getString(context.contentResolver, "assistant")
+            } catch (_: Exception) {
+                null
+            }
+        val ours = ComponentName(context.packageName, HermesVoiceInteractionService::class.java.name)
+        val parsed = selected?.let { ComponentName.unflattenFromString(it) }
+        return mapOf("isDefault" to (parsed == ours))
+    }
+
+    // «Digital assistant app» lives under Default apps; the voice input page is
+    // the fallback and, last, the general settings.
+    private fun openAssistantSettings(context: Context): Boolean {
+        val intents =
+            listOf(
+                Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),
+                Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
+            )
+        for (intent in intents) {
+            try {
+                context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            } catch (_: Exception) {
+                // Next one.
             }
         }
         return false
@@ -447,16 +619,28 @@ internal object HermesRichNotifications {
         Intent(context, HermesNotificationActionReceiver::class.java).apply {
             action = HermesNotificationActionReceiver.ACTION
             // A unique data URI keeps PendingIntents for different buttons apart.
-            data = Uri.parse(
-                "hermes-console-action://$source/$actionId/" +
-                    "${notificationId}/${(tag ?: "").hashCode()}/${payload.hashCode()}",
-            )
+            // It is also what the receiver checks the extras against: a reply
+            // button's PendingIntent is mutable (RemoteInput needs that), and
+            // `fillIn` can overwrite extras but never the data already set.
+            data = actionData(source, actionId, notificationId, tag, payload)
             putExtra(HermesNotificationActionReceiver.EXTRA_ACTION_ID, actionId)
             putExtra(HermesNotificationActionReceiver.EXTRA_PAYLOAD, payload)
             putExtra(HermesNotificationActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
             putExtra(HermesNotificationActionReceiver.EXTRA_NOTIFICATION_TAG, tag)
             putExtra(HermesNotificationActionReceiver.EXTRA_SOURCE, source)
         }
+
+    internal fun actionData(
+        source: String,
+        actionId: String,
+        notificationId: Int,
+        tag: String?,
+        payload: String,
+    ): Uri =
+        Uri.parse(
+            "hermes-console-action://$source/$actionId/" +
+                "${notificationId}/${(tag ?: "").hashCode()}/${payload.hashCode()}",
+        )
 
     private fun actionPendingIntent(
         context: Context,
@@ -500,10 +684,10 @@ internal object HermesRichNotifications {
     const val SERVICE_NOTIFICATION_ID = 256
 
     /**
-     * The background listener's ongoing card is posted by the foreground
-     * service plugin with the launcher portrait as its large icon. Re-post
-     * it with the neutral ">_" glyph instead: same id (the system keeps it
-     * attached to the service), silent, only-alert-once.
+     * The ongoing card of the shared foreground service is posted by the
+     * plugin with the launcher portrait as its large icon. Re-post it with
+     * the neutral ">_" glyph instead: same id (the system keeps it attached
+     * to the service), silent, only-alert-once.
      */
     fun decorateServiceNotification(context: Context): Boolean {
         return try {
@@ -1192,6 +1376,8 @@ internal object HermesRichNotifications {
         val rowKey = liveKey(tag, id)
         // A tap on one of its buttons already changed the row.
         if (args["yieldToActions"] == true && liveHeld(tag, id)) return mapOf("posted" to false)
+        // Which chat the row is about (the background check finds its rows by it).
+        val liveSessionId = args.str("sessionId")
         // Another engine shows more about this work than this caller knows.
         if (args["yieldToOwner"] == true) {
             val current = liveOwners[rowKey]
@@ -1199,6 +1385,8 @@ internal object HermesRichNotifications {
                 return mapOf("posted" to false)
             }
         }
+        // Drawn again on purpose: it is a live row once more.
+        recentCancels.remove(rowKey)
         val ownerBound = args["ownerBound"] == true && owner != null
         if (ownerBound && owner != null) {
             liveOwners[rowKey] = owner
@@ -1251,7 +1439,15 @@ internal object HermesRichNotifications {
         if (startedAt != null && startedAt > 0) {
             builder.setWhen(startedAt).setShowWhen(true).setUsesChronometer(true)
         }
-        if (ownerBound) builder.addExtras(android.os.Bundle().apply { putBoolean(EXTRA_OWNER_BOUND, true) })
+        builder.addExtras(
+            android.os.Bundle().apply {
+                if (ownerBound) putBoolean(EXTRA_OWNER_BOUND, true)
+                // A chat turn's row: found by its chat (background check).
+                if (liveSessionId != null) putString(EXTRA_LIVE_SESSION, liveSessionId)
+            },
+        )
+        // While the turn keep-alive runs, a chat turn's row is drawn as the
+        // service's own card (notify/notifyBuilt below): one card, this row.
         // The rail of a chat turn: a plain bar here, segments on Android 16.
         val progressMax = args.int("progressMax")?.takeIf { it > 0 }
         val progress = (args.int("progress") ?: 0).coerceIn(0, progressMax ?: 0)
@@ -1445,13 +1641,15 @@ internal object HermesRichNotifications {
     }
 
     private fun isActive(context: Context, tag: String?, id: Int): Boolean =
-        try {
-            context.getSystemService(NotificationManager::class.java)
-                ?.activeNotifications
-                ?.any { it.id == id && it.tag == tag } == true
-        } catch (_: Exception) {
-            false
-        }
+        // Shown as the turn keep-alive's card: active, at its own address.
+        HermesTurnKeepAliveService.carries(tag, id) ||
+            try {
+                context.getSystemService(NotificationManager::class.java)
+                    ?.activeNotifications
+                    ?.any { it.id == id && it.tag == tag } == true
+            } catch (_: Exception) {
+                false
+            }
 
     private const val EXTRA_CONVERSATION_ICON = "android.conversationIcon"
 
@@ -1470,7 +1668,11 @@ internal object HermesRichNotifications {
             return
         }
         try {
-            manager.notify(tag, id, builder.build().also(decorate))
+            val notification = builder.build().also(decorate)
+            // A chat live row (or what a tap puts in its place) while the turn
+            // keep-alive holds: drawn as the service's card, not a second one.
+            if (HermesTurnKeepAliveService.carry(context, tag, id, notification)) return
+            manager.notify(tag, id, notification)
         } catch (error: SecurityException) {
             Log.w(TAG, "notify refused: ${error.javaClass.simpleName}")
         }
@@ -1484,6 +1686,7 @@ internal object HermesRichNotifications {
             return
         }
         try {
+            if (HermesTurnKeepAliveService.carry(context, tag, id, notification)) return
             NotificationManagerCompat.from(context).notify(tag, id, notification)
         } catch (error: SecurityException) {
             Log.w(TAG, "notify refused: ${error.javaClass.simpleName}")
@@ -1917,12 +2120,20 @@ class HermesNotificationActionReceiver : BroadcastReceiver() {
         val id = intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0)
         val tag = intent.getStringExtra(EXTRA_NOTIFICATION_TAG)
         val source = intent.getStringExtra(EXTRA_SOURCE) ?: "notification"
+        // The extras of a mutable (reply) PendingIntent can be rewritten by
+        // whoever holds it; the data URI cannot. An intent whose extras do not
+        // match its own data was tampered with.
+        if (intent.data != HermesRichNotifications.actionData(source, actionId, id, tag, payload)) return
+        val remoteResults = RemoteInput.getResultsFromIntent(intent)
         val text =
-            RemoteInput.getResultsFromIntent(intent)
+            remoteResults
                 ?.getCharSequence(HermesRichNotifications.REMOTE_INPUT_KEY)
                 ?.toString()
                 ?.trim()
                 ?.take(4_000)
+        // Typed text only ever belongs to a reply/answer: an approve or deny
+        // that carries RemoteInput results was rebuilt from a reply button.
+        if (remoteResults != null && actionId != "reply" && actionId != "answer") return
         if ((actionId == "reply" || actionId == "answer") && text.isNullOrEmpty()) return
         // Widget buttons have no setAuthenticationRequired: they are refused
         // on every API level while the keyguard is showing (lock-screen and
@@ -1933,7 +2144,11 @@ class HermesNotificationActionReceiver : BroadcastReceiver() {
         val appLock =
             context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
                 .getBoolean("flutter.app_lock_enabled", false)
-        val locked = appLock || (Build.VERSION.SDK_INT < 31 && keyguard?.isDeviceLocked == true)
+        // setAuthenticationRequired is only enforced by SystemUI: a notification
+        // listener (a watch bridge) can send the PendingIntent itself. A tap
+        // the user really authenticated arrives with the device unlocked, so
+        // the keyguard is checked on every API level.
+        val locked = appLock || keyguard == null || keyguard.isDeviceLocked
         if (actionId == "read") {
             // "Mark read": the card goes at once and nothing is confirmed on
             // it. The chat's read mark on the server follows in the

@@ -513,10 +513,6 @@ void main() {
       for (final block in <String>[
         methodBlock(
           'Future<void> _toggleBackground(bool v)',
-          'Future<void> _toggleCronResults',
-        ),
-        methodBlock(
-          'Future<void> _toggleKanbanResults(',
           'Future<bool> _requestPermission',
         ),
       ]) {

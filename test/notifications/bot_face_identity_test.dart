@@ -285,6 +285,7 @@ void main() {
         calls = [];
         SharedPreferences.setMockInitialValues({
           'app_locale': 'es',
+          'notif_hide_sensitive_content': false, // these tests read the text of the notices (the default hides it)
           'notif_perm_requested': true,
           'notif_background_listen': true,
         });

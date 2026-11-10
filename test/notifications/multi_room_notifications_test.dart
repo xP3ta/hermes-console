@@ -40,7 +40,10 @@ RoomLiveNotice live(String member) => RoomLiveNotice(
 void main() {
   late Directory dir;
   setUp(() async {
-    SharedPreferences.setMockInitialValues({'app_locale': 'es'});
+    SharedPreferences.setMockInitialValues({
+      'app_locale': 'es',
+      'notif_hide_sensitive_content': false, // these tests read the text of the notices
+    });
     dir = await Directory.systemTemp.createTemp('faces');
   });
   tearDown(() => dir.delete(recursive: true));

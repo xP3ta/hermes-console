@@ -12,6 +12,7 @@ import 'package:hermes_android/core/services/notifications/notification_delivery
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_strings.dart';
 import 'package:hermes_android/core/services/notifications/rich_notifications.dart';
+import 'package:hermes_android/core/services/notifications/session_attention.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -222,6 +223,7 @@ void main() {
       });
       SharedPreferences.setMockInitialValues({
         'app_locale': 'es',
+        'notif_hide_sensitive_content': false, // these tests read the text of the notices (the default hides it)
         'notif_perm_requested': true,
         'notif_background_listen': true,
         ...extra,
@@ -355,6 +357,106 @@ void main() {
         );
       },
     );
+
+    // Push delivers these with the permanent listener OFF: that must not
+    // silence them (they are session notices, not polled automations).
+    group('without the permanent listener', () {
+      Future<void> question() => service.questionPending(
+        connId: 'conn-a',
+        sessionId: 'sess-1',
+        requestId: 'srq-7',
+        question: '¿Sigo?',
+      );
+
+      test('an approval and a question still alert by default', () async {
+        await setUpService({'notif_background_listen': false});
+        expect(service.notifyApprovals, isTrue);
+        expect(service.notifyQuestions, isTrue);
+        await approval();
+        await question();
+        expect(sink.posts, hasLength(2));
+        expect(sink.posts.every((p) => p['alert'] == true), isTrue);
+      });
+
+      test('what a push event asks for reaches the tray', () async {
+        await setUpService({'notif_background_listen': false});
+        final attention = NotificationSessionAttentionSink(service);
+        for (final (kind, request) in [
+          (SessionAttentionKind.approval, 'req-a'),
+          (SessionAttentionKind.input, 'req-q'),
+          (SessionAttentionKind.turnDone, null),
+        ]) {
+          await attention.deliver(
+            SessionAttentionSignal(
+              kind: kind,
+              connId: 'conn-a',
+              profile: 'default',
+              storedSessionId: 'sess-1',
+              requestId: request,
+              title: 'Diseño',
+              preview: 'Ya está listo',
+              tool: 'terminal',
+              question: '¿Publico? Sí, No',
+            ),
+          );
+        }
+        expect(sink.posts, hasLength(3));
+        expect(sink.posts[0]['text'], 'Pide permiso · terminal');
+        expect(sink.posts[1]['text'], '¿Publico? Sí, No');
+        expect(sink.posts[2]['text'], 'Ya está listo');
+        // A push names the tool, never the command: nothing to approve blind (audit A1).
+        expect(actionsOf(sink.posts[0]).map((a) => a['id']), ['deny', 'open']);
+        for (final card in sink.posts) {
+          expect(card['title'], 'Hermes: Diseño');
+          expect('${card['publicTitle']} ${card['publicText']}',
+              isNot(anyOf(contains('Diseño'), contains('terminal'), contains('¿Publico?'), contains('Ya está listo'))));
+        }
+      });
+
+      test(
+        'the durable fallback takes a chat approval (session and run)',
+        () async {
+          await setUpService({'notif_background_listen': false});
+          await expectLater(
+            service.approvalPending(
+              tool: 'rm -rf build/',
+              connId: 'conn-a',
+              sessionId: 'sess-1',
+              runId: 'runtime-1',
+              approvalId: 'req-durable',
+              surface: NotificationChatSurface.room,
+              roomId: 'room-1',
+            ),
+            completes,
+          );
+        },
+      );
+
+      test(
+        'a saved «no approvals» still silences questions with no switch of their own',
+        () async {
+          await setUpService({
+            'notif_background_listen': false,
+            'notif_approvals': false,
+          });
+          // Questions inherited the approvals switch before it had its own key.
+          expect(service.notifyQuestions, isFalse);
+          await approval();
+          await question();
+          expect(sink.posts, isEmpty);
+        },
+      );
+
+      test('turning approvals off later does not turn questions off', () async {
+        await setUpService({'notif_background_listen': false});
+        await service.setNotifyApprovals(false);
+        expect(service.notifyApprovals, isFalse);
+        expect(service.notifyQuestions, isTrue);
+        await approval();
+        await question();
+        expect(sink.posts, hasLength(1));
+      });
+    });
 
     test('several questions, or a password prompt: open only', () async {
       await setUpService();

@@ -49,6 +49,7 @@ void main() {
     };
     SharedPreferences.setMockInitialValues({
       'app_locale': 'es',
+      'notif_hide_sensitive_content': false, // these tests read the text of the notices (the default hides it)
       'notif_perm_requested': true,
       'notif_background_listen': true,
     });
@@ -605,6 +606,49 @@ void main() {
 
     expect(childShows(), hasLength(1));
   });
+
+  test(
+    'local cron: twelve successes and two failures retain separate notices',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      var now = 1800000000000;
+      final store = NotificationDeliveryStore(
+        databaseFactory: databaseFactoryFfi,
+        databasePath: deliveryPath,
+        clock: () => now,
+      );
+      final service = NotificationService(prefs, deliveryStore: store)
+        ..appInForeground = false;
+      addTearDown(service.closeDelivery);
+      Future<void> emit(String id, {bool ok = true}) => service.cronFinished(
+        title: 'Frequent job',
+        ok: ok,
+        connId: 'demo-node',
+        profile: 'work',
+        sessionId: 'session-$id',
+        executionId: id,
+        jobId: 'frequent',
+      );
+      for (var n = 0; n < 12; n++) {
+        await emit('success-$n');
+        now += const Duration(minutes: 5).inMilliseconds;
+      }
+      expect(childShows(), hasLength(1));
+      await emit('failure-1', ok: false);
+      await emit('failure-2', ok: false);
+      await emit('failure-1', ok: false);
+      expect(childShows(), hasLength(3));
+      await emit('success-boundary');
+      expect(childShows(), hasLength(4));
+      final tags = childShows()
+          .map(
+            (call) =>
+                ((call.arguments as Map)['platformSpecifics'] as Map)['tag'],
+          )
+          .toSet();
+      expect(tags, hasLength(4));
+    },
+  );
 
   test('un fallo de plataforma libera el claim de cron', () async {
     final prefs = await SharedPreferences.getInstance();

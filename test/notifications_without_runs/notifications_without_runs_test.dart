@@ -320,6 +320,7 @@ void main() {
       });
       SharedPreferences.setMockInitialValues({
         'app_locale': 'es',
+        'notif_hide_sensitive_content': false, // these tests read the text of the notices (the default hides it)
         'notif_perm_requested': true,
         'notif_background_listen': true,
       });
@@ -371,17 +372,19 @@ void main() {
         await deliver(SessionAttentionKind.approval, 'req-1');
         await deliver(SessionAttentionKind.approval, 'req-1');
         final card = sink.posts.single;
-        expect(actionIds(card), ['approve', 'deny', 'open']);
+        // The notice carries the tool, never the command: Deny and Open only,
+        // approving happens in the app where the command is on screen (A1).
+        expect(actionIds(card), ['deny', 'open']);
         final p = NotificationActionPayload.tryParse(
           card['actionPayload'] as String,
         )!;
         expect(p.route, NotificationActionRoute.chat);
         expect([p.sessionId, p.requestId], ['stored-1', 'req-1']);
-        expect(p.choices, ['once', 'deny']);
+        expect(p.choices, ['deny']);
         await gateway.router.handle(
           PendingNotificationAction(
             uid: 'u',
-            action: 'approve',
+            action: 'deny',
             notificationId: 1,
             payload: p,
           ),

@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// What a finished Cron run should raise.
 enum CronNotifyPolicy {
-  /// Notify results and failures (default; follows the global setting).
+  /// Inherit the global mode, including its Automatic success limit (default).
   all,
 
   /// Notify only failed runs.

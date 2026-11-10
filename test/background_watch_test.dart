@@ -449,7 +449,8 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       var prefs = await SharedPreferences.getInstance();
       var notifications = NotificationService(prefs);
-      expect(notifications.notifyCronResults, isFalse);
+      // 1.4.0: the device-wide Cron mode starts in Automatic.
+      expect(notifications.notifyCronResults, isTrue);
 
       SharedPreferences.setMockInitialValues({
         BackgroundListener.prefKey: true,

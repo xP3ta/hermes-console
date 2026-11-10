@@ -53,6 +53,7 @@ class NotificationController {
       runId: run.runId,
       approvalId: approvalId,
       profile: run.profile,
+      blind: true,
     );
   }
 

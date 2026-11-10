@@ -295,7 +295,7 @@ class RichRoomNoticePresenter implements RoomNoticePresenter {
 
   NotifL10n get _t => NotifL10n.of(prefs);
   bool get _hideSensitive =>
-      prefs.getBool('notif_hide_sensitive_content') ?? false;
+      prefs.getBool('notif_hide_sensitive_content') ?? true;
 
   String _conn = '';
 
