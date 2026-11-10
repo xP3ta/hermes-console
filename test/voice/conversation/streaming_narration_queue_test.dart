@@ -240,4 +240,43 @@ void main() {
 
     expect(q.chunks.map((chunk) => chunk.text), ['Resumen confirmado.']);
   });
+
+  test('flush releases a sealed tail without ending the turn (Desktop '
+      'session.flush)', () {
+    final q = queue();
+
+    q.observe('Voy a revisar el repositorio');
+    expect(q.chunks, isEmpty);
+
+    q.observe('Voy a revisar el repositorio', flush: true);
+    expect(q.chunks.map((chunk) => chunk.text), [
+      'Voy a revisar el repositorio.',
+    ]);
+    expect(q.terminal, isFalse);
+
+    q.observe('Voy a revisar el repositorio\n\nTodo en ord');
+    expect(q.chunks.map((chunk) => chunk.text), [
+      'Voy a revisar el repositorio.',
+    ]);
+
+    q.observe('Voy a revisar el repositorio\n\nTodo en orden.', terminal: true);
+    expect(q.chunks.map((chunk) => chunk.text), [
+      'Voy a revisar el repositorio.',
+      'Todo en orden.',
+    ]);
+  });
+
+  test('a flushed chunk that already played is not read again', () {
+    final q = queue();
+
+    q.observe('Miro el registro:', flush: true);
+    expect(q.chunks, hasLength(1));
+    q.markPlaybackThrough(1);
+    expect(q.completeCurrent(q.revision), isTrue);
+
+    final update = q.observe('Miro el registro:\n\nSin errores.');
+    expect(update.revisionChanged, isFalse);
+    expect(q.cursor, 1);
+    expect(q.current?.text, 'Sin errores.');
+  });
 }

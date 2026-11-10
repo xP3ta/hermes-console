@@ -102,6 +102,8 @@ const _zhVoiceMessages = <String, String>{
   'responseRequired': 'Hermes需要你的回复。请打开应用继续。',
   'stopNotSaved': '无法安全保存停止请求。请重试。',
   'recognitionUnavailable': '语音识别尚未就绪（{status}）。',
+  'providerError': '语音提供商返回：{detail}',
+  'noAudioHeard': '什么也听不到。麦克风是否连接到了车载设备或耳机？',
 };
 
 const _zhTranscriptGrammar = VoiceTranscriptGrammar(

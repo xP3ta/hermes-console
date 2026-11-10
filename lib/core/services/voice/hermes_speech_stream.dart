@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -142,6 +143,7 @@ class HermesSpeechStreamClient {
     HermesSpeechSocketConnector? connector,
     this.connectTimeout = const Duration(seconds: 12),
     this.finishTimeout = const Duration(minutes: 3),
+    this.firstAudioTimeout = kSpeechStreamFirstAudioTimeout,
   }) : _connector =
            connector ??
            ((uri, headers) => _WebSocketHermesSpeechSocket(
@@ -160,6 +162,7 @@ class HermesSpeechStreamClient {
   final HermesPcmStreamSinkFactory sinkFactory;
   final Duration connectTimeout;
   final Duration finishTimeout;
+  final Duration firstAudioTimeout;
   final HermesSpeechSocketConnector _connector;
 
   Uri buildUri(DashboardWebSocketAuth credentials) {
@@ -188,6 +191,7 @@ class HermesSpeechStreamClient {
       socket: socket,
       sink: sinkFactory(),
       finishTimeout: finishTimeout,
+      firstAudioTimeout: firstAudioTimeout,
       latencyTurn: VoiceLatencyTrace.current.currentTurn,
       onPcmAccepted: () => HermesSpeechStreamEvidence.notePcmObserved(
         dashboardBaseUrl,
@@ -208,6 +212,11 @@ class HermesSpeechStreamClient {
   }
 }
 
+/// Longest wait, after text was sent, for the first audio of a speak-stream.
+/// Set by Console from the open timeout (12 s) plus room for one sentence to
+/// be synthesized; to be tuned with `pcmFirstReceived` measurements.
+const Duration kSpeechStreamFirstAudioTimeout = Duration(seconds: 20);
+
 typedef HermesSpeechStreamSessionFactory =
     Future<HermesSpeechStreamSession> Function();
 typedef HermesSpeechPlaybackFence = Future<void> Function();
@@ -218,12 +227,14 @@ class HermesSpeechStreamSession {
     required HermesSpeechSocket socket,
     required HermesPcmStreamSink sink,
     Duration finishTimeout = const Duration(minutes: 3),
+    Duration firstAudioTimeout = kSpeechStreamFirstAudioTimeout,
     void Function()? onPcmAccepted,
     VoiceLatencyTurn? latencyTurn,
   }) => HermesSpeechStreamSession._(
     socket,
     sink,
     finishTimeout,
+    firstAudioTimeout,
     onPcmAccepted,
     latencyTurn,
   );
@@ -232,6 +243,7 @@ class HermesSpeechStreamSession {
     this._socket,
     this._sink,
     this.finishTimeout,
+    this.firstAudioTimeout,
     this._onPcmAccepted,
     this._latencyTurn,
   );
@@ -244,6 +256,10 @@ class HermesSpeechStreamSession {
   final HermesSpeechSocket _socket;
   final HermesPcmStreamSink _sink;
   final Duration finishTimeout;
+
+  /// How long text already sent may go without the first PCM before the
+  /// stream gives up and the sentence route speaks the same text.
+  final Duration firstAudioTimeout;
   final void Function()? _onPcmAccepted;
   final VoiceLatencyTurn? _latencyTurn;
 
@@ -257,6 +273,7 @@ class HermesSpeechStreamSession {
   Completer<void>? _resumeGate;
   Future<void> _playbackControlTail = Future<void>.value();
   Timer? _finishTimer;
+  Timer? _firstAudioTimer;
   HermesSpeechStreamState _state = HermesSpeechStreamState.connecting;
   HermesSpeechStreamFallbackKind? _fallbackKind;
   Uint8List? _oddCarry;
@@ -441,6 +458,7 @@ class HermesSpeechStreamSession {
     if (_finishRequested || _outcome.isCompleted || _stopping) return false;
     try {
       _socket.send(jsonEncode({'text': text}));
+      _armFirstAudioTimer();
       return true;
     } catch (_) {
       await _fail(HermesSpeechStreamFallbackKind.transport);
@@ -478,7 +496,35 @@ class HermesSpeechStreamSession {
       unawaited(_fail(HermesSpeechStreamFallbackKind.transport));
       return;
     }
+    _armFirstAudioTimer();
     _armFinishTimer();
+  }
+
+  /// An open socket that never sends the first PCM would otherwise wait for
+  /// [finishTimeout]. Counted from the last text sent while no audio has
+  /// arrived; a paused stream waits and counts again when it resumes. The
+  /// failure is the ordinary "before audio" one, so the controller speaks the
+  /// same text through the sentence route.
+  void _armFirstAudioTimer() {
+    if (_firstPcmReceived.isCompleted || _outcome.isCompleted || _stopping) {
+      return;
+    }
+    _firstAudioTimer?.cancel();
+    _firstAudioTimer = Timer(firstAudioTimeout, () {
+      _firstAudioTimer = null;
+      if (_firstPcmReceived.isCompleted || _outcome.isCompleted || _stopping) {
+        return;
+      }
+      if (_pauseRequested) {
+        _armFirstAudioTimer();
+        return;
+      }
+      debugPrint(
+        '[VOICE-PERF] voice.tts.stream.no_first_audio_ms='
+        '${firstAudioTimeout.inMilliseconds}',
+      );
+      unawaited(_fail(HermesSpeechStreamFallbackKind.transport));
+    });
   }
 
   Future<void> _handleFrame(dynamic frame) async {
@@ -657,6 +703,8 @@ class HermesSpeechStreamSession {
   }
 
   void _markPcmReceivedFromWire() {
+    _firstAudioTimer?.cancel();
+    _firstAudioTimer = null;
     if (!_firstPcmReceived.isCompleted) {
       _latencyTurn?.mark(VoiceLatencyPoint.pcmFirstReceived);
       _firstPcmReceived.complete(true);
@@ -728,6 +776,8 @@ class HermesSpeechStreamSession {
     _releaseResumeGate();
     _finishTimer?.cancel();
     _finishTimer = null;
+    _firstAudioTimer?.cancel();
+    _firstAudioTimer = null;
     if (!_firstPcmReceived.isCompleted) _firstPcmReceived.complete(false);
     if (!_firstPcmPossiblyWritten.isCompleted) {
       _firstPcmPossiblyWritten.complete(false);

@@ -4,6 +4,7 @@ import 'dart:convert';
 import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
 import '../services/voice/tts_engine.dart';
+import '../services/voice/voice_client_direct.dart';
 
 /// Traduce errores conocidos de voz sin exponer `toString()` técnico ni copy
 /// fijado dentro de servicios.
@@ -25,6 +26,14 @@ String localizedVoiceError(Strings strings, Object error) {
         error.statusCode?.toString() ?? '—',
       ),
     };
+  }
+  if (error is VoiceDirectProviderException) {
+    // Desktop's own wording, already without the key; clipped like a server
+    // reason.
+    final detail = error.message.length > _kServerVoiceDetailMaxLength
+        ? '${error.message.substring(0, _kServerVoiceDetailMaxLength)}…'
+        : error.message;
+    return strings.voz132VoiceProviderError(detail);
   }
   if (error is DashboardAuthException &&
       error.code == DashboardAuthFailureCode.loginRequired) {

@@ -206,6 +206,15 @@ void main() {
     },
   );
 
+  test('reports whether the running engine is speaking a reply', () async {
+    await rig.enter();
+    expect(rig.coordinator.voicePlaybackActive, isFalse);
+    rig.chained.voicePlaybackActive = true;
+    expect(rig.coordinator.voicePlaybackActive, isTrue);
+    rig.chained.voicePlaybackActive = false;
+    expect(rig.coordinator.voicePlaybackActive, isFalse);
+  });
+
   test('hidden owner cannot explicitly retry a live session', () async {
     rig.optIn = true;
     await rig.enter();
@@ -915,6 +924,26 @@ void main() {
       ]);
       rig.coordinator.retry();
       expect(rig.chained.calls.last, 'retry');
+    });
+  });
+  group('startsLiveFor', () {
+    test('is true only for a known GPT-Live mode that can start', () {
+      expect(rig.coordinator.startsLiveFor(rig.chat, 'ops'), isFalse);
+
+      rig.known(VoiceLiveMode.chained);
+      expect(rig.coordinator.startsLiveFor(rig.chat, 'ops'), isFalse);
+
+      rig.known(VoiceLiveMode.gptLive, available: false);
+      expect(rig.coordinator.startsLiveFor(rig.chat, 'ops'), isFalse);
+
+      rig.known(VoiceLiveMode.gptLive);
+      expect(rig.coordinator.startsLiveFor(rig.chat, 'ops'), isTrue);
+    });
+
+    test('is false with the app hidden, as enter would not start it', () {
+      rig.known(VoiceLiveMode.gptLive);
+      rig.appVisible = false;
+      expect(rig.coordinator.startsLiveFor(rig.chat, 'ops'), isFalse);
     });
   });
 }

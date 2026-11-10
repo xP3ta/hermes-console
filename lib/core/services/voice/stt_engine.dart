@@ -11,10 +11,12 @@ import 'package:record/record.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:whisper_ggml_plus/whisper_ggml_plus.dart';
 
+import 'stt_user_error.dart';
 import 'voice_language.dart';
 import 'voice_latency_trace.dart';
 
 export 'package:whisper_ggml_plus/whisper_ggml_plus.dart' show WhisperModel;
+export 'stt_user_error.dart';
 
 /// Ritmo conversacional de Hermes Desktop. Los motores móviles que controlan
 /// su propio endpointing comparten estos tiempos para que una pausa natural no
@@ -99,9 +101,31 @@ abstract interface class CapturedWavSttEngine {
   Future<String> transcribeCapturedWav(Uint8List wavBytes);
 }
 
+/// A [WhisperSttRuntime] that can also stream a capture to a live
+/// transcriber while it records (Hermes `stt.streaming`, Desktop
+/// `lib/voice-stream.ts`). The recording and its transcription stay the
+/// fallback; the runtime only prefers the live final when there is one.
+///
+/// It is a subtype of [WhisperSttRuntime] so `runtime is
+/// LiveCaptureSttRuntime` promotes the engine's runtime to it.
+abstract interface class LiveCaptureSttRuntime implements WhisperSttRuntime {
+  /// Called right before [WhisperSttRuntime.start] for each capture.
+  /// [continuous] is the composer dictation (Desktop streams only there);
+  /// [onPartial] receives the live text while that capture is current.
+  void prepareCapture({
+    required bool continuous,
+    required void Function(String text) onPartial,
+  });
+
+  /// The capture at [audioPath] (any capture when null) is over without a
+  /// live final to wait for: close its live session now.
+  void discardCapture(String? audioPath);
+}
+
 /// System recognition locale preferences derived from the shared language registry.
 final Map<String, List<String>> kSystemSttLocalePrefs = Map.unmodifiable({
-  for (final entry in voiceLanguages.entries) entry.key: entry.value.systemSttLocales,
+  for (final entry in voiceLanguages.entries)
+    entry.key: entry.value.systemSttLocales,
 });
 
 /// Frontera inyectable con los plugins usados por [SystemSttEngine]. Mantiene
@@ -235,6 +259,10 @@ class SystemSttEngine implements SttEngine {
   String? _resolvedLocale;
   bool _localeResolved = false;
 
+  /// The recognizer has no locale for the voice language and listens in the
+  /// system's one. The conversation tells the user once per capture.
+  bool localeFellBack = false;
+
   @override
   bool get supportsPartials => true;
 
@@ -285,6 +313,10 @@ class SystemSttEngine implements SttEngine {
       if (pick == null) {
         pick = await _runtime.systemLocale();
         if (operation != null && !_isCurrent(operation)) return;
+        // The recognizer has no pack for the chosen language and listens in
+        // the system's: say so instead of recognizing the wrong language.
+        localeFellBack =
+            pick == null || !pick.toLowerCase().startsWith(language.code);
       }
       _resolvedLocale = pick;
       _localeResolved = true;
@@ -294,6 +326,27 @@ class SystemSttEngine implements SttEngine {
       _resolvedLocale = null;
       _localeResolved = true;
     }
+  }
+
+  /// The recognizer reported a failure while a capture waits for speech. A
+  /// busy microphone, a failing audio input, a missing connection or a missing
+  /// language pack end that capture with a failure the user can act on; the
+  /// plain "no match" and timeouts stay what they were (an empty take).
+  void _onRuntimeError(String message) {
+    final kind = classifySttCaptureFailure(message);
+    final operation = _operation;
+    if (kind == null ||
+        operation == null ||
+        !_isCurrent(operation) ||
+        operation.heardSpeech ||
+        operation.controller.isClosed) {
+      return;
+    }
+    _cancelIdleSilenceTimer();
+    _operation = null;
+    operation.cancelled = true;
+    operation.controller.addError(SttCaptureFailure(kind));
+    unawaited(operation.controller.close());
   }
 
   Future<bool> _prepare(_SystemListenOperation? operation) async {
@@ -314,8 +367,9 @@ class SystemSttEngine implements SttEngine {
       return false;
     }
     _initialized = await _runtime.initialize(
-      onError: (_) {
+      onError: (message) {
         if (current()) lastError = 'System speech recognizer failed.';
+        _onRuntimeError(message);
       },
     );
     if (!current()) return false;
@@ -577,8 +631,18 @@ class WhisperSttEngine implements SttEngine {
   /// Silencio sostenido necesario para auto-parar.
   final Duration silenceTimeout;
 
+  /// The profile's `voice.silence_duration` when it set one (Desktop
+  /// `voice-prefs.ts:115-146`), read on every level sample; null keeps
+  /// [silenceTimeout].
+  final Duration Function()? silenceTimeoutOf;
+
   /// Tope de seguridad: para de grabar pase lo que pase tras este tiempo.
   final Duration maxDuration;
+
+  /// Extra time, after a take of [maxDuration], for its transcription. Every
+  /// inner request (the server's HTTP call) must give up before this budget,
+  /// or it would outlive the turn that asked for it.
+  final Duration transcribeGrace;
 
   /// Cierra una captura conversacional que nunca llegó a oír voz.
   final Duration idleSilenceTimeout;
@@ -590,6 +654,16 @@ class WhisperSttEngine implements SttEngine {
   /// en una alucinación. Un Stop explícito y el dictado continuo conservan su
   /// cierre manual aunque el VAD no haya confirmado el onset.
   final bool discardAutomaticTurnWithoutSpeechOnset;
+
+  /// A take shorter than [kSilentCaptureMinLength] or with no energy (no
+  /// usable level, or a peak under [kSilentCapturePeakDb]) is not
+  /// transcribed: the stream fails with [SttNoAudioError] (backlog 1.4.x
+  /// item 7). An automatic stop with no onset keeps its silent discard
+  /// unless it had no energy either.
+  final bool rejectSilentCapture;
+
+  /// Clock for the take's length only; the VAD keeps its own.
+  final DateTime Function() _clock;
 
   /// Reporta el nivel de micrófono normalizado (0 silencio … 1 fuerte).
   final void Function(double level)? onLevel;
@@ -623,6 +697,9 @@ class WhisperSttEngine implements SttEngine {
   bool _stopping = false;
   bool _discardCurrentAutomaticStop = false;
   bool _continuous = false;
+  double? _peakDb;
+  DateTime? _takeStartedAt;
+  bool _heardLivePartial = false;
   void Function()? _onSpeechEnd;
 
   WhisperSttEngine({
@@ -631,15 +708,20 @@ class WhisperSttEngine implements SttEngine {
     this.silenceThresholdDb = -40,
     this.speechOnsetDb,
     this.silenceTimeout = kVoiceTurnSilenceTimeout,
+    this.silenceTimeoutOf,
     this.maxDuration = kVoiceTurnMaxDuration,
+    this.transcribeGrace = const Duration(seconds: 45),
     this.idleSilenceTimeout = kVoiceTurnIdleSilenceTimeout,
     this.discardAutomaticTurnWithoutSpeechOnset = false,
+    this.rejectSilentCapture = false,
     this.onLevel,
     this.lang = 'es',
     WhisperSttRuntime? runtime,
     VoiceTurnTimerFactory? timerFactory,
+    DateTime Function()? clock,
   }) : _runtime = runtime ?? _PluginWhisperSttRuntime(),
-       _timerFactory = timerFactory ?? _defaultVoiceTurnTimer;
+       _timerFactory = timerFactory ?? _defaultVoiceTurnTimer,
+       _clock = clock ?? DateTime.now;
 
   @override
   bool get supportsPartials => false;
@@ -713,6 +795,9 @@ class WhisperSttEngine implements SttEngine {
     _speechOnsetSamples = 0;
     _stopping = false;
     _discardCurrentAutomaticStop = false;
+    _peakDb = null;
+    _takeStartedAt = null;
+    _heardLivePartial = false;
     final stopBeforeStart = _stopTail;
     _startupTail = _startupTail.then(
       (_) async {
@@ -762,6 +847,13 @@ class WhisperSttEngine implements SttEngine {
         return;
       }
       _audioPath = path;
+      final runtime = _runtime;
+      if (runtime is LiveCaptureSttRuntime) {
+        runtime.prepareCapture(
+          continuous: _continuous,
+          onPartial: (text) => _forwardLivePartial(operation, text),
+        );
+      }
       await _runtime.start(path);
       if (!_isCurrent(operation)) {
         String? recordedPath;
@@ -774,12 +866,19 @@ class WhisperSttEngine implements SttEngine {
       operation.started = true;
       onCaptureReady?.call();
       _startedAt = DateTime.now();
+      _takeStartedAt = _clock();
       _startVad(operation);
       _armIdleSilenceTimer(operation);
-    } catch (_) {
+    } catch (error) {
       _deleteAudioFile(path);
       if (_isCurrent(operation) && !controller.isClosed) {
-        controller.addError(Exception('Could not record audio.'));
+        // The recorder could not open: say whether the input is in use.
+        controller.addError(
+          SttCaptureFailure(
+            classifySttCaptureFailure(error.toString()) ??
+                SttCaptureFailureKind.micUnavailable,
+          ),
+        );
         await controller.close();
       }
     } finally {
@@ -826,6 +925,10 @@ class WhisperSttEngine implements SttEngine {
     _ampSub = _runtime.onAmplitudeChanged(amplitudeInterval).listen((amp) {
       if (!_isCurrent(operation)) return;
       final db = amp.current;
+      if (_isUsableVadSample(db)) {
+        final peak = _peakDb;
+        if (peak == null || db > peak) _peakDb = db;
+      }
       onLevel?.call(_normalize(db));
       final now = DateTime.now();
       if (kDebugMode &&
@@ -923,7 +1026,8 @@ class WhisperSttEngine implements SttEngine {
         // picos de voz medidos (-12 a -7,6 dB).
         if (_heardSpeech) {
           _silenceSince ??= now;
-          if (now.difference(_silenceSince!) >= silenceTimeout) {
+          if (now.difference(_silenceSince!) >=
+              (silenceTimeoutOf?.call() ?? silenceTimeout)) {
             _autoStop();
           }
         }
@@ -948,7 +1052,23 @@ class WhisperSttEngine implements SttEngine {
     unawaited(stop());
   }
 
+  /// Live text of [operation]'s capture. After Stop the capture is still
+  /// that one until its final lands (Desktop keeps showing the partial while
+  /// it transcribes); a newer listen() owns the stream from then on.
+  void _forwardLivePartial(_WhisperListenOperation operation, String text) {
+    final controller = operation.controller;
+    if (_disposed || controller.isClosed || !operation.started) return;
+    final current = _operation;
+    if (current != null && !identical(current, operation)) return;
+    if (text.trim().isNotEmpty) _heardLivePartial = true;
+    controller.add(SttResult(text, false));
+  }
+
   void _deleteAudioFile(String? path) {
+    // Every capture that ends (transcribed, discarded or failed) goes through
+    // here, so its live session never outlives it.
+    final runtime = _runtime;
+    if (runtime is LiveCaptureSttRuntime) runtime.discardCapture(path);
     if (path == null) return;
     try {
       final file = File(path);
@@ -970,6 +1090,10 @@ class WhisperSttEngine implements SttEngine {
     if (wasStarted) {
       latencyTurn?.mark(VoiceLatencyPoint.speechEndpoint);
     }
+    final silentTake =
+        rejectSilentCapture &&
+        wasStarted &&
+        _isSilentTake(discardAutomaticStop);
     if (operation != null) operation.cancelled = true;
     _operation = null;
     _generation++;
@@ -981,6 +1105,7 @@ class WhisperSttEngine implements SttEngine {
         controller,
         wasStarted: wasStarted,
         discardAutomaticStop: discardAutomaticStop,
+        silentTake: silentTake,
         latencyTurn: latencyTurn,
       );
     }();
@@ -988,10 +1113,29 @@ class WhisperSttEngine implements SttEngine {
     return result;
   }
 
+  /// Shortest take worth sending.
+  static const Duration kSilentCaptureMinLength = Duration(milliseconds: 300);
+
+  /// A peak under this is no energy: a live microphone in a quiet room reads
+  /// about -60 to -45 dBFS, one that delivers nothing reads -160.
+  static const double kSilentCapturePeakDb = -90;
+
+  bool _isSilentTake(bool automaticStop) {
+    // Words already came back live: there was audio, whatever the meter said.
+    if (_heardLivePartial) return false;
+    final peak = _peakDb;
+    if (peak == null || peak < kSilentCapturePeakDb) return true;
+    if (automaticStop) return false;
+    final started = _takeStartedAt;
+    return started == null ||
+        _clock().difference(started) < kSilentCaptureMinLength;
+  }
+
   Future<void> _stopOperation(
     StreamController<SttResult>? controller, {
     required bool wasStarted,
     required bool discardAutomaticStop,
+    bool silentTake = false,
     required VoiceLatencyTurn? latencyTurn,
   }) async {
     await _ampSub?.cancel();
@@ -1017,6 +1161,14 @@ class WhisperSttEngine implements SttEngine {
     String? path;
     try {
       path = await _runtime.stop() ?? _audioPath;
+      if (silentTake && !_disposed && _operation == null) {
+        // Nothing to hear: never upload it, say so (backlog item 7).
+        if (!controller.isClosed) {
+          controller.addError(const SttNoAudioError());
+          await controller.close();
+        }
+        return;
+      }
       if (discardAutomaticStop) {
         if (!controller.isClosed) await controller.close();
         return;
@@ -1037,7 +1189,7 @@ class WhisperSttEngine implements SttEngine {
       // dispositivo. Y un TIMEOUT de seguridad: si el modelo se atasca (típico
       // con `base` en CPU floja), fallamos con un error claro en vez de dejar la
       // UI colgada para siempre en "transcribiendo".
-      final budget = maxDuration + const Duration(seconds: 45);
+      final budget = maxDuration + transcribeGrace;
       latencyTurn?.mark(VoiceLatencyPoint.sttStarted);
       final text = await _runtime
           .transcribe(
@@ -1052,9 +1204,21 @@ class WhisperSttEngine implements SttEngine {
         controller.add(SttResult(text, true));
       }
       await controller.close();
-    } catch (_) {
+    } catch (error) {
+      if (error is TimeoutException) {
+        debugPrint(
+          '[VOICE-PERF] voice.stt.transcribe_timeout stage=transcription '
+          'budget_ms=${(maxDuration + transcribeGrace).inMilliseconds}',
+        );
+      }
       if (!controller.isClosed) {
-        controller.addError(Exception('Transcription failed.'));
+        controller.addError(
+          error is SttUserFacingError
+              ? error
+              : error is TimeoutException
+              ? const SttTimeoutError()
+              : Exception('Transcription failed.'),
+        );
         await controller.close();
       }
     } finally {

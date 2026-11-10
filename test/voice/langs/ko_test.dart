@@ -30,7 +30,7 @@ void main() {
 
   test('localizes every spoken message and preserves status', () {
     expect(language.messages.keys.toSet(), voiceLanguageFor('en').messages.keys.toSet());
-    expect(language.messages, hasLength(11));
+    expect(language.messages, hasLength(13));
     for (final message in language.messages.values) {
       expect(message, matches(RegExp('[가-힣]')));
     }

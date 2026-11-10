@@ -3,19 +3,26 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../active_chat_service.dart';
+import '../../../models/agent_profile.dart' show kMainProfileFallbackName;
+import '../../bot_roster_store.dart' show BotRosterRegistry, agentNameFor;
 import '../../connection_manager.dart';
 import '../../prompt_client_surface.dart';
+import '../live/live_audio_environment.dart';
+import '../session/voice_care.dart';
 import '../session/voice_ui_surface.dart';
 import '../hermes_speech_stream.dart';
 import '../spoken_text.dart';
 import '../stt_engine.dart';
+import '../voice_client_direct.dart';
 import '../voice_latency_trace.dart';
 import '../voice_phase.dart';
 import '../voice_language.dart';
 import '../voice_service.dart';
 import '../voice_settings.dart';
+import '../voice_stop_phrases.dart';
 import 'full_duplex_barge_in_monitor.dart';
 import 'streaming_narration_queue.dart';
+import 'voice_turn_latency_log.dart';
 import 'voice_conversation_engine.dart';
 import 'voice_conversation_runtime.dart';
 
@@ -46,13 +53,43 @@ class LocalVoiceConversationController extends ChangeNotifier
     this.voice, {
     FullDuplexBargeInMonitor? fullDuplexMonitor,
     Future<void> Function(Duration delay)? playbackTailDelay,
+    VoiceTurnLatencyLog? turnLatencyLog,
+    this._audioEvents,
+    this._routeChangeSettle = const Duration(milliseconds: 600),
   }) : _fullDuplex = fullDuplexMonitor,
+       _turnLatencyLog = turnLatencyLog ?? VoiceTurnLatencyLog(),
        _playbackTailDelay =
            playbackTailDelay ?? ((delay) => Future<void>.delayed(delay)) {
     voice.bargeInEnabled.addListener(_onBargeInPreferenceChanged);
   }
 
   final VoiceService voice;
+
+  /// Headset and Bluetooth changes (null: not observed, as in tests).
+  final Stream<LiveAudioEvent> Function()? _audioEvents;
+
+  /// Route changes arrive in bursts (a headset reports several devices); the
+  /// microphone is reopened once, after they settle.
+  final Duration _routeChangeSettle;
+  StreamSubscription<LiveAudioEvent>? _audioSub;
+  Timer? _routeSettleTimer;
+
+  /// Text of a message dictated but not sent, held until Retry or close.
+  String? _heldTurn;
+  VoiceCare? _care;
+
+  /// The app went to the background and paused the conversation for the user.
+  bool _pausedByBackground = false;
+
+  // QA 9709 (the owner): while the agent works the conversation is silent. There
+  // is no ambient sound: Desktop's repeating blips (`thinking-sound.ts`,
+  // the profile's `voice.thinking_sound`) played every 0.8-1.2 s on the
+  // media stream, which the phone's silent mode does not mute. The capsule
+  // shows the work, and gives one light tick when it starts.
+
+  /// QA-only logcat line per turn: end of speech and first reply text to
+  /// first audio, and whether audio played while a tool ran.
+  final VoiceTurnLatencyLog _turnLatencyLog;
   static const Duration _nativeSpeechFeedCadence = Duration(milliseconds: 150);
   // Desktop drains WebAudio plus 100 ms, requests AEC/NS and separately ignores
   // the first 500 ms after playback onset in its full-duplex VAD. Android cannot
@@ -92,7 +129,15 @@ class LocalVoiceConversationController extends ChangeNotifier
   String _profile = '';
   bool _allowTransportFallback = false;
   Future<void> Function(String prompt)? _onBeforeSend;
-  String _partialTranscript = '';
+  // Partials are not part of [_uiProjection] (a word heard must not rebuild
+  // the chat): they notify through their own listenable.
+  final ValueNotifier<String> _partialText = ValueNotifier<String>('');
+  String get _partialTranscript => _partialText.value;
+  set _partialTranscript(String text) {
+    if (_partialText.value == text) return;
+    _partialText.value = text;
+  }
+
   String _userTranscript = '';
   int _epoch = 0;
   bool _captureFinalAccepted = false;
@@ -156,6 +201,32 @@ class LocalVoiceConversationController extends ChangeNotifier
   String? note;
 
   @override
+  VoiceCare? get care {
+    final held = _care;
+    // A blocking situation lives as long as the note that announces it.
+    if (held != null && (!held.blocking || note != null)) return held;
+    return _pausedByBackground && userPaused
+        ? VoiceCare.pausedByBackground
+        : null;
+  }
+
+  @override
+  String? get heldTurnText => _heldTurn;
+
+  @override
+  String? takeHeldTurnText() {
+    final held = _heldTurn;
+    if (held == null) return null;
+    _heldTurn = null;
+    if (_care == VoiceCare.sendFailed) {
+      _care = null;
+      note = null;
+    }
+    _notify();
+    return held;
+  }
+
+  @override
   String? activeTool;
 
   @override
@@ -171,10 +242,16 @@ class LocalVoiceConversationController extends ChangeNotifier
   bool userPaused = false;
 
   @override
+  bool get privacyHidden => _privacyHardPaused;
+
+  @override
   bool get whisper => voice.sttRecordsThenTranscribes;
 
   @override
   String get partialTranscript => _partialTranscript;
+
+  @override
+  Listenable get partialTranscriptChanges => _partialText;
 
   @override
   String get userTranscript => _userTranscript;
@@ -209,6 +286,14 @@ class LocalVoiceConversationController extends ChangeNotifier
       !userPaused &&
       !paused &&
       (_fullDuplex?.armed ?? false);
+
+  /// Same reading as the barge-in path ([_onFullDuplexSpeechStart]).
+  @override
+  bool get voicePlaybackActive =>
+      active &&
+      ((_fullDuplex?.playbackActive ?? false) ||
+          _narrationAudioInFlight ||
+          phase == VoicePhase.speaking);
 
   @override
   Stream<SttCheck> get unavailable => _unavailable.stream;
@@ -255,6 +340,10 @@ class LocalVoiceConversationController extends ChangeNotifier
       backendRunning: chat.isStreaming,
       identity: _voiceIdentity(chat, ownerProfile),
     );
+    _heldTurn = null;
+    _care = null;
+    _pausedByBackground = false;
+    _watchAudioRoute();
     _normalCaptureToken = null;
     _bargeRuntimeToken = null;
     _playbackRuntimeToken = null;
@@ -379,7 +468,11 @@ class LocalVoiceConversationController extends ChangeNotifier
     // que el recognizer está oyendo ahora.
     _userTranscript = '';
     note = null;
+    _care = null;
     activeTool = null;
+    // A new capture is a new turn: the previous one is printed (QA) or, if it
+    // got no answer, dropped.
+    _turnLatencyLog.flush();
     final captureToken = claimedCaptureToken ?? _runtime.claimNormalCapture();
     if (captureToken == null) return;
     _normalCaptureToken = captureToken;
@@ -399,6 +492,9 @@ class LocalVoiceConversationController extends ChangeNotifier
           }
           _normalCaptureStartOperation = null;
           if (!_runtime.confirmNormalCapture(captureToken)) return;
+          // The recognizer has no pack for the voice language: it listens in
+          // the system's. Say so, once per capture.
+          if (voice.sttLanguageFellBack) _care = VoiceCare.languageFallback;
           _notify();
         },
         onSpeechEnd: () {
@@ -409,6 +505,7 @@ class LocalVoiceConversationController extends ChangeNotifier
           }
           if (!_runtime.beginNormalTranscription(captureToken)) return;
           _latencyTurn?.mark(VoiceLatencyPoint.speechEndpoint);
+          _turnLatencyLog.endpoint();
           _notify();
         },
       );
@@ -425,7 +522,7 @@ class LocalVoiceConversationController extends ChangeNotifier
           if (!_runtime.failNormalCapture(captureToken)) {
             _runtime.failTranscription(captureToken, rearm: false);
           }
-          note = voiceLanguageFor(_lang).message('microphoneUnclear');
+          note = _sttFailureNote(error);
           _notify();
         },
         onDone: () {
@@ -455,6 +552,11 @@ class LocalVoiceConversationController extends ChangeNotifier
       }
       _runtime.failNormalCapture(captureToken);
       note = voiceLanguageFor(_lang).message('microphoneUnavailable');
+      _care =
+          classifySttCaptureFailure(error.toString()) ==
+              SttCaptureFailureKind.micBusy
+          ? VoiceCare.micBusy
+          : VoiceCare.micUnavailable;
       _notify();
     }
   }
@@ -473,6 +575,11 @@ class LocalVoiceConversationController extends ChangeNotifier
     _sttSub = null;
     unawaited(subscription?.cancel());
     _latencyTurn?.mark(VoiceLatencyPoint.sttFinal);
+    _turnLatencyLog.transcriptFinal();
+    // A notice that only informs («listening in the system language») ends
+    // with the capture it was about; the phase label takes the line back.
+    final informing = _care;
+    if (informing != null && !informing.blocking) _care = null;
     if (text.isEmpty || isSpuriousIsolatedTranscript(text)) {
       // El endpoint idle de 12 s es mantenimiento del recorder, no un turno
       // del usuario. Una emisión aislada `y` observada en el Pixel se trata del
@@ -495,7 +602,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       _scheduleListening();
       return;
     }
-    if (isExactVoiceStopPhrase(text)) {
+    if (isExactVoiceStopPhrase(text, voice.stopPhrases.value)) {
       unawaited(exit());
       return;
     }
@@ -601,6 +708,7 @@ class LocalVoiceConversationController extends ChangeNotifier
           text,
           clientSurface: const PromptClientSurface.voiceChat(),
         );
+        _heldTurn = null;
         _runtime.markSubmissionQueued(turn);
         _notify();
         // El monitor consume una captura por interjección. Rearmarlo después de
@@ -632,19 +740,48 @@ class LocalVoiceConversationController extends ChangeNotifier
       );
       if (!_isCurrent(operation) || turn != _turnBinding) return;
       if (accepted) {
+        // A newer message reached Hermes: the held one is superseded.
+        _heldTurn = null;
         _runtime.markBackendRunning(turn);
         _markLatencySubmitAccepted(chat);
       } else {
-        _runtime.failSubmission(turn);
-        _scheduleListening();
+        _holdFailedTurn(turn, text);
       }
-    } catch (error) {
+    } catch (_) {
       if (!_isCurrent(operation) || turn != _turnBinding) return;
-      _runtime.failSubmission(turn);
-      note = voiceLanguageFor(_lang).message('sendFailed');
-      _notify();
-      _scheduleListening();
+      _holdFailedTurn(turn, text);
     }
+  }
+
+  /// The message did not reach Hermes. Keep the words the user said and stop
+  /// listening for a new turn: Retry sends this same message, and closing the
+  /// conversation hands it back to the composer. Opening the microphone again
+  /// here would clear the notice and lose what was said.
+  void _holdFailedTurn(VoiceTurnBinding turn, String text) {
+    _runtime.failSubmission(turn, rearm: false);
+    _heldTurn = text;
+    _care = VoiceCare.sendFailed;
+    note = voiceLanguageFor(_lang).message('sendFailed');
+    unawaited(_disarmFullDuplex());
+    _notify();
+  }
+
+  /// Sends the held message again as a new turn. False when the conversation
+  /// is busy with something else (the message stays held).
+  bool _resubmitHeldTurn(String text) {
+    final turn = _runtime.beginResubmission();
+    if (turn == null) return false;
+    _heldTurn = null;
+    _care = null;
+    note = null;
+    _turnBinding = turn;
+    _userTranscript = text;
+    _partialTranscript = text;
+    final operation = ++_epoch;
+    _notify();
+    _modelHandoff = voice.prepareForNarration();
+    unawaited(_submitTranscript(operation, turn, text));
+    return true;
   }
 
   Future<void> _armFullDuplexForTurn({bool beginResponseTurn = false}) async {
@@ -664,6 +801,9 @@ class LocalVoiceConversationController extends ChangeNotifier
     }
     final monitor = _fullDuplex ??= FullDuplexBargeInMonitor(
       source: VoiceServiceFullDuplexCaptureSource(voice),
+      thresholdMultiplier: () =>
+          voice.serverVoicePrefs.value.bargeInThresholdMultiplier,
+      endpointSilence: () => voice.serverVoicePrefs.value.silence,
     );
     if (beginResponseTurn) monitor.beginResponseTurn();
     final turn = _turnBinding;
@@ -690,6 +830,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         },
         onSpeechEndpoint: () {
           _latencyTurn?.mark(VoiceLatencyPoint.speechEndpoint);
+          _turnLatencyLog.endpoint();
         },
         onTranscriptionStart: () =>
             _onFullDuplexTranscriptionStart(generation, runtimeToken),
@@ -809,6 +950,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     _bargeInterruptTask = null;
     final text = transcript?.trim() ?? '';
     _latencyTurn?.mark(VoiceLatencyPoint.sttFinal);
+    _turnLatencyLog.transcriptFinal();
     if (text.isEmpty || isSpuriousIsolatedTranscript(text)) {
       _runtime.finishBargeTranscription(runtimeToken, '');
       if (_runtime.state.transcriptionOwner != VoiceTranscriptionOwner.none) {
@@ -820,7 +962,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       _scheduleListening();
       return;
     }
-    if (isExactVoiceStopPhrase(text)) {
+    if (isExactVoiceStopPhrase(text, voice.stopPhrases.value)) {
       await exit();
       return;
     }
@@ -898,41 +1040,14 @@ class LocalVoiceConversationController extends ChangeNotifier
     }
   }
 
-  static bool isExactVoiceStopPhrase(String transcript) {
-    // Conserva el matcher cerrado de Desktop y añade únicamente la orden local
-    // inequívoca documentada para la sesión española. Sigue siendo coincidencia
-    // del utterance completo: «cállate y dime otra cosa» nunca se consume.
-    final normalized = _normalizeVoiceUtterance(transcript);
-    if (normalized.isEmpty) return false;
-    var withoutAddress = normalized;
-    for (final prefix in const <String>['hermes', 'ok', 'okay', 'hey']) {
-      if (normalized != prefix && normalized.startsWith('$prefix ')) {
-        withoutAddress = normalized.substring(prefix.length + 1).trim();
-        break;
-      }
-    }
-    const phrases = <String>{
-      'stop',
-      'stop listening',
-      'stop it',
-      'stop please',
-      'please stop',
-      'stop stop',
-      'that is all',
-      "that's all",
-      'never mind',
-      'nevermind',
-      'end conversation',
-      'end the conversation',
-      'goodbye',
-      'good bye',
-      'bye',
-      'cancel',
-      'cállate',
-      'callate',
-    };
-    return phrases.contains(normalized) || phrases.contains(withoutAddress);
-  }
+  /// Whole-utterance stop command under the profile's `voice.stop_phrases`
+  /// (Desktop voice-stop-word.ts:97-129; see voice_stop_phrases.dart). The
+  /// default keeps Desktop's English list plus «cállate»: «cállate y dime
+  /// otra cosa» is never consumed.
+  static bool isExactVoiceStopPhrase(
+    String transcript, [
+    VoiceStopPhraseConfig stopPhrases = VoiceStopPhraseConfig.backendDefault,
+  ]) => isVoiceStopCommand(transcript, stopPhrases);
 
   /// Pixel QA observed ambient noise being finalized as the isolated Spanish
   /// conjunction `y`. Reject only that exact normalized utterance: raising the
@@ -1024,6 +1139,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     _latencyTurn?.mark(VoiceLatencyPoint.backendAccepted);
     _latencyTurn?.mark(VoiceLatencyPoint.firstAcceptedText);
     _latencyTurn?.mark(VoiceLatencyPoint.backendTextAccepted);
+    _turnLatencyLog.firstToken();
   }
 
   void _markFirstRawSpeechSuffix(
@@ -1037,6 +1153,9 @@ class LocalVoiceConversationController extends ChangeNotifier
     }
     appendLatency?.accept();
     _latencyTurn?.mark(VoiceLatencyPoint.firstRawSpeechSuffix);
+    // The first reply text may come as a sealed `message.interim` (a
+    // toolProgress event), never as a token: it is still the first text.
+    _turnLatencyLog.firstToken();
     // Hermes Agent does not currently expose its first synthesizable chunk as
     // an observable protocol signal. Preserve that gap explicitly.
     _latencyTurn?.mark(VoiceLatencyPoint.firstSynthesizableChunkUnavailable);
@@ -1096,7 +1215,10 @@ class LocalVoiceConversationController extends ChangeNotifier
         _resumeAfterApprovalIfResolved();
         final tokenRawBefore = narration.rawObserved.length;
         final tokenAppendLatency = _latencyTurn?.beginSuffixAppendLatency();
-        final update = narration.observe(chat.assistantNarrationContent);
+        final update = narration.observe(
+          chat.assistantNarrationContent,
+          flush: chat.assistantNarrationSealed,
+        );
         _markFirstRawSpeechSuffix(
           narration,
           tokenRawBefore,
@@ -1115,15 +1237,24 @@ class LocalVoiceConversationController extends ChangeNotifier
         activeTool = liveToolLabel;
         final progressRawBefore = narration.rawObserved.length;
         final progressAppendLatency = _latencyTurn?.beginSuffixAppendLatency();
+        // A sealed bubble arrives here (`message.interim` emits toolProgress):
+        // Desktop speaks its tail while the tool runs (session.flush()).
         final progressUpdate = narration.observe(
           chat.assistantNarrationContent,
+          flush: chat.assistantNarrationSealed,
         );
         _markFirstRawSpeechSuffix(
           narration,
           progressRawBefore,
           progressAppendLatency,
         );
-        if (progressUpdate.queueChanged) {
+        // Desktop feeds the reply's raw text to speak-stream on a 150 ms
+        // timer whatever its punctuation (`use-voice-conversation.ts:917`);
+        // the server cuts and flushes the tail itself. Grown raw text is new
+        // work even when no stable chunk changed.
+        final progressRawGrew =
+            narration.rawObserved.length > progressRawBefore;
+        if (progressUpdate.queueChanged || progressRawGrew) {
           responding = true;
           _reconcileNarrationRevision(progressUpdate);
           _driveNarrationIfNeeded();
@@ -1156,7 +1287,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         final doneRawBefore = narration.rawObserved.length;
         final doneAppendLatency = _latencyTurn?.beginSuffixAppendLatency();
         final update = narration.observe(
-          _terminalNarrationContent(chat),
+          chat.assistantNarrationContent,
           terminal: true,
         );
         _markFirstRawSpeechSuffix(narration, doneRawBefore, doneAppendLatency);
@@ -1179,7 +1310,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         final errorRawBefore = narration.rawObserved.length;
         final errorAppendLatency = _latencyTurn?.beginSuffixAppendLatency();
         final update = narration.observe(
-          _terminalNarrationContent(chat),
+          chat.assistantNarrationContent,
           terminal: true,
         );
         _markFirstRawSpeechSuffix(
@@ -1223,6 +1354,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       case ActiveChatEvent.earlierMessagesLoaded:
       case ActiveChatEvent.responseMetrics:
       case ActiveChatEvent.sessionInfo:
+      case ActiveChatEvent.busyInputModeChanged:
       case ActiveChatEvent.warning:
       case ActiveChatEvent.dashboardAuthChanged:
       case ActiveChatEvent.goalUpdated:
@@ -1301,14 +1433,11 @@ class LocalVoiceConversationController extends ChangeNotifier
       }
       return;
     }
-    // Desktop no convierte la ausencia de PCM del speak-stream en una sucesión
-    // de POST por frases: conserva el turno, espera `message.complete` y habla
-    // la respuesta pública pendiente una sola vez. Esto cubre tanto el frame
-    // oficial `fallback` como un endpoint WS ausente/deshabilitado. Las rutas
-    // locales mantienen su dispatcher incremental.
-    if (_usesNativeTerminalFallback && (!narration.terminal || backendActive)) {
-      return;
-    }
+    // Without PCM from speak-stream (its `fallback` frame, or no endpoint)
+    // Desktop POSTs each completed sentence while the reply is still being
+    // generated (`awaitFallbackSpeech`, use-voice-conversation.ts:703-842,
+    // since e39900cc91 in v0.22.0). The same incremental queue as the
+    // client-direct and phone routes does that here.
     if (!narration.hasPending) {
       if (narration.terminal && !backendActive) _scheduleListening();
       return;
@@ -1340,19 +1469,6 @@ class LocalVoiceConversationController extends ChangeNotifier
       }
     });
     _narrationTask = task;
-  }
-
-  bool get _usesNativeTerminalFallback =>
-      voice.nativeVoiceActive &&
-      (_nativeSpeechStreamFallbackForTurn ||
-          !voice.nativeSpeechStreamingAvailable);
-
-  String _terminalNarrationContent(ActiveChat chat) {
-    if (!_usesNativeTerminalFallback) return chat.assistantNarrationContent;
-    final authoritative = chat.assistantContent.trim();
-    return authoritative.isEmpty
-        ? chat.assistantNarrationContent
-        : authoritative;
   }
 
   void _scheduleNativeSpeechFeed() {
@@ -1436,6 +1552,10 @@ class LocalVoiceConversationController extends ChangeNotifier
             return;
           }
           if (!_runtime.confirmPlayback(playbackToken!)) return;
+          _turnLatencyLog.firstAudio(
+            VoiceTurnAudioPath.stream,
+            toolActive: _runtime.state.toolActive,
+          );
           _notify();
         }),
       );
@@ -1551,8 +1671,12 @@ class LocalVoiceConversationController extends ChangeNotifier
         return;
       case HermesSpeechStreamOutcome.played:
       case HermesSpeechStreamOutcome.partial:
-        if (_runtime.state.playbackOwner == VoicePlaybackOwner.preparing) {
-          _runtime.confirmPlayback(playbackToken);
+        if (_runtime.state.playbackOwner == VoicePlaybackOwner.preparing &&
+            _runtime.confirmPlayback(playbackToken)) {
+          _turnLatencyLog.firstAudio(
+            VoiceTurnAudioPath.stream,
+            toolActive: _runtime.state.toolActive,
+          );
         }
         await _finishPlaybackAfterPhysicalDrain(
           operation,
@@ -1604,12 +1728,10 @@ class LocalVoiceConversationController extends ChangeNotifier
       if (playbackToken == null) return;
       final revision = narration.revision;
       final batchStart = narration.cursor;
-      final (batchEnd, batchText) = _usesNativeTerminalFallback
-          ? (
-              narration.chunks.length,
-              _batchText(narration, batchStart, narration.chunks.length),
-            )
-          : _composePlaybackBatch(narration, batchStart);
+      final (batchEnd, batchText) = _composePlaybackBatch(
+        narration,
+        batchStart,
+      );
       await _fullDuplex?.setPlaybackActive(true);
       if (!_isCurrent(operation) || userPaused || paused) return;
       // Compromete el lote con la cola ANTES de sonar: solo una divergencia
@@ -1635,6 +1757,10 @@ class LocalVoiceConversationController extends ChangeNotifier
           _runtime.confirmPlayback(
             playbackToken,
             owner: VoicePlaybackOwner.fallback,
+          );
+          _turnLatencyLog.firstAudio(
+            VoiceTurnAudioPath.queue,
+            toolActive: _runtime.state.toolActive,
           );
           _markFirstTtsFeed();
           _notify();
@@ -1665,6 +1791,7 @@ class LocalVoiceConversationController extends ChangeNotifier
         _runtime.pauseByUser();
         userPaused = true;
         note = voiceLanguageFor(_lang).message('serverUnavailable');
+        _care = VoiceCare.serverUnavailable;
         _notify();
         return;
       } finally {
@@ -1716,7 +1843,9 @@ class LocalVoiceConversationController extends ChangeNotifier
     final turn = _turnBinding;
     if (turn == null) return null;
     final token = _runtime.preparePlayback(turn);
-    if (token != null) _playbackRuntimeToken = token;
+    if (token != null) {
+      _playbackRuntimeToken = token;
+    }
     return token;
   }
 
@@ -1784,7 +1913,6 @@ class LocalVoiceConversationController extends ChangeNotifier
   void _maybePrewarmNextBatch() {
     final narration = _narration;
     if (narration == null || !active || userPaused || paused) return;
-    if (_usesNativeTerminalFallback) return;
     if (_narrationTask == null) return;
     final fence = narration.playbackFence;
     if (fence <= narration.cursor || fence >= narration.chunks.length) return;
@@ -1854,8 +1982,7 @@ class LocalVoiceConversationController extends ChangeNotifier
   /// 160 caracteres. Esos cortes no deben crear voces ni silencios distintos,
   /// pero una oración que ya termina en puntuación sí debe salir al TTS local
   /// sin esperar a que termine la respuesta completa. El fallback nativo de
-  /// Servidor Hermes no usa este corte: replica Desktop con un único one-shot
-  /// terminal mediante [_usesNativeTerminalFallback].
+  /// Servidor Hermes usa el mismo corte, como Desktop (`awaitFallbackSpeech`).
   ///
   /// Devuelve el fin EXCLUSIVO del lote y su texto. La misma composición se
   /// reutiliza para narrar y para pre-sintetizar, evitando que el caché agrupe
@@ -1988,10 +2115,23 @@ class LocalVoiceConversationController extends ChangeNotifier
         userPaused) {
       return;
     }
-    final message = approval
+    final spoken = approval
         ? voiceLanguageFor(_lang).message('approvalRequired')
         : voiceLanguageFor(_lang).message('responseRequired');
-    await voice.enqueueLocalSpeech(message);
+    // The line speaks of the agent: it is called by its own name, the one
+    // the screens show (the line stays as is while the roster is unknown).
+    final spokenChat = _chat;
+    final agent = spokenChat == null
+        ? null
+        : agentNameFor(
+            BotRosterRegistry.shared.peek(spokenChat.connection.id),
+            _profile,
+          );
+    await voice.enqueueLocalSpeech(
+      agent == null
+          ? spoken
+          : spoken.replaceAll(kMainProfileFallbackName, agent),
+    );
   }
 
   void _resumeAfterApprovalIfResolved() {
@@ -2087,6 +2227,7 @@ class LocalVoiceConversationController extends ChangeNotifier
   @override
   void pauseConversation() {
     if (!active || userPaused) return;
+    _pausedByBackground = false;
     final nativeSession = _nativeSpeechStream;
     final preservePlayback =
         nativeSession != null && _playbackRuntimeToken != null;
@@ -2191,6 +2332,8 @@ class LocalVoiceConversationController extends ChangeNotifier
     }
     _sttReleasedForPause = false;
     _ttsReleasedForPause = false;
+    _pausedByBackground = false;
+    _care = null;
     final nativeSession = _nativeSpeechStream;
     if (nativeSession != null) {
       note = null;
@@ -2366,6 +2509,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       return;
     }
     _latencyTurn?.mark(VoiceLatencyPoint.speechEndpoint);
+    _turnLatencyLog.endpoint();
     _notify();
     unawaited(voice.stopDictation());
   }
@@ -2373,6 +2517,18 @@ class LocalVoiceConversationController extends ChangeNotifier
   @override
   void retry() {
     if (!active) return;
+    final held = _heldTurn;
+    // Only while the failure is what the user is looking at: after a new
+    // capture the held words wait for the composer, not for a resend.
+    if (held != null && care == VoiceCare.sendFailed) {
+      _resubmitHeldTurn(held);
+      return;
+    }
+    unawaited(_reopenCapture());
+  }
+
+  /// Closes whatever capture is open and opens a new one.
+  Future<void> _reopenCapture() {
     final captureToken = _normalCaptureToken;
     if (captureToken != null) {
       _runtime.failNormalCapture(captureToken);
@@ -2388,8 +2544,46 @@ class LocalVoiceConversationController extends ChangeNotifier
     userPaused = false;
     paused = false;
     note = null;
+    _care = null;
+    _pausedByBackground = false;
     _notify();
-    unawaited(_restartCapture(operation));
+    return _restartCapture(operation);
+  }
+
+  /// Starts watching headset and Bluetooth changes for this conversation.
+  void _watchAudioRoute() {
+    final events = _audioEvents;
+    if (events == null || _audioSub != null) return;
+    _audioSub = events().listen((event) {
+      if (event != LiveAudioEvent.routeChanged || !active || userPaused) return;
+      _routeSettleTimer?.cancel();
+      _routeSettleTimer = Timer(_routeChangeSettle, () {
+        _routeSettleTimer = null;
+        unawaited(_reopenCaptureForNewRoute());
+      });
+    }, onError: (Object _) {});
+  }
+
+  void _stopWatchingAudioRoute() {
+    _routeSettleTimer?.cancel();
+    _routeSettleTimer = null;
+    final sub = _audioSub;
+    _audioSub = null;
+    if (sub != null) unawaited(sub.cancel());
+  }
+
+  /// The route changed while listening: the recorder keeps the old input, so
+  /// open it again on the new one. While Hermes thinks or speaks nothing is
+  /// open and the next capture picks the new route by itself. A recorder that
+  /// cannot reopen reports through the usual microphone failure.
+  Future<void> _reopenCaptureForNewRoute() async {
+    if (!active || userPaused || paused || phase != VoicePhase.listening) {
+      return;
+    }
+    await _reopenCapture();
+    if (!active || note != null) return;
+    _care = VoiceCare.routeRestarted;
+    _notify();
   }
 
   Future<void> _restartCapture(
@@ -2505,7 +2699,12 @@ class LocalVoiceConversationController extends ChangeNotifier
   }
 
   @override
-  Future<void> onAppBackgrounded() => suspendForPrivacy();
+  Future<void> onAppBackgrounded() {
+    // Only this path says «paused by the background»: App Lock also suspends
+    // for privacy and has its own screen.
+    if (active && !userPaused) _pausedByBackground = true;
+    return suspendForPrivacy();
+  }
 
   @override
   void onAppResumed({required bool appUnlocked}) {
@@ -2713,12 +2912,16 @@ class LocalVoiceConversationController extends ChangeNotifier
     _playbackRuntimeToken = null;
     _narrationDriveRequested = false;
     active = false;
+    _stopWatchingAudioRoute();
+    _pausedByBackground = false;
     paused = false;
     overlayMinimized = false;
     userPaused = false;
     responding = false;
     activeTool = null;
     note = null;
+    // A held message stays until the screen takes it back or a new entry.
+    if (_care != VoiceCare.sendFailed) _care = null;
     _partialTranscript = '';
     _announcedPendingInputKey = null;
     _pendingInputAudioGeneration++;
@@ -2801,6 +3004,7 @@ class LocalVoiceConversationController extends ChangeNotifier
 
   void _scheduleListening() {
     if (!active ||
+        care == VoiceCare.sendFailed ||
         userPaused ||
         paused ||
         _rearmBlocked ||
@@ -2901,7 +3105,9 @@ class LocalVoiceConversationController extends ChangeNotifier
 
   String get _lang => voiceLanguageFor(voice.voiceLang).code;
 
-  String _sttUnavailableNote(SttCheck check) => voiceLanguageFor(_lang).message('recognitionUnavailable', {'status': check.status.name});
+  String _sttUnavailableNote(SttCheck check) => voiceLanguageFor(
+    _lang,
+  ).message('recognitionUnavailable', {'status': check.status.name});
 
   static String? _pendingInputKey(ActiveChat? chat) {
     if (chat == null) return null;
@@ -2940,6 +3146,8 @@ class LocalVoiceConversationController extends ChangeNotifier
     ownerTitle: ownerChat?.sessionTitle,
     phase: phase,
     note: note,
+    care: care,
+    held: _heldTurn != null,
     activeTool: activeTool,
     publicCommentary: publicCommentary,
     responding: responding,
@@ -2952,8 +3160,53 @@ class LocalVoiceConversationController extends ChangeNotifier
     whisper: whisper,
   );
 
+  void _observeTurnLatency() {
+    if (!_turnLatencyLog.enabled) return;
+    final state = _runtime.state;
+    _turnLatencyLog.observe(
+      audioPlaying:
+          state.playbackOwner == VoicePlaybackOwner.streaming ||
+          state.playbackOwner == VoicePlaybackOwner.fallback ||
+          state.playbackOwner == VoicePlaybackOwner.draining,
+      toolActive: state.toolActive,
+    );
+    if (!active) _turnLatencyLog.flush();
+  }
+
+  /// The provider's own reply when it refused (Desktop shows it,
+  /// REVIEW-R5-B #12); otherwise the usual microphone note.
+  String _sttFailureNote(Object error) {
+    final language = voiceLanguageFor(_lang);
+    _care = null;
+    if (error is SttTimeoutError) {
+      _care = VoiceCare.transcriptionTimedOut;
+      return language.message('microphoneUnclear');
+    }
+    if (error is SttCaptureFailure) {
+      _care = switch (error.kind) {
+        SttCaptureFailureKind.micBusy => VoiceCare.micBusy,
+        SttCaptureFailureKind.micUnavailable => VoiceCare.micUnavailable,
+        SttCaptureFailureKind.needsNetwork => VoiceCare.needsNetwork,
+        // The recognizer cannot run in the chosen language at all.
+        SttCaptureFailureKind.languageUnavailable => VoiceCare.micUnavailable,
+      };
+      return language.message('microphoneUnavailable');
+    }
+    if (error is VoiceDirectProviderException) {
+      final detail = error.message.length > _kProviderNoteDetailMaxLength
+          ? '${error.message.substring(0, _kProviderNoteDetailMaxLength)}…'
+          : error.message;
+      return language.message('providerError', {'detail': detail});
+    }
+    if (error is SttNoAudioError) return language.message('noAudioHeard');
+    return language.message('microphoneUnclear');
+  }
+
+  static const int _kProviderNoteDetailMaxLength = 200;
+
   void _notify() {
     if (_disposed) return;
+    _observeTurnLatency();
     final projection = _uiProjection;
     // El chat ya publica cada delta mediante su ValueNotifier estrecho. Voz no
     // consume `assistantResponse`, así que un token que no cambia fase,
@@ -2967,7 +3220,9 @@ class LocalVoiceConversationController extends ChangeNotifier
   @override
   void dispose() {
     if (_disposed) return;
+    _turnLatencyLog.flush();
     voice.bargeInEnabled.removeListener(_onBargeInPreferenceChanged);
+    _stopWatchingAudioRoute();
     ++_epoch;
     _runtime.exit();
     _turnBinding = null;

@@ -78,6 +78,8 @@ const _jaVoiceMessages = <String, String>{
   'responseRequired': 'Hermesが返答を求めています。アプリを開いて続けてください。',
   'stopNotSaved': '停止を安全に保存できませんでした。もう一度お試しください。',
   'recognitionUnavailable': '音声認識の準備ができていません（{status}）。',
+  'providerError': '音声プロバイダーの応答: {detail}',
+  'noAudioHeard': '何も聞こえません。マイクが車やヘッドセットのものになっていませんか？',
 };
 
 const _jaTranscriptGrammar = VoiceTranscriptGrammar(

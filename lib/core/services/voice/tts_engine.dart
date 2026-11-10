@@ -216,6 +216,9 @@ TtsAudioPlaybackFactory _resolveTtsPlaybackFactory(
   return playbackFactory ?? _AudioPlayerTtsPlayback.new;
 }
 
+/// A fresh player on the audio plugin, for short local sounds.
+TtsAudioPlayback newPluginAudioPlayback() => _AudioPlayerTtsPlayback();
+
 class _AudioPlayerTtsPlayback implements TtsAudioPlayback {
   final AudioPlayer _player;
 
@@ -1431,7 +1434,7 @@ class KokoroTtsSetup {
 }
 
 class OpenAiStreamingTtsEngine implements TtsEngine {
-  /// Base de la API, p.ej. `http://192.168.1.10:8880/v1` (Kokoro) o
+  /// Base de la API, p.ej. `http://192.0.2.10:8880/v1` (Kokoro) o
   /// `https://api.openai.com/v1` (nube). Se le añade `/audio/speech`.
   final String baseUrl;
 

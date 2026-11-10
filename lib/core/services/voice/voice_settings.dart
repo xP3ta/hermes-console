@@ -5,6 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'stt_sherpa.dart' show SherpaModelKind;
 import 'voice_lang.dart';
 import 'voice_language.dart';
+import 'voice_microphone.dart';
+
+export 'voice_microphone.dart' show VoiceMicrophone;
 
 /// Motor de reconocimiento de voz (voz → texto).
 enum SttEngineKind {
@@ -155,6 +158,10 @@ class VoiceSettings {
   /// con altavoz falla cerrado y el corte táctil continúa disponible.
   final bool bargeInEnabled;
 
+  /// Microphone of the Hermes server capture: automatic (Android and
+  /// Bluetooth decide) or always the phone's (backlog 1.4.x item 7).
+  final VoiceMicrophone microphone;
+
   /// Pausar y continuar es el comportamiento por defecto. Quien prefiera una
   /// lectura nueva en cada toque puede elegir detener y reiniciar.
   final ReadAloudStopBehavior readAloudStopBehavior;
@@ -180,7 +187,7 @@ class VoiceSettings {
   final SherpaModelKind sherpaModel;
 
   /// URL del servidor de STT en vivo (faster-whisper), p.ej.
-  /// `ws://192.168.1.10:9123`. El token va en el Keystore, no aquí. Solo aplica
+  /// `ws://192.0.2.10:9123`. El token va en el Keystore, no aquí. Solo aplica
   /// cuando [sttEngine] == server.
   final String serverSttUrl;
 
@@ -232,6 +239,7 @@ class VoiceSettings {
     this.ttsEngine = TtsEngineKind.onnx,
     this.autoSpeak = false,
     this.bargeInEnabled = false,
+    this.microphone = VoiceMicrophone.automatic,
     this.readAloudStopBehavior = ReadAloudStopBehavior.pauseAndResume,
     this.vadEnabled = true,
     this.elevenVoiceId = '21m00Tcm4TlvDq8ikWAM', // "Rachel" (default público)
@@ -297,6 +305,7 @@ class VoiceSettings {
     TtsEngineKind? ttsEngine,
     bool? autoSpeak,
     bool? bargeInEnabled,
+    VoiceMicrophone? microphone,
     ReadAloudStopBehavior? readAloudStopBehavior,
     bool? vadEnabled,
     String? elevenVoiceId,
@@ -332,6 +341,7 @@ class VoiceSettings {
       ttsEngine: ttsEngine ?? this.ttsEngine,
       autoSpeak: autoSpeak ?? this.autoSpeak,
       bargeInEnabled: bargeInEnabled ?? this.bargeInEnabled,
+      microphone: microphone ?? this.microphone,
       readAloudStopBehavior:
           readAloudStopBehavior ?? this.readAloudStopBehavior,
       vadEnabled: vadEnabled ?? this.vadEnabled,
@@ -399,6 +409,7 @@ class VoiceSettings {
   // La clave versionada evita resucitar el experimento retirado que usó
   // `voice_barge_in_enabled` en builds antiguas.
   static const _kBargeIn = 'voice_barge_in_enabled_v2';
+  static const _kMicrophone = 'voice_microphone';
   static const _kReadAloudStopBehavior = 'voice_read_aloud_stop_behavior';
   static const _kVad = 'voice_vad_enabled';
   static const _kVoice = 'voice_eleven_voice_id';
@@ -506,6 +517,7 @@ class VoiceSettings {
           : migratedTtsEngine,
       autoSpeak: prefs.getBool(_kAuto) ?? false,
       bargeInEnabled: prefs.getBool(_kBargeIn) ?? false,
+      microphone: VoiceMicrophone.from(prefs.getString(_kMicrophone)),
       readAloudStopBehavior: ReadAloudStopBehavior.from(
         prefs.getString(_kReadAloudStopBehavior),
       ),
@@ -569,6 +581,7 @@ class VoiceSettings {
     await prefs.setString(_kTts, ttsEngine.id);
     await prefs.setBool(_kAuto, autoSpeak);
     await prefs.setBool(_kBargeIn, bargeInEnabled);
+    await prefs.setString(_kMicrophone, microphone.id);
     await prefs.setString(_kReadAloudStopBehavior, readAloudStopBehavior.id);
     await prefs.setBool(_kVad, vadEnabled);
     await prefs.setString(_kVoice, elevenVoiceId);

@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
+import '../theme/readable_ink.dart';
 import 'voice_meter.dart';
 
 /// What the voice surface shows. A projection of the voice controller's phase;
@@ -40,6 +42,20 @@ extension VoiceStripStateRules on VoiceStripState {
     VoiceStripState.speaking => true,
     _ => false,
   };
+
+  /// «Terminar de hablar»: only while listening, for an engine that waits
+  /// to be told the user is done.
+  bool get canFinishListening => this == VoiceStripState.listening;
+
+  /// The voice dock's «Interrumpir»: only over Hermes's voice (while it
+  /// works, the dock stays quiet and pause or ✕ stay at hand).
+  bool get dockInterrupts => this == VoiceStripState.speaking;
+
+  /// «Reintentar» belongs to a failure.
+  bool get offersRetry => this == VoiceStripState.error;
+
+  /// «Ver aprobación» belongs to an approval waiting.
+  bool get offersReview => this == VoiceStripState.waiting;
 
   /// A turn can only be cancelled from a state that belongs to one.
   bool get canCancelTurn => switch (this) {
@@ -126,6 +142,41 @@ bool _textFits(
   return fits;
 }
 
+/// What is heard while listening, on one line that keeps the **last** words:
+/// the text is laid out whole, aligned to its end and clipped, so the start
+/// slips away to the left (135 v2 §4) instead of cutting what was just said.
+/// The line never grows while the user speaks.
+class _HeardTail extends StatelessWidget {
+  const _HeardTail({required this.text, required this.style});
+
+  final String text;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final overflows =
+          constraints.maxWidth.isFinite &&
+          !_textFits(context, text, style, constraints.maxWidth, 1);
+      // Only the width is set free; the height stays the line's.
+      return UnconstrainedBox(
+        constrainedAxis: Axis.vertical,
+        clipBehavior: Clip.hardEdge,
+        alignment: overflows
+            ? AlignmentDirectional.centerEnd
+            : AlignmentDirectional.centerStart,
+        child: Text(
+          text,
+          key: const ValueKey('voice-strip-status'),
+          maxLines: 1,
+          softWrap: false,
+          style: style,
+        ),
+      );
+    },
+  );
+}
+
 /// Voice conversation inside the chat, as Hermes Desktop does it: the
 /// transcript stays on screen and one thin line above the composer carries
 /// the live state, with at most one action that belongs to that state. The
@@ -148,6 +199,15 @@ class VoiceStatusLine extends StatefulWidget {
   final VoidCallback? onRetry;
   final VoidCallback? onReview;
 
+  /// «Terminar de hablar» while listening, for an engine that needs it: the
+  /// state's action inside the voice capsule (135 v2), where the composer's
+  /// round button no longer stands.
+  final VoidCallback? onFinishListening;
+
+  /// Inside the voice capsule: the capsule is the surface, so the line draws
+  /// none of its own (no fill, edge or shadow).
+  final bool embedded;
+
   const VoiceStatusLine({
     required this.state,
     required this.statusLabel,
@@ -157,6 +217,8 @@ class VoiceStatusLine extends StatefulWidget {
     this.onStopAndTalk,
     this.onRetry,
     this.onReview,
+    this.onFinishListening,
+    this.embedded = false,
     super.key,
   });
 
@@ -237,7 +299,16 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
   _LineAction? _action(Color tone) {
     final w = widget;
     final state = w.state;
-    if (state == VoiceStripState.error && w.onRetry != null) {
+    if (state.canFinishListening && w.onFinishListening != null) {
+      return _LineAction(
+        actionKey: 'voice-strip-finish-listening',
+        icon: Icons.arrow_upward_rounded,
+        label: w.labels.finishListening,
+        onPressed: w.onFinishListening!,
+        tint: tone,
+      );
+    }
+    if (state.offersRetry && w.onRetry != null) {
       return _LineAction(
         actionKey: 'voice-strip-retry',
         icon: Icons.refresh_rounded,
@@ -246,7 +317,7 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
         tint: tone,
       );
     }
-    if (state == VoiceStripState.waiting && w.onReview != null) {
+    if (state.offersReview && w.onReview != null) {
       return _LineAction(
         actionKey: 'voice-strip-review',
         icon: Icons.shield_outlined,
@@ -288,28 +359,27 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
       VoiceStripState.waiting => colors.warning,
       _ => colors.accent,
     };
+    // Ola 3 (AUDITORIA-PULIDO T2): the one tone of what floats; speaking
+    // tints it with the accent, a failure draws its edge in red.
+    final chrome = HermesChrome.of(colors);
     final surface = state == VoiceStripState.speaking
-        ? Color.alphaBlend(
-            colors.accent.withValues(alpha: 0.08),
-            colors.surfaceVariant,
-          )
-        : colors.surfaceVariant;
+        ? Color.alphaBlend(colors.accent.withValues(alpha: 0.08), chrome.opaque)
+        : chrome.opaque;
     final border = switch (state) {
       VoiceStripState.speaking => colors.accent.withValues(alpha: 0.34),
       VoiceStripState.error => colors.error.withValues(alpha: 0.5),
-      _ => colors.divider,
+      _ => chrome.line,
     };
-    final clockStyle = TextStyle(
-      color: colors.textSecondary,
-      fontSize: 11.5,
-      fontFamily: 'monospace',
+    // Ola 8: the quiet ink tuned for the chrome (4.5:1 on it).
+    final clockStyle = HermesType.mono.copyWith(
+      color: chrome.mutedInk,
+      fontSize: HermesType.caption.fontSize,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
-    final statusStyle = TextStyle(
+    final statusStyle = HermesType.value.copyWith(
       color: state == VoiceStripState.paused
-          ? colors.textSecondary
+          ? chrome.mutedInk
           : colors.textPrimary,
-      fontSize: 13.5,
       height: 1.2,
       fontWeight: FontWeight.w500,
     );
@@ -327,11 +397,14 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: DecoratedBox(
               key: const ValueKey('voice-strip'),
-              decoration: BoxDecoration(
-                color: surface.withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: border),
-              ),
+              decoration: w.embedded
+                  ? const BoxDecoration()
+                  : BoxDecoration(
+                      color: surface,
+                      borderRadius: BorderRadius.circular(HermesRadius.card),
+                      border: Border.all(color: border),
+                      boxShadow: chrome.shadow,
+                    ),
             ),
           ),
         ),
@@ -402,13 +475,20 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 10,
                                   ),
-                                  child: Text(
-                                    text,
-                                    key: const ValueKey('voice-strip-status'),
-                                    maxLines: statusLines,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: statusStyle,
-                                  ),
+                                  child: listening && _heard.isNotEmpty
+                                      ? _HeardTail(
+                                          text: text,
+                                          style: statusStyle,
+                                        )
+                                      : Text(
+                                          text,
+                                          key: const ValueKey(
+                                            'voice-strip-status',
+                                          ),
+                                          maxLines: statusLines,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: statusStyle,
+                                        ),
                                 ),
                               ),
                               if (clock != null) ...[
@@ -509,8 +589,7 @@ class _LineAction {
     this.tint,
   });
 
-  static const labelStyle = TextStyle(
-    fontSize: 12.5,
+  static final labelStyle = HermesType.support.copyWith(
     height: 1.2,
     fontWeight: FontWeight.w600,
   );
@@ -536,10 +615,15 @@ class _LineAction {
       };
 
   Widget build(HermesThemeColors colors, _LineActionForm form) {
-    final foreground = tint ?? colors.textPrimary;
     final background = (tint ?? colors.textPrimary).withValues(
       alpha: tint == null ? 0.08 : 0.2,
     );
+    // Ola 8: a tinted chip's label keeps 4.5:1 on its own tint (the raw
+    // accent fell to 2.1:1 on the capsule's dark chrome).
+    final foreground = switch (tint) {
+      final chip? => readableInkOnTint(chip, background, colors),
+      null => colors.textPrimary,
+    };
     return Semantics(
       button: true,
       label: label,
@@ -660,8 +744,7 @@ class VoiceComposerControls extends StatelessWidget {
   /// as a glyph.
   static const double minWidth = 3 * _kTarget;
 
-  static const _endStyle = TextStyle(
-    fontSize: 13,
+  static final _endStyle = HermesType.value.copyWith(
     height: 1.2,
     fontWeight: FontWeight.w700,
   );

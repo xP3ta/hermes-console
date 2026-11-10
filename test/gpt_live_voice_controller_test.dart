@@ -10,8 +10,10 @@ import 'package:hermes_android/core/services/voice/conversation/gpt_live_voice_c
 import 'package:hermes_android/core/services/voice/live/live_audio_environment.dart';
 import 'package:hermes_android/core/services/voice/live/live_rtc_transport.dart';
 import 'package:hermes_android/core/services/voice/live/voice_live_api.dart';
+import 'package:hermes_android/core/services/voice/session/voice_care.dart';
 import 'package:hermes_android/core/services/voice/voice_phase.dart';
 import 'package:hermes_android/core/services/voice/voice_service.dart';
+import 'package:hermes_android/core/services/voice/voice_stop_phrases.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/recording_desktop_gateway.dart';
@@ -68,8 +70,12 @@ class _Rig {
       audioEvents: () => audio.stream,
       languageCode: () => 'en',
       continueWhenHidden: () => keepWhenHidden,
+      stopPhrases: () => stopPhrases,
     );
   }
+
+  /// `voice.stop_phrases` as the app last read it for this profile.
+  VoiceStopPhraseConfig stopPhrases = VoiceStopPhraseConfig.backendDefault;
 
   /// What the app answers when the controller asks whether an open session
   /// may continue hidden: the lock-screen opt-in with the microphone service
@@ -336,6 +342,84 @@ void main() {
           'submit:y ahora lo de mañana',
         ]);
       });
+    });
+  });
+
+  // Desktop judges the live transcript with the same configurable matcher
+  // (use-voice-live-conversation.ts:270 and :302, voice-stop-word.ts).
+  group('voice.stop_phrases', () {
+    VoiceStopPhraseConfig phrases(List<String> list) =>
+        VoiceStopPhraseConfig.fromServerConfig({
+          'voice': {'stop_phrases': list},
+        });
+
+    void sayAndSettle(_Rig rig, FakeAsync async, String said) {
+      rig.transport.emitEvent({
+        'type': 'session.input_transcript.delta',
+        'delta': said,
+      });
+      async.elapse(const Duration(milliseconds: 1600));
+    }
+
+    test('the Desktop list ends the chat in default mode', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.delegate('del_stop', said: 'Never mind.');
+        async.flushMicrotasks();
+        expect(rig.desktop.submits, isEmpty);
+        expect(rig.controller.active, isFalse);
+      });
+    });
+
+    test('a custom phrase ends the chat without a turn', () {
+      fakeAsync((async) {
+        final rig = _Rig()..stopPhrases = phrases(['отбой']);
+        rig.enter(async);
+        rig.delegate('del_stop', said: 'Отбой!');
+        async.flushMicrotasks();
+        expect(rig.desktop.submits, isEmpty);
+        expect(rig.controller.active, isFalse);
+      });
+    });
+
+    test('a custom phrase settles the quiet window too', () {
+      fakeAsync((async) {
+        final rig = _Rig()..stopPhrases = phrases(['отбой']);
+        rig.enter(async);
+        sayAndSettle(rig, async, 'Hermes, отбой.');
+        expect(rig.controller.active, isFalse);
+      });
+    });
+
+    test('a custom list replaces the bare "stop"', () {
+      fakeAsync((async) {
+        final rig = _Rig()..stopPhrases = phrases(['отбой']);
+        rig.enter(async);
+        sayAndSettle(rig, async, 'stop');
+        expect(rig.controller.active, isTrue);
+      });
+    });
+
+    test('an empty list disables the spoken stop', () {
+      fakeAsync((async) {
+        final rig = _Rig()..stopPhrases = phrases(const []);
+        rig.enter(async);
+        sayAndSettle(rig, async, 'stop');
+        expect(rig.controller.active, isTrue);
+      });
+    });
+  });
+
+  // Desktop flags a typed send only over its TTS playback
+  // (voice-playback.ts:824-826); the live model's WebRTC audio is not it.
+  test('the live voice never counts as a spoken reply to interrupt', () {
+    fakeAsync((async) {
+      final rig = _Rig();
+      rig.enter(async);
+      rig.voiceReplies();
+      async.flushMicrotasks();
+      expect(rig.controller.voicePlaybackActive, isFalse);
     });
   });
 
@@ -1065,7 +1149,10 @@ void main() {
       });
     }
 
-    for (final event in LiveAudioEvent.values) {
+    // A route change has its own behavior (it reopens once, below).
+    for (final event in LiveAudioEvent.values.where(
+      (event) => event != LiveAudioEvent.routeChanged,
+    )) {
       test('${event.name} tears the session down', () {
         fakeAsync((async) {
           final rig = _Rig();
@@ -1084,6 +1171,45 @@ void main() {
         });
       });
     }
+
+    test('a route change reopens the session once, with a notice', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        final first = rig.transport;
+        rig.audio.add(LiveAudioEvent.routeChanged);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 15));
+        expect(first.disposeCalls, 1);
+        expect(rig.transportsCreated, 2);
+        expect(rig.controller.care, VoiceCare.routeRestarted);
+        expect(rig.controller.note, isNull);
+
+        // The link flaps: a second change soon after leaves it closed.
+        rig.audio.add(LiveAudioEvent.routeChanged);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 5));
+        expect(rig.transportsCreated, 2);
+        expect(rig.controller.note, startsWith('Live voice session ended'));
+
+        // Well after the cooldown a change reopens again.
+        async.elapse(GptLiveVoiceConversationController.routeReopenCooldown);
+        rig.controller.retry();
+        async.flushMicrotasks();
+        expect(rig.transportsCreated, 3);
+      });
+    });
+
+    test('a busy microphone reports its own care with a retry', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.transport.openMicrophoneError = const LiveMicrophoneBusyException();
+        rig.enter(async);
+        expect(rig.controller.care, VoiceCare.micBusy);
+        expect(rig.controller.phase, VoicePhase.idle);
+        expect(rig.controller.note, isNotNull);
+      });
+    });
 
     test('audio events outside a session do nothing', () {
       fakeAsync((async) {

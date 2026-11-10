@@ -40,6 +40,10 @@ class StreamingNarrationQueue {
   bool _silenced = false;
   bool _paused = false;
 
+  /// The raw text last released by a flush; a later observe of the same text
+  /// keeps it released.
+  String? _flushedRaw;
+
   String get rawObserved => _rawObserved;
   List<ReadAloudChunk> get chunks => _chunks;
   int get cursor => _cursor;
@@ -54,6 +58,7 @@ class StreamingNarrationQueue {
   void reset() {
     _revision++;
     _rawObserved = '';
+    _flushedRaw = null;
     _chunks = const [];
     _cursor = 0;
     _playbackFence = 0;
@@ -74,26 +79,38 @@ class StreamingNarrationQueue {
   /// usa como arranque del siguiente lote a pre-sintetizar (spec 048/US3).
   int get playbackFence => _playbackFence;
 
+  /// [flush] releases the last, unpunctuated sentence without ending the
+  /// turn: a sealed bubble while its tool runs, as Desktop's
+  /// `session.flush()` (`use-voice-conversation.ts:687-693`).
   StreamingNarrationUpdate observe(
     String visibleMarkdown, {
     bool terminal = false,
+    bool flush = false,
   }) {
     assert(maxChunkChars > 0);
     assert(safetyCeilingChars > 0);
     final bounded = visibleMarkdown.length <= safetyCeilingChars
         ? visibleMarkdown
         : visibleMarkdown.substring(0, safetyCeilingChars);
-    if (bounded == _rawObserved && (!terminal || _terminal)) {
+    final release = terminal || flush;
+    if (bounded == _rawObserved &&
+        (!terminal || _terminal) &&
+        (!flush || _flushedRaw == bounded)) {
       return const StreamingNarrationUpdate(
         queueChanged: false,
         revisionChanged: false,
       );
     }
+    if (flush) _flushedRaw = bounded;
 
     final segments = _renderer.render(bounded);
     final rendered = chunkNarrationSegments(segments, maxChars: maxChunkChars);
-    var stable = _stablePrefix(rendered, bounded, terminal: terminal);
-    stable = _coalesceOpeningHeadings(segments, stable, terminal: terminal);
+    var stable = _stablePrefix(
+      rendered,
+      bounded,
+      terminal: release || _flushedRaw == bounded,
+    );
+    stable = _coalesceOpeningHeadings(segments, stable, terminal: release);
 
     // El renderer puede rebajar la pausa de una frase que antes era final al
     // aparecer la siguiente. Su texto ya era estable y quizá ya sonó: conserva

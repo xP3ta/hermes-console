@@ -8,6 +8,7 @@ import '../../active_chat_service.dart';
 import '../live/voice_chat_mode_store.dart';
 import '../live/voice_live_api.dart';
 import '../live/voice_live_protocol.dart' show VoiceLiveMode;
+import '../session/voice_care.dart';
 import '../voice_phase.dart';
 import '../voice_service.dart' show SttCheck;
 import 'gpt_live_voice_conversation_controller.dart';
@@ -212,6 +213,17 @@ class VoiceConversationCoordinator extends ChangeNotifier
     );
   }
 
+  /// Whether entering now would start GPT-Live, from the last known mode of
+  /// this connection and profile (the same answer [enter] acts on). The
+  /// screen uses it to skip the checks of this phone's own voice engines,
+  /// which GPT-Live does not use. Unknown mode: false, as for [enter].
+  bool startsLiveFor(ActiveChat chat, String profile) =>
+      !_appHidden &&
+      (_modes
+              .read(VoiceChatModeStore.identity(chat.connection.id, profile))
+              ?.startsLive ??
+          false);
+
   /// Reads the server's mode for [identity] and remembers the answer. Returns
   /// whether the server answered within [timeout]: a failed or slow read
   /// leaves the last known mode as it was.
@@ -354,6 +366,15 @@ class VoiceConversationCoordinator extends ChangeNotifier
   String? get note => _privacyBlocked ? null : _engine.note ?? _fallbackNotice;
 
   @override
+  VoiceCare? get care => _privacyBlocked ? null : _engine.care;
+
+  @override
+  String? get heldTurnText => _privacyBlocked ? null : _engine.heldTurnText;
+
+  @override
+  String? takeHeldTurnText() => _current?.takeHeldTurnText();
+
+  @override
   String? get activeTool => _privacyBlocked ? null : _engine.activeTool;
 
   @override
@@ -375,16 +396,25 @@ class VoiceConversationCoordinator extends ChangeNotifier
       _privacyBlocked ? '' : _engine.partialTranscript;
 
   @override
+  Listenable get partialTranscriptChanges => _engine.partialTranscriptChanges;
+
+  @override
   String get userTranscript => _privacyBlocked ? '' : _engine.userTranscript;
 
   @override
   bool get userPaused => _engine.userPaused;
 
   @override
+  bool get privacyHidden => _privacyBlocked;
+
+  @override
   bool get backendActive => _engine.backendActive;
 
   @override
   bool get spokenInterruptionArmed => _engine.spokenInterruptionArmed;
+
+  @override
+  bool get voicePlaybackActive => _engine.voicePlaybackActive;
 
   @override
   bool get paused => _engine.paused;

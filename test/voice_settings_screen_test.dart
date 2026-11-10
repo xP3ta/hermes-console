@@ -1725,6 +1725,53 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('el micrófono del teléfono se elige con el dictado de Hermes '
+      '(backlog 1.4.x punto 7)', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'voice_stt_engine': 'hermes_server',
+    });
+    FlutterSecureStorage.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final voice = VoiceService(prefs, SecureStorage());
+    addTearDown(voice.dispose);
+
+    await tester.pumpWidget(host(voiceService: voice));
+    await tester.pump();
+    await openConversationSection(tester);
+
+    final toggle = find.byKey(const ValueKey('voice_microphone_phone'));
+    expect(toggle, findsOneWidget);
+    expect(voice.settings.microphone, VoiceMicrophone.automatic);
+
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    expect(voice.settings.microphone, VoiceMicrophone.phone);
+    expect(prefs.getString('voice_microphone'), 'phone');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sin captura de Hermes no se ofrece el micrófono del teléfono', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final voice = VoiceService(prefs, SecureStorage());
+    addTearDown(voice.dispose);
+
+    await tester.pumpWidget(host(voiceService: voice));
+    await tester.pump();
+    await openConversationSection(tester);
+
+    expect(
+      find.byKey(const ValueKey('voice_microphone_phone'), skipOffstage: false),
+      findsNothing,
+    );
+  });
+
   testWidgets('la selección legacy del servidor migra a la voz descargada', (
     tester,
   ) async {
@@ -1916,6 +1963,127 @@ void main() {
     await tester.pumpAndSettle();
     expect(voice.settings.autoSpeak, isTrue);
     expect(prefs.getBool('voice_auto_speak'), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  // QA 9709 (the owner): the model that answers when you speak is the first thing
+  // in Settings › Voice, and «Cambiar» sets the profile's voice model (the
+  // auxiliary `voice_chat`, what Models › «Conversación de voz» sets).
+  testWidgets('the voice model comes first and «Cambiar» sets it', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final voice = VoiceService(prefs, SecureStorage());
+    addTearDown(voice.dispose);
+    final writes = <Map<String, dynamic>>[];
+    var task = <String, dynamic>{
+      'task': 'voice_chat',
+      'provider': 'codex',
+      'model': 'gpt-6-luna',
+      'reasoning_effort': 'none',
+    };
+    final dashboard = DashboardClient(
+      host: 'hermes-demo.local',
+      manualToken: 'test-token',
+      httpClientOverride: MockClient((request) async {
+        if (request.method == 'GET' &&
+            request.url.path == '/api/model/auxiliary') {
+          expect(request.url.queryParameters['profile'], 'ops');
+          return http.Response(
+            jsonEncode({
+              'main': {'provider': 'codex', 'model': 'gpt-6.1-sol'},
+              'tasks': [
+                {'task': 'vision', 'provider': 'auto', 'model': ''},
+                task,
+              ],
+            }),
+            200,
+          );
+        }
+        if (request.method == 'GET' &&
+            request.url.path == '/api/model/options') {
+          return http.Response(
+            jsonEncode({
+              'providers': [
+                {
+                  'slug': 'codex',
+                  'name': 'OpenAI Codex',
+                  'authenticated': true,
+                  'models': ['gpt-6-luna', 'gpt-6.1-sol'],
+                },
+                {
+                  'slug': 'off',
+                  'name': 'Off',
+                  'authenticated': false,
+                  'models': ['not-ready'],
+                },
+              ],
+            }),
+            200,
+          );
+        }
+        if (request.method == 'POST' && request.url.path == '/api/model/set') {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          writes.add(body);
+          task = {
+            ...task,
+            'provider': body['provider'],
+            'model': body['model'],
+          };
+          return http.Response(jsonEncode({'ok': true}), 200);
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    addTearDown(dashboard.close);
+    final connection = SavedConnection(
+      id: 'demo-node',
+      label: 'Server',
+      host: 'hermes-demo.local',
+      port: 8642,
+      apiKey: '',
+      dashboardUrl: 'http://hermes-demo.local:9119',
+    );
+    await tester.pumpWidget(
+      host(
+        voiceService: voice,
+        connection: connection,
+        preferences: prefs,
+        dashboardClientFactory: (_) => dashboard,
+        profile: 'ops',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final block = find.byKey(const ValueKey('voice_model_block'));
+    final list = find.byKey(const ValueKey('voice_main_list'));
+    expect(block, findsOneWidget);
+    expect(tester.getRect(block).bottom, lessThan(tester.getRect(list).top));
+    expect(find.text('gpt-6-luna'), findsOneWidget);
+    expectNoJargon(tester);
+
+    await tester.tap(find.byKey(const ValueKey('voice-model-change')));
+    await tester.pumpAndSettle();
+    // Only what is ready on the server is offered.
+    expect(
+      find.byKey(const ValueKey('voice-model-off-not-ready')),
+      findsNothing,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('voice-model-codex-gpt-6.1-sol')),
+    );
+    await tester.pumpAndSettle();
+    expect(writes, [
+      {
+        'provider': 'codex',
+        'model': 'gpt-6.1-sol',
+        'scope': 'auxiliary',
+        'task': 'voice_chat',
+      },
+    ]);
+    expect(find.text('gpt-6.1-sol'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

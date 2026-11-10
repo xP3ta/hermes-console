@@ -18,6 +18,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
@@ -63,6 +64,11 @@ class SherpaSttModel {
   final String decoder;
   final String joiner; // '' para Whisper
 
+  /// H6: tamaño exacto y SHA-256 del .tar.bz2 publicado (como en TTS). Una
+  /// descarga que no coincide se borra antes de extraer nada.
+  final int archiveBytes;
+  final String archiveSha256;
+
   const SherpaSttModel({
     required this.kind,
     required this.displayName,
@@ -75,6 +81,8 @@ class SherpaSttModel {
     required this.tokens,
     required this.encoder,
     required this.decoder,
+    required this.archiveBytes,
+    required this.archiveSha256,
     this.joiner = '',
   });
 
@@ -88,8 +96,25 @@ class SherpaSttModel {
 const String _asrRelease =
     'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models';
 
+/// Un archivo con tamaño y SHA-256 fijados.
+class PinnedDownload {
+  const PinnedDownload({
+    required this.url,
+    required this.bytes,
+    required this.sha256,
+  });
+
+  final String url;
+  final int bytes;
+  final String sha256;
+}
+
 /// VAD silero (compartido por todos los modelos): un único .onnx ligero.
-const String _sileroUrl = '$_asrRelease/silero_vad.onnx';
+const PinnedDownload kSileroVad = PinnedDownload(
+  url: '$_asrRelease/silero_vad.onnx',
+  bytes: 643854,
+  sha256: '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6',
+);
 
 const List<SherpaSttModel> kSherpaSttModels = [
   SherpaSttModel(
@@ -104,6 +129,9 @@ const List<SherpaSttModel> kSherpaSttModels = [
     tokens: 'base-tokens.txt',
     encoder: 'base-encoder.int8.onnx',
     decoder: 'base-decoder.int8.onnx',
+    archiveBytes: 207557382,
+    archiveSha256:
+        '911b2083efd7c0dca2ac3b358b75222660dc09fb716d64fbfc417ba6c99ff3de',
   ),
   SherpaSttModel(
     kind: SherpaModelKind.whisperSmall,
@@ -117,6 +145,9 @@ const List<SherpaSttModel> kSherpaSttModels = [
     tokens: 'small-tokens.txt',
     encoder: 'small-encoder.int8.onnx',
     decoder: 'small-decoder.int8.onnx',
+    archiveBytes: 639387718,
+    archiveSha256:
+        '486a46afbb7ba798507190ffe02fea2dd726049af212e774537efac6afb210a6',
   ),
   SherpaSttModel(
     kind: SherpaModelKind.parakeetV3,
@@ -131,8 +162,79 @@ const List<SherpaSttModel> kSherpaSttModels = [
     encoder: 'encoder.int8.onnx',
     decoder: 'decoder.int8.onnx',
     joiner: 'joiner.int8.onnx',
+    archiveBytes: 487170055,
+    archiveSha256:
+        '5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf',
   ),
 ];
+
+class _DigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) => value = data;
+
+  @override
+  void close() {}
+}
+
+/// H6: descarga [url] a `[target].part` calculando el SHA-256 a la vez y
+/// solo la deja en [target] si el tamaño es exactamente [bytes] y la huella
+/// [sha256Hex]. Cualquier otra cosa lanza y no deja archivo.
+Future<void> downloadSherpaVerified(
+  http.Client client, {
+  required String url,
+  required File target,
+  required int bytes,
+  required String sha256Hex,
+  void Function(double fraction)? onProgress,
+  bool Function()? cancelled,
+}) async {
+  final partial = File('${target.path}.part');
+  try {
+    if (partial.existsSync()) partial.deleteSync();
+    final res = await client.send(http.Request('GET', Uri.parse(url)));
+    if (res.statusCode != 200) {
+      throw Exception('Model download failed (HTTP ${res.statusCode}).');
+    }
+    if (res.contentLength != null && res.contentLength != bytes) {
+      throw const FormatException(
+        'El tamaño publicado del modelo no coincide.',
+      );
+    }
+    var received = 0;
+    final sink = partial.openWrite();
+    final digest = _DigestSink();
+    final hashing = sha256.startChunkedConversion(digest);
+    try {
+      await for (final chunk in res.stream) {
+        if (cancelled?.call() ?? false) throw const ModelDownloadCancelled();
+        received += chunk.length;
+        if (received > bytes) {
+          throw const FormatException(
+            'La descarga del modelo supera el tamaño esperado.',
+          );
+        }
+        sink.add(chunk);
+        hashing.add(chunk);
+        onProgress?.call(received / bytes);
+      }
+    } finally {
+      hashing.close();
+      await sink.close();
+    }
+    if (received != bytes) {
+      throw const FormatException('La descarga del modelo está truncada.');
+    }
+    if (digest.value?.toString() != sha256Hex) {
+      throw const FormatException('La firma SHA-256 del modelo no coincide.');
+    }
+    if (target.existsSync()) target.deleteSync();
+    await partial.rename(target.path);
+  } finally {
+    if (partial.existsSync()) partial.deleteSync();
+  }
+}
 
 SherpaSttModel sherpaModelByKind(SherpaModelKind kind) =>
     kSherpaSttModels.firstWhere((m) => m.kind == kind);
@@ -220,15 +322,17 @@ class SherpaSttModelManager {
     // El silero se queda: lo comparten todos los modelos.
   }
 
-  /// Descarga el VAD silero si falta (es pequeño, ~2 MB). Sin progreso visible.
+  /// Descarga el VAD silero si falta (es pequeño, ~650 KB) y lo verifica.
   Future<void> _ensureSilero(http.Client client) async {
     final path = await sileroPath();
     if (File(path).existsSync()) return;
-    final res = await client.get(Uri.parse(_sileroUrl));
-    if (res.statusCode != 200) {
-      throw Exception('VAD download failed (HTTP ${res.statusCode}).');
-    }
-    await File(path).writeAsBytes(res.bodyBytes, flush: true);
+    await downloadSherpaVerified(
+      client,
+      url: kSileroVad.url,
+      target: File(path),
+      bytes: kSileroVad.bytes,
+      sha256Hex: kSileroVad.sha256,
+    );
   }
 
   /// Descarga (con progreso, a disco) y extrae el modelo, y asegura el VAD.
@@ -260,30 +364,19 @@ class SherpaSttModelManager {
           File(await tokensPath(m)).existsSync() &&
           (!m.isTransducer || File(await joinerPath(m)).existsSync());
       if (!modelPresent) {
-        final tmp = File('${base.path}/${m.dirName}.tar.bz2.part');
+        final tmp = File('${base.path}/${m.dirName}.tar.bz2');
         try {
-          final req = http.Request('GET', Uri.parse(m.url));
-          final res = await client.send(req);
-          if (res.statusCode != 200) {
-            throw Exception('Model download failed (HTTP ${res.statusCode}).');
-          }
-          final total = res.contentLength ?? (m.sizeMb * 1024 * 1024);
-          var received = 0;
-          final sink = tmp.openWrite();
-          try {
-            await for (final chunk in res.stream) {
-              sink.add(chunk);
-              received += chunk.length;
-              onProgress?.call(
-                SherpaPrepProgress(
-                  SherpaPrepPhase.downloading,
-                  total > 0 ? received / total : 0,
-                ),
-              );
-            }
-          } finally {
-            await sink.close();
-          }
+          await downloadSherpaVerified(
+            client,
+            url: m.url,
+            target: tmp,
+            bytes: m.archiveBytes,
+            sha256Hex: m.archiveSha256,
+            cancelled: () => _cancelledDownloads.contains(m.id),
+            onProgress: (f) => onProgress?.call(
+              SherpaPrepProgress(SherpaPrepPhase.downloading, f),
+            ),
+          );
 
           if (_cancelledDownloads.contains(m.id)) {
             throw const ModelDownloadCancelled();
@@ -1317,9 +1410,14 @@ class SherpaSttEngine
         (bytes) {
           if (_isCurrent(operation)) _onAudio(operation, bytes);
         },
-        onError: (Object _) {
+        onError: (Object error) {
           if (_isCurrent(operation) && !controller.isClosed) {
-            controller.addError(Exception('Microphone capture failed.'));
+            controller.addError(
+              SttCaptureFailure(
+                classifySttCaptureFailure(error.toString()) ??
+                    SttCaptureFailureKind.micUnavailable,
+              ),
+            );
           }
         },
       );

@@ -15,7 +15,9 @@ import '../secure_storage.dart';
 import 'conversation/native_voice.dart';
 import 'conversation/voice_consent_store.dart';
 import 'device_memory_profile.dart';
+import 'hermes_dictation_stream.dart';
 import 'hermes_speech_stream.dart';
+import 'hermes_stt_lease.dart';
 import 'stt_hermes_server.dart';
 import 'read_aloud_session.dart';
 import 'speech_renderer.dart';
@@ -27,7 +29,9 @@ import 'tts_engine.dart';
 import 'tts_model_manager.dart';
 import 'voice_lang.dart';
 import 'voice_language.dart';
+import 'voice_server_prefs.dart';
 import 'voice_settings.dart';
+import 'voice_stop_phrases.dart';
 
 /// Reserva opaca para preparar el Dictado oficial de Hermes.
 ///
@@ -224,6 +228,14 @@ class VoiceService {
 
   VoiceSettings _settings;
   late final ValueNotifier<bool> bargeInEnabled;
+
+  /// `voice.stop_phrases` of the profile the voice conversation runs on,
+  /// read from the Dashboard on each entry (Desktop voice-prefs.ts:70-91).
+  final VoiceStopPhraseState stopPhrases = VoiceStopPhraseState();
+
+  /// `voice.barge_in_threshold_multiplier` and `voice.silence_duration` of
+  /// the profile in use (Desktop `voice-prefs.ts:103-146`), in memory only.
+  final VoiceServerPrefsState serverVoicePrefs = VoiceServerPrefsState();
   late final VoiceConsentStore voiceConsent = VoiceConsentStore(_prefs);
   late final StreamingTtsProfile _legacyStreamingTtsProfile;
   final ValueNotifier<bool> speaking = ValueNotifier<bool>(false);
@@ -250,6 +262,11 @@ class VoiceService {
   /// con Whisper. La UI lo usa para hacer latir el orbe con la voz. Vale 0
   /// cuando no se está grabando o con el motor del sistema.
   final ValueNotifier<double> micLevel = ValueNotifier<double>(0);
+
+  /// How loud the reply is while it plays (0 … 1, RMS of full scale), for
+  /// the voice capsule's wave (QA 9709). Only the server's streamed voice
+  /// reports it (`LevelReportingPcmSink`); with other voices it stays 0.
+  final ValueNotifier<double> playbackLevel = ValueNotifier<double>(0);
   final ValueNotifier<bool> microphoneCapturing = ValueNotifier<bool>(false);
 
   /// Gestor de modelos de voz neuronal on-device (descarga/extracción).
@@ -347,6 +364,8 @@ class VoiceService {
   // activa TTS, snapshot de conversación ni contadores de Modo Voz.
   Object? _hermesDictationOwner;
   HermesTranscribeRequest? _hermesDictationTranscribe;
+  HermesLiveDictationOpener? _hermesDictationLive;
+  HermesSttLease? _hermesDictationSttLease;
   VoidCallback? _hermesDictationOnDispose;
   HermesServerDictationPreparation? _hermesDictationPreparation;
   int _hermesDictationPreparationGeneration = 0;
@@ -575,12 +594,14 @@ class VoiceService {
   HermesSpeakRequest? _nativeSpeak;
   HermesTranscribeRequest? _nativeTranscribe;
   HermesSpeechStreamSessionFactory? _nativeSpeechStreamFactory;
+  bool _nativeClientDirectSpeech = false;
   HermesSpeechStreamSession? _activeNativeSpeechStream;
   int _nativeSpeechStreamEpoch = 0;
   bool _nativeSpeechStreamingDisabled = false;
   bool _sttNativeVoice = false;
   VoidCallback? _nativeVoiceOnDispose;
   HermesTtsLeaseRequest? _nativeTtsLease;
+  HermesSttLease? _nativeSttLease;
   Future<void> _ttsLeaseQueue = Future<void>.value();
   final Set<Future<void>> _pendingTtsLeaseReleases = {};
   static const Duration _ttsLeaseOrderWait = Duration(seconds: 2);
@@ -637,6 +658,15 @@ class VoiceService {
       _hermesDictationTranscribe != null &&
       _settings.sttEngine == SttEngineKind.hermesServer;
 
+  /// The bound dictation streams live to the host (`stt.streaming`): its
+  /// partials are the host's live text, shown while the user speaks.
+  bool get hermesServerLiveDictationReady =>
+      hermesServerDictationReady && _hermesDictationLive != null;
+
+  @visibleForTesting
+  HermesLiveDictationOpener? get debugHermesDictationLive =>
+      _hermesDictationLive;
+
   /// Inicia una preparación exclusiva. Comenzar otra invalida la anterior,
   /// aunque su probe HTTP siga en vuelo.
   HermesServerDictationPreparation beginHermesServerDictationPreparation({
@@ -671,6 +701,8 @@ class VoiceService {
     required Object owner,
     required HermesServerDictationPreparation preparation,
     required HermesTranscribeRequest transcribe,
+    HermesLiveDictationOpener? liveDictation,
+    HermesSttLeaseRequest? sttLease,
     VoidCallback? onDispose,
   }) {
     if (_disposed ||
@@ -683,6 +715,10 @@ class VoiceService {
     final previousDispose = _hermesDictationOnDispose;
     _hermesDictationOwner = owner;
     _hermesDictationTranscribe = transcribe;
+    _hermesDictationLive = liveDictation;
+    _hermesDictationSttLease = sttLease == null
+        ? null
+        : HermesSttLease(name: _dictationSttLeaseId, request: sttLease);
     _hermesDictationOnDispose = onDispose;
     final disposal = _invalidateHermesDictationEngine(
       reason: 'hermes_dictation_rebind',
@@ -712,6 +748,8 @@ class VoiceService {
     final release = _hermesDictationOnDispose;
     _hermesDictationOwner = null;
     _hermesDictationTranscribe = null;
+    _hermesDictationLive = null;
+    _hermesDictationSttLease = null;
     _hermesDictationOnDispose = null;
     final disposal = _invalidateHermesDictationEngine(
       reason: 'hermes_dictation_off',
@@ -809,8 +847,16 @@ class VoiceService {
 
   bool get nativeSpeechStreamingAvailable =>
       nativeVoiceActive &&
+      !_nativeClientDirectSpeech &&
       _nativeSpeechStreamFactory != null &&
       !_nativeSpeechStreamingDisabled;
+
+  /// The server route speaks with the profile's own TTS provider from this
+  /// phone (client-direct voice). Like Hermes Desktop, that comes before the
+  /// speak-stream relay and is synthesized sentence by sentence while the
+  /// reply streams (voice-playback.ts `startSpeechStream`).
+  bool get nativeClientDirectSpeech =>
+      nativeVoiceActive && _nativeClientDirectSpeech;
 
   /// Activa el modo nativo para la sesión de voz que empieza. Los callbacks
   /// encapsulan el DashboardClient autenticado de la conexión activa.
@@ -819,7 +865,9 @@ class VoiceService {
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
     HermesTtsLeaseRequest? ttsLease,
+    HermesSttLeaseRequest? sttLease,
     VoidCallback? onDispose,
+    bool clientDirectSpeech = false,
   }) {
     if (_disposed) return false;
     _invalidateNativeVoicePreparation();
@@ -828,7 +876,9 @@ class VoiceService {
       transcribe: transcribe,
       speechStream: speechStream,
       ttsLease: ttsLease,
+      sttLease: sttLease,
       onDispose: onDispose,
+      clientDirectSpeech: clientDirectSpeech,
     );
   }
 
@@ -839,7 +889,9 @@ class VoiceService {
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
     HermesTtsLeaseRequest? ttsLease,
+    HermesSttLeaseRequest? sttLease,
     VoidCallback? onDispose,
+    bool clientDirectSpeech = false,
   }) {
     if (_disposed ||
         !identical(preparation, _nativeVoicePreparation) ||
@@ -853,7 +905,9 @@ class VoiceService {
       transcribe: transcribe,
       speechStream: speechStream,
       ttsLease: ttsLease,
+      sttLease: sttLease,
       onDispose: onDispose,
+      clientDirectSpeech: clientDirectSpeech,
     );
   }
 
@@ -862,7 +916,9 @@ class VoiceService {
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
     HermesTtsLeaseRequest? ttsLease,
+    HermesSttLeaseRequest? sttLease,
     VoidCallback? onDispose,
+    bool clientDirectSpeech = false,
   }) {
     final frozen = _voiceRouteSnapshot;
     if (_voiceConversationActive && frozen != null) {
@@ -881,9 +937,13 @@ class VoiceService {
     _nativeSpeak = speak;
     _nativeTranscribe = transcribe;
     _nativeSpeechStreamFactory = speechStream;
+    _nativeClientDirectSpeech = clientDirectSpeech;
     _nativeSpeechStreamingDisabled = false;
     _nativeVoiceOnDispose = onDispose;
     _nativeTtsLease = ttsLease;
+    _nativeSttLease = sttLease == null
+        ? null
+        : HermesSttLease(name: _sttLeaseId, request: sttLease);
     _invalidateEnginesForNativeSwitch(reason: 'native_voice_on');
     if (ttsLease != null) {
       // Mismo nombre de lease: re-adquirir por el cliente nuevo mantiene el
@@ -899,8 +959,28 @@ class VoiceService {
   /// Nombre estable del lease TTS de esta instalación. Distinto por
   /// instalación para que otro móvil o Desktop no suelten el motor que esta
   /// app sigue usando.
-  String get _ttsLeaseId {
-    final cached = _ttsLeaseName;
+  String get _ttsLeaseId =>
+      _ttsLeaseName ??= 'console:voice:$_voiceLeaseInstallId';
+
+  /// The STT lease of this installation, after Desktop's
+  /// `desktop:voice-input:<renderer>` (`stt-lease.ts:37`).
+  String get _sttLeaseId => 'console:voice-input:$_voiceLeaseInstallId';
+
+  /// The dictation's own lease: its client state is separate from the
+  /// conversation's, so sharing the name let one release the other's on
+  /// the server (REVIEW-R5-B #27). Desktop shares one name and one state.
+  String get _dictationSttLeaseId => '$_sttLeaseId:dictation';
+
+  @visibleForTesting
+  String get debugSttLeaseName => _sttLeaseId;
+
+  @visibleForTesting
+  String get debugDictationSttLeaseName => _dictationSttLeaseId;
+
+  String? _leaseInstallId;
+
+  String get _voiceLeaseInstallId {
+    final cached = _leaseInstallId;
     if (cached != null) return cached;
     var id = _prefs.getString(_ttsLeaseIdKey);
     if (id == null || id.isEmpty) {
@@ -911,7 +991,7 @@ class VoiceService {
             .then<void>((_) {}, onError: (_) {}),
       );
     }
-    return _ttsLeaseName = 'console:voice:$id';
+    return _leaseInstallId = id;
   }
 
   /// Serializa acquire/release para que un on→off→on rápido no llegue
@@ -998,7 +1078,8 @@ class VoiceService {
         _nativeSpeak == null &&
         _nativeTranscribe == null &&
         _nativeVoiceOnDispose == null &&
-        _nativeTtsLease == null) {
+        _nativeTtsLease == null &&
+        _nativeSttLease == null) {
       if (hadOnDeviceRoute) {
         _invalidateEnginesForNativeSwitch(
           reason: 'on_device_voice_off',
@@ -1007,13 +1088,31 @@ class VoiceService {
       }
       return hadOnDeviceRoute;
     }
-    final release = _nativeVoiceOnDispose;
+    var release = _nativeVoiceOnDispose;
     final lease = _nativeTtsLease;
     _nativeTtsLease = null;
+    final sttLease = _nativeSttLease;
+    _nativeSttLease = null;
+    if (sttLease != null) {
+      // Drop the STT lease through this session's client before it closes
+      // (Desktop use-voice-conversation.ts:989).
+      final closeClient = release;
+      final released = sttLease
+          .sync(false)
+          .timeout(_ttsLeaseReleaseWait, onTimeout: () {});
+      release = closeClient == null
+          ? null
+          : () => unawaited(
+              released.whenComplete(
+                () => _releaseNativeVoiceResource(closeClient),
+              ),
+            );
+    }
     _nativeVoiceSession = null;
     _nativeSpeak = null;
     _nativeTranscribe = null;
     _nativeSpeechStreamFactory = null;
+    _nativeClientDirectSpeech = false;
     _nativeSpeechStreamingDisabled = false;
     _nativeVoiceOnDispose = null;
     _nativeSpeechStreamEpoch += 1;
@@ -1437,6 +1536,27 @@ class VoiceService {
 
   Future<void> setVoiceConversationEnabled(bool value) =>
       voiceConsent.setConversationEnabled(value);
+
+  static const String _bargeInChosenKey = 'voice_barge_in_chosen_v1';
+
+  /// Seeds the barge-in switch from the server's `voice.barge_in` once
+  /// (Desktop `voice-prefs.ts:93-101`; the owner, V0 decision 4: the server value
+  /// is the initial seed and the local switch can change it). Seeded like
+  /// Desktop's one-time `applyAutoSpeakFromConfig` (`voice-prefs.ts:9-16`):
+  /// after the first seed, or once the user flips the switch, the local
+  /// value owns it. True when the switch changed.
+  Future<bool> seedBargeInFromServer(bool enabled) async {
+    if (_disposed || (_prefs.getBool(_bargeInChosenKey) ?? false)) {
+      return false;
+    }
+    await _prefs.setBool(_bargeInChosenKey, true);
+    if (_disposed || _settings.bargeInEnabled == enabled) return false;
+    await saveSettings(_settings.copyWith(bargeInEnabled: enabled));
+    return true;
+  }
+
+  /// The user chose the barge-in switch: the server no longer seeds it.
+  Future<void> markBargeInChosen() => _prefs.setBool(_bargeInChosenKey, true);
 
   Future<void> saveSettings(VoiceSettings s) async {
     final prevStt = _settings.sttEngine;
@@ -2679,7 +2799,12 @@ class VoiceService {
     vadEnabled: _engineSettings.vadEnabled,
     onLevel: (v) => micLevel.value = v,
     lang: voiceLang,
+    silenceTimeoutOf: _profileSilence,
   );
+
+  /// The profile's end-of-turn hold for the clip loop (Desktop
+  /// `use-voice-conversation.ts:391`); Desktop's 1.25 s until it says other.
+  Duration _profileSilence() => serverVoicePrefs.value.silence;
 
   /// Modelo sherpa activo según los ajustes (STT en vivo).
   SherpaSttModel get sherpaModel =>
@@ -2721,6 +2846,9 @@ class VoiceService {
         transcribeRequest: _guardedNativeTranscribe,
         lang: lang,
         onLevel: (v) => micLevel.value = v,
+        silenceTimeoutOf: _profileSilence,
+        sttLease: () => _nativeSttLease,
+        microphone: () => _settings.microphone,
       );
       _sttKind = SttEngineKind.server;
       _sttNativeVoice = true;
@@ -2749,6 +2877,10 @@ class VoiceService {
               transcribeRequest: _guardedHermesDictationTranscribe,
               lang: lang,
               onLevel: (v) => micLevel.value = v,
+              silenceTimeoutOf: _profileSilence,
+              liveDictation: () => _hermesDictationLive,
+              sttLease: () => _hermesDictationSttLease,
+              microphone: () => _settings.microphone,
             ),
             SttEngineKind.server => _newServerEngine(),
             SttEngineKind.system => SystemSttEngine(lang: lang),
@@ -2921,6 +3053,10 @@ class VoiceService {
         transcribeRequest: _guardedHermesDictationTranscribe,
         lang: voiceLang,
         onLevel: (v) => micLevel.value = v,
+        silenceTimeoutOf: _profileSilence,
+        liveDictation: () => _hermesDictationLive,
+        sttLease: () => _hermesDictationSttLease,
+        microphone: () => _settings.microphone,
       );
       if (!await engine.available()) {
         await engine.dispose();
@@ -2995,6 +3131,13 @@ class VoiceService {
       SttEngineKind.server => true,
       SttEngineKind.sherpaLive || SttEngineKind.system => false,
     };
+  }
+
+  /// The system recognizer in use has no pack for the voice language and
+  /// listens in the system's one (the conversation says so).
+  bool get sttLanguageFellBack {
+    final engine = _stt;
+    return engine is SystemSttEngine && engine.localeFellBack;
   }
 
   /// ¿Está activo el auto-stop por silencio (VAD) para el dictado actual? Solo
@@ -3344,8 +3487,11 @@ class VoiceService {
     _readAloudSession.dispose();
     voiceConsent.dispose();
     bargeInEnabled.dispose();
+    stopPhrases.dispose();
+    serverVoicePrefs.dispose();
     speaking.dispose();
     micLevel.dispose();
+    playbackLevel.dispose();
     microphoneCapturing.dispose();
   }
 }

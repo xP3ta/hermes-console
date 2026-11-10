@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
-import '../design/modal.dart' show showHermesDialogRoute;
+import '../design/modal.dart';
 
 enum VoiceDisclosureChoice { foregroundOnly, continueWhenLocked }
 
@@ -95,6 +95,35 @@ Future<bool?> showNativeVoiceConsentDialog(BuildContext context) =>
         );
       },
     );
+
+/// Consent for client-direct voice: the server offers it and the user has
+/// not answered for this server yet. Returns true (use direct voice), false
+/// (keep the relay; not asked again) or null when dismissed without deciding
+/// (asked again next time). A decision dialog, so it is `showHermesDialog`
+/// (spec 080): both choices stay pinned below the text, never under the
+/// scroll fold.
+Future<bool?> showClientDirectVoiceConsentDialog(BuildContext context) {
+  final s = Strings.of(context);
+  return showHermesDialog<bool>(
+    context: context,
+    useRootNavigator: true,
+    title: s.voz132DirectConsentTitle,
+    message: s.voz132DirectConsentBody,
+    actions: [
+      HermesDialogAction(
+        key: const ValueKey('voice_client_direct_decline'),
+        label: s.voz132DirectConsentDecline,
+        value: false,
+        style: HermesDialogActionStyle.cancel,
+      ),
+      HermesDialogAction(
+        key: const ValueKey('voice_client_direct_accept'),
+        label: s.voz132DirectConsentAccept,
+        value: true,
+      ),
+    ],
+  );
+}
 
 class _DisclosureChoiceTile extends StatelessWidget {
   const _DisclosureChoiceTile({

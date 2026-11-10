@@ -7,6 +7,7 @@
 // Todo se pinta al abrir con lo último que la app sabe (ajustes locales y la
 // última configuración de voz leída del servidor) y se refresca después.
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,6 +32,7 @@ import '../design/hermes_design.dart'
         showHermesOptions;
 import 'chat_screen.dart';
 import 'instance_edit_screen.dart';
+import 'models_screen.dart';
 import '../navigation/chat_route.dart';
 import '../services/connection_manager.dart';
 import '../services/new_session_factory.dart';
@@ -51,6 +53,8 @@ import '../services/voice/voice_settings.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../utils/voice_error.dart';
+import '../services/notifications/rich_notifications.dart';
+import '../widgets/assistant_settings_row.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_ui.dart' hide HermesSectionHeader;
 import '../widgets/hermes_app_bar.dart';
@@ -58,6 +62,7 @@ import '../widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl;
 import '../widgets/read_only.dart' show showReadOnlyNotice;
 import '../widgets/voice_disclosure_dialog.dart';
+import '../widgets/voice_model_block.dart';
 import '../feedback/feedback_policy.dart';
 
 typedef HermesServerPreviewEngineFactory =
@@ -360,6 +365,40 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
   /// Mientras se guarda un cambio se muestra ya la opción recién tocada.
   bool get _liveSelected =>
       (_pendingChatMode ?? _gptLiveStatus?.mode) == VoiceLiveMode.gptLive;
+
+  /// QA 9709: the voice's model, read from the dashboard this screen already
+  /// opened, for the profile it shows. A new one only when either changes,
+  /// or after Models was opened, so the block reads it again.
+  VoiceModelSource? _modelSource;
+  DashboardClient? _modelSourceClient;
+  String? _modelSourceProfile;
+
+  VoiceModelSource? get _voiceModelSource {
+    final dashboard = _nativeVoiceDashboard;
+    if (dashboard == null) return null;
+    if (_modelSource == null ||
+        !identical(dashboard, _modelSourceClient) ||
+        _effectiveProfile != _modelSourceProfile) {
+      _modelSourceClient = dashboard;
+      _modelSourceProfile = _effectiveProfile;
+      _modelSource = DashboardVoiceModelSource(
+        dashboard,
+        profile: _effectiveProfile,
+      );
+    }
+    return _modelSource;
+  }
+
+  Future<void> _openModels() async {
+    final connection = _nativeVoiceConnection;
+    if (connection == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ModelsScreen(connection: connection),
+      ),
+    );
+    if (mounted) setState(() => _modelSource = null);
+  }
 
   /// Una conexión de solo lectura ve el modo, pero no lo cambia.
   bool get _canEditChatMode =>
@@ -688,6 +727,8 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
         ),
         ttsLease: (lease, active) =>
             voiceDashboard.setTtsLease(lease, active: active, profile: profile),
+        sttLease: (lease, active) =>
+            voiceDashboard.setSttLease(lease, active: active, profile: profile),
         onDispose: voiceDashboard.close,
       );
       if (!installed) voiceDashboard.close();
@@ -1937,17 +1978,20 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
   // dispositivo), así que el dock solo se añade cuando hay conexión y
   // ConnectionManager disponibles — igual que el resto de pantallas que lo
   // usan, sin forzar una dependencia que esta pantalla no siempre tiene.
-  Widget _wrapWithDock(BuildContext context, Widget body) {
+  Widget _wrapWithDock(
+    BuildContext context,
+    Widget Function(double) buildBody,
+  ) {
     final conn = widget.connection;
     final connManager = context
         .findAncestorStateOfType<HermesAppState>()
         ?.connManager;
-    if (conn == null || connManager == null) return body;
+    if (conn == null || connManager == null) return buildBody(0);
     return GeneralDockShell(
       connection: conn,
       connManager: connManager,
       pet: false,
-      body: body,
+      bodyBuilder: (_, bottomClearance) => buildBody(bottomClearance),
     );
   }
 
@@ -2054,7 +2098,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
         ),
       ),
       const SizedBox(width: 2),
-      Icon(Icons.chevron_right_rounded, size: 18, color: colors.textDisabled),
+      Icon(Icons.chevron_right_rounded, size: 18, color: colors.textTertiary),
     ],
   );
 
@@ -2272,11 +2316,12 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
     List<Widget> children, {
     Key? key,
     ScrollController? controller,
+    double bottomClearance = 0,
   }) => ListView(
     clipBehavior: hermesUnderHeader,
     key: key,
     controller: controller,
-    padding: EdgeInsets.zero,
+    padding: EdgeInsets.only(bottom: bottomClearance),
     children: [
       Align(
         alignment: Alignment.topCenter,
@@ -2299,6 +2344,8 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
     final voice = _voice;
+    final modelConnection = _nativeVoiceConnection;
+    final modelSource = _voiceModelSource;
     return Scaffold(
       backgroundColor: colors.background,
       appBar: HermesAppBar(
@@ -2308,56 +2355,78 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
       ),
       body: _wrapWithDock(
         context,
-        _pageList(controller: _scrollController, [
-          for (final problem in _mainProblems(s))
-            Padding(
-              padding: const EdgeInsets.fromLTRB(6, 0, 6, 10),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: HermesStatusText(
-                  label: problem,
-                  tone: HermesStatusTone.warn,
-                  maxLines: 3,
+        (bottomClearance) => _pageList(
+          controller: _scrollController,
+          bottomClearance: bottomClearance,
+          [
+            for (final problem in _mainProblems(s))
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 0, 6, 10),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: HermesStatusText(
+                    label: problem,
+                    tone: HermesStatusTone.warn,
+                    maxLines: 3,
+                  ),
                 ),
               ),
+            // QA 9709: the model that answers when you speak, first and in
+            // view (maqueta 140-qa9709 voz-ajustes-modelo).
+            if (modelConnection != null && modelSource != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: HermesSpace.x4),
+                child: VoiceModelBlock(
+                  key: const ValueKey('voice_model_block'),
+                  source: modelSource,
+                  readOnly: modelConnection.readOnly,
+                  liveEngine: _liveSelected,
+                  onOpenModels: _openModels,
+                ),
+              ),
+            HermesListGroup(
+              key: const ValueKey('voice_main_list'),
+              dividerIndent: HermesSpace.rowH,
+              children: [
+                if (_showsMainEngineChoice) _mainEngineRow(colors, s),
+                HermesListRow(
+                  key: const ValueKey('voice_main_dictation'),
+                  title: s.voiceMainDictation,
+                  trailing: _mainRowValue(colors, _dictationSourceLabel(s)),
+                  onTap: () => _openPage(_VoicePage.dictation),
+                ),
+                HermesListRow(
+                  key: const ValueKey('voice_main_reply_voice'),
+                  title: s.voiceMainReplyVoice,
+                  trailing: _mainRowValue(colors, _replyVoiceLabel(s)),
+                  onTap: () => _openPage(_VoicePage.speech),
+                ),
+                HermesToggleRow(
+                  title: s.voiceAutoSpeakTitle,
+                  value: _s.autoSpeak,
+                  switchKey: const ValueKey('voice_auto_speak'),
+                  onChanged: (value) => _update(_s.copyWith(autoSpeak: value)),
+                ),
+                HermesToggleRow(
+                  title: s.voiceContinueLockedSettingTitle,
+                  value: voice?.continueVoiceWhenLocked ?? false,
+                  switchKey: const ValueKey('voice_continue_when_locked'),
+                  onChanged: voice == null ? null : _setContinueWhenLocked,
+                ),
+                HermesListRow(
+                  key: const ValueKey('voice_main_advanced'),
+                  title: s.voiceBlockAdvanced,
+                  onTap: () => _openPage(_VoicePage.advanced),
+                ),
+              ],
             ),
-          HermesListGroup(
-            key: const ValueKey('voice_main_list'),
-            dividerIndent: HermesSpace.rowH,
-            children: [
-              if (_showsMainEngineChoice) _mainEngineRow(colors, s),
-              HermesListRow(
-                key: const ValueKey('voice_main_dictation'),
-                title: s.voiceMainDictation,
-                trailing: _mainRowValue(colors, _dictationSourceLabel(s)),
-                onTap: () => _openPage(_VoicePage.dictation),
+            if (Platform.isAndroid)
+              AssistantSettingsGroup(
+                load: PlatformRichNotifications().assistantIsDefault,
+                openSettings: PlatformRichNotifications().openAssistantSettings,
               ),
-              HermesListRow(
-                key: const ValueKey('voice_main_reply_voice'),
-                title: s.voiceMainReplyVoice,
-                trailing: _mainRowValue(colors, _replyVoiceLabel(s)),
-                onTap: () => _openPage(_VoicePage.speech),
-              ),
-              HermesToggleRow(
-                title: s.voiceAutoSpeakTitle,
-                value: _s.autoSpeak,
-                switchKey: const ValueKey('voice_auto_speak'),
-                onChanged: (value) => _update(_s.copyWith(autoSpeak: value)),
-              ),
-              HermesToggleRow(
-                title: s.voiceContinueLockedSettingTitle,
-                value: voice?.continueVoiceWhenLocked ?? false,
-                switchKey: const ValueKey('voice_continue_when_locked'),
-                onChanged: voice == null ? null : _setContinueWhenLocked,
-              ),
-              HermesListRow(
-                key: const ValueKey('voice_main_advanced'),
-                title: s.voiceBlockAdvanced,
-                onTap: () => _openPage(_VoicePage.advanced),
-              ),
-            ],
-          ),
-        ]),
+          ],
+        ),
       ),
     );
   }
@@ -2377,7 +2446,11 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
       appBar: HermesAppBar(title: Text(title)),
       body: _wrapWithDock(
         context,
-        _pageList(key: ValueKey('voice_page_${page.name}'), children),
+        (bottomClearance) => _pageList(
+          key: ValueKey('voice_page_${page.name}'),
+          bottomClearance: bottomClearance,
+          children,
+        ),
       ),
     );
   }
@@ -3005,8 +3078,32 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
             switchKey: const ValueKey('voice_barge_in_enabled'),
             onChanged: _voice == null
                 ? null
-                : (value) => _update(_s.copyWith(bargeInEnabled: value)),
+                : (value) {
+                    // The local switch owns barge-in from now on (V0
+                    // decision 4: the server only seeds it).
+                    unawaited(_voice?.markBargeInChosen());
+                    unawaited(_update(_s.copyWith(bargeInEnabled: value)));
+                  },
           ),
+          // Only the Hermes server capture honours it (backlog 1.4.x item 7).
+          if (_usesHermesServer || _s.sttEngine == SttEngineKind.hermesServer)
+            HermesToggleRow(
+              title: s.voiceMicrophonePhoneTitle,
+              subtitle: s.voiceMicrophonePhoneSubtitle,
+              value: _s.microphone == VoiceMicrophone.phone,
+              switchKey: const ValueKey('voice_microphone_phone'),
+              onChanged: _voice == null
+                  ? null
+                  : (value) => unawaited(
+                      _update(
+                        _s.copyWith(
+                          microphone: value
+                              ? VoiceMicrophone.phone
+                              : VoiceMicrophone.automatic,
+                        ),
+                      ),
+                    ),
+            ),
         ],
         footer: _showsGptLiveRetry
             ? Row(
