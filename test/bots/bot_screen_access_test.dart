@@ -201,6 +201,42 @@ void main() {
       access.dispose();
     });
 
+    testWidgets('a bot that replaces another, same count, is asked too', (
+      tester,
+    ) async {
+      final asked = <String>[];
+      final access = BotScreenAccess(
+        probe: (profile) async {
+          asked.add(profile);
+          return BotScreenProbeResult.available;
+        },
+      );
+      Widget view(List<BotRosterEntry> bots) => _app(
+        DotsHomeView(
+          bots: bots,
+          rooms: const [],
+          avatarCache: null,
+          searchOpen: ValueNotifier(false),
+          onOpenBot: (_) {},
+          onBotActions: (_) {},
+          onOpenRoom: (_) {},
+          screenAccess: access,
+          onOpenScreen: (_) {},
+        ),
+      );
+      await tester.pumpWidget(view([_bot('astra'), _bot('forja')]));
+      await tester.pump();
+      await tester.pump();
+      expect(asked, ['astra', 'forja']);
+
+      await tester.pumpWidget(view([_bot('astra'), _bot('radar')]));
+      await tester.pump();
+      await tester.pump();
+      expect(asked, ['astra', 'forja', 'radar']);
+      expect(find.byKey(const ValueKey('roster-screen-radar')), findsOneWidget);
+      access.dispose();
+    });
+
     testWidgets('without an access the list is the same as before', (
       tester,
     ) async {
