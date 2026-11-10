@@ -351,7 +351,7 @@ void main() {
   });
 
   group('OnboardingScreen', () {
-    testWidgets('the welcome has two doors and the real Console mark', (
+    testWidgets('the welcome has three ways and the real Console mark', (
       tester,
     ) async {
       final manager = await emptyManager();
@@ -360,10 +360,16 @@ void main() {
       );
       // The opening plays here (the ambient light never settles).
       await tester.pump(const Duration(milliseconds: 3000));
-      expect(find.text('Conecta con tu Hermes'), findsOneWidget);
-      expect(find.text('Ya tengo Hermes'), findsOneWidget);
-      expect(find.text('Aún no tengo Hermes'), findsOneWidget);
-      expect(find.text('Conectar a mano'), findsOneWidget);
+      expect(find.text('Conectar un agente'), findsOneWidget);
+      final s = Strings.of(tester.element(find.byType(OnboardingScreen)));
+      for (final title in [
+        s.nacWayNousTitle,
+        s.nacWayManualTitle,
+        s.nacWayScanTitle,
+      ]) {
+        expect(find.text(title), findsOneWidget);
+      }
+      expect(find.text('Emparejar con un comando'), findsOneWidget);
       expect(find.text('Buscar mi Hermes'), findsNothing);
       expect(find.byKey(const ValueKey('console-mark')), findsOneWidget);
       expect(find.text('Saltar'), findsNothing);

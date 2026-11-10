@@ -340,36 +340,6 @@ def preview_ahora(source):
     return s
 
 
-def preview_bots(source):
-    """Bots in the picker: the real one-row layout with four sample faces."""
-    s = _sub(source, r'<!--.*?-->', '<!-- Picker preview of Bots. GENERATED from lw_faces.xml by\n'
-             '     tool/qa/widget_shots.py previews (the same layout, sample content): edit\n'
-             '     lw_faces.xml and regenerate, never this file. -->')
-    faces = ''.join(
-        '\n        <ImageView\n            android:layout_width="@dimen/lw_face"\n'
-        '            android:layout_height="@dimen/lw_face"\n'
-        '            android:layout_marginEnd="@dimen/lw_face_gap"\n'
-        '            android:importantForAccessibility="no"\n'
-        f'            android:src="@drawable/lw_sample_face_{name}" />\n'
-        for name in ('builder', 'review', 'scout', 'lead'))
-    s = _sub(s, r'(android:id="@\+id/lw_faces"\n.*?android:orientation="horizontal") />',
-             r'\1>\n' + faces + '    </LinearLayout>')
-    s = _sub(s, r'(android:id="@\+id/lw_faces_title".*?android:layout_marginTop="5dp") />',
-             r'\1\n        android:text="@string/lw_bots_calm" />')
-    return s
-
-
-def preview_rooms(source):
-    """Salas in the picker: the real one-row layout with a sample room."""
-    s = _sub(source, r'<!--.*?-->', '<!-- Picker preview of Salas. GENERATED from lw_strip.xml by\n'
-             '     tool/qa/widget_shots.py previews (the same layout, sample content): edit\n'
-             '     lw_strip.xml and regenerate, never this file. -->')
-    s = _sub(s, r'@drawable/lw_ic_clock', '@drawable/lw_ic_rooms')
-    s = _sub(s, r'@string/lw_sample_cron_job', '@string/lw_sample_room')
-    s = _sub(s, r'@string/lw_sample_cron_next', '@string/lw_sample_room_line')
-    return s
-
-
 def preview_tasks(source):
     """Tareas in the picker: the real one-row layout with a sample card."""
     s = _sub(source, r'<!--.*?-->', '<!-- Picker preview of Tareas. GENERATED from lw_strip.xml by\n'
@@ -392,8 +362,7 @@ def preview_chats(source):
     return s
 
 
-PREVIEWS = {'lw_preview_ahora': ('lw_strip', preview_ahora), 'lw_preview_bots': ('lw_faces', preview_bots),
-            'lw_preview_rooms': ('lw_strip', preview_rooms), 'lw_preview_tasks': ('lw_strip', preview_tasks),
+PREVIEWS = {'lw_preview_ahora': ('lw_strip', preview_ahora), 'lw_preview_tasks': ('lw_strip', preview_tasks),
             'lw_preview_chats': ('lw_strip', preview_chats)}
 
 

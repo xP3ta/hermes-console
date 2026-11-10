@@ -147,8 +147,10 @@ BotModeWidgetSnapshot buildBotModeWidgetSnapshot({
     return (state: state, room: room);
   }
 
-  String nameOf(AgentProfile p) =>
-      p.displayName.trim().isNotEmpty ? p.displayName.trim() : p.name;
+  String nameOf(AgentProfile p) {
+    if (p.isMainProfile) return p.visibleName;
+    return p.displayName.trim().isNotEmpty ? p.displayName.trim() : p.name;
+  }
 
   final bots = <WidgetBot>[
     for (final profile in profiles)
@@ -481,7 +483,7 @@ class BotModeBackgroundMonitor {
        _pool = pool ?? SharedGatewayPool.instance,
        _now = now ?? DateTime.now,
        _policy = policy ?? BotModeTickPolicy(),
-       _publish = publish ?? publishBotModeWidgetSnapshot {
+       _publish = publish ?? _discardBotModeWidgetSnapshot {
     _sink = sink ?? _platform;
   }
 
@@ -745,7 +747,7 @@ class BotModeBackgroundMonitor {
       }
       final rooms = _watcher?.views ?? const <RoomWatchView>[];
       final hideSensitive =
-          prefs.getBool('notif_hide_sensitive_content') ?? false;
+          prefs.getBool('notif_hide_sensitive_content') ?? true;
       final t = NotifL10n.of(prefs);
       final now = _now();
       final built = buildBotModeWidgetSnapshot(
@@ -835,6 +837,13 @@ class BotModeBackgroundMonitor {
   /// Listener stopped: no Live Update may outlive it.
   Future<void> close() => _dropWatcher();
 }
+
+/// The Bots and Salas home widgets were retired in 1.4.0: nothing reads the
+/// snapshot any more, so the listener's room pass does not store or publish
+/// it. [publishBotModeWidgetSnapshot] stays for callers that inject it.
+Future<void> _discardBotModeWidgetSnapshot(
+  BotModeWidgetSnapshot snapshot,
+) async {}
 
 String? _lastPublished;
 int _lastPublishedAtMs = 0;

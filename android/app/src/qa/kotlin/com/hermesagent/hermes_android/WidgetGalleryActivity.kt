@@ -399,7 +399,7 @@ class WidgetGalleryActivity : Activity() {
         }
         shot("cron_none_2x1", LauncherWidgetSubject.CRON, noCron, LauncherWidgetSize(184f, 98f))
         shot("cron_none_4x2", LauncherWidgetSubject.CRON, noCron, LauncherWidgetSize(380f, 208f))
-        // Bots and Salas: a team with every state, and the same one with old data.
+        // A team with every state (Ahora still reads their approvals).
         val devs = WidgetRoom(
             id = "r-devs", name = "Console Devs", working = true,
             members = listOf(member("builder", "Builder", "working"), member("review", "Review", "queued"), member("lead", "Lead", "idle"), member("scout", "Scout", "idle")),
@@ -486,15 +486,6 @@ class WidgetGalleryActivity : Activity() {
             shot("chats_$cells", LauncherWidgetSubject.CHATS, withChats, size)
             shot("chats_old_$cells", LauncherWidgetSubject.CHATS, oldChats, size)
         }
-        val live = LauncherWidgetData(now, chat, team)
-        val gone = LauncherWidgetData(now, chat, team.copy(updatedAtMs = now - 3 * hour))
-        for ((cells, pair) in sizes) {
-            val size = LauncherWidgetSize(pair.first, pair.second)
-            shot("bots_$cells", LauncherWidgetSubject.BOTS, live, size)
-            shot("bots_old_$cells", LauncherWidgetSubject.BOTS, gone, size)
-            shot("salas_$cells", LauncherWidgetSubject.ROOMS, live, size)
-            shot("salas_old_$cells", LauncherWidgetSubject.ROOMS, gone, size)
-        }
 
         reapplyCheck(scenes, out)
     }
@@ -572,8 +563,6 @@ class WidgetGalleryActivity : Activity() {
             "picker_ahora" to Pair(R.layout.lw_preview_ahora, DpSize(380.dp, 98.dp)),
             "picker_chat_rapido" to Pair(R.layout.lw_quick_small, DpSize(184.dp, 98.dp)),
             "picker_cron" to Pair(R.layout.lw_strip, DpSize(184.dp, 98.dp)),
-            "picker_bots" to Pair(R.layout.lw_preview_bots, DpSize(184.dp, 98.dp)),
-            "picker_salas" to Pair(R.layout.lw_preview_rooms, DpSize(184.dp, 98.dp)),
             "picker_tareas" to Pair(R.layout.lw_preview_tasks, DpSize(184.dp, 98.dp)),
             "picker_chats" to Pair(R.layout.lw_preview_chats, DpSize(184.dp, 98.dp)),
         )

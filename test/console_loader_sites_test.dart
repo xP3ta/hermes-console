@@ -19,7 +19,7 @@ const _sites = <String>[
   'lib/core/screens/companion/petdex_gallery_screen.dart',
   'lib/core/screens/credential_pool_screen.dart',
   'lib/core/screens/dashboard_setup_screen.dart',
-  'lib/core/screens/extensions_center_screen.dart',
+  'lib/core/screens/extensions_tools_screen.dart',
   'lib/core/screens/foreign_session_import_screen.dart',
   'lib/core/screens/local_models_screen.dart',
   'lib/core/screens/memory_draft_screen.dart',
