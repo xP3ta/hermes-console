@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/project_files.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/utils/chat_folder_learning.dart';
 import 'package:hermes_android/core/utils/chat_inline_refs.dart';
@@ -81,6 +82,31 @@ ChatFileOpener _opener(
     return chatLearnFolders(learnedFrom, known: [?cwd]);
   },
 );
+
+/// A server that reports another path for the reads in [served]: it followed
+/// a link out of the folder the file was asked in.
+class _LinkedFiles extends TreeFiles {
+  _LinkedFiles(super.files, this.served);
+
+  final Map<String, String> served;
+
+  @override
+  Future<ProjectFilePreview> readProjectFileText(String path) async {
+    // A network read: the viewer is listening before the answer arrives.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    final preview = await super.readProjectFileText(path);
+    final other = served[path];
+    if (other == null) return preview;
+    return ProjectFilePreview(
+      path: other,
+      text: preview.text,
+      binary: preview.binary,
+      truncated: preview.truncated,
+      byteSize: preview.byteSize,
+      mimeType: preview.mimeType,
+    );
+  }
+}
 
 void main() {
   setUp(() {
@@ -228,5 +254,51 @@ void main() {
     await _settle(tester);
     expect(copied, ['pair.py']);
     expect(files.reads, isEmpty);
+  });
+
+  testWidgets('a found file served from outside stays refused on retry', (
+    tester,
+  ) async {
+    final files = _LinkedFiles(
+      {
+        '/home/u/a/README.md': 'a',
+        '/home/u/b/manifest.json': '{}',
+        '/home/u/b/sub/deep/pair.py': 'x',
+      },
+      {'/home/u/b/sub/deep/pair.py': '/etc/elsewhere.py'},
+    );
+    final opener = _opener(files, learnedFrom: ['/home/u/b/manifest.json']);
+    await _pump(tester, 'Mira `pair.py`.', opener: opener);
+    await tester.tap(find.byType(ChatFileChip));
+    await _settle(tester);
+    expect(files.reads.last, '/home/u/b/sub/deep/pair.py');
+    expect(find.byKey(const ValueKey('chat-file-error')), findsOneWidget);
+    expect(find.textContaining('fuera de las carpetas'), findsOneWidget);
+    final reads = files.reads.length;
+    await tester.tap(find.text('Reintentar'));
+    await _settle(tester);
+    expect(files.reads.length, reads + 1, reason: 'the retry read it again');
+    expect(find.byKey(const ValueKey('chat-file-error')), findsOneWidget);
+    expect(find.textContaining('fuera de las carpetas'), findsOneWidget);
+    expect(find.byType(ArtifactViewerScreen), findsNothing);
+  });
+
+  testWidgets('a chosen file served from outside is refused', (tester) async {
+    final files = _LinkedFiles(
+      {'/home/u/b/x/pair.py': 'uno', '/home/u/b/y/pair.py': 'dos'},
+      {'/home/u/b/y/pair.py': '/etc/elsewhere.py'},
+    );
+    final opener = _opener(files, learnedFrom: ['/home/u/b']);
+    await _pump(tester, 'Mira `pair.py`.', opener: opener);
+    await tester.tap(find.byType(ChatFileChip));
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Elegir archivo'));
+    await _settle(tester);
+    await tester.tap(find.text('y/pair.py'));
+    await _settle(tester);
+    expect(files.reads.last, '/home/u/b/y/pair.py');
+    expect(find.byKey(const ValueKey('chat-file-error')), findsOneWidget);
+    expect(find.textContaining('fuera de las carpetas'), findsOneWidget);
+    expect(find.byType(ArtifactViewerScreen), findsNothing);
   });
 }
