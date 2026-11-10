@@ -24,6 +24,8 @@ path = [
   "REUSE.toml",
   "SECURITY.md",
   "analysis_options.yaml",
+  "dart_test.yaml",
+  "shaders/live_reply_tail.frag",
   "l10n.yaml",
   "pubspec.lock",
   "pubspec.yaml",
