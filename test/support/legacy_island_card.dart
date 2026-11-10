@@ -1,16 +1,18 @@
+// Historical header-card fixture retained for existing design/keyboard tests.
+// Production activity now belongs to SubagentActivityCard.
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 
-import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
-import '../design/tokens.dart';
-import '../models/activity_snapshot.dart';
-import '../theme/app_theme.dart';
-import 'floating_chat_header.dart';
-import 'pill_morph.dart';
-import 'running_work.dart';
+import 'package:hermes_android/core/design/modal.dart' show releaseTextFocusIfKeyboardHidden;
+import 'package:hermes_android/core/design/tokens.dart';
+import 'package:hermes_android/core/models/activity_snapshot.dart';
+import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
+import 'package:hermes_android/core/widgets/pill_morph.dart';
+import 'package:hermes_android/core/widgets/running_work.dart';
 
 /// The card stops growing here (about five rows under its first line) and
 /// scrolls what is left inside.
@@ -138,6 +140,7 @@ Future<void> showRunningWorkCard({
   required String dismissLabel,
   DateTime Function()? clock,
   double Function()? reserveBelow,
+  bool showSubagents = true,
 }) => showIslandCard(
   context: context,
   origin: origin,
@@ -146,10 +149,12 @@ Future<void> showRunningWorkCard({
   reserveBelow: reserveBelow,
   builder: (cardContext) => _ClosesWhenEmpty(
     snapshot: snapshot,
+    subagents: showSubagents,
     child: RunningWork(
       key: const ValueKey('island-running-work'),
       snapshot: snapshot,
       clock: clock,
+      showSubagents: showSubagents,
       // The card's first line already says it.
       title: false,
       // At once: what the row opens next goes on top of a card that is
@@ -164,9 +169,14 @@ Future<void> showRunningWorkCard({
 
 /// Closes the card it is in once there is nothing left to show in it.
 class _ClosesWhenEmpty extends StatefulWidget {
-  const _ClosesWhenEmpty({required this.snapshot, required this.child});
+  const _ClosesWhenEmpty({
+    required this.snapshot,
+    required this.child,
+    this.subagents = true,
+  });
 
   final ValueListenable<ActivitySnapshot> snapshot;
+  final bool subagents;
   final Widget child;
 
   @override
@@ -187,7 +197,13 @@ class _ClosesWhenEmptyState extends State<_ClosesWhenEmpty> {
   }
 
   void _check() {
-    if (!mounted || RunningWork.hasContent(widget.snapshot.value)) return;
+    if (!mounted ||
+        RunningWork.hasContent(
+          widget.snapshot.value,
+          subagents: widget.subagents,
+        )) {
+      return;
+    }
     Navigator.of(context).maybePop();
   }
 

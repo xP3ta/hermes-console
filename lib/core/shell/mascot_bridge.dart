@@ -14,7 +14,6 @@ import '../services/active_chat_service.dart';
 import '../services/approval_policy.dart';
 import '../services/connection_manager.dart';
 import '../services/home_widget_publisher.dart';
-import '../services/notifications/background_listener.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/notifications/notification_strings.dart';
 import '../widgets/action_approval.dart';
@@ -392,16 +391,6 @@ class MascotBridge {
             onAction: () => unawaited(
               notifications.requestPermission().then((_) => _loadSuggestions()),
             ),
-          ),
-        );
-      } else if (!await BackgroundListener.isEnabled()) {
-        suggestions.add(
-          MascotNotice(
-            key: 'background-off',
-            kind: MascotNoticeKind.suggestion,
-            text: (s) => s.mascotSuggestBackground,
-            action: (s) => s.mascotSuggestOpenSettings,
-            onAction: openNotificationSettings,
           ),
         );
       }
