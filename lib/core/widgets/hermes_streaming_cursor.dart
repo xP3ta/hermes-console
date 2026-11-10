@@ -53,6 +53,12 @@ class _BlinkingCursorState extends State<_BlinkingCursor>
     duration: const Duration(seconds: 1),
     value: 1,
   );
+  // Made once: a CurvedAnimation built in build() would add a status
+  // listener to the controller on every rebuild.
+  late final CurvedAnimation _opacity = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeInOut,
+  );
 
   @override
   void didChangeDependencies() {
@@ -69,6 +75,7 @@ class _BlinkingCursorState extends State<_BlinkingCursor>
 
   @override
   void dispose() {
+    _opacity.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -97,13 +104,7 @@ class _BlinkingCursorState extends State<_BlinkingCursor>
         height: 16,
         child: Align(
           alignment: AlignmentDirectional.bottomStart,
-          child: FadeTransition(
-            opacity: CurvedAnimation(
-              parent: _controller,
-              curve: Curves.easeInOut,
-            ),
-            child: bar,
-          ),
+          child: FadeTransition(opacity: _opacity, child: bar),
         ),
       ),
     );
