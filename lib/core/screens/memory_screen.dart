@@ -41,8 +41,10 @@ import '../design/hermes_design.dart'
         HermesStatusText,
         HermesStatusTone;
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
 import '../utils/api_error.dart';
 import '../widgets/hermes_pill.dart';
+import 'constellation_screen.dart';
 import 'memory_draft_screen.dart';
 import 'memory_entries_screen.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -157,6 +159,42 @@ class _MemoryScreenState extends State<MemoryScreen>
       ),
     );
     // Entry edits change the file sizes shown here.
+    if (mounted) await _load();
+  }
+
+  Future<void> _openConstellation() async {
+    final repository = MemoryEntriesRepository(
+      DashboardMemoryEntriesRest(_client),
+      profile: _profile,
+    );
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ConstellationScreen(
+          loadGraph: repository.graph,
+          onEditNode: (node) async {
+            final file = node.source == 'profile'
+                ? MemoryFileKind.user
+                : MemoryFileKind.memory;
+            final changed = await Navigator.push<bool>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MemoryEntryEditorScreen(
+                  repository: repository,
+                  file: file,
+                  entry: MemoryEntry(id: node.id, label: node.label),
+                  instanceId: widget.connection.id,
+                  readOnly: widget.connection.readOnly,
+                  appLockedForTesting: widget.appLockedForTesting,
+                ),
+              ),
+            );
+            return changed == true;
+          },
+        ),
+      ),
+    );
+    // Edits through the map change the file sizes shown here.
     if (mounted) await _load();
   }
 
@@ -414,7 +452,7 @@ class _MemoryScreenState extends State<MemoryScreen>
     final needsDashboard =
         _dependencyFailure == DashboardDependencyFailure.credentials;
     return Padding(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(HermesSpace.x5),
       child: FeatureDependencyNotice(
         noticeId:
             'memory-${needsDashboard ? 'dashboard' : 'load'}-${widget.connection.id}',
@@ -456,13 +494,21 @@ class _MemoryScreenState extends State<MemoryScreen>
       onRefresh: _load,
       child: ListView(
         clipBehavior: hermesUnderHeader,
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        padding: const EdgeInsets.fromLTRB(
+          HermesSpace.x4,
+          HermesSpace.x3,
+          HermesSpace.x4,
+          HermesSpace.x4,
+        ),
         children: [
           Padding(
-            padding: const EdgeInsets.only(bottom: 20),
+            padding: const EdgeInsets.only(bottom: HermesSpace.x5),
             child: TextField(
               controller: _filterController,
-              style: TextStyle(fontSize: 13, color: colors.textPrimary),
+              style: TextStyle(
+                fontSize: HermesType.valueSize,
+                color: colors.textPrimary,
+              ),
               decoration: InputDecoration(
                 hintText: Strings.of(context).memoryFilterHint,
                 prefixIcon: Icon(
@@ -490,11 +536,27 @@ class _MemoryScreenState extends State<MemoryScreen>
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(
                   vertical: 10,
-                  horizontal: 12,
+                  horizontal: HermesSpace.x3,
                 ),
               ),
             ),
           ),
+
+          // The star map of what the agent has learned, one tap away. Not
+          // shown while filtering: it is not a provider or a file.
+          if (_filter.isEmpty) ...[
+            HermesListGroup(
+              dividerIndent: HermesSpace.rowH,
+              children: [
+                d.HermesListRow(
+                  icon: Icons.auto_awesome_outlined,
+                  title: Strings.of(context).constellationTitle,
+                  onTap: _openConstellation,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
 
           // Only show active section when not filtering (it's always visible)
           if (_filter.isEmpty) ...[
@@ -509,11 +571,14 @@ class _MemoryScreenState extends State<MemoryScreen>
             _buildProvidersSection(sorted, info.active, colors)
           else if (_filter.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 32),
+              padding: const EdgeInsets.symmetric(vertical: HermesSpace.x8),
               child: Center(
                 child: Text(
                   Strings.of(context).memoryNoMatches(_filter),
-                  style: TextStyle(fontSize: 13, color: colors.textTertiary),
+                  style: TextStyle(
+                    fontSize: HermesType.valueSize,
+                    color: colors.textTertiary,
+                  ),
                 ),
               ),
             ),
@@ -527,9 +592,11 @@ class _MemoryScreenState extends State<MemoryScreen>
     return Card(
       color: colors.surfaceVariant.withValues(alpha: 0.35),
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(HermesRadius.control),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(HermesSpace.x4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -575,7 +642,10 @@ class _MemoryScreenState extends State<MemoryScreen>
               const SizedBox(height: 8),
               Text(
                 active.description,
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                style: TextStyle(
+                  fontSize: HermesType.valueSize,
+                  color: colors.textSecondary,
+                ),
               ),
             ],
           ],
@@ -591,9 +661,11 @@ class _MemoryScreenState extends State<MemoryScreen>
     return Card(
       color: colors.surfaceVariant.withValues(alpha: 0.35),
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(HermesRadius.control),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(HermesSpace.x4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -633,7 +705,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                             Text(
                               '${e.key}.md',
                               style: TextStyle(
-                                fontSize: 13,
+                                fontSize: HermesType.valueSize,
                                 color: colors.textPrimary,
                               ),
                             ),
@@ -714,7 +786,10 @@ class _MemoryScreenState extends State<MemoryScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          padding: const EdgeInsets.only(
+            left: HermesSpace.x1,
+            bottom: HermesSpace.x2,
+          ),
           child: Text(
             Strings.of(context).memProvidersSection,
             style: TextStyle(
@@ -755,7 +830,9 @@ class _MemoryScreenState extends State<MemoryScreen>
       margin: const EdgeInsets.only(bottom: 6),
       color: colors.surfaceVariant.withValues(alpha: 0.35),
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(HermesRadius.control),
+      ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
@@ -788,7 +865,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                         child: Text(
                           provider.name,
                           style: TextStyle(
-                            fontSize: 13,
+                            fontSize: HermesType.valueSize,
                             fontWeight: isActive
                                 ? FontWeight.w600
                                 : FontWeight.normal,

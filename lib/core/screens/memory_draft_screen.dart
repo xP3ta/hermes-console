@@ -174,6 +174,8 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
     final colors = Theme.of(context).hermes;
     return Scaffold(
       appBar: HermesAppBar(
+        // No glass (Q9-CRISTAL): an editor, not a list, sits under it.
+        glass: false,
         title: Text(
           '${widget.fileName}.md',
           style: TextStyle(

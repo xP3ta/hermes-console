@@ -144,6 +144,11 @@ class MemoryEntriesRepository {
     ];
   }
 
+  /// The learning graph as the server sends it (`nodes`, `edges`), for the
+  /// constellation. Read only.
+  Future<Map<String, dynamic>> graph() =>
+      _guard(() => rest.get('learning/graph?$_q'), missingIsUnsupported: true);
+
   Future<LoadedMemoryEntry> read(String id) async {
     final result = await _guard(
       () => rest.get('learning/node?id=${Uri.encodeQueryComponent(id)}&$_q'),
