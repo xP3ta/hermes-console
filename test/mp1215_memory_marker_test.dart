@@ -247,7 +247,8 @@ void main() {
         expect(find.text(label), findsOneWidget);
         expect(find.text('Prefiere respuestas cortas.'), findsOneWidget);
         // ct1215: the folded line names the memory tool in a word.
-        expect(find.text('Pensó durante 4s · memoria'), findsOneWidget);
+        // Mock 138 v2: a turn that used tools ends saying how long it worked.
+        expect(find.text('Trabajó 4 s · memoria'), findsOneWidget);
       });
     }
 
