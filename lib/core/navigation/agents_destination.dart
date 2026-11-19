@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -38,7 +39,7 @@ Widget buildAgentsDestination(
         ? SafeArea(
             child: Center(
               child: HermesEmptyState(
-                icon: Icons.terminal_rounded,
+                icon: HIcons.terminal_rounded,
                 title: strings.navAgents,
                 body: strings.drawerNeedInstance,
               ),

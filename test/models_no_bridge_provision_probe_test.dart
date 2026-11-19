@@ -12,6 +12,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // No real Bridge, network, provisioning or SSH: every manager operation records
 // its invocation locally. A needsToken result exercises the baseline trigger.
@@ -85,7 +86,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Fixture'), findsWidgets);
     expect(requests, contains('GET /api/model/info'));
-    await tester.tap(find.byIcon(Icons.refresh).first);
+    await tester.tap(find.byIcon(HIcons.refresh).first);
     await tester.pumpAndSettle();
     expect(find.text('Fixture'), findsWidgets);
     expect(requests.where((s) => s == 'GET /api/model/info').length, 2);

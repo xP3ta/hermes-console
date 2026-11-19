@@ -1,6 +1,7 @@
 // Shared presentation helpers of the Capabilities hub: human labels, icons,
 // failure copy and the non-dismissible progress surface used while a server
 // action runs.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -14,9 +15,9 @@ import 'mcp_runtime_status.dart';
 import 'spp_safety.dart' show sppSafeEndpoint;
 
 IconData capabilityKindIcon(CapabilityKind kind) => switch (kind) {
-  CapabilityKind.skill => Icons.auto_awesome_outlined,
-  CapabilityKind.plugin => Icons.extension_outlined,
-  CapabilityKind.mcp => Icons.hub_outlined,
+  CapabilityKind.skill => HIcons.auto_awesome_outlined,
+  CapabilityKind.plugin => HIcons.extension_outlined,
+  CapabilityKind.mcp => HIcons.hub_outlined,
 };
 
 String capabilityKindLabel(Strings s, CapabilityKind kind) => switch (kind) {

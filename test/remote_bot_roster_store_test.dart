@@ -9,6 +9,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/widgets/remote_bot_roster.dart';
 
 import 'support/bot_roster_fakes.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   testWidgets(
@@ -106,10 +107,10 @@ void main() {
       ]),
     );
     expect(find.text('kept'), findsOneWidget);
-    expect(find.byIcon(Icons.cloud_off_outlined), findsOneWidget);
+    expect(find.byIcon(HIcons.cloud_off_outlined), findsOneWidget);
     pending.complete(const [AgentProfile(name: 'live')]);
     await tester.pumpAndSettle();
     expect(find.text('live'), findsOneWidget);
-    expect(find.byIcon(Icons.cloud_off_outlined), findsNothing);
+    expect(find.byIcon(HIcons.cloud_off_outlined), findsNothing);
   });
 }

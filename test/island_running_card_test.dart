@@ -14,6 +14,7 @@ import 'package:hermes_android/core/widgets/running_work.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'package:hermes_android/core/design/hicons.dart';
 
 // The island is the home of what a conversation has alive outside its turn:
 // with nothing alive it is only the name and a tap does nothing; with
@@ -173,13 +174,13 @@ class _Chat extends StatelessWidget {
           child: FloatingChatHeader(
             leading: FloatingHeaderButton(
               key: const ValueKey('menu'),
-              icon: Icons.menu_rounded,
+              icon: HIcons.menu_rounded,
               tooltip: 'Menú',
               onPressed: () {},
             ),
             trailing: FloatingHeaderButton(
               key: const ValueKey('new'),
-              icon: Icons.add_rounded,
+              icon: HIcons.add_rounded,
               tooltip: 'Nuevo chat',
               onPressed: () {},
             ),
@@ -349,7 +350,7 @@ void main() {
             ),
           )
           .icon,
-      Icons.keyboard_arrow_up_rounded,
+      HIcons.keyboard_arrow_up_rounded,
     );
     // One row per thing, whole, under it.
     for (final row in [

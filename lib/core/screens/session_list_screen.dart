@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import '../bots/data/gateway_socket_meter.dart';
 import '../services/app_lock_sensitive_read_fence.dart';
@@ -2485,7 +2486,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             // Fijar y archivar son las acciones de organización principales.
             ListTile(
               leading: Icon(
-                pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                pinned ? HIcons.push_pin : HIcons.push_pin_outlined,
                 color: pinned ? colors.accent : null,
               ),
               title: Text(pinned ? s.slMenuUnpin : s.slMenuPin),
@@ -2496,7 +2497,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             ),
             ListTile(
               leading: Icon(
-                archived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                archived ? HIcons.unarchive_outlined : HIcons.archive_outlined,
               ),
               title: Text(archived ? s.slMenuUnarchive : s.slMenuArchive),
               onTap: () async {
@@ -2507,7 +2508,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             // Cambiar título es un alias LOCAL (no toca el servidor), por eso
             // está disponible incluso en modo solo lectura.
             ListTile(
-              leading: const Icon(Icons.edit_outlined),
+              leading: const Icon(HIcons.edit_outlined),
               title: Text(s.slMenuRename),
               onTap: () async {
                 Navigator.pop(ctx);
@@ -2520,8 +2521,8 @@ class _SessionListScreenState extends State<SessionListScreen>
                 key: const ValueKey('session-menu-unread'),
                 leading: Icon(
                   unread
-                      ? Icons.mark_email_read_outlined
-                      : Icons.mark_email_unread_outlined,
+                      ? HIcons.mark_email_read_outlined
+                      : HIcons.mark_email_unread_outlined,
                 ),
                 title: Text(unread ? s.slMenuMarkRead : s.slMenuMarkUnread),
                 onTap: () async {
@@ -2534,7 +2535,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 key: ValueKey('session-menu-pr-${session.id}'),
                 load: load,
                 builder: (context, label, onTap) => ListTile(
-                  leading: const Icon(Icons.merge_type_rounded),
+                  leading: const Icon(HIcons.merge_type_rounded),
                   title: Text(label),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -2549,7 +2550,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             ))
               ListTile(
                 key: const ValueKey('session-menu-branches'),
-                leading: const Icon(Icons.account_tree_outlined),
+                leading: const Icon(HIcons.account_tree_outlined),
                 title: Text(s.sesBranchesTitle),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -2557,7 +2558,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 },
               ),
             ListTile(
-              leading: const Icon(Icons.info_outline),
+              leading: const Icon(HIcons.info_outline),
               title: Text(s.slMenuDetails),
               onTap: () {
                 Navigator.pop(ctx);
@@ -2570,7 +2571,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 !_moveUnsupported.contains(widget.connection.id))
               ListTile(
                 key: const ValueKey('session-menu-move'),
-                leading: const Icon(Icons.drive_file_move_outlined),
+                leading: const Icon(HIcons.drive_file_move_outlined),
                 title: Text(s.se1215MenuMove),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -2579,7 +2580,7 @@ class _SessionListScreenState extends State<SessionListScreen>
               ),
             ListTile(
               key: const ValueKey('session-menu-export'),
-              leading: const Icon(Icons.ios_share_outlined),
+              leading: const Icon(HIcons.ios_share_outlined),
               title: Text(s.se1215MenuExport),
               onTap: () {
                 Navigator.pop(ctx);
@@ -2589,8 +2590,8 @@ class _SessionListScreenState extends State<SessionListScreen>
             ListTile(
               leading: Icon(
                 hidden
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
+                    ? HIcons.visibility_outlined
+                    : HIcons.visibility_off_outlined,
               ),
               title: Text(
                 hidden
@@ -2615,7 +2616,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             ),
             if (!widget.connection.readOnly)
               ListTile(
-                leading: const Icon(Icons.delete_outline),
+                leading: const Icon(HIcons.delete_outline),
                 title: Text(s.slMenuDelete),
                 onTap: () async {
                   Navigator.pop(ctx);
@@ -2623,7 +2624,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 },
               ),
             ListTile(
-              leading: const Icon(Icons.content_copy_outlined),
+              leading: const Icon(HIcons.content_copy_outlined),
               title: Text(s.slMenuCopyId),
               subtitle: Text(
                 session.id,
@@ -2663,7 +2664,10 @@ class _SessionListScreenState extends State<SessionListScreen>
         widget.connection,
         factory: widget.gatewayFactory,
       );
-      final tree = await lease.client.projectTree();
+      // The session's own profile: projects live in each profile's store.
+      final tree = await lease.client.projectTree(
+        profile: Session.profileOwner(session.profile),
+      );
       if (!mounted) return;
       setState(() => _projectTree = tree);
       final targets = projectMoveTargets(
@@ -2764,7 +2768,7 @@ class _SessionListScreenState extends State<SessionListScreen>
               ),
             for (final target in targets)
               ListTile(
-                leading: const Icon(Icons.folder_outlined),
+                leading: const Icon(HIcons.folder_outlined),
                 title: Text(target.label),
                 onTap: () => Navigator.pop(ctx, target),
               ),
@@ -3132,7 +3136,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         automaticallyImplyLeading: false,
         leading: Builder(
           builder: (ctx) => IconButton(
-            icon: Icon(Icons.menu, color: colors.textSecondary),
+            icon: Icon(HIcons.menu, color: colors.textSecondary),
             onPressed: () => Scaffold.of(ctx).openDrawer(),
             tooltip: s.slMenuTooltip,
           ),
@@ -3153,7 +3157,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         actions: [
           // Mock 134-A: a pencil drawn in outline (audit 2.1).
           IconButton(
-            icon: Icon(Icons.edit_outlined, color: colors.textPrimary),
+            icon: Icon(HIcons.edit_outlined, color: colors.textPrimary),
             onPressed: _createNewSession,
             tooltip: s.slNewSession,
           ),
@@ -3163,7 +3167,7 @@ class _SessionListScreenState extends State<SessionListScreen>
           // in the header: one tap, as a filter is.
           _buildArchiveToggle(),
           HermesMenuButton<String>(
-            icon: Icon(Icons.more_vert, color: colors.textSecondary),
+            icon: Icon(HIcons.more_vert, color: colors.textSecondary),
             tooltip: s.slMoreOptions,
             onSelected: (value) {
               if (value.startsWith('sort:')) {
@@ -3185,7 +3189,7 @@ class _SessionListScreenState extends State<SessionListScreen>
               HermesAction(
                 value: 'refresh',
                 label: s.slMenuRefresh,
-                icon: Icons.refresh,
+                icon: HIcons.refresh,
               ),
               for (final sort in SessionListSort.values)
                 HermesAction(
@@ -3206,7 +3210,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 HermesAction(
                   value: 'import',
                   label: s.fsImportMenu,
-                  icon: Icons.download_for_offline_outlined,
+                  icon: HIcons.download_for_offline_outlined,
                   divided: _projectTree == null,
                 ),
             ],
@@ -3224,7 +3228,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     final header = _buildHeader(s, colors);
     return Scaffold(
       appBar: phone ? header : null,
-      drawerEnableOpenDragGesture: true,
+      drawerEnableOpenDragGesture: HermesDrawer.openDragEnabled(context),
       drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
       drawer: HermesDrawer(
         connection: widget.connection,
@@ -3442,7 +3446,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     // through the list's own filters. Every count is of the chats the
     // panel lists, by the list's own predicate, «N+» while the server has
     // pages not read: never the server's `total`, which also counts rows no
-    // list shows (Fold, 9960: «Forja · 7 chats» over two).
+    // list shows (Fold, 9960: «Leo · 7 chats» over two).
     final active = Session.profileOwner(_profileScope.name);
     final more = <String, bool>{
       if (!searching && _branchesMayHaveMore) active: true,
@@ -3512,7 +3516,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         ChatSwitcherAgent(
           owner: owner,
           // The name Bots and Inicio give the face beside it (its title
-          // first: «Forja», not «console-builder»).
+          // first: «Leo», not «console-builder»).
           name:
               profiles[owner]?.visibleName ??
               activeProfileDisplayLabel(
@@ -3617,7 +3621,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline, size: 48, color: colors.warning),
+            Icon(HIcons.error_outline, size: 48, color: colors.warning),
             const SizedBox(height: 16),
             Text(
               loginRefused ? s.s2SessionExpiredLine : s.slConnectionError,
@@ -3636,7 +3640,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             FilledButton.icon(
               onPressed: loginRefused ? _signIn : _fetchSessions,
               icon: Icon(
-                loginRefused ? Icons.login_rounded : Icons.refresh_rounded,
+                loginRefused ? HIcons.login_rounded : HIcons.refresh_rounded,
                 size: 18,
               ),
               label: Text(loginRefused ? s.s2SessionExpiredSignIn : s.slRetry),
@@ -3796,12 +3800,12 @@ class _SessionListScreenState extends State<SessionListScreen>
       direction: DismissDirection.horizontal,
       background: _SwipeAffordance(
         alignment: Alignment.centerLeft,
-        icon: pinned ? Icons.push_pin_outlined : Icons.push_pin,
+        icon: pinned ? HIcons.push_pin_outlined : HIcons.push_pin,
         label: pinned ? s.slMenuUnpin : s.slMenuPin,
       ),
       secondaryBackground: _SwipeAffordance(
         alignment: Alignment.centerRight,
-        icon: Icons.tune_rounded,
+        icon: HIcons.tune_rounded,
         label: s.slSwipeManage,
       ),
       confirmDismiss: (direction) async {
@@ -4016,7 +4020,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         child: IconButton(
           key: const ValueKey('session-filter-archived'),
           onPressed: _toggleArchived,
-          icon: const Icon(Icons.inventory_2_outlined, size: HermesIcon.md),
+          icon: const Icon(HIcons.inventory_2_outlined, size: HermesIcon.md),
           color: _showArchived ? colors.textPrimary : colors.textSecondary,
           style: IconButton.styleFrom(
             minimumSize: const Size.square(HermesSpace.tap),
@@ -4046,9 +4050,9 @@ class ScheduledJobsEntry extends StatelessWidget {
       child: ListTile(
         key: const ValueKey('session-library-scheduled-jobs'),
         dense: true,
-        leading: Icon(Icons.schedule_rounded, color: colors.accent),
+        leading: Icon(HIcons.schedule_rounded, color: colors.accent),
         title: Text(s.crnTitle),
-        trailing: Icon(Icons.chevron_right, color: colors.textSecondary),
+        trailing: Icon(HIcons.chevron_right, color: colors.textSecondary),
         onTap: onTap,
       ),
     );
@@ -4070,7 +4074,7 @@ class _LibraryScopeNotice extends StatelessWidget {
         child: HermesInfoBanner(
           text,
           key: const ValueKey('session-library-scope-notice'),
-          icon: Icons.info_outline,
+          icon: HIcons.info_outline,
           tone: colors.textSecondary,
         ),
       ),
@@ -4226,7 +4230,7 @@ class _BotFilterChip extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(
             minWidth: HermesSpace.tap,
-            maxWidth: 72,
+            maxWidth: 88,
             minHeight: HermesSpace.tap,
           ),
           child: Padding(
@@ -4241,17 +4245,19 @@ class _BotFilterChip extends StatelessWidget {
                   face
                 else
                   // The badge stays within the face's height (the name
-                  // sits 2 px under it) and leans into the chip's own
-                  // padding sideways, never past it: no wider than the
-                  // face and that padding (a «10+» in large text over a
-                  // short name's chip shrinks rather than cover the next).
+                  // sits 2 px under it) and leans out of the face's corner
+                  // by 10 dp: no wider than the face and the chip's padding
+                  // (a «10+» in large text over a short name's chip shrinks
+                  // rather than cover the next face).
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
                       face,
                       Positioned(
-                        right: -HermesSpace.x1,
-                        bottom: 0,
+                        // On the face's top corner and leaning out of it:
+                        // the face and the name under it stay whole.
+                        right: -10,
+                        top: -4,
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(
                             maxWidth: faceSize + HermesSpace.x1,
@@ -4491,23 +4497,23 @@ class _FilteredEmptyState extends StatelessWidget {
     final String title;
     final String subtitle;
     if (searching) {
-      icon = Icons.search_off_rounded;
+      icon = HIcons.search_off_rounded;
       title = s.slEmptySearchTitle;
       subtitle = s.slEmptySearchSubtitle;
     } else if (hidden) {
-      icon = Icons.visibility_off_outlined;
+      icon = HIcons.visibility_off_outlined;
       title = s.slEmptyHiddenTitle;
       subtitle = s.slEmptyHiddenSubtitle;
     } else if (archived) {
-      icon = Icons.archive_outlined;
+      icon = HIcons.archive_outlined;
       title = s.slEmptyArchivedTitle;
       subtitle = s.slEmptyArchivedSubtitle;
     } else if (automation) {
-      icon = Icons.schedule_outlined;
+      icon = HIcons.schedule_outlined;
       title = s.slEmptyAutomationTitle;
       subtitle = s.slEmptyAutomationSubtitle;
     } else {
-      icon = Icons.chat_bubble_outline;
+      icon = HIcons.chat_bubble_outline;
       title = s.slEmptyTitle;
       subtitle = s.slEmptySubtitle;
     }
@@ -4520,7 +4526,7 @@ class _FilteredEmptyState extends StatelessWidget {
         title: title,
         body: subtitle,
         primaryLabel: onCreateNew == null ? null : s.drawerNewChat,
-        primaryIcon: Icons.edit_square,
+        primaryIcon: HIcons.edit_square,
         onPrimary: onCreateNew,
       ),
     );
@@ -4595,7 +4601,7 @@ class _ConnectingStateState extends State<_ConnectingState>
           children: [
             RotationTransition(
               turns: _spinCtrl,
-              child: Icon(Icons.sync_rounded, size: 18, color: colors.accent),
+              child: Icon(HIcons.sync_rounded, size: 18, color: colors.accent),
             ),
             const SizedBox(width: 10),
             Flexible(
@@ -4649,7 +4655,7 @@ class _ConnectionIssueState extends StatelessWidget {
                   color: colors.warning.withValues(alpha: 0.35),
                 ),
               ),
-              child: Icon(Icons.cloud_off_rounded, color: colors.warning),
+              child: Icon(HIcons.cloud_off_rounded, color: colors.warning),
             ),
             const SizedBox(height: 16),
             Text(
@@ -4673,7 +4679,7 @@ class _ConnectionIssueState extends StatelessWidget {
             const SizedBox(height: 22),
             FilledButton.icon(
               onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
+              icon: const Icon(HIcons.refresh_rounded, size: 18),
               label: Text(Strings.of(context).slRetry),
             ),
           ],
@@ -4886,7 +4892,7 @@ class _SessionTile extends StatelessWidget {
                         if (pinned) ...[
                           const SizedBox(width: 7),
                           Icon(
-                            Icons.push_pin,
+                            HIcons.push_pin,
                             size: 13,
                             color: colors.textDisabled,
                           ),
@@ -4997,7 +5003,7 @@ class _SessionTile extends StatelessWidget {
                 TextButton.icon(
                   key: ValueKey('session-show-${session.id}'),
                   onPressed: onShow,
-                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  icon: const Icon(HIcons.visibility_outlined, size: 18),
                   label: Text(strings.slHiddenShowAction),
                 ),
               ] else if (!timeInPreview) ...[
@@ -5058,7 +5064,7 @@ class _ChatPanePlaceholder extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.forum_outlined, size: 40, color: colors.textSecondary),
+              Icon(HIcons.forum_outlined, size: 40, color: colors.textSecondary),
               const SizedBox(height: 12),
               Text(
                 Strings.of(context).tabletPickConversation,

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 // Notification settings. With the app open its own sockets raise local
@@ -197,7 +198,7 @@ class _NotificationSettingsScreenState
       dense: true,
       title: Text(s.notifLiveUpdatesTitle),
       subtitle: Text(s.notifLiveUpdatesSub),
-      trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+      trailing: const Icon(HIcons.open_in_new_rounded, size: 18),
       onTap: () =>
           unawaited(PlatformRichNotifications().openPromotionSettings()),
     );
@@ -222,7 +223,7 @@ class _NotificationSettingsScreenState
             Row(
               children: [
                 Icon(
-                  Icons.health_and_safety_outlined,
+                  HIcons.health_and_safety_outlined,
                   size: 16,
                   color: colors.accent,
                 ),
@@ -241,7 +242,7 @@ class _NotificationSettingsScreenState
                   tooltip: s.notifRefreshTooltip,
                   onPressed: _refresh,
                   icon: Icon(
-                    Icons.refresh_rounded,
+                    HIcons.refresh_rounded,
                     size: 18,
                     color: colors.textSecondary,
                   ),
@@ -311,7 +312,7 @@ class _NotificationSettingsScreenState
             Row(
               children: [
                 Icon(
-                  Icons.notifications_off_outlined,
+                  HIcons.notifications_off_outlined,
                   size: 16,
                   color: colors.warning,
                 ),
@@ -342,7 +343,7 @@ class _NotificationSettingsScreenState
               alignment: Alignment.centerLeft,
               child: FilledButton.icon(
                 onPressed: _requestPermission,
-                icon: const Icon(Icons.check_rounded, size: 16),
+                icon: const Icon(HIcons.check_rounded, size: 16),
                 label: Text(s.notifGrantButton),
               ),
             ),
@@ -359,7 +360,7 @@ class _NotificationSettingsScreenState
   ) {
     return HermesSwitchTile(
       secondary: Icon(
-        Icons.notifications_active_outlined,
+        HIcons.notifications_active_outlined,
         color: colors.textSecondary,
       ),
       title: s.nrdMasterTitle,
@@ -391,7 +392,7 @@ class _NotificationSettingsScreenState
       _eventSwitch(
         colors,
         enabled: on,
-        icon: Icons.verified_user_outlined,
+        icon: HIcons.verified_user_outlined,
         title: s.notifApprovalsTitle,
         subtitle: s.notifApprovalsSub,
         value: notif.notifyApprovals,
@@ -403,7 +404,7 @@ class _NotificationSettingsScreenState
       _eventSwitch(
         colors,
         enabled: on,
-        icon: Icons.help_outline_rounded,
+        icon: HIcons.help_outline_rounded,
         title: s.nrdQuestionsTitle,
         subtitle: s.nrdQuestionsSub,
         value: notif.notifyQuestions,
@@ -415,7 +416,7 @@ class _NotificationSettingsScreenState
       _eventSwitch(
         colors,
         enabled: on,
-        icon: Icons.chat_bubble_outline,
+        icon: HIcons.chat_bubble_outline,
         title: s.nrdDoneTitle,
         subtitle: s.nrdDoneSub,
         value: notif.notifyReplies,
@@ -427,7 +428,7 @@ class _NotificationSettingsScreenState
       _eventSwitch(
         colors,
         enabled: on,
-        icon: Icons.flag_outlined,
+        icon: HIcons.flag_outlined,
         title: s.notifLocalAgentResultsTitle,
         subtitle: s.notifLocalAgentResultsSub,
         value: notif.notifyLocalAgentResults,
@@ -439,7 +440,7 @@ class _NotificationSettingsScreenState
       _eventSwitch(
         colors,
         enabled: on,
-        icon: Icons.task_alt_outlined,
+        icon: HIcons.task_alt_outlined,
         title: s.notifRunsTitle,
         subtitle: s.notifRunsSub,
         value: notif.notifyRuns,
@@ -488,7 +489,7 @@ class _NotificationSettingsScreenState
       _eventSwitch(
         colors,
         enabled: on,
-        icon: Icons.view_kanban_outlined,
+        icon: HIcons.view_kanban_outlined,
         title: s.pekKanbanSwitchTitle,
         subtitle: s.pekKanbanSwitchSub,
         value: notif.notifyKanbanResults,
@@ -508,7 +509,7 @@ class _NotificationSettingsScreenState
     return _eventSwitch(
       colors,
       enabled: notif.enabled,
-      icon: Icons.visibility_outlined,
+      icon: HIcons.visibility_outlined,
       title: s.notifForegroundTitle,
       subtitle: s.notifForegroundSub,
       value: notif.evenInForeground,
@@ -533,7 +534,7 @@ class _NotificationSettingsScreenState
       child: _eventSwitch(
         colors,
         enabled: true,
-        icon: Icons.sync_alt_rounded,
+        icon: HIcons.sync_alt_rounded,
         title: s.notifKeepAliveTitle,
         subtitle: s.notifKeepAliveSub,
         value: notif.keepAliveWhileWorking,
@@ -565,7 +566,7 @@ class _NotificationSettingsScreenState
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : Icon(
-                    Icons.podcasts_rounded,
+                    HIcons.podcasts_rounded,
                     color: notif.enabled
                         ? colors.textSecondary
                         : colors.textDisabled,
@@ -594,7 +595,7 @@ class _NotificationSettingsScreenState
               dense: true,
               title: Text(s.notifFixedCardTitle),
               subtitle: Text(s.notifFixedCardSub),
-              trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+              trailing: const Icon(HIcons.open_in_new_rounded, size: 18),
               onTap: () => unawaited(
                 PlatformRichNotifications().openChannelSettings(
                   BackgroundListener.serviceChannelId,
@@ -633,7 +634,7 @@ class _NotificationSettingsScreenState
     Strings s,
   ) {
     return HermesSecondaryButton(
-      icon: Icons.send_rounded,
+      icon: HIcons.send_rounded,
       label: s.notifTestButton,
       onTap: () async {
         if (!_granted) await _requestPermission();
@@ -690,7 +691,7 @@ class HermesNotificationDiagnosticRow extends StatelessWidget {
           : CrossAxisAlignment.center,
       children: [
         Icon(
-          good ? Icons.check_circle_rounded : Icons.cancel_rounded,
+          good ? HIcons.check_circle_rounded : HIcons.cancel_rounded,
           size: 16,
           color: good ? colors.success : colors.warning,
         ),

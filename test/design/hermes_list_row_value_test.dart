@@ -7,6 +7,7 @@ import 'package:hermes_android/core/design/hermes_design.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 
 import '../support/design_shots.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _rows = <(String, String)>[
   ('Modelo', 'anthropic · claude-opus-4.1'),
@@ -44,7 +45,7 @@ Future<void> _pump(
                 for (final (title, value) in rows)
                   HermesListRow(
                     key: ValueKey(title),
-                    icon: Icons.memory_rounded,
+                    icon: HIcons.memory_rounded,
                     title: title,
                     value: value,
                     onTap: () {},
@@ -60,7 +61,7 @@ Future<void> _pump(
 
 Finder _arrow(String title) => find.descendant(
   of: find.byKey(ValueKey(title)),
-  matching: find.byIcon(Icons.chevron_right_rounded),
+  matching: find.byIcon(HIcons.chevron_right_rounded),
 );
 
 void main() {

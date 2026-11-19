@@ -2,6 +2,7 @@
 // prioridad como glifo de texto, cronómetro en vivo si se está ejecutando y
 // contador de hijos/enlaces. Solo dibuja; arrastrar, abrir y mover siguen en
 // la pantalla.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -153,7 +154,7 @@ class KanbanCard extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                Icons.mode_comment_outlined,
+                                HIcons.mode_comment_outlined,
                                 size: HermesIcon.sm,
                                 color: colors.textSecondary,
                               ),
@@ -186,8 +187,8 @@ class KanbanCard extends StatelessWidget {
                 const SizedBox(width: HermesSpace.x2),
                 Icon(
                   selected
-                      ? Icons.check_circle_rounded
-                      : Icons.radio_button_unchecked_rounded,
+                      ? HIcons.check_circle_rounded
+                      : HIcons.radio_button_unchecked_rounded,
                   key: ValueKey('kanban-select-mark-${task.id}'),
                   size: HermesIcon.lg,
                   color: selected ? colors.accent : colors.textSecondary,

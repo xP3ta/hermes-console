@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -554,7 +555,7 @@ class _FileHeader extends StatelessWidget {
                               ? Duration.zero
                               : const Duration(milliseconds: 150),
                           child: Icon(
-                            Icons.expand_more,
+                            HIcons.expand_more,
                             size: 18,
                             color: colors.textSecondary,
                           ),

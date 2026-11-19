@@ -413,8 +413,19 @@ void main() {
     final chatState = tester.state(chatScreen);
     final strings = Strings.of(tester.element(chatScreen));
 
-    final permissions = find.byKey(const ValueKey('status-pill-permissions'));
-    _expectOnScreen(tester, permissions, 'The permissions pill');
+    // The permissions live in the chat settings sheet, not in the composer.
+    final notch = find.byKey(const ValueKey('chat-settings-button'));
+    _expectOnScreen(tester, notch, 'The chat settings button');
+    await tester.tap(notch);
+    final controlSheet = find.byKey(const ValueKey('chat-control-sheet'));
+    await _pumpUntil(
+      tester,
+      () => _routeSettled(tester, controlSheet),
+      what: 'the chat control sheet',
+    );
+    await tester.pump(const Duration(milliseconds: 350));
+    final permissions = find.byKey(const ValueKey('chat-control-permissions'));
+    _expectOnScreen(tester, permissions, 'The permissions row');
     await tester.tap(permissions);
     final modeSheet = find.byKey(const ValueKey('chat-mode-dialog'));
     await _pumpUntil(

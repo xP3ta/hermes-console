@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -177,7 +178,7 @@ class HermesTreeToggle extends StatelessWidget {
                   ? Duration.zero
                   : const Duration(milliseconds: 160),
               child: Icon(
-                Icons.chevron_right,
+                HIcons.chevron_right,
                 size: 18,
                 color: color ?? colors.textDisabled,
               ),

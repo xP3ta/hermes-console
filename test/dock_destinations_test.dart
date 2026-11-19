@@ -54,6 +54,7 @@ import 'package:hermes_android/core/widgets/general_dock_shell.dart';
 import 'package:hermes_android/core/widgets/owned_resource_host.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _connection = SavedConnection(
   id: 'dock-destinations',
@@ -567,17 +568,17 @@ void main() {
       expect(GestureDockTab.parse('search'), GestureDockTab.search);
       expect(
         gestureDockTabIcon(GestureDockTab.search),
-        Icons.chat_bubble_outline_rounded,
+        HIcons.chat_bubble_outline_rounded,
       );
       expect(
         gestureDockTabIcon(GestureDockTab.search, selected: true),
-        Icons.chat_bubble_rounded,
+        HIcons.chat_bubble_rounded,
       );
       for (final tab in GestureDockTab.values) {
         for (final selected in [false, true]) {
           expect(
             gestureDockTabIcon(tab, selected: selected),
-            isNot(anyOf(Icons.search, Icons.search_rounded)),
+            isNot(anyOf(HIcons.search, HIcons.search_rounded)),
             reason: 'no magnifier on the dock: ${tab.name}',
           );
         }

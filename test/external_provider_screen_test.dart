@@ -13,6 +13,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   final en = lookupStrings(const Locale('en'));
@@ -629,7 +630,7 @@ void main() {
 
     Finder menuButton(String id) => find.descendant(
       of: find.byKey(ValueKey('saved-endpoint-$id')),
-      matching: find.byIcon(Icons.more_vert),
+      matching: find.byIcon(HIcons.more_vert),
     );
 
     Finder inMenu(String label) => find.descendant(
@@ -715,7 +716,7 @@ void main() {
       tester,
     ) async {
       await pumpSection(tester);
-      expect(find.byIcon(Icons.more_vert), findsNWidgets(3));
+      expect(find.byIcon(HIcons.more_vert), findsNWidgets(3));
 
       await openMenu(tester, 'edge/a');
       expect(inMenu('Activate'), findsOneWidget);

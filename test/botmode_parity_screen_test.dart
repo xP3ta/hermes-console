@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'botmode_parity_model_test.dart'
     show mirrorPng, mirroredProfile, parityRoom;
+import 'package:hermes_android/core/design/hicons.dart';
 
 class _Source implements MissionControlDataSource {
   final MissionBackendSnapshot snapshot;
@@ -274,12 +275,12 @@ void main() {
       MaterialApp(
         home: RoomMirrorAvatar(
           image: broken,
-          fallback: const Icon(Icons.groups_outlined),
+          fallback: const Icon(HIcons.groups_outlined),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.groups_outlined), findsOneWidget);
+    expect(find.byIcon(HIcons.groups_outlined), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

@@ -17,6 +17,7 @@ import 'package:hermes_android/core/widgets/console_loader.dart';
 
 import '../support/bot_roster_fakes.dart';
 import '../support/profile_model_fakes.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Future<void> _pumpCard(WidgetTester tester, FakeModelGateway gateway) async {
   phoneView(tester);
@@ -195,7 +196,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(tile),
-          matching: find.byIcon(Icons.refresh_rounded),
+          matching: find.byIcon(HIcons.refresh_rounded),
         ),
         findsOneWidget,
       );

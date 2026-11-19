@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -201,7 +202,7 @@ class _GitWorktreesScreenState extends State<GitWorktreesScreen> {
                 );
                 if (picked != null) setState(() => base = picked);
               },
-              icon: const Icon(Icons.call_split_rounded, size: HermesIcon.sm),
+              icon: const Icon(HIcons.call_split_rounded, size: HermesIcon.sm),
               label: Text(
                 '${strings.ghtBranchNewBase}: $base',
                 maxLines: 2,
@@ -260,7 +261,7 @@ class _GitWorktreesScreenState extends State<GitWorktreesScreen> {
                     ).backButtonTooltip,
                     onPressed: () => Navigator.of(context).maybePop(),
                     icon: Icon(
-                      Icons.arrow_back_rounded,
+                      HIcons.arrow_back_rounded,
                       color: colors.textPrimary,
                     ),
                   ),
@@ -282,7 +283,7 @@ class _GitWorktreesScreenState extends State<GitWorktreesScreen> {
                     tooltip: strings.gitRefresh,
                     onPressed: _loading ? null : _load,
                     icon: Icon(
-                      Icons.refresh_rounded,
+                      HIcons.refresh_rounded,
                       color: colors.textSecondary,
                     ),
                   ),
@@ -395,7 +396,7 @@ class _WorktreeRow extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                tree.isMain ? Icons.home_outlined : Icons.account_tree_outlined,
+                tree.isMain ? HIcons.home_outlined : HIcons.account_tree_outlined,
                 size: HermesIcon.lg,
                 color: current ? colors.accentText : colors.textSecondary,
               ),
@@ -438,14 +439,14 @@ class _WorktreeRow extends StatelessWidget {
                       key: ValueKey('ght-worktree-open-${tree.path}'),
                       value: _WorktreeAction.open,
                       label: strings.ghtWorktreeOpen,
-                      icon: Icons.open_in_new_rounded,
+                      icon: HIcons.open_in_new_rounded,
                     ),
                   if (writes && !tree.isMain && !current)
                     HermesAction(
                       key: ValueKey('ght-worktree-remove-${tree.path}'),
                       value: _WorktreeAction.remove,
                       label: strings.ghtWorktreeRemove,
-                      icon: Icons.delete_outline_rounded,
+                      icon: HIcons.delete_outline_rounded,
                       destructive: true,
                     ),
                 ],

@@ -7,6 +7,8 @@ export '../widgets/chat/chat_markdown_body.dart'
         validateRemoteChatImageTransport;
 export '../widgets/chat/chat_message_selection_area.dart';
 
+import 'package:hermes_android/core/design/hicons.dart';
+import '../utils/memory_context.dart';
 import '../utils/projected_content_copy.dart';
 import '../utils/enum_labels.dart';
 import '../bots/data/gateway_socket_meter.dart';
@@ -108,6 +110,7 @@ import '../models/agent_profile.dart';
 import '../models/chat_preferences.dart';
 import '../models/cron_run_write_gate.dart';
 import '../models/account_usage_limits.dart';
+import 'usage_analytics_screen.dart';
 import '../models/compaction_progress.dart';
 import '../models/command_descriptor.dart';
 import '../models/desktop_compression_result.dart';
@@ -230,6 +233,7 @@ import '../utils/assistant_suggestions.dart';
 import '../utils/chat_ask_about.dart';
 import '../utils/chat_inline_refs.dart';
 import '../widgets/chat/live_reply_reveal.dart';
+import '../widgets/chat/reply_bubble.dart';
 import '../widgets/chat/live_turn_window.dart' show LiveReasoningSnippet;
 import '../utils/streaming_normalizer.dart';
 import 'activity_screen.dart';
@@ -1366,6 +1370,8 @@ enum _ChatControlAction {
   panelBrowser,
   panelAgents,
   refresh,
+  usage,
+  permissions,
   prompts,
   showPinnedPrompt,
   subagents,
@@ -1821,8 +1827,8 @@ class _ChatScreenState extends State<ChatScreen>
   /// conn-registry: in the chat a loss stays silent for five minutes of real
   /// outage, also with a turn running or the link known down: no amber word,
   /// no pill headline, no composer hint before the one persistent notice.
-  /// That is what the official app shows (nothing, lanes/official-compare
-  /// S1-S6) and the acceptance criterion (harness SC12/SC13); Desktop
+  /// That is what the official app shows (nothing)
+  /// and the acceptance criterion (harness SC12/SC13); Desktop
   /// escalates at RECONNECT_ESCALATE_AFTER_MS = 300 000
   /// (use-gateway-boot.ts:121,590-608). Its passive status pill is the one
   /// thing not copied.
@@ -1953,8 +1959,19 @@ class _ChatScreenState extends State<ChatScreen>
   /// pm1215: one notification per model picked; the bottom pill's model
   /// chip glows once (instead of a toast).
   final ValueNotifier<int> _modelPulse = ValueNotifier(0);
+
+  /// A model was picked while the status row was down: it is only up while
+  /// the field has focus, and the sheet the model is picked in holds it.
+  /// The chip glows the next time the row is shown.
+  bool _modelPulseDue = false;
+
   void _pulseModelChip() {
     if (_disposed || !mounted) return;
+    if (!_textFocusNode.hasFocus || _statusPillKey.currentContext == null) {
+      _modelPulseDue = true;
+      return;
+    }
+    _modelPulseDue = false;
     _modelPulse.value++;
   }
 
@@ -3145,7 +3162,7 @@ class _ChatScreenState extends State<ChatScreen>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              Icons.refresh_rounded,
+                              HIcons.refresh_rounded,
                               size: 14,
                               color: colors.accent,
                             ),
@@ -3872,7 +3889,12 @@ class _ChatScreenState extends State<ChatScreen>
     if (!_chat.isStreaming || !_liveAssistantMaterialized) return;
     if (_messages.isEmpty) return;
     final head = _messages.first;
-    if (head['role'] != 'assistant' || head['_pipeline'] != true) return;
+    // Also after an unsealed delta (`_pipeline` false): a tool step that
+    // follows streamed text replaces the live row, and the live host draws
+    // the row its frame holds. Interims are optional on the producer
+    // (tui_gateway/prompt_turn.py:787-794, display.interim_assistant_
+    // messages), so a seal does not always come between text and a tool.
+    if (head['role'] != 'assistant') return;
     final frame = _liveAssistantFrame.value;
     if (frame == null ||
         frame.turnSerial != _assistantEntranceSerial ||
@@ -4069,6 +4091,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (!_textFocusNode.hasFocus) {
       _slashCompletions.cancel();
       _closeReferencePalette();
+    } else if (_modelPulseDue) {
+      // The status row comes up with the focus: glow once it is built.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pulseModelChip());
     }
     // Only the slash/reference palettes read composer focus in build. With
     // both empty a focus flip changes nothing on screen, and a screen-wide
@@ -8626,6 +8651,7 @@ class _ChatScreenState extends State<ChatScreen>
       goal: activity.goal,
       processesStale: _chat.backgroundProcessesStale,
       subagentsStale: _chat.subagentRosterUnconfirmed,
+      subagentsAbsentConfirmed: _chat.subagentAbsentConfirmedKeys,
       backgroundStartedAt: activity.startedAt,
       subagents: subagents,
       subagentGenericCount: _chat.safeActiveSubagentCount,
@@ -8973,7 +8999,7 @@ class _ChatScreenState extends State<ChatScreen>
       revision: current.storageId.hashCode,
       key: const ValueKey('recovered-turn-banner'),
       tone: IslandTone.warning,
-      icon: Icons.help_outline_rounded,
+      icon: HIcons.help_outline_rounded,
       sticky: true,
       line: str.islandRecoveredTurn,
       more: [
@@ -9117,7 +9143,7 @@ class _ChatScreenState extends State<ChatScreen>
           // Red, as a connection that is gone; but it waits its turn behind
           // what the reader can act on (a recovered message, a sign-in).
           weight: IslandTone.warning.rank,
-          icon: Icons.cloud_off_outlined,
+          icon: HIcons.cloud_off_outlined,
           busy: reconnecting,
           sticky: true,
           action: connectionIslandAction(
@@ -9161,7 +9187,7 @@ class _ChatScreenState extends State<ChatScreen>
           id: 'history-partial',
           key: const ValueKey('local-transcript-truncation-notice'),
           tone: IslandTone.warning,
-          icon: Icons.history_toggle_off_rounded,
+          icon: HIcons.history_toggle_off_rounded,
           sticky: true,
           line: str.islandHistoryPartial,
           more: str.chaLocalTranscriptTruncated,
@@ -9176,7 +9202,7 @@ class _ChatScreenState extends State<ChatScreen>
           id: 'earlier-failed',
           key: const ValueKey('core-read-partial-coverage-notice'),
           tone: IslandTone.warning,
-          icon: Icons.account_tree_outlined,
+          icon: HIcons.account_tree_outlined,
           sticky: true,
           line: str.islandEarlierFailed,
           more: str.chaEarlierMessagesError,
@@ -9272,10 +9298,19 @@ class _ChatScreenState extends State<ChatScreen>
   /// Design B: the delegated work is a capsule above the composer, below the
   /// queue chip; the header stays identity only (with the sprite's halo while
   /// confirmed delegated work runs).
+  /// The task list rides the capsule above the composer while it is open
+  /// or its turn runs; after that it goes back to the turn's block.
+  AgentTaskList? get _capsuleTasks {
+    final tasks = _chat.transcriptAgentTasks;
+    if (tasks.isEmpty) return null;
+    return tasks.isFinished ? null : tasks;
+  }
+
   Widget _buildDelegatedCapsule(ActivitySnapshot snapshot) {
     Widget build() => _lockWhileEditing(
       SubagentActivityCard(
         capsule: true,
+        tasks: _capsuleTasks,
         capsulePadding: const EdgeInsets.symmetric(
           horizontal: kConsoleComposerSideInset + kConsoleComposerSurfaceInset,
         ),
@@ -9307,6 +9342,7 @@ class _ChatScreenState extends State<ChatScreen>
         clock: _chat.wallNow,
         activities: _displaySubagentActivities,
         unconfirmed: _chat.subagentRosterUnconfirmed,
+        absentConfirmed: _chat.subagentAbsentConfirmedKeys,
         onDismiss: _closeSubagentGroup,
         closedIds: _closedAgentIds,
         reopenable: _reopenableSubagents,
@@ -9411,7 +9447,7 @@ class _ChatScreenState extends State<ChatScreen>
         listenable: workspace,
         builder: (context, _) => FloatingHeaderButton(
           key: const ValueKey('chat-list-toggle'),
-          icon: Icons.view_sidebar_outlined,
+          icon: HIcons.view_sidebar_outlined,
           mirrored: true,
           tooltip: workspace.listVisible || workspace.listOverlay
               ? str.cwsCloseList
@@ -9423,7 +9459,7 @@ class _ChatScreenState extends State<ChatScreen>
       leading = Builder(
         builder: (ctx) => FloatingHeaderButton(
           key: const ValueKey('chat-menu-button'),
-          icon: Icons.menu_rounded,
+          icon: HIcons.menu_rounded,
           tooltip: str.chaMenuTooltip,
           onPressed: () => Scaffold.of(ctx).openDrawer(),
         ),
@@ -9431,7 +9467,7 @@ class _ChatScreenState extends State<ChatScreen>
     } else if (navigator.canPop()) {
       leading = FloatingHeaderButton(
         key: const ValueKey('floating-header-back'),
-        icon: Icons.arrow_back_rounded,
+        icon: HIcons.arrow_back_rounded,
         tooltip: MaterialLocalizations.of(context).backButtonTooltip,
         onPressed: () => navigator.maybePop(),
       );
@@ -9444,7 +9480,7 @@ class _ChatScreenState extends State<ChatScreen>
     final trailing = Builder(
       builder: (buttonContext) => FloatingHeaderButton(
         key: const ValueKey('chat-settings-button'),
-        icon: Icons.more_horiz_rounded,
+        icon: HIcons.more_horiz_rounded,
         tooltip: str.chaControlTitle,
         onPressed: () =>
             unawaited(_showChatControlSheet(anchor: buttonContext)),
@@ -9625,7 +9661,25 @@ class _ChatScreenState extends State<ChatScreen>
   /// idempotente: se llama en cada evento del chat.
   void _onCompactionChanged() {
     if (_disposed || !mounted) return;
+    _publishSheetCompaction();
     setState(() {});
+  }
+
+  /// Hands the compaction to the open context sheet, which lives on another
+  /// route: at once from an event, after the frame from inside one (never
+  /// mid-build). The sheet then follows in the frame that shows the change
+  /// in the chat, not one frame later.
+  void _publishSheetCompaction() {
+    void apply() {
+      if (_disposed || !mounted) return;
+      _sheetCompaction.value = _visibleCompaction;
+    }
+
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+      apply();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => apply());
+    }
   }
 
   void _syncCompaction() {
@@ -10012,7 +10066,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (_disposed || !mounted) return;
     // conn-registry E2: a loss that ends says nothing. Desktop has no
     // «reconnected» notice (grep over apps/desktop/src: none; the official
-    // app shows none either, lanes/official-compare/S3).
+    // app shows none either).
     setState(() {});
   }
 
@@ -10703,7 +10757,7 @@ class _ChatScreenState extends State<ChatScreen>
           tooltip: MaterialLocalizations.of(ctx).backButtonTooltip,
           constraints: const BoxConstraints(minWidth: HermesSpace.tap, minHeight: HermesSpace.tap),
           onPressed: () => navigator.maybePop(),
-          icon: const Icon(Icons.arrow_back_rounded),
+          icon: const Icon(HIcons.arrow_back_rounded),
         ),
       if (scaffold.hasDrawer)
         IconButton(
@@ -10711,7 +10765,7 @@ class _ChatScreenState extends State<ChatScreen>
           tooltip: Strings.of(ctx).chaMenuTooltip,
           constraints: const BoxConstraints(minWidth: HermesSpace.tap, minHeight: HermesSpace.tap),
           onPressed: scaffold.openDrawer,
-          icon: const Icon(Icons.menu_rounded),
+          icon: const Icon(HIcons.menu_rounded),
         ),
     ]);
   });
@@ -13938,14 +13992,13 @@ class _ChatScreenState extends State<ChatScreen>
   /// Texto visible de las filas anteriores del grupo, en orden.
   String _responseGroupTextPrefix(List<Map<String, dynamic>> older) => [
     for (final row in older)
-      if (row['content'] is String &&
-          (row['content'] as String).trim().isNotEmpty)
+      if (row['content'] is String)
         projectedContentCopy(
           Strings.of(context),
           row,
           row['content'] as String,
         ),
-  ].join('\n\n');
+  ].where((text) => text.trim().isNotEmpty).join('\n\n');
 
   static String _joinResponseGroupText(String prefix, String content) =>
       prefix.isEmpty
@@ -14006,7 +14059,11 @@ class _ChatScreenState extends State<ChatScreen>
   void _editUserMessage(Map<String, dynamic> message, double bubbleWidth) {
     final ordinal = _userOrdinalFor(message);
     if (ordinal == null) return;
-    final rawContent = (message['content'] ?? '').toString();
+    // The editor starts from what the bubble shows (memory-context lens).
+    final rawContent = memoryContextDisplayText(
+      message['role'],
+      (message['content'] ?? '').toString(),
+    );
     final parsed = _parseUserContent(rawContent);
     if (parsed.text.trim().isEmpty ||
         !_attachmentsCanBeReused(parsed.attachments)) {
@@ -14065,7 +14122,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (message == null || _editingRewriteSubmitted) return;
     final ordinal = _editingUserMessageOrdinal;
     if (ordinal == null) return;
-    final rawContent = (message['content'] ?? '').toString();
+    final rawContent = memoryContextDisplayText(
+      message['role'],
+      (message['content'] ?? '').toString(),
+    );
     final parsed = _parseUserContent(rawContent);
     if (edited.isEmpty || edited == parsed.text.trim()) return;
     // Saving while a reply streams interrupts that reply: ask first, and keep
@@ -15498,6 +15558,16 @@ class _ChatScreenState extends State<ChatScreen>
   /// The «Vistas» popover is showing.
   bool _viewsPopoverOpen = false;
 
+  /// Makes the composer, which had the keyboard when Ajustes opened, the
+  /// chat's focused field again right before a sheet from Ajustes is pushed:
+  /// the request is applied after the push, so the sheet's route takes the
+  /// focus and, on close, gives it back to the composer as it does from the
+  /// model sheet. The field never holds the focus in between, so the
+  /// keyboard does not flash.
+  void _composerBehindSheet(bool hadKeyboard) {
+    if (hadKeyboard) _textFocusNode.requestFocus();
+  }
+
   /// the owner's final windows: Ajustes shows the conversation's title and
   /// quick pill, then Paneles and the conversation's actions. Model and
   /// permissions live in the status pill under the composer; Memory and
@@ -15520,6 +15590,11 @@ class _ChatScreenState extends State<ChatScreen>
     // As the notch's sheet did: the composer lets go of the keyboard first,
     // so closing Ajustes never brings it back.
     final focused = FocusManager.instance.primaryFocus;
+    // A sheet Ajustes opens gives it back, as the model sheet does, when the
+    // composer had the keyboard up at this moment.
+    final composerHadKeyboard =
+        focused == _textFocusNode &&
+        (View.maybeOf(context)?.viewInsets.bottom ?? 0) > 0;
     if (focused?.context?.findAncestorWidgetOfExactType<EditableText>() !=
         null) {
       focused!.unfocus();
@@ -15550,6 +15625,17 @@ class _ChatScreenState extends State<ChatScreen>
                 ? strings.chaVoiceSettingsCta
                 : null,
             prompts: strings.pj1215PromptsAction,
+            usage: strings.kluUsageTitle,
+            usageValue: _pillContextMetrics.value.percent == null
+                ? null
+                : '${_pillContextMetrics.value.percent!} %',
+            permissions: policy == null ? null : strings.msvPermissions,
+            permissionsValue: policy == null
+                ? null
+                : approvalModeLabel(
+                    strings,
+                    policy.effectiveMode(widget.session.id),
+                  ),
             showPinnedPrompt: strings.q90PinnedPromptShow,
             branch: strings.tc1215BranchChat,
             details: strings.chaSessionDetailsAction,
@@ -15611,6 +15697,10 @@ class _ChatScreenState extends State<ChatScreen>
           onRefresh: () => select(_ChatControlAction.refresh),
           onContent: () => select(_ChatControlAction.content),
           onPrompts: () => select(_ChatControlAction.prompts),
+          onUsage: () => select(_ChatControlAction.usage),
+          onPermissions: policy == null
+              ? null
+              : () => select(_ChatControlAction.permissions),
           onShowPinnedPrompt:
               PinnedPromptPrefs.shared.enabled &&
                   PinnedPromptPrefs.shared.isHiddenFor(_pinnedPromptChatKey)
@@ -15674,6 +15764,14 @@ class _ChatScreenState extends State<ChatScreen>
         _openPanelFromSettings(ChatWorkspaceTab.agents);
       case _ChatControlAction.refresh:
         unawaited(_fetchMessages(userInitiated: true));
+      case _ChatControlAction.usage:
+        _composerBehindSheet(composerHadKeyboard);
+        _showContextSheet();
+      case _ChatControlAction.permissions:
+        if (policy != null) {
+          _composerBehindSheet(composerHadKeyboard);
+          _showModeSheet(policy);
+        }
       case _ChatControlAction.prompts:
         unawaited(_showPromptSheet());
       case _ChatControlAction.showPinnedPrompt:
@@ -17438,7 +17536,7 @@ class _ChatScreenState extends State<ChatScreen>
     Widget scaffold() => _KeyboardInsetWatcher(
       onRoom: _onKeyboardRoom,
       child: Scaffold(
-        drawerEnableOpenDragGesture: true,
+        drawerEnableOpenDragGesture: HermesDrawer.openDragEnabled(context),
         drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
         onDrawerChanged: (open) {
           if (_navigationDrawerOpen == open || !mounted) return;
@@ -17510,7 +17608,9 @@ class _ChatScreenState extends State<ChatScreen>
                                 ),
                                 child: AgentTaskScope(
                                   tasks: agentTasks,
-                                  ownerStepId: agentTasks.isEmpty
+                                  ownerStepId:
+                                      agentTasks.isEmpty ||
+                                          _capsuleTasks != null
                                       ? null
                                       : latestAgentTaskStepId(_messages),
                                   child: _buildBody(),
@@ -18211,7 +18311,7 @@ class _ChatScreenState extends State<ChatScreen>
                                         );
                                       });
                                     },
-                              icon: const Icon(Icons.refresh, size: 18),
+                              icon: const Icon(HIcons.refresh, size: 18),
                               label: Text(
                                 Strings.of(ctx).chatModelCatalogRetry,
                               ),
@@ -18474,8 +18574,8 @@ class _ChatScreenState extends State<ChatScreen>
           ),
           leading: Icon(
             (override == mode)
-                ? Icons.radio_button_checked
-                : Icons.radio_button_unchecked,
+                ? HIcons.radio_button_checked
+                : HIcons.radio_button_unchecked,
             color: mode == null ? colors.accent : _modeColor(mode, colors),
           ),
           title: Text(
@@ -19035,7 +19135,7 @@ class _ChatScreenState extends State<ChatScreen>
     await showHermesDialogRoute<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        icon: Icon(Icons.mic_off_rounded, color: colors.accent, size: 28),
+        icon: Icon(HIcons.mic_off_rounded, color: colors.accent, size: 28),
         title: Text(
           title,
           style: TextStyle(
@@ -19080,8 +19180,8 @@ class _ChatScreenState extends State<ChatScreen>
           FilledButton.icon(
             icon: Icon(
               check.status == SttStatus.needsMicPermission
-                  ? Icons.mic_rounded
-                  : Icons.settings_voice_rounded,
+                  ? HIcons.mic_rounded
+                  : HIcons.settings_voice_rounded,
               size: 16,
             ),
             label: Text(cta),
@@ -19907,7 +20007,7 @@ class _ChatScreenState extends State<ChatScreen>
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Row(
                   children: [
-                    Icon(Icons.mic_rounded, size: 20, color: colors.accent),
+                    Icon(HIcons.mic_rounded, size: 20, color: colors.accent),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -19920,7 +20020,7 @@ class _ChatScreenState extends State<ChatScreen>
                       ),
                     ),
                     Icon(
-                      Icons.open_in_new_rounded,
+                      HIcons.open_in_new_rounded,
                       size: 19,
                       color: colors.textSecondary,
                     ),
@@ -19980,10 +20080,10 @@ class _ChatScreenState extends State<ChatScreen>
             else
               Icon(
                 backgroundStopWarning
-                    ? Icons.warning_amber_rounded
+                    ? HIcons.warning_amber_rounded
                     : stop == StopConfirmationState.failed
-                    ? Icons.error_outline_rounded
-                    : Icons.stop_circle_outlined,
+                    ? HIcons.error_outline_rounded
+                    : HIcons.stop_circle_outlined,
                 key: const ValueKey('chat-stop-status-icon'),
                 size: 14,
                 color: backgroundStopWarning
@@ -20193,8 +20293,8 @@ class _ChatScreenState extends State<ChatScreen>
             children: [
               Icon(
                 outcome.isError
-                    ? Icons.error_outline_rounded
-                    : Icons.task_alt_rounded,
+                    ? HIcons.error_outline_rounded
+                    : HIcons.task_alt_rounded,
                 size: 16,
                 color: color,
               ),
@@ -20223,7 +20323,7 @@ class _ChatScreenState extends State<ChatScreen>
                 constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                 tooltip: s.inAppDismiss,
                 onPressed: () => _chat.dismissBackgroundTaskOutcome(taskId),
-                icon: Icon(Icons.close_rounded, color: colors.textDisabled),
+                icon: Icon(HIcons.close_rounded, color: colors.textDisabled),
               ),
             ],
           ),
@@ -20324,7 +20424,7 @@ class _ChatScreenState extends State<ChatScreen>
             child: TextButton.icon(
               key: const ValueKey('chat-queue-resume'),
               onPressed: _resumeParkedQueue,
-              icon: const Icon(Icons.play_arrow_rounded),
+              icon: const Icon(HIcons.play_arrow_rounded),
               label: Text(strings.chaQueueResume),
               style: TextButton.styleFrom(
                 minimumSize: const Size(HermesSpace.tap, HermesSpace.tap),
@@ -20486,7 +20586,7 @@ class _ChatScreenState extends State<ChatScreen>
           ? null
           : (_) => _recognizerPrewarm?.armOnMicPressDown(),
       child: HermesTactileAction(
-        icon: Icons.graphic_eq_rounded,
+        icon: HIcons.graphic_eq_rounded,
         semanticLabel: Strings.of(context).chaVoiceModeTooltip,
         onPressed: widget.connection.readOnly ? null : _enterVoiceMode,
         backgroundColor: colors.secondary,
@@ -20582,7 +20682,7 @@ class _ChatScreenState extends State<ChatScreen>
         padding: const EdgeInsets.fromLTRB(18, 2, HermesSpace.x2, 0),
         child: Row(
           children: [
-            Icon(Icons.lock_outline_rounded, size: 16, color: colors.warning),
+            Icon(HIcons.lock_outline_rounded, size: 16, color: colors.warning),
             const SizedBox(width: 8),
             Expanded(
               child: ExcludeSemantics(
@@ -20635,7 +20735,7 @@ class _ChatScreenState extends State<ChatScreen>
                   child: Row(
                     children: [
                       Icon(
-                        Icons.visibility_outlined,
+                        HIcons.visibility_outlined,
                         size: 18,
                         color: colors.textSecondary,
                       ),
@@ -20887,6 +20987,7 @@ class _ChatScreenState extends State<ChatScreen>
       // Nothing sits on the composer's top edge (Vistas v3: no notch).
       topPadding: 0,
       footer: _buildFloatingStatusPill(colors),
+      footerInside: true,
     );
   }
 
@@ -20911,12 +21012,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// chat v2); la compactación vive dentro de ella.
   Widget _buildFloatingStatusPill(HermesThemeColors colors) {
     final compaction = _visibleCompaction;
+    // What changed it without the tracker (a compression command, a
+    // restored one) reaches the sheet from here.
     if (!identical(_sheetCompaction.value, compaction)) {
-      // The open context sheet lives on another route: notify after this
-      // frame, never mid-build.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_disposed && mounted) _sheetCompaction.value = _visibleCompaction;
-      });
+      _publishSheetCompaction();
     }
     final policy = context
         .findAncestorStateOfType<HermesAppState>()
@@ -20946,6 +21045,7 @@ class _ChatScreenState extends State<ChatScreen>
         key: _statusPillKey,
         child: ChatStatusPill(
           key: const ValueKey('chat-status-pill'),
+          embedded: true,
           metrics: _pillContextMetrics,
           contextPending: _pillContextPending,
           onOpenContext: _showContextSheet,
@@ -20972,7 +21072,7 @@ class _ChatScreenState extends State<ChatScreen>
                   key: const ValueKey('md1215-model-pending'),
                   message: Strings.of(context).md1215ModelPending,
                   child: Icon(
-                    Icons.schedule_rounded,
+                    HIcons.schedule_rounded,
                     size: 12,
                     color: colors.textSecondary,
                   ),
@@ -20981,17 +21081,9 @@ class _ChatScreenState extends State<ChatScreen>
           // Plan limits from `session.usage` (as Hermes Desktop shows them):
           // the dot appears only from an unambiguous number ≥ 80 %.
           limitLevel: limitLevel,
-          permissionsLabel: policy == null
-              ? null
-              : approvalModeLabel(
-                  Strings.of(context),
-                  policy.effectiveMode(widget.session.id),
-                ),
-          permissionsFlag: flag?.$1,
-          permissionsColor: flag?.$2,
-          onOpenPermissions: policy == null
-              ? null
-              : () => _showModeSheet(policy),
+          // Permissions live in the chat's settings («Permisos»), whatever
+          // the mode (the owner, 2026-11-18).
+          permissionsLabel: null,
           modelPulse: _modelPulse,
         ),
       ),
@@ -21012,7 +21104,7 @@ class _ChatScreenState extends State<ChatScreen>
       onRoute: _trackStatusSheet,
       origin: _statusPillRect,
       surfaceKey: const ValueKey('desktop-context-usage-popover-surface'),
-      title: strings.chaContextUsageTitle,
+      title: strings.kluUsageTitle,
       builder: (_) => SessionContextSheetBody(
         metrics: _sessionContextMetrics,
         loadBreakdown: _loadSessionContextDetails,
@@ -21022,6 +21114,22 @@ class _ChatScreenState extends State<ChatScreen>
         },
         compaction: _sheetCompaction,
         onCompact: readOnly ? null : () => unawaited(_compressFromError()),
+        model: _headerModelId,
+        provider: _headerProviderSlug,
+        onOpenAllUsage: () {
+          final navigator = Navigator.of(context);
+          navigator.maybePop();
+          navigator.push(
+            MaterialPageRoute<void>(
+              builder: (_) => UsageAnalyticsScreen(
+                connection: widget.connection,
+                profile: Session.profileOwner(widget.session.profile),
+                loadLimits: _chat.loadAccountUsage,
+                preferredProvider: _headerProviderSlug,
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -21109,7 +21217,7 @@ class _ChatScreenState extends State<ChatScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.error_outline, size: 32, color: colors.error),
+                Icon(HIcons.error_outline, size: 32, color: colors.error),
                 const SizedBox(height: 12),
                 Text(
                   str.chaMessagesError,
@@ -21145,7 +21253,7 @@ class _ChatScreenState extends State<ChatScreen>
                 ],
                 const SizedBox(height: 14),
                 HermesSecondaryButton(
-                  icon: Icons.refresh_rounded,
+                  icon: HIcons.refresh_rounded,
                   label: str.chaRetry,
                   color: colors.error,
                   onTap: _retryMessagesAfterError,
@@ -21857,7 +21965,7 @@ class _ChatScreenState extends State<ChatScreen>
             key: const ValueKey('chat-message-branch'),
             value: true,
             label: strings.tc1215BranchFromHere,
-            icon: Icons.call_split_rounded,
+            icon: HIcons.call_split_rounded,
           ),
         ],
       );
@@ -22011,6 +22119,12 @@ class _ChatScreenState extends State<ChatScreen>
     // burbuja compacta en lugar de apilar mensajes de usuario independientes.
     if (unit is _UserTurnGroup) {
       final rawContent = (unit.primary['content'] as String?) ?? '';
+      // What the bubble shows of the raw text (memory-context lens): Edit
+      // stays available when that is all the projection changed.
+      final shownRaw = memoryContextDisplayText(
+        unit.primary['role'],
+        rawContent,
+      );
       final content = projectedContentCopy(
         Strings.of(context),
         unit.primary,
@@ -22060,7 +22174,7 @@ class _ChatScreenState extends State<ChatScreen>
             answering &&
             (marks.queued.isNotEmpty || _chat.queuedEntries.isNotEmpty),
         onEdit:
-            content == rawContent &&
+            content == shownRaw &&
                 unit.supplements.isEmpty &&
                 _canEditUserMessage(unit.primary)
             ? (bubbleWidth) => _editUserMessage(unit.primary, bubbleWidth)
@@ -22794,7 +22908,7 @@ class _ChatNoticeDismissButton extends StatelessWidget {
       child: IconButton(
         onPressed: onPressed,
         tooltip: label,
-        icon: const Icon(Icons.close_rounded),
+        icon: const Icon(HIcons.close_rounded),
         iconSize: 18,
         color: Theme.of(context).hermes.textSecondary,
         constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
@@ -22868,7 +22982,7 @@ class _EditQueuedEntrySheetState extends State<_EditQueuedEntrySheet> {
               children: [
                 IconButton(
                   onPressed: () => _close(),
-                  icon: const Icon(Icons.close_rounded),
+                  icon: const Icon(HIcons.close_rounded),
                   tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
                 ),
                 const SizedBox(width: 4),
@@ -23410,7 +23524,7 @@ class _SlashPalette extends StatelessWidget {
                 ),
               ),
               child: command.isSkill
-                  ? Icon(Icons.bolt_rounded, size: 18, color: colors.accent)
+                  ? Icon(HIcons.bolt_rounded, size: 18, color: colors.accent)
                   : Text(
                       '/',
                       textScaler: TextScaler.noScaling,
@@ -23573,7 +23687,7 @@ class _EmptyChatState extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        Icons.folder_outlined,
+                        HIcons.folder_outlined,
                         size: 14,
                         color: colors.textSecondary,
                       ),
@@ -23897,7 +24011,7 @@ class _ErrorBubbleState extends State<ChatErrorBubble> {
                 Row(
                   children: [
                     Icon(
-                      authFailure != null ? Icons.key_off_rounded : kind.icon,
+                      authFailure != null ? HIcons.key_off_rounded : kind.icon,
                       size: 14,
                       color: colors.error,
                     ),
@@ -24307,7 +24421,7 @@ class _PlannedErrorCardState extends State<_PlannedErrorCard>
                   children: [
                     Icon(
                       authFailure != null
-                          ? Icons.key_off_rounded
+                          ? HIcons.key_off_rounded
                           : _classifyError(errorText).icon,
                       size: 14,
                       color: colors.error,
@@ -24611,7 +24725,7 @@ class _LiveAssistantHost extends StatelessWidget {
 @visibleForTesting
 int get debugActiveChatRevealClocks => debugActiveLiveReplyClocks;
 
-/// F5 (REPORT-AUDITORIA-FLUIDEZ §3, C2): a question over the chat comes
+/// F5: a question over the chat comes
 /// in: its veil fades in (HermesMotion.fast) while the card rises 10 dp
 /// into place with a fade (HermesMotion.base, emphasized; the turn's
 /// blocks' entrance, mock 138 v2). Opacity and translation only, so taps
@@ -24690,7 +24804,7 @@ class _PromptEntranceState extends State<_PromptEntrance>
   );
 }
 
-/// F5 (REPORT-AUDITORIA-FLUIDEZ §3, C1/C2): a card over the composer (an
+/// F5: a card over the composer (an
 /// approval, a question) that comes in as the turn's blocks do (mock 138
 /// v2: from 10 dp below with a fade), goes out with a short fade, and
 /// whose height eases, so the composer moves with it instead of jumping.
@@ -25032,7 +25146,7 @@ _timelineSystemEventPresentation(
         detail: details.isEmpty
             ? strings.chaBackgroundWorkFinished
             : details.join(' · '),
-        icon: Icons.hub_outlined,
+        icon: HIcons.hub_outlined,
       );
     case 'process_complete':
       // El runtime ya redactó el título compacto; el payload completo queda en
@@ -25044,7 +25158,7 @@ _timelineSystemEventPresentation(
       return (
         title: title.isNotEmpty ? title : strings.chaTimelineProcessFinished,
         detail: null,
-        icon: Icons.terminal_rounded,
+        icon: HIcons.terminal_rounded,
       );
     case 'side_answer':
       // Local `/btw` or `/bg` answer: the header is the title, the answer the
@@ -25068,16 +25182,16 @@ _timelineSystemEventPresentation(
             ? answer
             : (message['content'] ?? '').toString(),
         icon: metadata['is_error'] == true
-            ? Icons.error_outline_rounded
+            ? HIcons.error_outline_rounded
             : isBackground
-            ? Icons.task_alt_rounded
-            : Icons.chat_bubble_outline_rounded,
+            ? HIcons.task_alt_rounded
+            : HIcons.chat_bubble_outline_rounded,
       );
     case 'model_switch':
       return (
         title: strings.chaTimelineModelChanged,
         detail: null,
-        icon: Icons.swap_horiz_rounded,
+        icon: HIcons.swap_horiz_rounded,
       );
     case 'compression_result':
       final rawMetadata = message['display_metadata'];
@@ -25108,19 +25222,19 @@ _timelineSystemEventPresentation(
                 beforeTokens.toString(),
                 afterTokens.toString(),
               ),
-        icon: Icons.compress_rounded,
+        icon: HIcons.compress_rounded,
       );
     case 'auto_continue':
       return (
         title: strings.chaTimelineAutoContinued,
         detail: null,
-        icon: Icons.replay_rounded,
+        icon: HIcons.replay_rounded,
       );
     default:
       return (
         title: strings.chaTimelineSystemEvent,
         detail: null,
-        icon: Icons.info_outline_rounded,
+        icon: HIcons.info_outline_rounded,
       );
   }
 }
@@ -25385,7 +25499,7 @@ class _SystemBlobChip extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.bolt_rounded, size: 15, color: colors.accent),
+                Icon(HIcons.bolt_rounded, size: 15, color: colors.accent),
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(
@@ -25490,7 +25604,7 @@ class _ProcessNotificationRowState extends State<_ProcessNotificationRow> {
                     SizedBox(
                       width: 28,
                       child: Icon(
-                        Icons.terminal_rounded,
+                        HIcons.terminal_rounded,
                         size: 16,
                         color: failed
                             ? colors.error.withValues(alpha: 0.8)
@@ -25517,8 +25631,8 @@ class _ProcessNotificationRowState extends State<_ProcessNotificationRow> {
                     ),
                     Icon(
                       _expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
+                          ? HIcons.expand_less_rounded
+                          : HIcons.expand_more_rounded,
                       size: 18,
                       color: colors.textSecondary.withValues(alpha: 0.72),
                     ),
@@ -25840,7 +25954,11 @@ class _UserMessage extends StatelessWidget {
           children: [
             KeyedSubtree(
               key: const ValueKey('user-message-bubble'),
-              child: _BubbleSizeReporter(
+              child: SpringIn(
+                animate: status != null,
+                scaleFrom: 0.92,
+                alignment: Alignment.centerRight,
+                child: _BubbleSizeReporter(
                 holder: bubbleSize,
                 // Always present (painter or not), so marking the bubble
                 // never remounts it or an inline editor inside it.
@@ -25861,9 +25979,14 @@ class _UserMessage extends StatelessWidget {
                     // borde. El mensaje del agente va en texto plano; el del usuario
                     // en esta burbuja sutil.
                     decoration: BoxDecoration(
-                      color: HermesGlassLook.bubbleFill(
-                        context,
-                        colors.surfaceVariant,
+                      // The user.s own bubble is the same neutral a step stronger, so it
+                      // never reads as one of the agent.s and never takes a hue.
+                      color: Color.alphaBlend(
+                        colors.textPrimary.withValues(alpha: 0.07),
+                        HermesGlassLook.bubbleFill(
+                          context,
+                          colors.surfaceVariant,
+                        ),
                       ),
                       borderRadius: BorderRadius.circular(20),
                     ),
@@ -25919,7 +26042,7 @@ class _UserMessage extends StatelessWidget {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(
-                                      Icons.add_comment_outlined,
+                                      HIcons.add_comment_outlined,
                                       size: 14,
                                       color: colors.accent,
                                     ),
@@ -25989,6 +26112,7 @@ class _UserMessage extends StatelessWidget {
                   ),
                 ),
               ),
+              ),
             ),
             if (editing && editingLaterTurns > 0)
               Padding(
@@ -26016,7 +26140,7 @@ class _UserMessage extends StatelessWidget {
                         minHeight: 48,
                       ),
                       icon: Icon(
-                        Icons.edit_outlined,
+                        HIcons.edit_outlined,
                         size: 15,
                         color: colors.textSecondary,
                       ),
@@ -26045,7 +26169,7 @@ class _UserMessage extends StatelessWidget {
                       minHeight: 48,
                     ),
                     icon: Icon(
-                      Icons.copy_rounded,
+                      HIcons.copy_rounded,
                       size: 13,
                       color: colors.textSecondary,
                     ),
@@ -26064,7 +26188,7 @@ class _UserMessage extends StatelessWidget {
                               Padding(
                                 padding: const EdgeInsets.only(right: 3),
                                 child: Icon(
-                                  Icons.check_rounded,
+                                  HIcons.check_rounded,
                                   key: const ValueKey('user-bubble-sent-check'),
                                   size: 12,
                                   color: colors.textTertiary,
@@ -26252,8 +26376,14 @@ class _BranchLongPress extends StatelessWidget {
 /// y el nombre, el turno y la respuesta empiezan en el mismo borde. En una
 /// sala cada turno sí lleva la cara de quien habla (`RoomMemberFace`).
 class _AssistantNameHeader extends StatelessWidget {
-  const _AssistantNameHeader({required this.name, this.subtitle});
+  const _AssistantNameHeader({
+    required this.name,
+    this.subtitle,
+    this.inline = false,
+  });
 
+  /// A settled turn: its line of work sits beside the name, on one line.
+  final bool inline;
   final String name;
   final Widget? subtitle;
 
@@ -26270,6 +26400,7 @@ class _AssistantNameHeader extends StatelessWidget {
           ? null
           : botIdentityColor(bot.profile!, avatarCache: bot.avatarCache),
       subtitle: subtitle,
+      inlineSubtitle: inline,
     );
   }
 }
@@ -26327,7 +26458,7 @@ class _AssistantLiveHeader extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(
         HermesSpace.x3,
         compact ? 5 : 11,
-        HermesSpace.x4,
+        HermesSpace.x4 + 12,
         0,
       ),
       child: Column(
@@ -26514,32 +26645,32 @@ class _AssistantMessage extends StatelessWidget {
       if (latest != null) ...[
         ChatCopyScope(
           label: s.tc1215CopyLatest,
-          icon: Icons.short_text_rounded,
+          icon: HIcons.short_text_rounded,
           text: () => markdownToClipboardText(
             GeneratedMediaService.stripDirectives(latest()),
           ),
         ),
         ChatCopyScope(
           label: s.tc1215CopyFull,
-          icon: Icons.copy_all_rounded,
+          icon: HIcons.copy_all_rounded,
           text: () => plain,
         ),
       ] else
         ChatCopyScope(
           label: s.chaCopyMessage,
-          icon: Icons.copy_rounded,
+          icon: HIcons.copy_rounded,
           text: () => plain,
         ),
       if (raw != plain)
         ChatCopyScope(
           label: s.tc1215CopyMarkdown,
-          icon: Icons.notes_rounded,
+          icon: HIcons.notes_rounded,
           text: () => raw,
         ),
       if (code.isNotEmpty)
         ChatCopyScope(
           label: s.tc1215CopyCode(code.length),
-          icon: Icons.code_rounded,
+          icon: HIcons.code_rounded,
           text: () => code.join('\n\n'),
         ),
     ];
@@ -26603,6 +26734,14 @@ class _AssistantMessage extends StatelessWidget {
             turnInFlight ||
             _assistantActivityDuration(metadata) != null ||
             metadata['_approval_choice'] != null);
+    // A settled turn says what it did at its foot, beside the answer's
+    // actions; its header keeps the face and the name only.
+    final settledTrace =
+        !turnInFlight &&
+        !stopped &&
+        metadata['_approval_choice'] == null &&
+        (activityEvents.isNotEmpty ||
+            _assistantActivityDuration(metadata) != null);
     final structuredImages = _structuredGeneratedImages(metadata);
     final structuredVideos = _structuredGeneratedVideos(metadata);
     final textualGeneratedBasenames = <String, int>{};
@@ -26940,7 +27079,7 @@ class _AssistantMessage extends StatelessWidget {
       ),
       if (onRegenerate != null)
         ChatMessageActionButton(
-          icon: Icons.refresh_rounded,
+          icon: HIcons.refresh_rounded,
           label: Strings.of(context).chaRegenerate,
           onPressed: onRegenerate,
         ),
@@ -26963,7 +27102,7 @@ class _AssistantMessage extends StatelessWidget {
       header: branchable(
         !showHeader
             ? null
-            : showTrace
+            : showTrace && !settledTrace
             ? ThinkingTraceCard(
                 key: const ValueKey('assistant-activity-trace'),
                 events: activityEvents,
@@ -26982,10 +27121,18 @@ class _AssistantMessage extends StatelessWidget {
                 rowAttachments: connectionCard == null
                     ? const {}
                     : {connectionCard!.toolCallId: connectionCard!.card},
-                headerBuilder: (context, summary, details) => Column(
+                headerBuilder: (context, summary, details) => Padding(
+                  padding: EdgeInsetsDirectional.only(
+                    end: turnInFlight ? 12 : 0,
+                  ),
+                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _AssistantNameHeader(name: agentName, subtitle: summary),
+                    _AssistantNameHeader(
+                      name: agentName,
+                      subtitle: summary,
+                      inline: !turnInFlight,
+                    ),
 
                     if (!turnInFlight &&
                         const {
@@ -27013,6 +27160,7 @@ class _AssistantMessage extends StatelessWidget {
                     turnInFlight ? _FaceIndent(child: details) : details,
                   ],
                 ),
+                ),
               )
             : _AssistantNameHeader(name: agentName),
       ),
@@ -27020,24 +27168,38 @@ class _AssistantMessage extends StatelessWidget {
         if (showHeader && metaLines.isNotEmpty)
           _MetaBlock(lines: metaLines, onDark: false),
         if (answer.isNotEmpty)
-          if (isStreaming)
-            LiveReplyReveal(
-              key: const ValueKey('live-reply-reveal'),
-              revision: metadata,
-              enabled: revealAnswer,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: _stackImageRuns(
-                  answerWidgets(),
-                ).toList(growable: false),
-              ),
-            )
-          else
-            ..._stackImageRuns(answerWidgets()),
-        // Optional cursor under the live answer; a sibling of the text, so
-        // it never holds the text back (Settings › Appearance).
-        if (answer.isNotEmpty && isStreaming) const HermesStreamingCursor(),
+          ReplyBubble(
+            key: const ValueKey('assistant-reply-bubble'),
+            live: isStreaming,
+            first: showHeader,
+            last: showFooter,
+            fill: HermesGlassLook.bubbleFill(
+              context,
+              Theme.of(context).hermes.surfaceVariant,
+            ).withValues(alpha: 0.5),
+            children: [
+              if (isStreaming)
+                LiveReplyReveal(
+                  key: const ValueKey('live-reply-reveal'),
+                  revision: metadata,
+                  enabled: revealAnswer,
+                  child: Column(
+                    crossAxisAlignment: showHeader && showFooter
+                        ? CrossAxisAlignment.start
+                        : CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: _stackImageRuns(
+                      answerWidgets(),
+                    ).toList(growable: false),
+                  ),
+                )
+              else
+                ..._stackImageRuns(answerWidgets()),
+              // Optional cursor under the live answer; a sibling of the
+              // text, so it never holds the text back.
+              if (isStreaming) const HermesStreamingCursor(),
+            ],
+          ),
         if (changedFiles.isNotEmpty) TurnChangesChip(files: changedFiles),
         if (showFooter)
           TurnMemoryPill(events: activityEvents, active: turnInFlight),
@@ -27046,11 +27208,47 @@ class _AssistantMessage extends StatelessWidget {
         // Once per answer: a long one is cut in slices, only the last has
         // the foot.
         if (!isStreaming && showFooter)
-          Row(
-            key: const ValueKey('assistant-footer-actions'),
-            mainAxisSize: MainAxisSize.min,
-            children: headerActions(),
-          ),
+          if (settledTrace && activityEvents.isNotEmpty)
+            ThinkingTraceCard(
+                key: const ValueKey('assistant-activity-trace-foot'),
+                events: activityEvents,
+                active: turnInFlight,
+                liveInPill: false,
+                // The transcript owns ordinary work; the footer only
+                // complements it with agents, background work or queued input.
+                stepCards: true,
+                headline: Strings.of(context).chatActivityThinking,
+                activeMood: headerMood,
+                waitingForUser: activityActive && waitingForUser,
+                stopped: stopped,
+                duration: _assistantActivityDuration(metadata),
+                delegatedCount:
+                    metadata[TurnActivityMemory.delegatedCountKey] as int? ?? 0,
+                rowAttachments: connectionCard == null
+                    ? const {}
+                    : {connectionCard!.toolCallId: connectionCard!.card},
+                headerBuilder: (context, summary, details) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      key: const ValueKey('assistant-footer-actions'),
+                      children: [
+                        ...headerActions(),
+                        const SizedBox(width: 4),
+                        Expanded(child: summary),
+                      ],
+                    ),
+                    details,
+                  ],
+                ),
+            )
+          else
+            Row(
+              key: const ValueKey('assistant-footer-actions'),
+              mainAxisSize: MainAxisSize.min,
+              children: headerActions(),
+            ),
         if (showFooter && technicalDetails.isNotEmpty)
           _AssistantTechnicalDetails(details: technicalDetails),
         if (showFooter && metadata['show_link_preview'] == true)
@@ -27129,7 +27327,7 @@ class _AssistantTechnicalDetailsState
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        Icons.terminal_rounded,
+                        HIcons.terminal_rounded,
                         size: 15,
                         color: colors.textDisabled,
                       ),
@@ -27149,7 +27347,7 @@ class _AssistantTechnicalDetailsState
                             ? Duration.zero
                             : const Duration(milliseconds: 160),
                         child: Icon(
-                          Icons.keyboard_arrow_down_rounded,
+                          HIcons.keyboard_arrow_down_rounded,
                           size: 17,
                           color: colors.textDisabled,
                         ),
@@ -27195,7 +27393,7 @@ class _AssistantTechnicalDetailsState
                         minHeight: 48,
                       ),
                       icon: Icon(
-                        Icons.copy_rounded,
+                        HIcons.copy_rounded,
                         size: 15,
                         color: colors.textSecondary,
                       ),
@@ -27520,7 +27718,7 @@ class _LinkPreviewCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(Icons.link, size: 16, color: colors.textSecondary),
+            Icon(HIcons.link, size: 16, color: colors.textSecondary),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -27670,7 +27868,7 @@ class _LinkPreviewLoaderState extends State<_LinkPreviewLoader> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.link, size: 12, color: colors.textSecondary),
+              Icon(HIcons.link, size: 12, color: colors.textSecondary),
               const SizedBox(width: 4),
               Text(
                 Strings.of(context).chaLinkPreview,
@@ -27774,14 +27972,14 @@ class _QueuedRow extends StatelessWidget {
                       key: ValueKey('chat-queue-move-up-${entry.id}'),
                       value: true,
                       label: strings.tc1215QueueMoveUp,
-                      icon: Icons.arrow_upward_rounded,
+                      icon: HIcons.arrow_upward_rounded,
                     ),
                   if (canMoveDown)
                     HermesAction<bool>(
                       key: ValueKey('chat-queue-move-down-${entry.id}'),
                       value: false,
                       label: strings.tc1215QueueMoveDown,
-                      icon: Icons.arrow_downward_rounded,
+                      icon: HIcons.arrow_downward_rounded,
                     ),
                 ],
               );
@@ -27839,7 +28037,7 @@ class _QueuedRow extends StatelessWidget {
       child: Row(
         children: [
           Icon(
-            Icons.subdirectory_arrow_right_rounded,
+            HIcons.subdirectory_arrow_right_rounded,
             size: 16,
             color: colors.textDisabled,
           ),
@@ -27949,27 +28147,27 @@ class _QueuedRow extends StatelessWidget {
             action(
               keyName: 'chat-queue-abandon-${entry.id}',
               label: strings.chatQueueAbandon,
-              icon: Icons.remove_circle_outline_rounded,
+              icon: HIcons.remove_circle_outline_rounded,
               onPressed: onAbandon,
             )
           else ...[
             action(
               keyName: 'chat-queue-edit-${entry.id}',
               label: strings.chaQueueEdit,
-              icon: Icons.edit_outlined,
+              icon: HIcons.edit_outlined,
               onPressed: editEnabled ? onEdit : null,
             ),
             if (canSteer)
               action(
                 keyName: 'chat-queue-steer-${entry.id}',
                 label: strings.chaQueueSteer,
-                icon: Icons.turn_right_rounded,
+                icon: HIcons.turn_right_rounded,
                 onPressed: onSteer,
               ),
             action(
               keyName: 'chat-queue-send-now-${entry.id}',
               label: sendLabel,
-              icon: Icons.keyboard_return_rounded,
+              icon: HIcons.keyboard_return_rounded,
               onPressed: isEditing || accepted || entry.sending
                   ? null
                   : onSendNow,
@@ -27977,7 +28175,7 @@ class _QueuedRow extends StatelessWidget {
             action(
               keyName: 'chat-queue-delete-${entry.id}',
               label: strings.chaQueueDelete,
-              icon: Icons.delete_outline_rounded,
+              icon: HIcons.delete_outline_rounded,
               onPressed: accepted || entry.sending ? null : onDelete,
             ),
           ],
@@ -28115,7 +28313,7 @@ class _ScrollToBottomButton extends StatelessWidget {
         label: newLabel == null
             ? strings.chaScrollToBottom
             : '${strings.chaScrollToBottom}, $newLabel',
-        icon: Icons.keyboard_arrow_down,
+        icon: HIcons.keyboard_arrow_down,
         iconSize: 20,
         badge: newLabel,
       );
@@ -29046,7 +29244,7 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            Icons.history,
+                            HIcons.history,
                             size: 14,
                             color: colors.textSecondary,
                           ),
@@ -29121,7 +29319,7 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
                       children: [
                         ExcludeSemantics(
                           child: Icon(
-                            Icons.error_outline_rounded,
+                            HIcons.error_outline_rounded,
                             size: 16,
                             color: colors.error,
                           ),

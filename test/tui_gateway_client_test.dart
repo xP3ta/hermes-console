@@ -4197,7 +4197,16 @@ void main() {
   );
 
   test(
-    'un replay truncado descarta tanto el tail como frames vivos retenidos',
+    // PARITY-SUBST (2026-11-16): was «un replay truncado
+    // descarta tanto el tail como frames vivos retenidos» (nothing ever
+    // dispatched, even live frames newer than the head, until a recovery).
+    // Desktop (hermes-agent 3b421578, apps/shared/src/json-rpc-gateway.ts
+    // :620-631 + :709-719 skipTruncatedWindow + :724-742 dispatchIfNewer +
+    // :784-809 flushReplayHold): a truncated window is never painted, the
+    // cursor jumps to the server head, and live frames newer than that head
+    // still dispatch. The answer's epoch is the socket's own (pure truncation;
+    // an epoch change is a separate branch, :651-704).
+    'un replay truncado salta a la cabeza y despacha solo lo vivo más nuevo',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(server.close);
@@ -4258,7 +4267,7 @@ void main() {
               'jsonrpc': '2.0',
               'id': frame['id'],
               'result': {
-                'epoch': 'epoch-qa',
+                'epoch': 'epoch-a',
                 'truncated': true,
                 'latest_seq': 3,
                 'events': [
@@ -4352,17 +4361,17 @@ void main() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
+      // The truncated tail (seq 2) and the live frame at the head (seq 3) are
+      // never painted; the live frame past the head (seq 4) is, once.
       expect(
         events.map((event) => event.payload['text']).whereType<String>(),
-        isEmpty,
+        ['live-after-truncation'],
       );
-      // The app only releases this runtime after applying a recovery snapshot.
-      client.commitRecoveryRuntime('runtime-replay');
       recoveryCommitted.complete();
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(
         events.map((event) => event.payload['text']).whereType<String>(),
-        isEmpty,
+        ['live-after-truncation', 'live-after-authoritative-recovery'],
       );
     },
   );

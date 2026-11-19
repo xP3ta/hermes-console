@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -149,7 +150,7 @@ class _ChatFileViewerScreenState extends State<ChatFileViewerScreen> {
               value: path,
               label: label,
               subtitle: folder,
-              icon: Icons.insert_drive_file_rounded,
+              icon: HIcons.insert_drive_file_rounded,
             );
           }(),
       ],
@@ -189,7 +190,6 @@ class _ChatFileViewerScreenState extends State<ChatFileViewerScreen> {
             sourcePath: content.path,
             initialLine: widget.line,
             endLine: widget.endLine,
-            allowActiveContent: false,
             // What may hold secrets never goes out through the share sheet.
             allowShare: !content.sensitive,
             notice: content.truncated
@@ -331,8 +331,8 @@ class _Message extends StatelessWidget {
                 onPressed: onToggleDetails,
                 icon: Icon(
                   detailsOpen
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
+                      ? HIcons.expand_less_rounded
+                      : HIcons.expand_more_rounded,
                 ),
                 label: Text(detailsLabel!),
               ),

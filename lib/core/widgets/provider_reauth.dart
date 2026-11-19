@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -271,7 +272,7 @@ class ProviderAuthBanner extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Icon(Icons.key_off_rounded, size: 16, color: colors.error),
+                Icon(HIcons.key_off_rounded, size: 16, color: colors.error),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -284,7 +285,7 @@ class ProviderAuthBanner extends StatelessWidget {
                 IconButton(
                   key: const ValueKey('hr1215-provider-auth-dismiss'),
                   onPressed: onDismiss,
-                  icon: const Icon(Icons.close_rounded, size: 20),
+                  icon: const Icon(HIcons.close_rounded, size: 20),
                   tooltip: s.commonClose,
                   constraints: const BoxConstraints(
                     minWidth: 48,
@@ -307,7 +308,7 @@ class ProviderAuthBanner extends StatelessWidget {
                 style: hermesTonalButtonStyle,
                 key: const ValueKey('hr1215-provider-auth-action'),
                 onPressed: onAction,
-                icon: const Icon(Icons.key_rounded, size: 18),
+                icon: const Icon(HIcons.key_rounded, size: 18),
                 label: Text(providerAuthActionLabel(s, failure)),
               ),
             ),

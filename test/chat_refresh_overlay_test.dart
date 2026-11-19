@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   test('refresh canonicaliza todos los aliases de ID de mensaje', () {
@@ -291,7 +292,7 @@ void main() {
     expect(material.color, colors.surface);
     final text = tester.widget<Text>(find.text('No se pudo actualizar'));
     expect(text.style?.color, colors.textPrimary);
-    final glyph = tester.widget<Icon>(find.byIcon(Icons.error_outline_rounded));
+    final glyph = tester.widget<Icon>(find.byIcon(HIcons.error_outline_rounded));
     expect(glyph.color, colors.error);
   });
 }

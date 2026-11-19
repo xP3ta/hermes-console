@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -84,7 +85,7 @@ class ReadOnlyBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.visibility_outlined,
+            HIcons.visibility_outlined,
             size: _iconSize,
             color: colors.warning,
           ),

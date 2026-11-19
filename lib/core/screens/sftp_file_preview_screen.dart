@@ -5,6 +5,7 @@
 // imagen y texto/código; los mismos límites (512 KB de texto) y la misma
 // detección de binario (`electron/main.ts`, `looksBinary`). Lo que se puede
 // ver lo pinta el visor de artefactos de la app.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -83,10 +84,12 @@ class _SftpFilePreviewScreenState extends State<SftpFilePreviewScreen> {
     mimeType: '',
   );
 
-  /// Images and PDFs are shown whole and skip the binary sniff, as on
-  /// Desktop; everything else is text, cut at 512 KB.
+  /// Images, PDFs and 3D models are shown whole and skip the binary sniff;
+  /// everything else is text, cut at 512 KB.
   bool get _isMedia =>
-      _kind == ArtifactViewerKind.image || _kind == ArtifactViewerKind.pdf;
+      _kind == ArtifactViewerKind.image ||
+      _kind == ArtifactViewerKind.pdf ||
+      _kind == ArtifactViewerKind.model3d;
 
   @override
   void initState() {
@@ -188,7 +191,7 @@ class _SftpFilePreviewScreenState extends State<SftpFilePreviewScreen> {
       ),
       _PreviewState.unavailable => HermesEmptyState(
         key: const ValueKey('sftp-preview-unavailable'),
-        icon: Icons.error_outline,
+        icon: HIcons.error_outline,
         title: strings.sftpPreviewUnavailable,
         body: localizedSshError(strings, _error ?? StateError('preview')),
         primaryLabel: strings.commonClose,
@@ -196,7 +199,7 @@ class _SftpFilePreviewScreenState extends State<SftpFilePreviewScreen> {
       ),
       _PreviewState.binary => HermesEmptyState(
         key: const ValueKey('sftp-preview-binary'),
-        icon: Icons.warning_amber_rounded,
+        icon: HIcons.warning_amber_rounded,
         title: strings.sftpPreviewBinaryTitle,
         body: strings.sftpPreviewBinaryBody(widget.name),
         primaryLabel: strings.sftpPreviewAnyway,
@@ -208,7 +211,7 @@ class _SftpFilePreviewScreenState extends State<SftpFilePreviewScreen> {
       ),
       _PreviewState.large => HermesEmptyState(
         key: const ValueKey('sftp-preview-large'),
-        icon: Icons.warning_amber_rounded,
+        icon: HIcons.warning_amber_rounded,
         title: strings.sftpPreviewLargeTitle,
         body: strings.sftpPreviewLargeBody(
           widget.name,

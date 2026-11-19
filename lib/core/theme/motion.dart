@@ -14,6 +14,13 @@ abstract final class HermesMotion {
   /// A tab or segment change, folding and unfolding (v25 .2 s; 134 .2 s).
   static const Duration base = Duration(milliseconds: 200);
 
+  /// What an animated size takes when motion is reduced: never zero, as a
+  /// zero-length size animation settles inside its own layout.
+  static const Duration instant = Duration(milliseconds: 1);
+
+  /// A reply bubble growing with the live text (a soft spring).
+  static const Duration bubble = Duration(milliseconds: 520);
+
   /// A block of the live turn coming in: a slight slide with a fade.
   static const Duration enter = Duration(milliseconds: 450);
 

@@ -6,12 +6,13 @@ import 'package:hermes_android/core/screens/tools_hub_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 HermesToolDestination _dest(String id, String group, {String? value}) =>
     HermesToolDestination(
       id: id,
       group: group,
-      icon: Icons.folder_outlined,
+      icon: HIcons.folder_outlined,
       label: 'Destino $id',
       value: value,
       builder: (_) => const SizedBox.shrink(),
@@ -72,7 +73,7 @@ void main() {
     expect(
       find.descendant(
         of: plain,
-        matching: find.byIcon(Icons.chevron_right_rounded),
+        matching: find.byIcon(HIcons.chevron_right_rounded),
       ),
       findsOneWidget,
     );

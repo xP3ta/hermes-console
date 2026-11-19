@@ -141,7 +141,7 @@ void main() {
     File('${lib.path}/a.dart').writeAsStringSync('''
 final a = Text('10:00', style: TextStyle(color: c.textDisabled));
 final b = Text('x', style: base.copyWith(color: c.textDisabled));
-final i = Icon(Icons.close, color: c.textDisabled);
+final i = Icon(HIcons.close, color: c.textDisabled);
 final t = TextButton.styleFrom(disabledForegroundColor: c.textDisabled);
 // TextStyle(color: c.textDisabled) in a comment
 ''');

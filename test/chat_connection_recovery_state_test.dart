@@ -683,7 +683,7 @@ void main() {
       );
       // conn-registry E2: the end of a loss says nothing. Desktop has no
       // «reconnected» notice (no match in apps/desktop/src) and the official
-      // app shows none (lanes/official-compare/S3).
+      // app shows none.
       expect(find.text('Reconnected'), findsNothing);
     },
   );

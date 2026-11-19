@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../design/tokens.dart';
@@ -176,7 +177,7 @@ class ChatLinkCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(HermesRadius.group),
                 ),
                 child: Icon(
-                  Icons.language_rounded,
+                  HIcons.language_rounded,
                   size: 28,
                   color: colors.accent,
                 ),

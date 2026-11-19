@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -364,10 +365,10 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
       InteractivePromptKind.terminalRead => strings.interactiveTerminalTitle,
     };
     final icon = switch (request.kind) {
-      InteractivePromptKind.clarify => Icons.help_outline_rounded,
-      InteractivePromptKind.sudo => Icons.admin_panel_settings_outlined,
-      InteractivePromptKind.secret => Icons.key_outlined,
-      InteractivePromptKind.terminalRead => Icons.terminal_rounded,
+      InteractivePromptKind.clarify => HIcons.help_outline_rounded,
+      InteractivePromptKind.sudo => HIcons.admin_panel_settings_outlined,
+      InteractivePromptKind.secret => HIcons.key_outlined,
+      InteractivePromptKind.terminalRead => HIcons.terminal_rounded,
     };
     final summary = _isBatchClarify
         ? strings.interactiveBatchProgress(
@@ -730,7 +731,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
               Padding(
                 padding: const EdgeInsets.only(left: 8, top: 2),
                 child: Icon(
-                  Icons.lock_outline,
+                  HIcons.lock_outline,
                   size: 14,
                   color: colors.textSecondary,
                 ),
@@ -777,11 +778,11 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     final enabled = onTap != null;
     final indicator = multiSelect
         ? (selected
-              ? Icons.check_box_rounded
-              : Icons.check_box_outline_blank_rounded)
+              ? HIcons.check_box_rounded
+              : HIcons.check_box_outline_blank_rounded)
         : (selected
-              ? Icons.radio_button_checked_rounded
-              : Icons.radio_button_off_rounded);
+              ? HIcons.radio_button_checked_rounded
+              : HIcons.radio_button_off_rounded);
     final foreground = enabled ? colors.textPrimary : colors.textDisabled;
     // A single answer reads as a radio button («1 of 3, checked»), several
     // as check boxes (review R5A B3-5).
@@ -850,7 +851,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
                 ),
               if (trailingChevron)
                 Icon(
-                  Icons.chevron_right_rounded,
+                  HIcons.chevron_right_rounded,
                   size: 20,
                   color: colors.textSecondary,
                 ),
@@ -897,7 +898,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
               ? colors.accent.withAlpha(34)
               : colors.surfaceVariant,
           prefixIcon: Icon(
-            sensitive ? Icons.lock_outline_rounded : Icons.edit_outlined,
+            sensitive ? HIcons.lock_outline_rounded : HIcons.edit_outlined,
             size: 18,
             color: colors.textSecondary,
           ),
@@ -934,7 +935,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
   List<Widget> _legacyActions(Strings strings) => [
     TextButton.icon(
       onPressed: widget.busy ? null : widget.onCancel,
-      icon: const Icon(Icons.stop_circle_outlined, size: 18),
+      icon: const Icon(HIcons.stop_circle_outlined, size: 18),
       label: Text(strings.interactiveCancel),
     ),
     if (_skippable)
@@ -946,7 +947,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     FilledButton.icon(
       onPressed: widget.busy ? null : _submit,
       icon: Icon(
-        _isTerminalRead ? Icons.refresh_rounded : Icons.send_rounded,
+        _isTerminalRead ? HIcons.refresh_rounded : HIcons.send_rounded,
         size: 17,
       ),
       label: Text(
@@ -965,7 +966,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
       TextButton.icon(
         key: const ValueKey('interactive-batch-cancel'),
         onPressed: onCancel,
-        icon: const Icon(Icons.stop_circle_outlined, size: 18),
+        icon: const Icon(HIcons.stop_circle_outlined, size: 18),
         label: Text(strings.interactiveCancel),
       ),
       if (_skippable)
@@ -977,7 +978,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
       FilledButton.icon(
         key: const ValueKey('interactive-batch-confirm'),
         onPressed: onConfirm,
-        icon: const Icon(Icons.send_rounded, size: 17),
+        icon: const Icon(HIcons.send_rounded, size: 17),
         label: Text(strings.interactiveBatchConfirm),
       ),
     ];
@@ -1032,7 +1033,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
               TextButton.icon(
                 key: const ValueKey('interactive-batch-cancel'),
                 onPressed: onCancel,
-                icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                icon: const Icon(HIcons.stop_circle_outlined, size: 18),
                 label: Text(cancel, maxLines: 1),
               ),
             )
@@ -1043,7 +1044,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
               child: TextButton(
                 key: const ValueKey('interactive-batch-cancel'),
                 onPressed: onCancel,
-                child: const Icon(Icons.stop_circle_outlined, size: 18),
+                child: const Icon(HIcons.stop_circle_outlined, size: 18),
               ),
             ),
           if (_skippable && words)
@@ -1061,7 +1062,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
               child: TextButton(
                 key: _skipKey,
                 onPressed: _onSkip,
-                child: const Icon(Icons.skip_next_rounded, size: 18),
+                child: const Icon(HIcons.skip_next_rounded, size: 18),
               ),
             ),
           if (words)
@@ -1069,7 +1070,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
               FilledButton.icon(
                 key: const ValueKey('interactive-batch-confirm'),
                 onPressed: onConfirm,
-                icon: const Icon(Icons.send_rounded, size: 17),
+                icon: const Icon(HIcons.send_rounded, size: 17),
                 label: Text(confirm, maxLines: 1),
               ),
             )
@@ -1080,7 +1081,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
               child: FilledButton(
                 key: const ValueKey('interactive-batch-confirm'),
                 onPressed: onConfirm,
-                child: const Icon(Icons.send_rounded, size: 17),
+                child: const Icon(HIcons.send_rounded, size: 17),
               ),
             ),
         ],
@@ -1143,8 +1144,8 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
                   : Strings.of(context).a11yHideAnswer,
               icon: Icon(
                 _obscure
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
+                    ? HIcons.visibility_outlined
+                    : HIcons.visibility_off_outlined,
               ),
             ),
           )

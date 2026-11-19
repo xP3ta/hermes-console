@@ -5,8 +5,12 @@
     "purl": "pkg:github/novnc/noVNC@v1.5.0",
     "license": "MPL-2.0",
     "licenseEvidence": "assets/novnc/LICENSE.txt",
-    "paths": ["assets/novnc/core"],
-    "exclude": ["assets/novnc/core/crypto/des.js"],
+    "paths": [
+      "assets/novnc/core"
+    ],
+    "exclude": [
+      "assets/novnc/core/crypto/des.js"
+    ],
     "note": "Unmodified upstream core of the v1.5.0 tag."
   },
   {
@@ -15,7 +19,9 @@
     "purl": "pkg:github/novnc/noVNC@v1.5.0#core/crypto/des.js",
     "license": "LicenseRef-noVNC-DES",
     "licenseEvidence": "LICENSES/LicenseRef-noVNC-DES.txt",
-    "paths": ["assets/novnc/core/crypto/des.js"],
+    "paths": [
+      "assets/novnc/core/crypto/des.js"
+    ],
     "note": "Part of the noVNC v1.5.0 tag under its own BSD-style grant."
   },
   {
@@ -24,7 +30,31 @@
     "purl": "pkg:github/novnc/noVNC@v1.5.0#vendor/pako",
     "license": "MIT",
     "licenseEvidence": "assets/novnc/vendor/pako/LICENSE",
-    "paths": ["assets/novnc/vendor/pako"],
+    "paths": [
+      "assets/novnc/vendor/pako"
+    ],
     "note": "noVNC's ES-module port of pako 1.0.3, as shipped in noVNC v1.5.0."
+  },
+  {
+    "name": "mermaid",
+    "version": "11.17.2",
+    "purl": "pkg:npm/mermaid@11.17.2",
+    "license": "MIT",
+    "licenseEvidence": "assets/viewers/mermaid-LICENSE.txt",
+    "paths": [
+      "assets/viewers/mermaid.min.js"
+    ],
+    "note": "Unmodified dist/mermaid.min.js of the npm package; it bundles its own dependencies (d3, dagre-d3-es, cytoscape, katex, dompurify and others, under MIT, ISC, BSD or Apache-2.0/MPL-2.0 terms)."
+  },
+  {
+    "name": "model-viewer",
+    "version": "4.4.0",
+    "purl": "pkg:npm/%40google/model-viewer@4.4.0",
+    "license": "Apache-2.0",
+    "licenseEvidence": "assets/viewers/model-viewer-LICENSE.txt",
+    "paths": [
+      "assets/viewers/model-viewer-umd.min.js"
+    ],
+    "note": "Unmodified dist/model-viewer-umd.min.js of the npm package; it bundles three.js (MIT), lit (BSD-3-Clause), fflate (MIT) and gainmap-js (MIT)."
   }
 ]

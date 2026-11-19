@@ -15,6 +15,7 @@ import 'package:hermes_android/core/widgets/dock_style.dart';
 import 'package:hermes_android/core/models/dock_config.dart';
 import 'room_member_status_test.dart' show statusRoom, statusNow, statusEvent;
 import 'support/inter_font.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void expectPillLabelsFit(WidgetTester tester, Finder surface) {
   for (final element
@@ -137,7 +138,7 @@ void main() {
             controlKey: ValueKey(id),
             label: dockItemLabel(Strings.of(c), id),
             compactLabel: dockItemCompactLabel(Strings.of(c), id),
-            icon: Icons.circle_outlined,
+            icon: HIcons.circle_outlined,
             compact: true,
             innerRadius: 12,
             onTap: () {},

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/widgets/running_work.dart';
+import 'package:hermes_android/core/models/agent_task_list.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
@@ -58,6 +59,7 @@ class _AdaptiveGateway
   /// Only `subagent.list` fails (process and control reads still answer).
   bool failList = false;
   bool resumedSessionRunning = true;
+  AgentTaskList? todoState;
   List<DesktopSubagentSnapshot> subagents = const [];
   AgentCenterSnapshot processSnapshot = const AgentCenterSnapshot(
     snapshots: [],
@@ -114,6 +116,7 @@ class _AdaptiveGateway
       created: false,
       running: resumedSessionRunning,
       status: resumedSessionRunning ? 'working' : 'idle',
+      todoState: todoState,
     );
   }
 
@@ -862,17 +865,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       final card = find.byKey(const ValueKey('subagent-panel'));
       expect(card, findsOneWidget);
-      final process = find.byKey(
-        const ValueKey('running-process-process-live'),
-      );
-      expect(process, findsOneWidget);
-      expect(
-        find.descendant(of: process, matching: find.text('Last known state')),
-        findsNothing,
-        reason: 'the processes were just confirmed live by process.list',
-      );
-      // A retained agent may be unconfirmed in the same sheet; it must not
-      // taint the separately live-confirmed process section.
+      // Agents and processes are tabs of the sheet; the agents one opens
+      // first. A retained agent may be unconfirmed there; it must not taint
+      // the separately live-confirmed process tab.
       final agent = find.descendant(
         of: card,
         matching: find.byKey(const ValueKey('subagent-row-child-1')),
@@ -884,6 +879,28 @@ void main() {
           matching: find.textContaining('Unconfirmed', findRichText: true),
         ),
         findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('running-process-process-live')),
+        findsNothing,
+        reason: 'the processes are on their own tab',
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('delegates-tabs')),
+          matching: find.text('1 process'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      final process = find.byKey(
+        const ValueKey('running-process-process-live'),
+      );
+      expect(process, findsOneWidget);
+      expect(
+        find.descendant(of: process, matching: find.text('Last known state')),
+        findsNothing,
+        reason: 'the processes were just confirmed live by process.list',
       );
       final processes = find.descendant(
         of: card,
@@ -958,6 +975,108 @@ void main() {
       expect(fixture.gateway.resumeExistingCalls, 1);
       expect(fixture.gateway.listCalls, greaterThanOrEqualTo(1));
       expect(fixture.gateway.processCalls, greaterThanOrEqualTo(1));
+
+      await _disposeFixture(tester, fixture);
+    },
+  );
+
+  // E6 (criterion «come back and see it live»): a return with a NEW socket
+  // while a turn is still live re-resumes the open chat and shows the
+  // subagents, background processes and checklist the server has NOW, with no
+  // user action. Desktop (hermes-agent 3b421578): re-resume on gateway open
+  // even when alreadyActive (apps/desktop/src/app/session/hooks/
+  // use-route-resume.ts:197-205); checklist from the resume's todo_state
+  // (use-session-actions/index.ts:2163-2174); subagent.list on gateway state
+  // change (app/chat/composer/status-stack/use-subagent-snapshot.ts:16-88);
+  // process.list on session mount and while background work runs
+  // (status-stack/index.tsx:173-201, store/composer-status.ts:432-462).
+  testWidgets(
+    'E6 return with a new socket during a live turn shows the subagents, '
+    'processes and checklist the server has now',
+    (tester) async {
+      final fixture = await _mountChat(
+        tester,
+        changeEventsAvailable: true,
+        attachDesktopRuntimeOnLoad: true,
+        resumedSessionRunning: true,
+        subagents: const [
+          DesktopSubagentSnapshot(subagentId: 'child-1', status: 'running'),
+        ],
+      );
+      fixture.gateway
+        ..todoState = AgentTaskList.tryParse({
+          'revision': 1,
+          'todos': [
+            {'id': '1', 'content': 'Uno', 'status': 'in_progress'},
+          ],
+        })
+        ..processSnapshot = const AgentCenterSnapshot(
+          snapshots: [],
+          processes: [
+            BackgroundProcessEntry(
+              opaqueId: 'process-1',
+              status: AgentCenterStatus.running,
+              uptimeSeconds: 1,
+              command: 'sleep 100',
+            ),
+          ],
+        );
+      for (var i = 0; i < 6; i += 1) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      expect(fixture.chat.desktopRuntimeSessionId, 'runtime-adaptive',
+          reason: 'precondition: bound to the live turn');
+
+      await background(tester);
+      fixture.gateway.dropTransport();
+      await tester.pump();
+
+      // While away the server moved on: the child finished, the first
+      // process exited and another started, the plan advanced.
+      fixture.gateway
+        ..subagents = const [
+          DesktopSubagentSnapshot(subagentId: 'child-1', status: 'completed'),
+        ]
+        ..todoState = AgentTaskList.tryParse({
+          'revision': 2,
+          'todos': [
+            {'id': '1', 'content': 'Uno', 'status': 'completed'},
+            {'id': '2', 'content': 'Dos', 'status': 'in_progress'},
+          ],
+        })
+        ..processSnapshot = const AgentCenterSnapshot(
+          snapshots: [],
+          processes: [
+            BackgroundProcessEntry(
+              opaqueId: 'process-2',
+              status: AgentCenterStatus.running,
+              uptimeSeconds: 1,
+              command: 'sleep 200',
+            ),
+          ],
+        );
+
+      await resume(tester);
+      for (var i = 0; i < 12; i += 1) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+
+      expect(fixture.chat.desktopRuntimeSessionId, 'runtime-adaptive',
+          reason: 'the open chat re-resumed on the new socket (live turn)');
+      expect(fixture.chat.agentTasks.revision, 2,
+          reason: "the checklist is the server's new revision");
+      expect(
+        fixture.chat.subagentActivities
+            .where((a) => a.subagentId == 'child-1')
+            .every((a) => a.isTerminal),
+        isTrue,
+        reason: 'the child that finished away shows finished',
+      );
+      expect(
+        fixture.chat.backgroundProcesses.map((p) => p.id).toList(),
+        ['process-2'],
+        reason: 'the processes are the ones running now',
+      );
 
       await _disposeFixture(tester, fixture);
     },

@@ -12,6 +12,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 
 import '../support/nav_harness.dart';
 import '../support/profile_model_fakes.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _third = 'terceros';
 
@@ -278,7 +279,7 @@ void main() {
     expect(_shownName(tester), kMainProfileFallbackName);
     expect(rig.active, '');
     expect(
-      find.byIcon(Icons.edit_outlined),
+      find.byIcon(HIcons.edit_outlined),
       findsNothing,
       reason: 'no edit affordance on a read-only server',
     );

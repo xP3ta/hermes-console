@@ -12,6 +12,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/voice_model_block.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'support/reasoning_tap.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _groups = [
   HermesModelGroup(
@@ -168,14 +169,14 @@ void main() {
     expect(
       find.descendant(
         of: _key('voice-model-codex-gpt-6-luna'),
-        matching: find.byIcon(Icons.check_rounded),
+        matching: find.byIcon(HIcons.check_rounded),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: _key('voice-model-codex-gpt-6.1-sol'),
-        matching: find.byIcon(Icons.check_rounded),
+        matching: find.byIcon(HIcons.check_rounded),
       ),
       findsNothing,
     );
@@ -267,7 +268,7 @@ void main() {
     await tester.tap(_key('voice-model-reasoning'));
     await tester.pumpAndSettle();
     expect(_key('voice-model-picker'), findsNothing);
-    expect(find.byIcon(Icons.check_rounded), findsNothing);
+    expect(find.byIcon(HIcons.check_rounded), findsNothing);
     semantics.dispose();
   });
 

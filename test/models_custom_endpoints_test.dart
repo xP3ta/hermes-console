@@ -11,6 +11,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Custom endpoints live inside Models, like Desktop's Settings → Providers
 /// (apps/desktop/src/app/settings/providers-settings.tsx, the custom
@@ -147,7 +148,7 @@ Future<void> _pump(
 
 Finder _menuButton(String id) => find.descendant(
   of: find.byKey(ValueKey('saved-endpoint-$id')),
-  matching: find.byIcon(Icons.more_vert),
+  matching: find.byIcon(HIcons.more_vert),
 );
 
 Finder _inMenu(String label) => find.descendant(
@@ -283,6 +284,6 @@ void main() {
     await _pump(tester, client: client);
 
     expect(find.byKey(const ValueKey('custom-endpoint-add')), findsOneWidget);
-    expect(find.byIcon(Icons.more_vert), findsNothing);
+    expect(find.byIcon(HIcons.more_vert), findsNothing);
   });
 }

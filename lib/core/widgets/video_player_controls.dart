@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -330,7 +331,7 @@ class _VideoPlayerControlsState extends State<VideoPlayerControls>
             key: ValueKey<String>('video-speed-$speed'),
             value: speed,
             label: _speedLabel(strings, speed),
-            icon: speed == current ? Icons.check_rounded : null,
+            icon: speed == current ? HIcons.check_rounded : null,
           ),
       ],
     );
@@ -452,8 +453,8 @@ class _VideoPlayerControlsState extends State<VideoPlayerControls>
                     ? strings.videoPlayerUnmute
                     : strings.videoPlayerMute,
                 icon: muted
-                    ? Icons.volume_off_rounded
-                    : Icons.volume_up_rounded,
+                    ? HIcons.volume_off_rounded
+                    : HIcons.volume_up_rounded,
                 onPressed: () => unawaited(_toggleMute()),
               ),
               Semantics(
@@ -481,7 +482,7 @@ class _VideoPlayerControlsState extends State<VideoPlayerControls>
               VideoControlButton(
                 key: const ValueKey<String>('video-seek-back'),
                 label: strings.videoPlayerSeekBack,
-                icon: Icons.replay_10_rounded,
+                icon: HIcons.replay_10_rounded,
                 iconSize: 28,
                 filled: true,
                 onPressed: () => unawaited(_seekBy(-videoSeekStep)),
@@ -491,10 +492,10 @@ class _VideoPlayerControlsState extends State<VideoPlayerControls>
                 key: const ValueKey<String>('video-play-pause'),
                 label: playLabel,
                 icon: value.isPlaying
-                    ? Icons.pause_rounded
+                    ? HIcons.pause_rounded
                     : replay
-                    ? Icons.replay_rounded
-                    : Icons.play_arrow_rounded,
+                    ? HIcons.replay_rounded
+                    : HIcons.play_arrow_rounded,
                 size: 60,
                 iconSize: 36,
                 filled: true,
@@ -504,7 +505,7 @@ class _VideoPlayerControlsState extends State<VideoPlayerControls>
               VideoControlButton(
                 key: const ValueKey<String>('video-seek-forward'),
                 label: strings.videoPlayerSeekForward,
-                icon: Icons.forward_10_rounded,
+                icon: HIcons.forward_10_rounded,
                 iconSize: 28,
                 filled: true,
                 onPressed: () => unawaited(_seekBy(videoSeekStep)),
@@ -585,8 +586,8 @@ class _VideoPlayerControlsState extends State<VideoPlayerControls>
                     ? strings.videoPlayerExitFullscreen
                     : strings.genVideoFullscreen,
                 icon: widget.isFullscreen
-                    ? Icons.fullscreen_exit_rounded
-                    : Icons.fullscreen_rounded,
+                    ? HIcons.fullscreen_exit_rounded
+                    : HIcons.fullscreen_rounded,
                 onPressed: widget.onFullscreen,
               ),
             ],

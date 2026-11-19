@@ -3,6 +3,7 @@
 //
 // The identifier is validated on the phone before it can leave it
 // ([isSafePluginInstallIdentifier]); the server's own installer does the work.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -169,7 +170,7 @@ class _PluginSourceInstallSheetState extends State<PluginSourceInstallSheet> {
           const SizedBox(height: HermesSpace.x3),
           FilledButton.icon(
             onPressed: _submit,
-            icon: const Icon(Icons.arrow_forward_rounded, size: 19),
+            icon: const Icon(HIcons.arrow_forward_rounded, size: 19),
             label: Text(strings.extensionsCenterPluginReviewAction),
           ),
         ],

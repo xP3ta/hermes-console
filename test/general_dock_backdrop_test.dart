@@ -10,6 +10,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/general_dock_shell.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _connection = SavedConnection(
   id: 'dock-backdrop',
@@ -231,7 +232,7 @@ void main() {
               HermesToolDestination(
                 id: 'destination-$i',
                 group: 'QA',
-                icon: Icons.code,
+                icon: HIcons.code,
                 label: 'Destino $i',
                 builder: (_) => Scaffold(
                   appBar: AppBar(title: Text('Página $i')),

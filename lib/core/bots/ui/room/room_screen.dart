@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import '../../../design/edges.dart' show HermesBottomScrim;
 import '../../../services/app_lock_sensitive_read_fence.dart';
@@ -2386,7 +2387,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             for (final handle in broadcasts)
               HermesListRow(
                 key: ValueKey('room-mention-$handle'),
-                icon: Icons.groups_outlined,
+                icon: HIcons.groups_outlined,
                 title: '@$handle',
                 onTap: () => _insertMention(handle),
               ),
@@ -2412,7 +2413,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.reply_rounded, size: 14, color: colors.accentText),
+              Icon(HIcons.reply_rounded, size: 14, color: colors.accentText),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -2436,7 +2437,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 visualDensity: VisualDensity.compact,
                 iconSize: 14,
                 onPressed: () => _setThread(null),
-                icon: Icon(Icons.close_rounded, color: colors.accentText),
+                icon: Icon(HIcons.close_rounded, color: colors.accentText),
               ),
             ],
           ),
@@ -3666,7 +3667,7 @@ class _RoomThreadPageState extends State<_RoomThreadPage> {
                 child: FilledButton.icon(
                   key: const ValueKey('room-thread-reply'),
                   onPressed: onReply,
-                  icon: const Icon(Icons.reply_rounded),
+                  icon: const Icon(HIcons.reply_rounded),
                   label: Text(s.roomReplyInThread),
                 ),
               ),

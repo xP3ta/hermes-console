@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -215,7 +216,7 @@ class _McpOAuthFlowSurfaceState extends State<McpOAuthFlowSurface>
                 key: const ValueKey('mcp-oauth-close'),
                 tooltip: copy.close,
                 onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close_rounded),
+                icon: const Icon(HIcons.close_rounded),
               ),
             ],
           ),
@@ -248,10 +249,10 @@ class _McpOAuthFlowSurfaceState extends State<McpOAuthFlowSurface>
                     else
                       Icon(
                         approved
-                            ? Icons.check_circle_outline_rounded
+                            ? HIcons.check_circle_outline_rounded
                             : terminalFailure != null
-                            ? Icons.error_outline_rounded
-                            : Icons.hourglass_top_rounded,
+                            ? HIcons.error_outline_rounded
+                            : HIcons.hourglass_top_rounded,
                         color: approved
                             ? colors.success
                             : terminalFailure != null
@@ -300,8 +301,8 @@ class _McpOAuthFlowSurfaceState extends State<McpOAuthFlowSurface>
               onPressed: _openBrowser,
               icon: Icon(
                 _browserOpened
-                    ? Icons.open_in_new_rounded
-                    : Icons.language_rounded,
+                    ? HIcons.open_in_new_rounded
+                    : HIcons.language_rounded,
               ),
               label: Text(copy.openBrowser),
             ),
@@ -310,7 +311,7 @@ class _McpOAuthFlowSurfaceState extends State<McpOAuthFlowSurface>
             OutlinedButton.icon(
               key: const ValueKey('mcp-oauth-check-now'),
               onPressed: _poll,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(HIcons.refresh_rounded),
               label: Text(copy.refresh),
             ),
           ],
@@ -567,7 +568,7 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
                 child: HermesInlineNotice(
                   key: const ValueKey('spp-mcp-command-hint'),
                   tone: HermesStatusTone.warn,
-                  icon: Icons.info_outline_rounded,
+                  icon: HIcons.info_outline_rounded,
                   message: sppMcpIssueText(Strings.of(context), hint),
                 ),
               ),
@@ -615,7 +616,7 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
                 onPressed: _environment.length >= 40
                     ? null
                     : _addEnvironmentRow,
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(HIcons.add_rounded),
                 label: Text(copy.addVariable),
               ),
             ),
@@ -645,7 +646,7 @@ class _McpServerDraftSurfaceState extends State<McpServerDraftSurface> {
                   child: HermesInlineNotice(
                     key: const ValueKey('spp-mcp-insecure'),
                     tone: HermesStatusTone.warn,
-                    icon: Icons.warning_amber_rounded,
+                    icon: HIcons.warning_amber_rounded,
                     message: Strings.of(context).sppMcpInsecurePublicToken,
                   ),
                 )
@@ -745,7 +746,7 @@ class _EnvironmentRow extends StatelessWidget {
       final remove = IconButton(
         tooltip: copy.removeVariable,
         onPressed: onRemove,
-        icon: const Icon(Icons.remove_circle_outline_rounded),
+        icon: const Icon(HIcons.remove_circle_outline_rounded),
       );
       if (constraints.maxWidth >= 460) {
         return Row(

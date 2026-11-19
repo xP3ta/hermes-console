@@ -1,18 +1,19 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 /// Generic icon for files whose type is not recognised.
-const IconData projectFileGenericIcon = Icons.insert_drive_file_outlined;
+const IconData projectFileGenericIcon = HIcons.insert_drive_file_outlined;
 
-const IconData _code = Icons.code_rounded;
-const IconData _shell = Icons.terminal_rounded;
-const IconData _data = Icons.data_object_rounded;
-const IconData _table = Icons.table_chart_outlined;
-const IconData _doc = Icons.description_outlined;
-const IconData _pdf = Icons.picture_as_pdf_outlined;
-const IconData _image = Icons.image_outlined;
-const IconData _archive = Icons.folder_zip_outlined;
-const IconData _config = Icons.settings_outlined;
-const IconData _lock = Icons.lock_outline_rounded;
+const IconData _code = HIcons.code_rounded;
+const IconData _shell = HIcons.terminal_rounded;
+const IconData _data = HIcons.data_object_rounded;
+const IconData _table = HIcons.table_chart_outlined;
+const IconData _doc = HIcons.description_outlined;
+const IconData _pdf = HIcons.picture_as_pdf_outlined;
+const IconData _image = HIcons.image_outlined;
+const IconData _archive = HIcons.folder_zip_outlined;
+const IconData _config = HIcons.settings_outlined;
+const IconData _lock = HIcons.lock_outline_rounded;
 
 /// Lower-case exact file names, then extensions with their leading dot.
 /// Exact names win, so lockfiles beat their `.json` extension.

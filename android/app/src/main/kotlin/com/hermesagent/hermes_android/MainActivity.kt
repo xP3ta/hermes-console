@@ -182,6 +182,7 @@ class MainActivity : FlutterFragmentActivity() {
         ScreenAssetHost.register(this, flutterEngine)
         HermesHapticsSwitch.register(this, flutterEngine)
         WebViewRenderGuard.register(flutterEngine)
+        WebViewSnapshot.register(flutterEngine)
         DurableSecretWriter.attach(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         clipboardImageHandler?.close()
         clipboardImageHandler = HermesClipboardImageHandler(applicationContext).also { handler ->

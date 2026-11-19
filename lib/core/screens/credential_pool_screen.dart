@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -61,7 +62,7 @@ class _CredentialPoolScreenState extends State<CredentialPoolScreen> {
       appBar: HermesAppBar(title: Text(s.mdlCredentialPoolTitle)),
       body: _error != null
           ? HermesEmptyState(
-              icon: Icons.error_outline,
+              icon: HIcons.error_outline,
               title: s.commonErrorTitle,
               body: s.mdlCredentialPoolLoadError,
             )
@@ -69,7 +70,7 @@ class _CredentialPoolScreenState extends State<CredentialPoolScreen> {
           ? const Center(child: ConsoleLoader.large())
           : pool.providers.isEmpty
           ? HermesEmptyState(
-              icon: Icons.key_off_outlined,
+              icon: HIcons.key_off_outlined,
               title: s.mdlCredentialPoolEmptyTitle,
               body: s.mdlCredentialPoolEmptyBody,
             )
@@ -86,7 +87,7 @@ class _CredentialPoolScreenState extends State<CredentialPoolScreen> {
                           key: ValueKey(
                             'credential-${provider.provider}-${entry.index}',
                           ),
-                          icon: Icons.key_outlined,
+                          icon: HIcons.key_outlined,
                           title: entry.label.trim().isEmpty
                               ? s.mdlCredentialPoolKeyNumber(entry.index)
                               : entry.label,

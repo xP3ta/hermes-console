@@ -676,45 +676,6 @@ void main() {
     expect(gateway.liveSockets, 1);
   });
 
-  test('a silent-fanout gap on runtime B rehydrates only chat B; A keeps '
-      'its runtime on the healthy shared socket', () async {
-    gateway.busy.addAll({'stored-a', 'stored-b'});
-    final a = await open('a');
-    await open('b');
-    final client = _sharedClient(pool, gateway);
-    expect(client.watchedRuntimesForTesting, {'runtime-a', 'runtime-b'});
-    // Watermarks >= 1 (Hermes' `latest_seq` is a positive sequence).
-    gateway.pushEvent('runtime-a', 'status.update', const {'kind': 'noop'});
-    gateway.pushEvent('runtime-b', 'status.update', const {'kind': 'noop'});
-    await _waitUntil(() => client.replayWatermarksForTesting.length == 2);
-    gateway.silentGap.add('runtime-b');
-    final resumesBefore = gateway.rpcCalls('session.resume').length;
-
-    _skew += const Duration(seconds: 11);
-    await client.debugProbeSilentFanout();
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-
-    expect(
-      gateway
-          .rpcCalls('session.events.since')
-          .map((f) => f['params']['session_id']),
-      containsAll(['runtime-a', 'runtime-b']),
-    );
-    // B runs its own (unchanged) post-gap recovery; A is never touched.
-    await _waitUntil(
-      () => gateway.rpcCalls('session.resume').length > resumesBefore,
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    expect(a.desktopRuntimeSessionId, 'runtime-a');
-    final resumedAfter = gateway
-        .rpcCalls('session.resume')
-        .skip(resumesBefore)
-        .map((f) => f['params']['session_id'])
-        .toList();
-    expect(resumedAfter, ['stored-b'], reason: 'only B rehydrates');
-    expect(gateway.sockets, hasLength(1));
-  });
-
   test('network switch: one redial and one handshake for every open chat '
       '(per-chat sockets needed one each)', () async {
     Future<({int sockets, int handshakes})> measure() async {

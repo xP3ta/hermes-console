@@ -16,6 +16,7 @@ import 'package:hermes_android/core/widgets/subagent_work_pill.dart';
 import 'package:hermes_android/core/widgets/running_work.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'support/inter_font.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final SubagentActivityScope _scope = SubagentActivityScope(
   connectionId: 'connection-card',
@@ -529,7 +530,7 @@ void main() {
             .data,
         isNot(contains('very-long-source-file.dart')),
       );
-      expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsOneWidget);
+      expect(find.byIcon(HIcons.keyboard_arrow_down_rounded), findsOneWidget);
       expect(
         tester.getSize(find.byKey(const ValueKey('subagent-work-pill'))).height,
         lessThanOrEqualTo(40),

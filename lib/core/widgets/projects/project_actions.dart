@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -228,7 +229,7 @@ Future<ProjectMenuAction?> showProjectMenu(
             ),
             item(
               ProjectMenuAction.newChat,
-              Icons.add_comment_outlined,
+              HIcons.add_comment_outlined,
               strings.pj1215MenuNewChat,
               key: const ValueKey('pj1215-menu-new-chat'),
             ),
@@ -236,14 +237,14 @@ Future<ProjectMenuAction?> showProjectMenu(
               if (saved)
                 item(
                   ProjectMenuAction.rename,
-                  Icons.edit_outlined,
+                  HIcons.edit_outlined,
                   strings.pj1215MenuRename,
                   note: writeNote(),
                   key: const ValueKey('pj1215-menu-rename'),
                 ),
               item(
                 ProjectMenuAction.appearance,
-                Icons.palette_outlined,
+                HIcons.palette_outlined,
                 strings.pj1215MenuAppearance,
                 // An auto project is adopted through its folder (Desktop).
                 note:
@@ -254,7 +255,7 @@ Future<ProjectMenuAction?> showProjectMenu(
               if (saved)
                 item(
                   isActive ? null : ProjectMenuAction.setActive,
-                  Icons.track_changes_rounded,
+                  HIcons.track_changes_rounded,
                   isActive
                       ? strings.pj1215MenuIsActive
                       : strings.pj1215MenuSetActive,
@@ -264,21 +265,21 @@ Future<ProjectMenuAction?> showProjectMenu(
               const Divider(height: 12),
               item(
                 ProjectMenuAction.newWorktree,
-                Icons.call_split_rounded,
+                HIcons.call_split_rounded,
                 strings.pj1215MenuNewWorktree,
                 note: gitNote(),
                 key: const ValueKey('pj1215-menu-new-worktree'),
               ),
               item(
                 ProjectMenuAction.openBranch,
-                Icons.alt_route_rounded,
+                HIcons.alt_route_rounded,
                 strings.pj1215MenuOpenBranch,
                 note: gitNote(),
                 key: const ValueKey('pj1215-menu-open-branch'),
               ),
               item(
                 root.isEmpty ? null : ProjectMenuAction.copyPath,
-                Icons.copy_rounded,
+                HIcons.copy_rounded,
                 strings.pj1215MenuCopyPath,
                 key: const ValueKey('pj1215-menu-copy-path'),
               ),
@@ -286,7 +287,7 @@ Future<ProjectMenuAction?> showProjectMenu(
               if (saved)
                 item(
                   ProjectMenuAction.addFolder,
-                  Icons.create_new_folder_outlined,
+                  HIcons.create_new_folder_outlined,
                   strings.pj1215MenuAddFolder,
                   // Picked on the server, like Desktop's remote picker.
                   note: switch (addFolderBlock) {
@@ -300,7 +301,7 @@ Future<ProjectMenuAction?> showProjectMenu(
                 ),
               item(
                 null,
-                Icons.folder_open_outlined,
+                HIcons.folder_open_outlined,
                 strings.pj1215MenuReveal,
                 note: strings.pj1215DesktopOnly,
                 key: const ValueKey('pj1215-menu-reveal'),
@@ -309,7 +310,7 @@ Future<ProjectMenuAction?> showProjectMenu(
               if (saved)
                 item(
                   ProjectMenuAction.delete,
-                  Icons.delete_outline_rounded,
+                  HIcons.delete_outline_rounded,
                   strings.pj1215MenuDelete,
                   note: writeNote(),
                   destructive: true,
@@ -318,7 +319,7 @@ Future<ProjectMenuAction?> showProjectMenu(
               else
                 item(
                   ProjectMenuAction.hide,
-                  Icons.visibility_off_outlined,
+                  HIcons.visibility_off_outlined,
                   strings.pj1215MenuHide,
                   key: const ValueKey('pj1215-menu-hide'),
                 ),
@@ -555,7 +556,7 @@ class _SwatchButton extends StatelessWidget {
             ),
           ),
           child: color == null
-              ? Icon(Icons.block_rounded, size: 18, color: colors.textSecondary)
+              ? Icon(HIcons.block_rounded, size: 18, color: colors.textSecondary)
               : null,
         ),
       ),
@@ -922,7 +923,7 @@ class _WorktreeSheetState extends State<_WorktreeSheet> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.call_split_rounded),
+                  : const Icon(HIcons.call_split_rounded),
               label: Text(strings.pj1215WorktreeCreate),
             ),
           ],
@@ -972,7 +973,7 @@ class _WorktreeSheetState extends State<_WorktreeSheet> {
           contentPadding: EdgeInsets.zero,
           enabled: !_pending,
           leading: Icon(
-            branch.isRemote ? Icons.cloud_outlined : Icons.fork_right_rounded,
+            branch.isRemote ? HIcons.cloud_outlined : HIcons.fork_right_rounded,
             size: 20,
             color: colors.textSecondary,
           ),

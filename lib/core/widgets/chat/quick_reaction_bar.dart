@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -277,18 +278,18 @@ class _MessageActionsSurface extends StatelessWidget {
                     if (scope.copyText != null)
                       action(
                         MessageActionKind.copy,
-                        Icons.copy_rounded,
+                        HIcons.copy_rounded,
                         strings.chaCopyMessage,
                       ),
                     if (reply != null)
                       action(
                         MessageActionKind.reply,
-                        Icons.reply_rounded,
+                        HIcons.reply_rounded,
                         scope.replyLabel ?? strings.roomReplyInThread,
                       ),
                     action(
                       MessageActionKind.select,
-                      Icons.text_fields_rounded,
+                      HIcons.text_fields_rounded,
                       strings.chaSelectText,
                     ),
                   ],

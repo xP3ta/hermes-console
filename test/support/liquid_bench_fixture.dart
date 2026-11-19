@@ -11,6 +11,7 @@ import 'package:hermes_android/core/widgets/chat/chat_markdown_body.dart';
 import 'package:hermes_android/core/widgets/dock_style.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const liquidBenchViewportKey = ValueKey('liquid-bench-viewport');
 const liquidBenchLiveWindowKey = ValueKey('liquid-bench-live-window');
@@ -108,7 +109,7 @@ Widget liquidBenchScene({
               key: liquidBenchDockKey,
               style: const DockStyle(transparency: .6),
               children: [
-                for (final icon in [Icons.home, Icons.forum, Icons.settings])
+                for (final icon in [Icons.home, Icons.forum, HIcons.settings])
                   Expanded(
                     child: IconButton(icon: Icon(icon), onPressed: () {}),
                   ),

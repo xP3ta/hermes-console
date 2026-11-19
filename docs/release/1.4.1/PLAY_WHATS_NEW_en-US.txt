@@ -1,0 +1,11 @@
+What's new in 1.4.1:
+• New chat look: lighter icons, tidier composer.
+• Files preview in the chat: pages, PDFs, diagrams and 3D models.
+• New Usage screen: cost, tokens and limits by day and model.
+• Chat no longer loses or repeats text after returning or a network cut.
+• Sub-agents keep showing as running.
+• Rooms and Projects fixes.
+• Home reconnects by itself.
+• Dictation model download works again.
+• Text size 85–150 %.
+• Swipe-to-open menu is optional (off).

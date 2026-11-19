@@ -13,6 +13,7 @@ import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _title = 'Ya no necesitas el bridge';
 const _body = 'Console habla ahora directamente con Hermes.';
@@ -60,12 +61,12 @@ class _Chat extends StatelessWidget {
           right: 0,
           child: FloatingChatHeader(
             leading: FloatingHeaderButton(
-              icon: Icons.menu_rounded,
+              icon: HIcons.menu_rounded,
               tooltip: 'Menú',
               onPressed: () {},
             ),
             trailing: FloatingHeaderButton(
-              icon: Icons.add_rounded,
+              icon: HIcons.add_rounded,
               tooltip: 'Nuevo chat',
               onPressed: () {},
             ),
@@ -108,7 +109,7 @@ HermesNoticeHandle? _say({
   bool showDismiss = true,
 }) => HermesNotice.ofNavigator(_navigator.currentState)!.show(
   id: 'stays-until-answered',
-  icon: Icons.check_circle_outline_rounded,
+  icon: HIcons.check_circle_outline_rounded,
   title: title,
   message: _body,
   priority: HermesNoticePriority.high,

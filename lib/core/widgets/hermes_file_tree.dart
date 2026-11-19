@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -225,8 +226,8 @@ class _FileTreeRow extends StatelessWidget {
     final state = context.findAncestorStateOfType<_HermesFileTreeState>();
     final icon = node.isDirectory
         ? expanded
-              ? Icons.folder_open_outlined
-              : Icons.folder_outlined
+              ? HIcons.folder_open_outlined
+              : HIcons.folder_outlined
         : _fileIcon(node.name);
 
     return Semantics(
@@ -249,8 +250,8 @@ class _FileTreeRow extends StatelessWidget {
                     child: node.isDirectory
                         ? Icon(
                             expanded
-                                ? Icons.keyboard_arrow_down_rounded
-                                : Icons.keyboard_arrow_right_rounded,
+                                ? HIcons.keyboard_arrow_down_rounded
+                                : HIcons.keyboard_arrow_right_rounded,
                             size: 18,
                             color: colors.textSecondary,
                           )
@@ -295,10 +296,10 @@ IconData _fileIcon(String name) {
       ? name.substring(name.lastIndexOf('.') + 1).toLowerCase()
       : '';
   return switch (extension) {
-    'md' || 'txt' || 'rst' => Icons.description_outlined,
-    'png' || 'jpg' || 'jpeg' || 'webp' || 'gif' => Icons.image_outlined,
-    'json' || 'yaml' || 'yml' || 'toml' => Icons.data_object_rounded,
-    'dart' || 'py' || 'js' || 'ts' || 'rs' || 'kt' => Icons.code_rounded,
-    _ => Icons.insert_drive_file_outlined,
+    'md' || 'txt' || 'rst' => HIcons.description_outlined,
+    'png' || 'jpg' || 'jpeg' || 'webp' || 'gif' => HIcons.image_outlined,
+    'json' || 'yaml' || 'yml' || 'toml' => HIcons.data_object_rounded,
+    'dart' || 'py' || 'js' || 'ts' || 'rs' || 'kt' => HIcons.code_rounded,
+    _ => HIcons.insert_drive_file_outlined,
   };
 }

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -221,7 +222,7 @@ class ScreenHeader extends StatelessWidget {
                   child: SizedBox.square(
                     dimension: 44,
                     child: Icon(
-                      Icons.arrow_back_rounded,
+                      HIcons.arrow_back_rounded,
                       size: 20,
                       color: colors.textPrimary,
                     ),

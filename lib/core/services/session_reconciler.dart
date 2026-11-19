@@ -784,6 +784,70 @@ class DesktopSessionReconciler {
     chronological.removeAt(optimisticIndex);
   }
 
+  /// A line that is only a reference (`@file:…`, `@url:…`): Desktop drops
+  /// those lines on both sides of every prompt comparison
+  /// (components/assistant-ui/reference-kinds.ts:147,165-173).
+  static final RegExp _referenceOnlyLine = RegExp(
+    r"""^(?:@(file|folder|url|image|tool|line|terminal|session):(`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|\S+))$""",
+  );
+
+  static String _comparablePromptText(Object? text) => _whitespaceNormalizedPrompt(
+    (text?.toString() ?? '')
+        .split('\n')
+        .where((line) => !_referenceOnlyLine.hasMatch(line.trimRight()))
+        .join('\n'),
+  );
+
+  /// Whether the rows a resume answered with already hold the prompt of the
+  /// running turn (`inflight.user`), so no live copy of it is painted.
+  ///
+  /// Desktop adds the `user-inflight` row unless the stored rows of the open
+  /// turn carry that text: use-session-actions/utils.ts:986-1032
+  /// (appendLiveSessionProjection, the latest user run), utils.ts:1258-1300
+  /// (dedupeInflightUserAgainstTranscript, the newest stored row) and
+  /// persisted-live-turn.ts:107-128 (locateTurn: newest first up to the
+  /// newest final reply, a correction is no candidate).
+  ///
+  /// One case comes from the producer and not from Desktop: a prompt queued
+  /// while the previous turn ran is stored when it is accepted, before that
+  /// turn's final reply (tui_gateway/session_auto_continue.py:352-358, raw
+  /// `[uA, uB, aA]`). The users of that turn after its opener count too.
+  static bool storedRowsHoldInflightPrompt(
+    List<DesktopSessionMessage> rows,
+    String prompt,
+  ) {
+    final wanted = _comparablePromptText(prompt);
+    if (wanted.isEmpty) return false;
+    final stored = rows
+        .where((message) => message.publiclyRenderable)
+        .toList(growable: false);
+    // An ordinary prompt: a correction is no candidate (locateTurn), and an
+    // editorial row (`model_switch`…) is not the turn's input even when its
+    // text matches.
+    bool isPrompt(DesktopSessionMessage message) =>
+        message.role == DesktopSessionMessageRole.user &&
+        (message.raw['display_kind']?.toString().trim() ?? '').isEmpty;
+    bool isFinalReply(DesktopSessionMessage message) {
+      if (message.role != DesktopSessionMessageRole.assistant) return false;
+      final calls = message.toolCalls;
+      if (calls is Iterable && calls.isNotEmpty) return false;
+      return '${message.text ?? message.content ?? ''}'.trim().isNotEmpty;
+    }
+
+    bool holdsPrompt(DesktopSessionMessage message) =>
+        _comparablePromptText(message.text ?? message.content) == wanted;
+    var index = stored.length - 1;
+    for (; index >= 0 && !isFinalReply(stored[index]); index--) {
+      if (isPrompt(stored[index]) && holdsPrompt(stored[index])) return true;
+    }
+    final queuedDuringPrevious = <DesktopSessionMessage>[];
+    for (index--; index >= 0 && !isFinalReply(stored[index]); index--) {
+      if (isPrompt(stored[index])) queuedDuringPrevious.add(stored[index]);
+    }
+    if (queuedDuringPrevious.isNotEmpty) queuedDuringPrevious.removeLast();
+    return queuedDuringPrevious.any(holdsPrompt);
+  }
+
   /// Desktop (`use-session-actions/utils.ts`) adds no `user-inflight` row when
   /// the last user run already holds the inflight prompt. Walks back from the
   /// end to the last durable terminal assistant; true when that run has exactly
@@ -1253,6 +1317,17 @@ class DesktopSessionReconciler {
       snapshot.resolvedTurnStartedAt,
     );
     final hasInflightUser = inflightUser?.trim().isNotEmpty == true;
+    // With the rows of this snapshot in hand they decide whether the running
+    // prompt is already stored, as on Desktop ([storedRowsHoldInflightPrompt]).
+    // A snapshot without rows keeps the anchor plan over the fallback, and
+    // so does a turn with corrections: their rows are planned together with
+    // the prompt.
+    final emitsInflightPrompt =
+        snapshot.messagesProvided &&
+            hasInflightUser &&
+            inflight!.corrections.isEmpty
+        ? !storedRowsHoldInflightPrompt(snapshot.messages, inflightUser!)
+        : liveUserPlan.emits(0);
     // Recovery of a turn this client submitted: the open turn's optimistic
     // row IS the prompt the runtime now reports as `inflight.user`. The
     // Gateway sanitizes the text it stores (whitespace, paste artifacts,
@@ -1262,7 +1337,7 @@ class DesktopSessionReconciler {
     if (bridgeOwnedLiveUser &&
         !snapshot.messagesProvided &&
         hasInflightUser &&
-        liveUserPlan.emits(0)) {
+        emitsInflightPrompt) {
       _dropOwnedOptimisticOpenTurnUser(chronological, inflightUser!);
     }
     final durableStructuredInflight =
@@ -1275,7 +1350,7 @@ class DesktopSessionReconciler {
     // open turn; a classified durable row carries its own structural identity.
     if (inflightUser != null &&
         inflightUser.trim().isNotEmpty &&
-        liveUserPlan.emits(0) &&
+        emitsInflightPrompt &&
         !durableStructuredInflight &&
         !(bridgeOwnedLiveUser &&
             _lastUserRunOpensWithPrompt(chronological, inflightUser))) {

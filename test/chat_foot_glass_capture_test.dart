@@ -1,4 +1,4 @@
-// OPUS-CRISTAL: the chat foot's smoked glass in a real Flutter raster, at
+// Foot glass: the chat foot's smoked glass in a real Flutter raster, at
 // component level (composer + context pill + the chat's current foot scrim,
 // over real content). A is today (no strip), B the toned strip. It measures
 // what the approved mock-up promised, on the engine's own pixels:
@@ -462,7 +462,7 @@ void main() {
       expect(measures['A-rest-spread']! as int, lessThanOrEqualTo(3));
       expect(measures['B-rest-spread']! as int, greaterThanOrEqualTo(12));
       // ignore: avoid_print
-      print('OPUS-CRISTAL $themeId band spread $measures');
+      print('foot glass $themeId band spread $measures');
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
@@ -500,7 +500,7 @@ void main() {
         final stimulus = _ghost(bare[0], bare[1], width, _mask(rect));
         // ignore: avoid_print
         print(
-          'OPUS-CRISTAL $themeId stimulus under $name '
+          'foot glass $themeId stimulus under $name '
           '${stimulus.toStringAsFixed(3)}',
         );
         expect(stimulus, greaterThan(3), reason: 'no text behind $name');
@@ -538,7 +538,7 @@ void main() {
         final ghostCapsule = _ghost(shots[0], shots[1], width, _mask(capsule));
         // ignore: avoid_print
         print(
-          'OPUS-CRISTAL $themeId ${glass ? 'B' : 'A'} ghost composer '
+          'foot glass $themeId ${glass ? 'B' : 'A'} ghost composer '
           '${ghostComposer.toStringAsFixed(4)} capsule '
           '${ghostCapsule.toStringAsFixed(4)}',
         );
@@ -585,7 +585,7 @@ void main() {
         image.dispose();
         // ignore: avoid_print
         print(
-          'OPUS-CRISTAL $themeId ${behind.name} hint worst '
+          'foot glass $themeId ${behind.name} hint worst '
           '${worst.toStringAsFixed(3)} floor ${floor.toStringAsFixed(3)}',
         );
         // Strict: no rounding allowance. A raster under the floor stays red

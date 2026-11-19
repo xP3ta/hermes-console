@@ -8,6 +8,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/user_message_text.dart';
 import 'package:hermes_android/core/widgets/inline_message_editor.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 TextEditingValue _caretAtEnd(String text) => TextEditingValue(
   text: text,
@@ -143,7 +144,7 @@ void main() {
       final chip = find.byKey(const ValueKey('user-reference-chip-url'));
       expect(chip, findsOneWidget);
       expect(
-        find.descendant(of: chip, matching: find.byIcon(Icons.link_rounded)),
+        find.descendant(of: chip, matching: find.byIcon(HIcons.link_rounded)),
         findsOneWidget,
       );
       expect(
@@ -180,7 +181,7 @@ void main() {
       expect(
         find.descendant(
           of: folder,
-          matching: find.byIcon(Icons.folder_outlined),
+          matching: find.byIcon(HIcons.folder_outlined),
         ),
         findsOneWidget,
       );

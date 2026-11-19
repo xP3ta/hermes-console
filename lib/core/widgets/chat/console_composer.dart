@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -129,6 +130,7 @@ class ConsoleComposer extends StatelessWidget {
     this.locked = false,
     this.showBotModeToggle = true,
     this.footer,
+    this.footerInside = false,
     this.palette,
     this.hintText,
     this.fieldEnabled = true,
@@ -221,6 +223,10 @@ class ConsoleComposer extends StatelessWidget {
   /// Contenido bajo el composer (la pastilla de modo del chat principal).
   final Widget? footer;
 
+  /// The footer opens inside the composer surface while the field has focus,
+  /// instead of sitting under it.
+  final bool footerInside;
+
   /// Paleta flotante anclada sobre el composer (slash, @menciones).
   final Widget? palette;
 
@@ -288,7 +294,7 @@ class ConsoleComposer extends StatelessWidget {
           dimension: 48,
           child: Center(
             child: HermesTactileAction(
-              icon: Icons.stop_rounded,
+              icon: HIcons.stop_rounded,
               iconSize: 17,
               semanticLabel: Strings.of(context).chaStopDictationTooltip,
               onPressed: dictation.onStop,
@@ -304,7 +310,7 @@ class ConsoleComposer extends StatelessWidget {
     if (dictation.interactive && !locked) {
       return HermesTactileAction(
         key: const ValueKey('mic'),
-        icon: Icons.mic_none_rounded,
+        icon: HIcons.mic_none_rounded,
         onPressed: dictation.onStart,
         semanticLabel: controller.text.trim().isEmpty
             ? Strings.of(context).chaVoiceDictationTooltip
@@ -369,7 +375,7 @@ class ConsoleComposer extends StatelessWidget {
       key: const ValueKey('dictation-cancel'),
       dimension: 48,
       child: HermesTactileAction(
-        icon: Icons.close_rounded,
+        icon: HIcons.close_rounded,
         iconSize: 30,
         semanticLabel: Strings.of(context).chaCancel,
         onPressed: dictation.cancelEnabled ? dictation.onCancel : null,
@@ -392,7 +398,7 @@ class ConsoleComposer extends StatelessWidget {
       dimension: 48,
       child: Center(
         child: HermesTactileAction(
-          icon: Icons.arrow_upward_rounded,
+          icon: HIcons.arrow_upward_rounded,
           iconSize: 23,
           semanticLabel: Strings.of(context).chaSendTooltip,
           onPressed: enabled ? dictation.onSend : null,
@@ -490,19 +496,46 @@ class ConsoleComposer extends StatelessWidget {
           voiceOwnRow = voiceMaxWidth < voiceControls.minWidth;
           if (voiceOwnRow) voiceMaxWidth = voiceComfortWidth = rowWidth;
         }
-        // A chat pane beside the workspace (an open Fold) left the field
-        // narrower than its hint, which broke over four lines and grew the
-        // composer («Pregunta / a / Hermes / …»). There it stays on one line.
-        // A phone keeps its composer as it was.
-        final narrowField =
-            voiceControls == null &&
-            _besideWorkspace(imeContext) &&
-            _hintWouldWrap(
-              imeContext,
-              compactIme: compactIme,
-              recording: recording,
-              primaryVisible: !recording && !voiceTakesPrimarySlot,
-            );
+        // A field narrower than its hint broke it over several lines and grew
+        // the empty composer («Pregunta / a / Hermes / …»). Beside the
+        // workspace (an open Fold) any wrap keeps it on one line, with the
+        // short hint. A phone at ordinary sizes keeps its composer as it was.
+        // With large text (an effective scale above 1.5: Android 200 % with
+        // Hermes at 120 % is 2.64) a hint needing more than two lines took
+        // ~4.5 lines, a third of a 360×690 screen, and covered the last
+        // message: then it stays on one line ending in «…». What is typed
+        // still grows the field; the full hint stays in semantics.
+        final hintLines = voiceControls == null
+            ? _hintLinesNeeded(
+                imeContext,
+                compactIme: compactIme,
+                recording: recording,
+                primaryVisible: !recording && !voiceTakesPrimarySlot,
+              )
+            : 0.0;
+        final narrowField = hintLines > 1 && _besideWorkspace(imeContext);
+        final hintTooTall =
+            hintLines > 2 &&
+            MediaQuery.textScalerOf(imeContext).scale(14) / 14 > 1.5;
+        // Writing: the text keeps its own line and every control sits in one
+        // row under it. At rest the single line is as it was.
+        final stackable =
+            footer != null && footerInside && voiceControls == null;
+        bool stackedNow() => stackable && focusNode.hasFocus && !recording;
+        Widget restOnly(Widget piece, {double gap = 0}) => !stackable
+            ? piece
+            : ListenableBuilder(
+                listenable: focusNode,
+                builder: (context, _) =>
+                    stackedNow() ? SizedBox(width: gap) : piece,
+              );
+        Widget addButton() => AttachmentSourceMenuButton(
+          key: const ValueKey('composer-add'),
+          semanticLabel: Strings.of(context).chaAttachTooltip,
+          onSelected: onAttach!,
+          onScanDocument: onScanDocument,
+          enabled: attachEnabled && !locked,
+        );
         return Container(
           key: const ValueKey('chat-composer-host'),
           padding: compactIme
@@ -583,15 +616,7 @@ class ConsoleComposer extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
                                   if (!recording && onAttach != null)
-                                    AttachmentSourceMenuButton(
-                                      key: const ValueKey('composer-add'),
-                                      semanticLabel: Strings.of(
-                                        context,
-                                      ).chaAttachTooltip,
-                                      onSelected: onAttach!,
-                                      onScanDocument: onScanDocument,
-                                      enabled: attachEnabled && !locked,
-                                    ),
+                                    restOnly(addButton(), gap: 14),
                                   if (recording)
                                     _dictationCancel(
                                       context,
@@ -609,6 +634,7 @@ class ConsoleComposer extends StatelessWidget {
                                           : onRemoveAttachment,
                                     ),
                                   Expanded(
+                                    key: const ValueKey('composer-field-slot'),
                                     child: SizedBox(
                                       height: recording
                                           ? kConsoleDictationComposerHeight
@@ -636,7 +662,8 @@ class ConsoleComposer extends StatelessWidget {
                                                 recording: recording,
                                                 singleLineHint:
                                                     voiceControls != null ||
-                                                    narrowField,
+                                                    narrowField ||
+                                                    hintTooTall,
                                                 shortHint: narrowField,
                                               ),
                                             ),
@@ -662,10 +689,12 @@ class ConsoleComposer extends StatelessWidget {
                                   ),
                                   if (dictation != null &&
                                       (voiceControls == null || recording))
-                                    _dictationAction(
-                                      context,
-                                      colors,
-                                      dictation,
+                                    restOnly(
+                                      _dictationAction(
+                                        context,
+                                        colors,
+                                        dictation,
+                                      ),
                                     ),
                                   if (recording)
                                     _dictationSend(context, colors, dictation!),
@@ -675,15 +704,95 @@ class ConsoleComposer extends StatelessWidget {
                                       voiceMaxWidth,
                                       voiceComfortWidth,
                                     ),
-                                  if (!recording && !voiceTakesPrimarySlot) ...[
-                                    const SizedBox(width: 2),
-                                    SizedBox.square(
-                                      dimension: 48,
-                                      child: Center(child: _primaryAction()),
+                                  if (!recording && !voiceTakesPrimarySlot)
+                                    restOnly(
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const SizedBox(width: 2),
+                                          SizedBox.square(
+                                            dimension: 48,
+                                            child: Center(
+                                              child: _primaryAction(),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      gap: 8,
                                     ),
-                                  ],
                                 ],
                               ),
+                              if (footer != null && footerInside)
+                                ListenableBuilder(
+                                  listenable: focusNode,
+                                  builder: (context, _) => AnimatedSize(
+                                    duration: reduceMotion
+                                        ? HermesMotion.instant
+                                        : HermesMotion.base,
+                                    curve: Curves.easeOutCubic,
+                                    alignment: Alignment.topCenter,
+                                    child: stackedNow()
+                                        ? Row(
+                                            key: const ValueKey(
+                                              'composer-control-row',
+                                            ),
+                                            children: [
+                                              if (onAttach != null)
+                                                addButton(),
+                                              Expanded(
+                                                child: IgnorePointer(
+                                                  ignoring: locked,
+                                                  child: ExcludeSemantics(
+                                                    excluding: locked,
+                                                    child: footer,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (dictation != null)
+                                                _dictationAction(
+                                                  context,
+                                                  colors,
+                                                  dictation,
+                                                ),
+                                              if (!voiceTakesPrimarySlot)
+                                                SizedBox.square(
+                                                  dimension: 48,
+                                                  child: Center(
+                                                    child: _primaryAction(),
+                                                  ),
+                                                ),
+                                            ],
+                                          )
+                                        : focusNode.hasFocus && !recording
+                                        ? Container(
+                                            margin: const EdgeInsets.fromLTRB(
+                                              14,
+                                              2,
+                                              8,
+                                              4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              border: Border(
+                                                top: BorderSide(
+                                                  color: colors.divider
+                                                      .withValues(alpha: 0.5),
+                                                  width: 0.6,
+                                                ),
+                                              ),
+                                            ),
+                                            child: IgnorePointer(
+                                              ignoring: locked,
+                                              child: ExcludeSemantics(
+                                                excluding: locked,
+                                                child: footer,
+                                              ),
+                                            ),
+                                          )
+                                        : const SizedBox(
+                                            width: double.infinity,
+                                          ),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -738,7 +847,7 @@ class ConsoleComposer extends StatelessWidget {
                     },
                   ),
                 ),
-                if (footer != null)
+                if (footer != null && !footerInside)
                   IgnorePointer(
                     ignoring: locked,
                     child: ExcludeSemantics(excluding: locked, child: footer),
@@ -854,7 +963,9 @@ class ConsoleComposer extends StatelessWidget {
 
   /// The field, between its controls, is narrower than its hint on one
   /// line (measured like the room the voice controls get).
-  bool _hintWouldWrap(
+  /// How many lines the hint needs in the field, between its controls
+  /// (measured like the room the voice controls get): over 1 it wraps.
+  double _hintLinesNeeded(
     BuildContext context, {
     required bool compactIme,
     required bool recording,
@@ -865,7 +976,9 @@ class ConsoleComposer extends StatelessWidget {
     if (dictation != null) taken += 48;
     if (primaryVisible) taken += 2 + 48;
     final field = _inputRowWidth(context, compactIme: compactIme) - taken;
-    return field < _hintFieldWidth(context);
+    final hint = _hintFieldWidth(context);
+    if (field <= 0) return double.infinity;
+    return hint / field;
   }
 
   /// Width of the leading control (attach `+`, or cancel while dictating).
@@ -1174,7 +1287,7 @@ class ConsoleAttachmentChips extends StatelessWidget {
                           : ColoredBox(
                               color: colors.background,
                               child: Icon(
-                                Icons.insert_drive_file_outlined,
+                                HIcons.insert_drive_file_outlined,
                                 size: 16,
                                 color: colors.textSecondary,
                               ),
@@ -1219,7 +1332,7 @@ class ConsoleAttachmentChips extends StatelessWidget {
                     behavior: HitTestBehavior.opaque,
                     onTap: remove,
                     child: Icon(
-                      Icons.close_rounded,
+                      HIcons.close_rounded,
                       size: 16,
                       color: colors.textSecondary,
                     ),
@@ -1420,8 +1533,8 @@ class _ConsoleSendButtonState extends State<ConsoleSendButton> {
             ConsoleSendMode.stop => s.chaStopTooltip,
           };
     final icon = switch (widget.mode) {
-      ConsoleSendMode.send => Icons.arrow_upward,
-      ConsoleSendMode.stop => Icons.stop_rounded,
+      ConsoleSendMode.send => HIcons.arrow_upward_rounded,
+      ConsoleSendMode.stop => HIcons.stop_rounded,
     };
     // Q9-CHAT5 v2 (the owner, decision 5): stop is red, the theme's error tone,
     // with the ink that reads on it.

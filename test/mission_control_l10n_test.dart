@@ -4,6 +4,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/dock.dart';
 import 'package:hermes_android/core/widgets/room_avatar_stack.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   for (final entry in const {
@@ -68,13 +69,13 @@ void main() {
                         DockCreateOrbit(
                           controlKey: const ValueKey('bot-mode-create-bot'),
                           label: Strings.of(context).missionCreateBotLabel,
-                          icon: Icons.smart_toy_outlined,
+                          icon: HIcons.smart_toy_outlined,
                           onTap: () {},
                         ),
                         DockCreateOrbit(
                           controlKey: const ValueKey('bot-mode-create-room'),
                           label: Strings.of(context).missionCreateRoomLabel,
-                          icon: Icons.groups_2_outlined,
+                          icon: HIcons.groups_2_outlined,
                           onTap: () {},
                         ),
                       ],

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -116,7 +117,7 @@ class _StartupFailureAppState extends State<StartupFailureApp> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.error_outline_rounded, size: 48),
+                      const Icon(HIcons.error_outline_rounded, size: 48),
                       const SizedBox(height: 16),
                       Text(
                         strings.s1216StartupFailedTitle,

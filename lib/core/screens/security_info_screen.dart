@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -256,7 +257,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
             child: Column(
               children: [
                 HermesSwitchTile(
-                  secondary: Icon(Icons.lock_outline, color: colors.accent),
+                  secondary: Icon(HIcons.lock_outline, color: colors.accent),
                   title: s.secLockTitle,
                   subtitle: s.secLockSubtitle,
                   value: lock?.enabled ?? false,
@@ -271,7 +272,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   ),
                   HermesSwitchTile(
                     secondary: Icon(
-                      Icons.fingerprint,
+                      HIcons.fingerprint,
                       color: _biometricsSupported
                           ? colors.accent
                           : colors.textDisabled,
@@ -291,7 +292,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   ),
                   ListTile(
                     leading: Icon(
-                      Icons.timer_outlined,
+                      HIcons.timer_outlined,
                       color: colors.textSecondary,
                     ),
                     title: Text(s.secLockTimeout),
@@ -320,12 +321,12 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   ),
                   ListTile(
                     leading: Icon(
-                      Icons.pin_outlined,
+                      HIcons.pin_outlined,
                       color: colors.textSecondary,
                     ),
                     title: Text(s.secChangePin),
                     trailing: Icon(
-                      Icons.chevron_right,
+                      HIcons.chevron_right,
                       color: colors.textDisabled,
                     ),
                     onTap: _changePin,
@@ -341,7 +342,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
               children: [
                 HermesSwitchTile(
                   secondary: Icon(
-                    Icons.notifications_off_outlined,
+                    HIcons.notifications_off_outlined,
                     color: colors.accent,
                   ),
                   title: s.secHideNotificationsTitle,
@@ -362,7 +363,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                 ),
                 HermesSwitchTile(
                   secondary: Icon(
-                    Icons.screenshot_monitor_outlined,
+                    HIcons.screenshot_monitor_outlined,
                     color: colors.accent,
                   ),
                   title: s.secBlockScreenshotsTitle,
@@ -385,8 +386,8 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
               children: [
                 _SecurityStatusRow(
                   icon: connectionStatus.ok
-                      ? Icons.enhanced_encryption_outlined
-                      : Icons.warning_amber_rounded,
+                      ? HIcons.enhanced_encryption_outlined
+                      : HIcons.warning_amber_rounded,
                   title: s.secConnectionTitle,
                   status: connectionStatus.label,
                   detail: connectionStatus.detail,
@@ -399,7 +400,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                   color: colors.divider,
                 ),
                 _SecurityStatusRow(
-                  icon: Icons.key_outlined,
+                  icon: HIcons.key_outlined,
                   title: s.secCredentialStorageTitle,
                   status: s.secStatusProtected,
                   detail: s.secCredentialStorageSub,
@@ -413,8 +414,8 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
                 ),
                 _SecurityStatusRow(
                   icon: lock?.enabled == true
-                      ? Icons.lock_outline
-                      : Icons.lock_open_outlined,
+                      ? HIcons.lock_outline
+                      : HIcons.lock_open_outlined,
                   title: s.secLockTitle,
                   status: lock?.enabled == true
                       ? s.secStatusProtected
@@ -431,7 +432,7 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
           Card(
             margin: const EdgeInsets.only(bottom: 10),
             child: ListTile(
-              leading: Icon(Icons.key_off_outlined, color: colors.error),
+              leading: Icon(HIcons.key_off_outlined, color: colors.error),
               title: Text(
                 s.secWipeKeysTitle,
                 style: TextStyle(color: colors.error),
@@ -601,7 +602,7 @@ class _PinSetupScreenState extends State<_PinSetupScreen> {
     return Scaffold(
       appBar: HermesAppBar(
         leading: IconButton(
-          icon: const Icon(Icons.close),
+          icon: const Icon(HIcons.close),
           onPressed: _cancel,
           tooltip: s.secCancel,
         ),

@@ -1,6 +1,7 @@
 // On-demand log view of one MCP server. One read when it opens and one per
 // manual refresh or source switch; there is no timer, and the lines live in
 // this State only (never persisted, never exported).
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -98,7 +99,7 @@ class _McpLogsScreenState extends State<McpLogsScreen> {
         IconButton(
           key: const ValueKey('cph-logs-refresh'),
           tooltip: s.cphLogsRefresh,
-          icon: const Icon(Icons.refresh_rounded),
+          icon: const Icon(HIcons.refresh_rounded),
           onPressed: _loading ? null : _load,
         ),
       ],

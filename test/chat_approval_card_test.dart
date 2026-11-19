@@ -8,6 +8,7 @@ import 'package:hermes_android/core/widgets/interactive_prompt_card.dart'
     show blockingRequestSurface;
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   Widget host(Widget child) => MaterialApp(
@@ -133,7 +134,7 @@ void main() {
     await tester.pump();
 
     // El botón de copiar de la caja del comando (icono content_copy).
-    await tester.tap(find.byIcon(Icons.content_copy));
+    await tester.tap(find.byIcon(HIcons.content_copy));
     await tester.pump();
     expect(copied, 'rm -f /tmp/x');
     // Drena el temporizador de 900 ms que repone el icono (evita "Timer pending").

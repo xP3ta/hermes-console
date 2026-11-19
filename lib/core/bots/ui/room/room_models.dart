@@ -475,7 +475,10 @@ List<RoomTranscriptEntry> buildRoomTranscript({
             : body.text;
         var preview = plainPreview(head, maxChars: 120);
         if (preview.isEmpty) {
-          preview = body.attachments.map((a) => a.name).join(', ');
+          preview = [
+            for (final a in body.attachments) withoutBidiControls(a.name),
+            for (final a in target.attachments) a.displayName,
+          ].join(', ');
         }
         if (preview.isEmpty) return null;
         return RoomReplyQuote(

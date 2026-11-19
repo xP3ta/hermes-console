@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../utils/companion_error_copy.dart';
@@ -231,7 +232,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
                 ? Strings.of(context).petdexSortAlpha
                 : Strings.of(context).petdexSortFeatured,
             icon: Icon(
-              _alphabetical ? Icons.sort_by_alpha : Icons.auto_awesome,
+              _alphabetical ? HIcons.sort_by_alpha : HIcons.auto_awesome,
             ),
             onPressed: () => setState(() => _alphabetical = !_alphabetical),
           ),
@@ -254,7 +255,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
                   fontSize: 13.5,
                 ),
                 prefixIcon: Icon(
-                  Icons.search,
+                  HIcons.search,
                   size: 20,
                   color: colors.textSecondary,
                 ),
@@ -323,7 +324,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          Icons.search_off,
+                          HIcons.search_off,
                           size: 48,
                           color: colors.textDisabled,
                         ),
@@ -397,8 +398,8 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
                                   )
                                 : Icon(
                                     widget.picking
-                                        ? Icons.chevron_right_rounded
-                                        : Icons.download_rounded,
+                                        ? HIcons.chevron_right_rounded
+                                        : HIcons.download_rounded,
                                     color: colors.accent,
                                     size: 20,
                                   ),
@@ -452,7 +453,7 @@ class _PetdexThumb extends StatelessWidget {
               loadingBuilder: (context, child, progress) =>
                   progress == null ? child : const SizedBox.shrink(),
               errorBuilder: (context, error, stack) => Center(
-                child: Icon(Icons.pets, color: colors.textSecondary, size: 96),
+                child: Icon(HIcons.pets, color: colors.textSecondary, size: 96),
               ),
             ),
           ),
@@ -478,7 +479,7 @@ class _ErrorState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.cloud_off, color: colors.textSecondary, size: 36),
+          Icon(HIcons.cloud_off, color: colors.textSecondary, size: 36),
           const SizedBox(height: 12),
           Text(
             offline
@@ -562,7 +563,7 @@ class _PetdexDetailSheet extends StatelessWidget {
                   height: 120,
                   child: Center(
                     child: Icon(
-                      Icons.image_not_supported_outlined,
+                      HIcons.image_not_supported_outlined,
                       color: colors.textSecondary,
                     ),
                   ),
@@ -580,7 +581,7 @@ class _PetdexDetailSheet extends StatelessWidget {
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Icon(picking ? Icons.check_rounded : Icons.download_rounded),
+                : Icon(picking ? HIcons.check_rounded : HIcons.download_rounded),
             label: Text(
               picking
                   ? Strings.of(context).petdexUsePet

@@ -1751,17 +1751,13 @@ class ApiClient {
 
   /// True when the Dashboard answered, even to refuse: a 401/403 means the
   /// server is there and the login is what is missing, never an outage.
+  /// The probe carries no credentials ([DashboardClient.publicStatusCode]):
+  /// a local login cooldown or token store is not an answer from the server.
   Future<bool> _dashboardReachable(DashboardClient dashboard) =>
       _sharedStatusProbe(dashboard, () async {
         try {
-          await dashboard.getServerStatus().timeout(
-            const Duration(seconds: 10),
-          );
-          return true;
-        } on DashboardAuthException {
-          return true;
-        } on DashboardHttpException catch (error) {
-          return error.statusCode == 401 || error.statusCode == 403;
+          final status = await dashboard.publicStatusCode();
+          return status == 200 || status == 401 || status == 403;
         } catch (e) {
           debugPrint('[connection] excepción silenciada (se asume false): $e');
           return false;
@@ -4153,6 +4149,24 @@ class DashboardClient {
   /// gateway_pid, gateway_platforms (plat -> {state,error}), active_sessions,
   /// config_version, latest_config_version, auth_required, ...}. Solo lectura.
   Future<Map<String, dynamic>> getServerStatus() => apiGet('status');
+
+  /// Liveness for the status line: `GET /api/status` without credentials.
+  /// The route is public on the Dashboard (Hermes `PUBLIC_API_PATHS`) and is
+  /// Desktop's own probe. Only an answer from the server counts: no login,
+  /// login cooldown or stored token can stand in for it. Pixel QA of 1.4.1:
+  /// with Tailscale off, a login that failed for want of a network armed the
+  /// login cooldown, and the next probes met that cooldown's
+  /// [DashboardAuthException] without any request and read «reachable».
+  /// Returns the HTTP status; throws when the server does not answer.
+  Future<int> publicStatusCode({
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    _requireOpen();
+    final res = await _http
+        .within(timeout)
+        .get(Uri.parse('$_baseUrl/api/status'));
+    return res.statusCode;
+  }
 
   /// Transcript almacenado por el Dashboard, con aislamiento por perfil.
   /// El API gateway de :8642 no acepta `profile`; las sesiones de perfiles

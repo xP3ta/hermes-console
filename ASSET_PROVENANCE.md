@@ -207,3 +207,28 @@ asset and strip. Licence text and credit: `assets/chat_icons/LICENSE.txt`.
 | `assets/chat_icons/response-stream.webp` | Response stream | `assets/response-stream.lottie` | MIT | `b53fab9c29cff50773e2f8bdaf01e463bb8580e8cb126ff969ddc09d1008f441` |
 | `assets/chat_icons/terminal-agent.webp` | Terminal agent | `assets/terminal-agent.lottie` | MIT | `60739bbb2ba285a61067da612c001b7d7b1ab4f442342d76ef02828acd671e4d` |
 | `assets/chat_icons/tool-call.webp` | Tool call | `assets/tool-call.lottie` | MIT | `4d38ea5fb9dbadda5f91977a970c4916042b3b18a18087086492395aa928c715` |
+
+## App icons (Material Symbols)
+
+The app's icons are a subset of Google's Material Symbols Rounded
+(https://github.com/google/material-design-icons, Apache-2.0), packed locally;
+no icon font is fetched at runtime. `lib/core/design/hicons.dart` lists the
+code point of every icon used. Licence text:
+`assets/fonts/MaterialSymbols-LICENSE.txt`.
+
+| File | Contents | License | SHA-256 |
+|---|---|---|---|
+| `assets/fonts/HermesSymbols.ttf` | Outlined icons, light weight | Apache-2.0 | `6b42def303c6692c00caaa7698f54fc214fd013e3bb124ef0cfb345f680ed502` |
+| `assets/fonts/HermesSymbolsFilled.ttf` | The few filled icons | Apache-2.0 | `f50fe5296848a7ee42c277cdac6db6e068e851446f8daf8b012d21ca23989782` |
+
+## Viewer libraries (diagrams and 3D models)
+
+Packed unmodified from the npm registry; loaded from the app bundle only.
+
+| File | Source | License | SHA-256 |
+|---|---|---|---|
+| `assets/viewers/mermaid.min.js` | `dist/mermaid.min.js` of `mermaid@11.17.2` (https://registry.npmjs.org/mermaid/-/mermaid-11.17.2.tgz, tarball SHA-256 `6ad2f42c3fc26bbf9e45cbb6d11898972573ea52b33a5f4ff51952899f950ffd`) | MIT | `581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8` |
+| `assets/viewers/model-viewer-umd.min.js` | `dist/model-viewer-umd.min.js` of `@google/model-viewer@4.4.0` (https://registry.npmjs.org/@google/model-viewer/-/model-viewer-4.4.0.tgz, tarball SHA-256 `8b621bd58da86cfa9908aaedf5a263d49770d08fc9e04ca661e3019616565f02`) | Apache-2.0 | `d785423b1d046ea84a9f59ef6cf15f3077603e1bf938b01ced9b0240691884a2` |
+
+Mermaid 12 is not used: its bundle includes ELK (EPL-2.0), which cannot be
+combined with this GPL-3.0-only app.

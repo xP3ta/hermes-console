@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -251,13 +252,13 @@ Widget chatCitationScoped({
 }
 
 IconData _iconFor(ChatFileKind kind) => switch (kind) {
-  ChatFileKind.folder => Icons.folder_rounded,
-  ChatFileKind.archive => Icons.folder_zip_rounded,
-  ChatFileKind.image => Icons.image_rounded,
-  ChatFileKind.pdf => Icons.picture_as_pdf_rounded,
-  ChatFileKind.code => Icons.code_rounded,
-  ChatFileKind.data => Icons.data_object_rounded,
-  ChatFileKind.file || ChatFileKind.markdown => Icons.insert_drive_file_rounded,
+  ChatFileKind.folder => HIcons.folder_rounded,
+  ChatFileKind.archive => HIcons.folder_zip_rounded,
+  ChatFileKind.image => HIcons.image_rounded,
+  ChatFileKind.pdf => HIcons.picture_as_pdf_rounded,
+  ChatFileKind.code => HIcons.code_rounded,
+  ChatFileKind.data => HIcons.data_object_rounded,
+  ChatFileKind.file || ChatFileKind.markdown => HIcons.insert_drive_file_rounded,
 };
 
 /// A file or folder of a reply: a type icon and the short name in the accent,

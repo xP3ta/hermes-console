@@ -4,6 +4,7 @@
 // API keys in Android Keystore). The "active" gateway is the
 // `last_connection_id` preference that HomeScreen uses to auto-connect on
 // launch — selecting a card here changes which gateway the app opens next.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -293,7 +294,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
         IconButton(
           key: const ValueKey('hermes-add'),
           tooltip: _connections.isEmpty ? s.homeAddInstance : s.gwAddInstance,
-          icon: Icon(Icons.add, color: colors.accent),
+          icon: Icon(HIcons.add, color: colors.accent),
           onPressed: _showAddDialog,
         ),
       ],
@@ -308,7 +309,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
           HermesPrimaryButton(
             key: const ValueKey('hermes-add-empty'),
             label: s.homeAddInstance,
-            icon: Icons.qr_code_scanner,
+            icon: HIcons.qr_code_scanner,
             onTap: _showAddDialog,
           ),
         ] else ...[
@@ -321,7 +322,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
           HermesListRow(
             key: const ValueKey('hermes-add-another'),
             title: s.gwAddInstance,
-            icon: Icons.add,
+            icon: HIcons.add,
             onTap: _showAddDialog,
           ),
         ],
@@ -394,7 +395,7 @@ class _CardMenu extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     return HermesMenuButton<_MenuAction>(
       tooltip: Strings.of(context).sConnectionOptions(label),
-      icon: Icon(Icons.more_vert, size: 20, color: colors.textSecondary),
+      icon: Icon(HIcons.more_vert, size: 20, color: colors.textSecondary),
       onSelected: (action) {
         switch (action) {
           case _MenuAction.select:
@@ -412,24 +413,24 @@ class _CardMenu extends StatelessWidget {
           HermesAction(
             value: _MenuAction.select,
             label: Strings.of(context).gwSetActive,
-            icon: Icons.check_circle_outline,
+            icon: HIcons.check_circle_outline,
           ),
         HermesAction(
           value: _MenuAction.toggleDefault,
           label: isDefault
               ? Strings.of(context).gwUnsetDefault
               : Strings.of(context).gwSetDefault,
-          icon: isDefault ? Icons.star : Icons.star_outline,
+          icon: isDefault ? HIcons.star : HIcons.star_outline,
         ),
         HermesAction(
           value: _MenuAction.test,
           label: Strings.of(context).gwTestConnection,
-          icon: Icons.wifi_tethering,
+          icon: HIcons.wifi_tethering,
         ),
         HermesAction(
           value: _MenuAction.delete,
           label: Strings.of(context).gwDelete,
-          icon: Icons.delete_outline,
+          icon: HIcons.delete_outline,
           destructive: true,
         ),
       ],

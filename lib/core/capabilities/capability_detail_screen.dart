@@ -1,6 +1,7 @@
 // Capability detail: one action that works now, trust and permissions, and
 // secondary actions behind "More". Every action calls the repository for
 // real; nothing flips locally until the server confirms it.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -180,13 +181,13 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
   };
 
   IconData _icon(CapabilityAction action) => switch (action) {
-    CapabilityAction.install => Icons.download_rounded,
-    CapabilityAction.update => Icons.system_update_alt_rounded,
-    CapabilityAction.enable => Icons.toggle_on_outlined,
-    CapabilityAction.disable => Icons.toggle_off_outlined,
-    CapabilityAction.remove => Icons.delete_outline_rounded,
-    CapabilityAction.test => Icons.network_check_rounded,
-    CapabilityAction.docs => Icons.open_in_new_rounded,
+    CapabilityAction.install => HIcons.download_rounded,
+    CapabilityAction.update => HIcons.system_update_alt_rounded,
+    CapabilityAction.enable => HIcons.toggle_on_outlined,
+    CapabilityAction.disable => HIcons.toggle_off_outlined,
+    CapabilityAction.remove => HIcons.delete_outline_rounded,
+    CapabilityAction.test => HIcons.network_check_rounded,
+    CapabilityAction.docs => HIcons.open_in_new_rounded,
   };
 
   Future<bool> _confirm(CapabilityAction action, {String scanLine = ''}) {
@@ -969,7 +970,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
               key: const ValueKey('cph-detail-readonly'),
               label: s.cphReadOnlyTag,
               tone: HermesStatusTone.neutral,
-              icon: Icons.lock_outline_rounded,
+              icon: HIcons.lock_outline_rounded,
             ),
         ],
       ),
@@ -988,7 +989,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
           IconButton(
             key: _moreKey,
             tooltip: s.cphMore,
-            icon: const Icon(Icons.more_vert_rounded),
+            icon: const Icon(HIcons.more_vert_rounded),
             onPressed: _busy ? null : () => _openMore(secondary),
           ),
       ],
@@ -1005,15 +1006,15 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
           children: [
             HermesListRow(
               icon: item.trust == CapabilityTrust.official
-                  ? Icons.verified_outlined
-                  : Icons.shield_outlined,
+                  ? HIcons.verified_outlined
+                  : HIcons.shield_outlined,
               title: capabilityTrustLabel(s, item.trust),
               subtitle: capabilityTrustBody(s, item.trust),
               subtitleMaxLines: 3,
             ),
             if (item.author.isNotEmpty)
               HermesListRow(
-                icon: Icons.person_outline_rounded,
+                icon: HIcons.person_outline_rounded,
                 title: s.cphRowPublisher,
                 value: item.author,
               ),
@@ -1021,44 +1022,44 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
             if (item.source.isNotEmpty &&
                 item.source.toLowerCase() != item.trust.name)
               HermesListRow(
-                icon: Icons.inventory_2_outlined,
+                icon: HIcons.inventory_2_outlined,
                 title: s.cphRowSource,
                 value: capabilityLabel(item.source),
               ),
             if (d.repo.isNotEmpty)
               HermesListRow(
-                icon: Icons.code_rounded,
+                icon: HIcons.code_rounded,
                 title: s.cphRowRepo,
                 subtitle: d.subdir.isEmpty ? d.repo : '${d.repo} · ${d.subdir}',
                 subtitleMaxLines: 3,
               ),
             if (d.pin(item.version).isNotEmpty)
               HermesListRow(
-                icon: Icons.push_pin_outlined,
+                icon: HIcons.push_pin_outlined,
                 title: s.cphRowPin,
                 value: d.pin(item.version),
               )
             else if (item.version.isNotEmpty)
               HermesListRow(
-                icon: Icons.sell_outlined,
+                icon: HIcons.sell_outlined,
                 title: s.cphRowVersion,
                 value: item.version,
               ),
             if (d.platforms.isNotEmpty)
               HermesListRow(
-                icon: Icons.devices_outlined,
+                icon: HIcons.devices_outlined,
                 title: s.cphRowPlatforms,
                 value: d.platforms.join(', '),
               ),
             if (d.requiresHermes.isNotEmpty)
               HermesListRow(
-                icon: Icons.tag_rounded,
+                icon: HIcons.tag_rounded,
                 title: s.cphRowRequiresHermes,
                 value: d.requiresHermes,
               ),
             if (item.category.isNotEmpty && item.category != 'mcp')
               HermesListRow(
-                icon: Icons.category_outlined,
+                icon: HIcons.category_outlined,
                 title: s.cphRowCategory,
                 value: capabilityLabel(item.category),
               ),
@@ -1069,42 +1070,42 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
           children: [
             if (item.tools.isNotEmpty)
               HermesListRow(
-                icon: Icons.build_outlined,
+                icon: HIcons.build_outlined,
                 title: s.cphRowTools,
                 subtitle: item.tools.join(', '),
                 subtitleMaxLines: 4,
               ),
             if (d.hooks.isNotEmpty)
               HermesListRow(
-                icon: Icons.webhook_outlined,
+                icon: HIcons.webhook_outlined,
                 title: s.cphRowHooks,
                 subtitle: d.hooks.join(', '),
                 subtitleMaxLines: 4,
               ),
             if (d.middleware.isNotEmpty)
               HermesListRow(
-                icon: Icons.layers_outlined,
+                icon: HIcons.layers_outlined,
                 title: s.cphRowMiddleware,
                 subtitle: d.middleware.join(', '),
                 subtitleMaxLines: 4,
               ),
             if (item.requirements.isNotEmpty)
               HermesListRow(
-                icon: Icons.key_outlined,
+                icon: HIcons.key_outlined,
                 title: s.cphRowRequires,
                 subtitle: item.requirements.join(', '),
                 subtitleMaxLines: 4,
               ),
             if (d.knownIssues.isNotEmpty)
               HermesListRow(
-                icon: Icons.warning_amber_rounded,
+                icon: HIcons.warning_amber_rounded,
                 title: s.cphRowKnownIssues,
                 subtitle: d.knownIssues.join('\n'),
                 subtitleMaxLines: 8,
               ),
             if (item.description == 'oauth')
               HermesListRow(
-                icon: Icons.lock_person_outlined,
+                icon: HIcons.lock_person_outlined,
                 title: s.cphRowAuth,
                 value: 'OAuth',
               ),
@@ -1115,7 +1116,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                 d.knownIssues.isEmpty &&
                 item.description != 'oauth')
               HermesListRow(
-                icon: Icons.check_circle_outline_rounded,
+                icon: HIcons.check_circle_outline_rounded,
                 title: s.cphNoPermissions,
                 muted: true,
               ),
@@ -1130,7 +1131,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
             children: [
               HermesListRow(
                 key: const ValueKey('cph-authorize-row'),
-                icon: Icons.lock_open_rounded,
+                icon: HIcons.lock_open_rounded,
                 title: AdminIntegrationsCopy.of(context).authorize,
                 onTap: _busy ? null : _authorizeMcp,
               ),
@@ -1145,7 +1146,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
             children: [
               HermesListRow(
                 key: const ValueKey('cph-logs-row'),
-                icon: Icons.article_outlined,
+                icon: HIcons.article_outlined,
                 title: s.cphLogsTitle,
                 onTap: _openLogs,
               ),
@@ -1162,7 +1163,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
             children: [
               HermesListRow(
                 key: const ValueKey('spp-row-skill-md'),
-                icon: Icons.description_outlined,
+                icon: HIcons.description_outlined,
                 title: s.sppViewSkillMd,
                 onTap: _busy ? null : _openSkillMd,
               ),
@@ -1181,26 +1182,26 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
             children: [
               if (runtime != null && runtime.tools > 0)
                 HermesListRow(
-                  icon: Icons.build_outlined,
+                  icon: HIcons.build_outlined,
                   title: s.cphRowTools,
                   value: s.cphMcpToolCount(runtime.tools),
                 ),
               if (item.transport.isNotEmpty)
                 HermesListRow(
-                  icon: Icons.swap_horiz_rounded,
+                  icon: HIcons.swap_horiz_rounded,
                   title: s.cphRowTransport,
                   value: item.transport,
                 ),
               if (item.command.isNotEmpty)
                 HermesListRow(
-                  icon: Icons.terminal_rounded,
+                  icon: HIcons.terminal_rounded,
                   title: s.cphRowCommand,
                   subtitle: sppSafeTarget(item.command),
                   subtitleMaxLines: 4,
                 ),
               if (item.url.isNotEmpty)
                 HermesListRow(
-                  icon: Icons.link_rounded,
+                  icon: HIcons.link_rounded,
                   title: s.cphRowUrl,
                   subtitle: sppSafeEndpoint(item.url),
                   subtitleMaxLines: 3,
@@ -1210,7 +1211,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                   sppMcpUrlIsPublicCleartext(item.url))
                 HermesListRow(
                   key: const ValueKey('spp-row-insecure'),
-                  icon: Icons.warning_amber_rounded,
+                  icon: HIcons.warning_amber_rounded,
                   iconColor: Theme.of(context).hermes.warning,
                   title: s.sppInsecureTitle,
                   subtitle: s.sppInsecurePublicBody,
@@ -1218,26 +1219,26 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                 ),
               if (d.authType.isNotEmpty)
                 HermesListRow(
-                  icon: Icons.lock_person_outlined,
+                  icon: HIcons.lock_person_outlined,
                   title: s.cphRowAuthType,
                   value: d.authType,
                 ),
               if (d.installUrl.isNotEmpty)
                 HermesListRow(
-                  icon: Icons.cloud_download_outlined,
+                  icon: HIcons.cloud_download_outlined,
                   title: s.cphRowCloneFrom,
                   subtitle: sppSafeEndpoint(d.installUrl),
                   subtitleMaxLines: 3,
                 ),
               if (d.installRef.isNotEmpty)
                 HermesListRow(
-                  icon: Icons.call_split_rounded,
+                  icon: HIcons.call_split_rounded,
                   title: s.cphRowCloneRef,
                   value: d.installRef,
                 ),
               if (d.bootstrap.isNotEmpty)
                 HermesListRow(
-                  icon: Icons.terminal_rounded,
+                  icon: HIcons.terminal_rounded,
                   title: s.cphRowBootstrap,
                   subtitle: d.bootstrap.join('\n'),
                   subtitleMaxLines: 12,
@@ -1246,7 +1247,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                   _repo.supports(CapabilityFeature.skillPreview) == true)
                 HermesListRow(
                   key: const ValueKey('cph-row-preview'),
-                  icon: Icons.description_outlined,
+                  icon: HIcons.description_outlined,
                   title: s.cphRowPreview,
                   onTap: _busy ? null : _showPreview,
                 ),
@@ -1254,7 +1255,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                   _repo.supports(CapabilityFeature.skillScan) == true)
                 HermesListRow(
                   key: const ValueKey('cph-row-scan'),
-                  icon: Icons.security_outlined,
+                  icon: HIcons.security_outlined,
                   title: s.cphRowScan,
                   onTap: _busy ? null : _showScan,
                 ),

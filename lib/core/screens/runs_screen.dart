@@ -2,6 +2,7 @@
 // RunRegistry local. Desde que «Nueva tarea» abre un chat normal, ya no se
 // sigue, aprueba ni para ningún run: solo se muestran su prompt,
 // estado, salida y error guardados.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -166,7 +167,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                 title: record.runId,
                 muted: true,
                 trailing: Icon(
-                  Icons.copy_rounded,
+                  HIcons.copy_rounded,
                   size: 18,
                   color: colors.textSecondary,
                 ),
@@ -181,7 +182,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
             ],
           ),
           const SizedBox(height: 10),
-          HermesInfoBanner(s.runsHistoryReadOnly, icon: Icons.history),
+          HermesInfoBanner(s.runsHistoryReadOnly, icon: HIcons.history),
           if (output.isNotEmpty) ...[
             const SizedBox(height: 16),
             HermesSectionHeader(
@@ -204,7 +205,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                     padding: EdgeInsets.zero,
                     focusColor: colors.textSecondary.withValues(alpha: 0.12),
                     icon: Icon(
-                      Icons.content_copy_outlined,
+                      HIcons.content_copy_outlined,
                       size: 14,
                       color: colors.textSecondary,
                     ),
@@ -224,7 +225,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
             const SizedBox(height: 14),
             HermesInfoBanner(
               s.runsError(error),
-              icon: Icons.error_outline,
+              icon: HIcons.error_outline,
               tone: colors.error,
             ),
           ],

@@ -6,6 +6,7 @@ import 'package:hermes_android/core/widgets/attachment_source_sheet.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/home_prompt_composer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   testWidgets('es un campo real y no envía contenido vacío', (tester) async {
@@ -38,7 +39,7 @@ void main() {
     expect(field.decoration?.focusedBorder, InputBorder.none);
     final send = find.byKey(const ValueKey('home-prompt-send'));
     expect(tester.widget<HermesTactileAction>(send).onPressed, isNotNull);
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.graphic_eq_rounded), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), '   ');
     await tester.pump();
@@ -178,11 +179,11 @@ void main() {
       ),
     );
 
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.graphic_eq_rounded), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'hola');
     await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsNothing);
+    expect(find.byIcon(HIcons.arrow_upward_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.graphic_eq_rounded), findsNothing);
 
     final surface = tester.widget<HermesComposerSurface>(
       find.byType(HermesComposerSurface),
@@ -197,17 +198,17 @@ void main() {
 
     await tester.enterText(find.byType(TextField), '   ');
     await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.graphic_eq_rounded), findsOneWidget);
 
     final controller = tester
         .widget<TextField>(find.byType(TextField))
         .controller!;
     controller.text = 'texto programático';
     await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.arrow_upward_rounded), findsOneWidget);
     controller.clear();
     await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.graphic_eq_rounded), findsOneWidget);
   });
 
   testWidgets('el botón + expone un adjunto real con target de 48 dp', (

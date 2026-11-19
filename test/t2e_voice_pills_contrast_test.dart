@@ -15,6 +15,7 @@ import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/voice_capsule.dart';
 import 'package:hermes_android/core/widgets/voice_strip.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _themes = ['console', 'console-light', 'amber', 'gruvbox-light'];
 
@@ -61,7 +62,7 @@ List<Color> _inks(WidgetTester tester, Finder of) {
     find.descendant(of: of, matching: find.byType(RichText)),
   );
   for (final text in texts) {
-    if (text.text.style?.fontFamily == Icons.done_rounded.fontFamily) {
+    if (text.text.style?.fontFamily == HIcons.done_rounded.fontFamily) {
       continue;
     }
     text.text.visitChildren((span) {

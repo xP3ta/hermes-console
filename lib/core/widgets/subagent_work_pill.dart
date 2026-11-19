@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -204,7 +205,7 @@ class _SubagentWorkPillState extends State<SubagentWorkPill> {
               children: [
                 if (widget.agentIcon) ...[
                   Icon(
-                    Icons.group_outlined,
+                    HIcons.group_outlined,
                     size: HermesSpace.x3,
                     color: chrome.mutedInk,
                   ),
@@ -452,7 +453,7 @@ class _ActivityChevron extends StatelessWidget {
     child: SizedBox.square(
       dimension: HermesSpace.x6,
       child: Icon(
-        Icons.keyboard_arrow_down_rounded,
+        HIcons.keyboard_arrow_down_rounded,
         size: HermesSpace.x4,
         color: HermesChrome.of(Theme.of(context).hermes).mutedInk,
       ),

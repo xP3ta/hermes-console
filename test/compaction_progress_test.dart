@@ -9,6 +9,7 @@ import 'package:hermes_android/core/widgets/chat_status_pill.dart';
 import 'package:hermes_android/core/widgets/session_context_usage.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'support/inter_font.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final DateTime _t0 = DateTime(2026, 9, 21, 12);
 
@@ -330,7 +331,7 @@ void main() {
       expect(find.text('Compactando…'), findsOneWidget);
       expect(find.text('21%'), findsNothing);
       // The durable "compacted N times" mark gives way to the live state.
-      expect(find.byIcon(Icons.compress_rounded), findsNothing);
+      expect(find.byIcon(HIcons.compress_rounded), findsNothing);
       expect(find.text('YOLO'), findsOneWidget);
       expect(
         tester
@@ -407,7 +408,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Compactada'), findsNothing);
       expect(find.text('21%'), findsOneWidget);
-      expect(find.byIcon(Icons.compress_rounded), findsOneWidget);
+      expect(find.byIcon(HIcons.compress_rounded), findsOneWidget);
       final pill = find.byKey(const ValueKey('desktop-context-usage-status'));
       expect(tester.getSemantics(pill).flagsCollection.isLiveRegion, isFalse);
     });

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -298,7 +299,7 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
                         minWidth: 40,
                         minHeight: 40,
                       ),
-                      icon: const Icon(Icons.close_rounded, size: 18),
+                      icon: const Icon(HIcons.close_rounded, size: 18),
                     ),
                   ),
                 ),
@@ -317,7 +318,7 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
                         minWidth: 40,
                         minHeight: 40,
                       ),
-                      icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                      icon: const Icon(HIcons.arrow_upward_rounded, size: 18),
                     ),
                   ),
                 ),

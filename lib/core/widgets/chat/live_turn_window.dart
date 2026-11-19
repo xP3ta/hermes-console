@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -53,10 +54,10 @@ LiveToolKind liveToolKind(String? tool) {
 }
 
 IconData _glyphOf(LiveToolKind kind) => switch (kind) {
-  LiveToolKind.skill => Icons.auto_awesome_outlined,
-  LiveToolKind.file => Icons.description_outlined,
-  LiveToolKind.terminal => Icons.terminal_rounded,
-  LiveToolKind.other => Icons.build_outlined,
+  LiveToolKind.skill => HIcons.neurology,
+  LiveToolKind.file => HIcons.description_outlined,
+  LiveToolKind.terminal => HIcons.terminal_rounded,
+  LiveToolKind.other => HIcons.build_outlined,
 };
 
 /// One pill of the window: a step, or a run of consecutive steps of the same
@@ -207,7 +208,7 @@ class _RingCheckPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final stroke = HermesLiveTurn.connectorWidth * size.shortestSide / 15;
+    final stroke = 1.3 * size.shortestSide / 15;
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
@@ -255,7 +256,7 @@ class _RingBangPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final stroke = HermesLiveTurn.connectorWidth * size.shortestSide / 15;
+    final stroke = 1.3 * size.shortestSide / 15;
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
@@ -338,7 +339,7 @@ class _SpinnerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final stroke = HermesLiveTurn.connectorWidth * size.shortestSide / 15;
+    final stroke = 1.3 * size.shortestSide / 15;
     canvas.drawArc(
       (Offset.zero & size).deflate(stroke / 2),
       -math.pi / 2,
@@ -442,7 +443,7 @@ class _LiveRow extends StatelessWidget {
             ),
           }
         : row.failed
-        ? Icon(Icons.error_outline_rounded, size: HermesLiveTurn.glyphSize, color: colors.error)
+        ? Icon(HIcons.error_outline_rounded, size: HermesLiveTurn.glyphSize, color: colors.error)
         : s
         ? const LiveSpinnerRing()
         : const LiveRingCheck();
@@ -451,7 +452,7 @@ class _LiveRow extends StatelessWidget {
         color: s || (memory && memState != LiveMemoryState.unconfirmed)
             ? accent.withValues(alpha: 0.10)
             : chrome.fill,
-        borderRadius: BorderRadius.circular(HermesRadius.control),
+        borderRadius: BorderRadius.circular(HermesRadius.tag),
         border: Border.all(
           color: memory && memState != LiveMemoryState.unconfirmed
               ? accent.withValues(alpha: 0.5)
@@ -469,7 +470,7 @@ class _LiveRow extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                memory ? Icons.psychology_outlined : _glyphOf(row.kind),
+                memory ? HIcons.bookmark_border_rounded : _glyphOf(row.kind),
                 key: ValueKey(
                   memory ? 'live-turn-glyph-memory' : 'live-turn-glyph-${row.kind.name}',
                 ),

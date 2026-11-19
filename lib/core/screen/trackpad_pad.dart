@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -268,7 +269,7 @@ class _ScreenTrackpadState extends State<ScreenTrackpad> {
                               border: Border.all(color: colors.divider),
                             ),
                             child: Icon(
-                              Icons.unfold_more_rounded,
+                              HIcons.unfold_more_rounded,
                               size: 16,
                               semanticLabel: strings.bsaPadScroll,
                               color: colors.textSecondary,

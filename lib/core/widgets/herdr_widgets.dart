@@ -3,6 +3,7 @@
 // espacios y sus agentes. Solo muestra lo que `herdr api snapshot` da de
 // verdad (tipo y nombre del agente, estado y carpeta); el modelo, el
 // contexto y Aprobar/Denegar de la maqueta no salen de Herdr y no están.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -129,8 +130,8 @@ class HerdrAgentBanner extends StatelessWidget {
           children: [
             Icon(
               pane?.hasAgent ?? false
-                  ? Icons.smart_toy_outlined
-                  : Icons.terminal_rounded,
+                  ? HIcons.smart_toy_outlined
+                  : HIcons.terminal_rounded,
               size: 20,
               color: colors.textSecondary,
             ),
@@ -170,7 +171,7 @@ class HerdrPanelButton extends StatelessWidget {
         isLabelVisible: needsYou > 0,
         backgroundColor: colors.warning,
         label: Text('$needsYou'),
-        child: const Icon(Icons.tag),
+        child: const Icon(HIcons.tag),
       ),
     );
   }
@@ -205,7 +206,7 @@ class HerdrPanel extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
           child: Row(
             children: [
-              Icon(Icons.tag, size: 20, color: colors.textSecondary),
+              Icon(HIcons.tag, size: 20, color: colors.textSecondary),
               const SizedBox(width: 8),
               Text(
                 SshSessionKind.herdr.programName ?? SshSessionKind.herdr.id,
@@ -324,7 +325,7 @@ class _PaneRow extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                pane.hasAgent ? Icons.smart_toy_outlined : Icons.terminal,
+                pane.hasAgent ? HIcons.smart_toy_outlined : HIcons.terminal,
                 size: 18,
                 color: colors.textSecondary,
               ),

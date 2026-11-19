@@ -1,4 +1,4 @@
-// OPUS-CRISTAL: where a page's foot scrim leaves the content alone, so the
+// Foot glass: where a page's foot scrim leaves the content alone, so the
 // smoked glass of the pieces above it frosts real content, not the scrim.
 //
 // The chat's foot scrim (HermesBottomScrim, QA 9529) dissolves the reply
@@ -84,8 +84,8 @@ class HermesScrimHoles extends ChangeNotifier {
     final bounds = [for (final path in now) path.getBounds()];
     // The live outlines, never the published ones: a piece whose shape
     // changed within the same bounds (rectangular to bevelled) gets its
-    // current outline, so no old corner is ever cut outside it (Git,
-    // OPUS-SCRIM-CONTOUR-FRESHNESS-1). The bounds check keeps the
+    // current outline, so no old corner is ever cut outside it.
+    // The bounds check keeps the
     // published, still position as the condition to cut at all.
     return listEquals(bounds, _bounds) ? now : const <Path>[];
   }

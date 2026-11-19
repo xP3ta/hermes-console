@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -760,7 +761,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
         ),
         child: Row(
           children: [
-            Icon(Icons.visibility_outlined, size: 16, color: colors.accent),
+            Icon(HIcons.visibility_outlined, size: 16, color: colors.accent),
             const SizedBox(width: HermesSpace.x2),
             Expanded(
               child: Text(
@@ -792,21 +793,21 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
             tooltip: strings.brwBack,
             color: colors.textPrimary,
             onPressed: _canGoBack ? () => unawaited(_goBack()) : null,
-            icon: const Icon(Icons.arrow_back_rounded),
+            icon: const Icon(HIcons.arrow_back_rounded),
           ),
           IconButton(
             key: const ValueKey('in-app-browser-forward'),
             tooltip: strings.brwForward,
             color: colors.textPrimary,
             onPressed: _canGoForward ? () => unawaited(_goForward()) : null,
-            icon: const Icon(Icons.arrow_forward_rounded),
+            icon: const Icon(HIcons.arrow_forward_rounded),
           ),
           IconButton(
             key: const ValueKey('in-app-browser-reload'),
             tooltip: strings.brwReload,
             color: colors.textPrimary,
             onPressed: _url.isEmpty && _error == null ? null : _reload,
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(HIcons.refresh_rounded),
           ),
           if (widget.tab?.barTrailing case final trailing?) ...[
             Expanded(flex: 2, child: _buildAddressField(strings, colors)),
@@ -821,7 +822,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
             onPressed: external == null
                 ? null
                 : () => unawaited(_openExternal(external)),
-            icon: const Icon(Icons.open_in_new_rounded),
+            icon: const Icon(HIcons.open_in_new_rounded),
           ),
         ],
       ),
@@ -843,7 +844,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
               color: colors.accent,
             ),
           )
-        : Icon(Icons.language_rounded, size: 18, color: colors.textSecondary);
+        : Icon(HIcons.language_rounded, size: 18, color: colors.textSecondary);
     return Semantics(
       label: strings.brwAddress,
       textField: true,
@@ -900,7 +901,7 @@ class _InAppBrowserBlankView extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                Icons.language_rounded,
+                HIcons.language_rounded,
                 size: HermesSpace.x8,
                 color: colors.textSecondary,
               ),
@@ -1014,7 +1015,7 @@ class _InAppBrowserErrorView extends StatelessWidget {
                 FilledButton.icon(
                   key: const ValueKey('in-app-browser-error-open-external'),
                   onPressed: () => onOpenExternal(external),
-                  icon: const Icon(Icons.open_in_new_rounded),
+                  icon: const Icon(HIcons.open_in_new_rounded),
                   label: Text(strings.brwOpenExternal),
                 )
               else

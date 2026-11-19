@@ -356,8 +356,16 @@ Esto puede ser logueado por proxies, firewalls y herramientas de debug.
 - Package ID, versión, SHA-256 y certificado de firma se miden de nuevo sobre
   cada artefacto. Los sidecars no son autoridad y un hash no sustituye la
   identidad de firma.
-- Dos clones limpios, con caches separados y el `pubspec.lock` autoritativo
-  fijado por SHA-256, generan dos observaciones independientes. Antes de promover
+- Dos clones limpios, construidos uno tras otro en UNA ruta absoluta canónica
+  (`$WORK/build`: clon, `HOME`, `PUB_CACHE`, `GRADLE_USER_HOME`; `$WORK` es un
+  directorio temporal nuevo en cada ejecución: la ruta es común a las dos
+  réplicas de esa ejecución, no una ruta fija publicada) recreada vacía
+  para cada uno y comprobada inexistente antes del segundo, con el `pubspec.lock`
+  autoritativo fijado por SHA-256, generan dos observaciones independientes. Las
+  rutas absolutas de build quedan dentro de las bibliotecas nativas y del
+  snapshot de Dart: la igualdad solo se afirma para builds en esa misma ruta. Si
+  la comparación falla, su informe (sin bytes firmados) se conserva junto a la
+  salida pedida. Antes de promover
   la salida, el propio paso de build emite un manifiesto canónico que fija
   fuente, inputs, comando, rutas/hashes pre-build del toolchain (que deben
   permanecer iguales tras ambos replicas) y nombres/tamaños/hashes de los

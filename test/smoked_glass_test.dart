@@ -55,7 +55,7 @@ void main() {
     expect(HermesSmokedGlass.light.matrix[4], closeTo(0.85 * 255, 1e-6));
   });
 
-  // Git R1, OPUS-WIRING-CONTRAST-RANGE-1: an ink whose luminance falls
+  // An ink whose luminance falls
   // inside the range under the glass meets a page that matches it, 1:1.
   test('an ink inside the range under the glass reads 1:1 and is refused', () {
     final chrome = HermesChrome.of(_classicDark);

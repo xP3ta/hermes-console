@@ -2,6 +2,7 @@
 // motivo de cada fallo con «Reintentar», y lo que se puede hacer con un
 // documento ya guardado (Abrir, Compartir, Guardar otra copia…). Lo usan
 // todos los «Guardar» de la app y las descargas SFTP.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -148,17 +149,17 @@ Future<void> showSavedDocumentActions(
     actions: [
       HermesAction(
         value: 'open',
-        icon: Icons.open_in_new_rounded,
+        icon: HIcons.open_in_new_rounded,
         label: strings.commonOpen,
       ),
       HermesAction(
         value: 'share',
-        icon: Icons.share_outlined,
+        icon: HIcons.share_outlined,
         label: strings.commonShare,
       ),
       HermesAction(
         value: 'copy',
-        icon: Icons.save_alt_rounded,
+        icon: HIcons.save_alt_rounded,
         label: strings.saveAnotherCopy,
       ),
     ],

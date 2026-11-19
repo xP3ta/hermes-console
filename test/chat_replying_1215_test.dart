@@ -953,9 +953,10 @@ void main() {
       final delegates = find.byKey(const ValueKey('delegates-capsule'));
       expect(delegates, findsOneWidget);
       expect(tester.getSemantics(delegates).label, contains('1 subagente'));
+      // The delegated child lives in the capsule, not as a card of the turn.
       expect(
-        find.byKey(const ValueKey('delegated-child-child-1')),
-        findsOneWidget,
+        find.byKey(const ValueKey('delegated-child-cards')),
+        findsNothing,
       );
       await openInlineDetails(tester);
       expect(stepCard('call-delegate'), findsOneWidget);
@@ -1067,16 +1068,22 @@ void main() {
       await tester.tap(lineLabel());
       await settle(tester, 12);
       expect(stepCards(), findsNWidgets(1), reason: 'the command');
-      final tasks = find.byKey(const ValueKey('thinking-trace-tasks'));
-      expect(tasks, findsOneWidget);
-      expect(tester.getSemantics(tasks).label, 'Tareas 3 de 5 · 2 sin hacer');
-      expect(tester.getSemantics(tasks).flagsCollection.isButton, isTrue);
-      // Above the reply text.
+      // An unfinished plan rides the capsule above the composer, so the turn
+      // keeps no task line of its own while it is open.
       expect(
-        tester.getRect(tasks).bottom,
-        lessThanOrEqualTo(
-          tester.getTopLeft(find.textContaining('Hecho: 3 de 5')).dy + 1,
-        ),
+        find.byKey(const ValueKey('thinking-trace-tasks')),
+        findsNothing,
+      );
+      final capsuleTasks = find.byKey(
+        const ValueKey('delegates-capsule-tasks'),
+      );
+      expect(capsuleTasks, findsOneWidget);
+      expect(tester.widget<Text>(capsuleTasks).data, '3/5');
+      expect(
+        tester
+            .getSemantics(find.byKey(const ValueKey('delegates-capsule')))
+            .label,
+        contains('3 de 5'),
       );
       // The thought's card opens the thought.
       final card = thoughtCard();
@@ -1092,25 +1099,10 @@ void main() {
       );
       expect(find.byKey(const ValueKey('turn-reasoning')), findsOneWidget);
       expect(paintedTextsContaining(tester, 'Monto cinco tareas.'), isNotEmpty);
-      // «Tareas…» opens the list: done with checks, the rest «sin hacer».
-      await tester.tap(tasks);
-      await settle(tester, 12);
-      expect(find.byKey(const ValueKey('turn-tasks-history')), findsOneWidget);
-      expect(
-        paintedTextsContaining(tester, 'Resumir el resultado · sin hacer'),
-        isNotEmpty,
-        reason: 'what was in progress is not being worked on any more',
-      );
-      expect(
-        paintedTextsContaining(tester, 'Revisar disco (opcional) · sin hacer'),
-        isNotEmpty,
-      );
-      // And both fold back.
+      // And the thought folds back.
       await pressThought(tester);
-      await tester.tap(tasks);
       await settle(tester, 12);
       expect(find.byKey(const ValueKey('turn-reasoning')), findsNothing);
-      expect(find.byKey(const ValueKey('turn-tasks-history')), findsNothing);
       expect(tester.takeException(), isNull);
       await tearDownChat(tester, gateway);
     });
@@ -1436,7 +1428,7 @@ void main() {
     });
   });
 
-  // F5 (REPORT-AUDITORIA-FLUIDEZ §3, C1/C2, P2): a card over the composer
+  // F5: a card over the composer
   // or the chat comes in instead of appearing in one frame; with reduced
   // motion it is there at once.
   group('F5: cards that come in', () {

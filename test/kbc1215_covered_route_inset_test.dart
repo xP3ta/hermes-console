@@ -414,6 +414,22 @@ void main() {
         .last;
     FocusNode composerFocus(WidgetTester tester) =>
         tester.widget<TextField>(composer()).focusNode!;
+    // The composer surface, not its text field: focusing the field stacks the
+    // controls under the text, which moves the field inside a surface that
+    // stays pinned to the bottom.
+    double composerBottom(WidgetTester tester) => tester
+        .getRect(
+          find
+              .descendant(
+                of: find.byType(ChatScreen, skipOffstage: false),
+                matching: find.byKey(
+                  const ValueKey('chat-composer-host'),
+                  skipOffstage: false,
+                ),
+              )
+              .last,
+        )
+        .bottom;
     int shows(WidgetTester tester) => tester.testTextInput.log
         .where((call) => call.method == 'TextInput.show')
         .length;
@@ -446,7 +462,7 @@ void main() {
       final chat = tester.element(find.byType(ChatScreen));
       expect(MediaQuery.viewInsetsOf(chat).bottom, 0, reason: when);
       expect(
-        tester.getRect(composer()).bottom,
+        composerBottom(tester),
         closeTo(restingBottom, 0.5),
         reason: '$when: the composer must sit at the bottom',
       );
@@ -460,7 +476,7 @@ void main() {
       await pumpStack(tester, g);
       composerFocus(tester).unfocus();
       await tester.pump(const Duration(milliseconds: 400));
-      final restingBottom = tester.getRect(composer()).bottom;
+      final restingBottom = composerBottom(tester);
       await leave(tester);
       tester.testTextInput.log.clear();
       await comeBack(tester);
@@ -478,9 +494,9 @@ void main() {
       usePhoneView(tester);
       final g = _Gateway();
       await pumpStack(tester, g);
-      final restingBottom = tester.getRect(composer()).bottom;
+      final restingBottom = composerBottom(tester);
       await openKeyboard(tester);
-      expect(tester.getRect(composer()).bottom, lessThan(restingBottom - 200));
+      expect(composerBottom(tester), lessThan(restingBottom - 200));
       tester.testTextInput.log.clear();
       await leave(tester);
       // The input connection is released while away, so Android does not
@@ -675,7 +691,7 @@ void main() {
       // start locked).
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('app_lock_enabled', true);
-      final restingBottom = tester.getRect(composer()).bottom;
+      final restingBottom = composerBottom(tester);
       await openKeyboard(tester);
       await leave(tester);
       await comeBack(tester);

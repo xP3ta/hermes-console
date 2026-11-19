@@ -23,6 +23,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _connection = SavedConnection(
   id: 'dock-toggle-qa',
@@ -151,7 +152,7 @@ void main() {
                 DockCreateOrbit(
                   controlKey: const ValueKey('bot-mode-create-bot'),
                   label: 'New bot',
-                  icon: Icons.smart_toy_outlined,
+                  icon: HIcons.smart_toy_outlined,
                   onTap: () {},
                 ),
               ],

@@ -2,6 +2,7 @@
 // el terminal y fila de teclas auxiliares con scroll horizontal (con un
 // degradado en el borde que tiene más teclas detrás). Nada de Herdr aquí.
 // Colores del tema; nada de hex en bruto.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
@@ -61,7 +62,7 @@ class SshTerminalExpandButton extends StatelessWidget {
                         ? Duration.zero
                         : const Duration(milliseconds: 150),
                     child: Icon(
-                      expanded ? Icons.close_fullscreen : Icons.open_in_full,
+                      expanded ? HIcons.close_fullscreen : HIcons.open_in_full,
                       key: ValueKey<bool>(expanded),
                       size: 18,
                       color: colors.textPrimary,

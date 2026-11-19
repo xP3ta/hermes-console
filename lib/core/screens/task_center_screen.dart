@@ -2,6 +2,7 @@
 // primer mensaje (como Desktop: session.create + prompt.submit, por el WS del
 // Dashboard) y la lista muestra el histórico local de runs antiguos, solo
 // lectura y sin red. Fuente del histórico: RunRegistry local (SharedPreferences).
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -174,13 +175,13 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
           if (!widget.connection.readOnly)
             IconButton(
               key: const ValueKey('runs-create'),
-              icon: const Icon(Icons.add_rounded),
+              icon: const Icon(HIcons.add_rounded),
               tooltip: s.runsNewRun,
               onPressed: _newRun,
             ),
           if (registry != null && registry.records.isNotEmpty)
             IconButton(
-              icon: const Icon(Icons.delete_sweep_outlined, size: 20),
+              icon: const Icon(HIcons.delete_sweep_outlined, size: 20),
               tooltip: s.runsClear,
               onPressed: _clearAll,
             ),
@@ -201,7 +202,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.rocket_launch_outlined,
+              HIcons.rocket_launch_outlined,
               size: 40,
               color: colors.textDisabled,
             ),
@@ -253,7 +254,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
                   ),
                 ),
                 const SizedBox(width: 6),
-                Icon(Icons.delete_outline, color: colors.error, size: 18),
+                Icon(HIcons.delete_outline, color: colors.error, size: 18),
               ],
             ),
           ),
@@ -315,8 +316,8 @@ class _RunCard extends StatelessWidget {
             children: [
               HermesIconTile(
                 status == 'failed'
-                    ? Icons.error_outline
-                    : Icons.rocket_launch_outlined,
+                    ? HIcons.error_outline
+                    : HIcons.rocket_launch_outlined,
                 size: 34,
               ),
               const SizedBox(width: 12),

@@ -10,6 +10,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/utils/ansi_text.dart';
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _e = '\x1B';
 
@@ -294,7 +295,7 @@ void main() {
         await pumpRecord(tester, index['t2']);
         expect(tailText(tester), 'line 1\nline 2\nline 3\nline 4');
         expect(find.text('Output'), findsOneWidget);
-        expect(find.byIcon(Icons.expand_more), findsNothing);
+        expect(find.byIcon(HIcons.expand_more), findsNothing);
       });
     }
   });
@@ -302,7 +303,7 @@ void main() {
   testWidgets('short output has nothing to unfold', (tester) async {
     await tester.pumpWidget(_host(const TerminalOutputCard(output: 'a\nb')));
     expect(find.text('Output'), findsOneWidget);
-    expect(find.byIcon(Icons.expand_more), findsNothing);
+    expect(find.byIcon(HIcons.expand_more), findsNothing);
     final strings = Strings.of(tester.element(find.byType(TerminalOutputCard)));
     expect(find.text(strings.i18n131P6ExitCode('0')), findsNothing);
   });

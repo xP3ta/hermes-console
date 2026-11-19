@@ -14,6 +14,7 @@
 // for FLAG_SECURE while it is open (the sheet is above it), writes only over
 // a connection that may carry a secret, always names the profile it writes
 // to, and asks before replacing a key that is set or deleting one.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -350,7 +351,7 @@ class _EnvKeysScreenState extends State<EnvKeysScreen> {
               minHeight: HermesSpace.tap,
             ),
             onPressed: _loading ? null : () => _openSheet(null),
-            icon: const Icon(Icons.add_rounded),
+            icon: const Icon(HIcons.add_rounded),
           ),
         ],
       ),
@@ -390,7 +391,7 @@ class _EnvKeysScreenState extends State<EnvKeysScreen> {
                 if (_writesBlocked)
                   HermesInlineNotice(
                     message: s.kluCleartextBlocked,
-                    icon: Icons.lock_outline_rounded,
+                    icon: HIcons.lock_outline_rounded,
                     tone: HermesStatusTone.error,
                   ),
                 _SearchField(
@@ -444,7 +445,7 @@ class _EnvKeysScreenState extends State<EnvKeysScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 36, color: colors.error),
+              Icon(HIcons.error_outline, size: 36, color: colors.error),
               const SizedBox(height: 12),
               Text(
                 s.kluKeysLoadError,
@@ -460,7 +461,7 @@ class _EnvKeysScreenState extends State<EnvKeysScreen> {
               const SizedBox(height: 16),
               HermesSecondaryButton(
                 label: s.commonRetry,
-                icon: Icons.refresh,
+                icon: HIcons.refresh,
                 onTap: _load,
               ),
             ],
@@ -581,7 +582,7 @@ class _SearchField extends StatelessWidget {
           fontSize: HermesType.textSize,
           color: colors.textSecondary,
         ),
-        prefixIcon: Icon(Icons.search, size: 18, color: colors.textSecondary),
+        prefixIcon: Icon(HIcons.search, size: 18, color: colors.textSecondary),
         suffixIcon: controller.text.isEmpty
             ? null
             : IconButton(
@@ -590,7 +591,7 @@ class _SearchField extends StatelessWidget {
                   minWidth: HermesSpace.tap,
                   minHeight: HermesSpace.tap,
                 ),
-                icon: Icon(Icons.clear, size: 18, color: colors.textSecondary),
+                icon: Icon(HIcons.clear, size: 18, color: colors.textSecondary),
                 onPressed: onClear,
               ),
         isDense: true,

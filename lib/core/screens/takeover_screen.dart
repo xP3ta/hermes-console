@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -508,7 +509,7 @@ class _TakeoverScreenState extends State<TakeoverScreen>
             : _controls(strings, colors, page, ws),
       _Phase.stopped => _Centered(
         colors: colors,
-        icon: Icons.desktop_windows_outlined,
+        icon: HIcons.desktop_windows_outlined,
         message: _blocked ? strings.screenBlocked : strings.screenStopped,
         note: _blocked ? null : strings.bsaStoppedNote,
         action: _blocked
@@ -522,25 +523,25 @@ class _TakeoverScreenState extends State<TakeoverScreen>
       ),
       _Phase.starting => _Centered(
         colors: colors,
-        icon: Icons.power_settings_new,
+        icon: HIcons.power_settings_new,
         message: strings.screenStarting,
         busy: true,
       ),
       _Phase.acquiring => _Centered(
         colors: colors,
-        icon: Icons.front_hand_outlined,
+        icon: HIcons.front_hand_outlined,
         message: strings.screenAcquiring,
         busy: true,
       ),
       _Phase.checking => _Centered(
         colors: colors,
-        icon: Icons.monitor_outlined,
+        icon: HIcons.monitor_outlined,
         message: strings.screenChecking,
         busy: true,
       ),
       _Phase.failed => _Centered(
         colors: colors,
-        icon: Icons.error_outline,
+        icon: HIcons.error_outline,
         message: _failureText(strings, _failure),
         action: ScreenPill(
           key: const ValueKey('screen-takeover-retry'),
@@ -850,7 +851,7 @@ Widget _unencrypted(Strings strings, HermesThemeColors colors) => Builder(
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.lock_open_rounded, size: 13, color: colors.warning),
+              Icon(HIcons.lock_open_rounded, size: 13, color: colors.warning),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(

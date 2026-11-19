@@ -1,4 +1,4 @@
-// F5 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §3, A4/A5, P1): a
+// F5 of the fluidity plan: a
 // generated PDF or video holds its final box from the first frame, so it
 // takes its place without moving the chat; what changes eases
 // (HermesMotion), and with reduced motion it is instant.

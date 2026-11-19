@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -189,7 +190,7 @@ class _HomePromptComposerState extends State<HomePromptComposer> {
           ),
           HermesTactileAction(
             key: const ValueKey('home-prompt-dictation'),
-            icon: Icons.mic_none_rounded,
+            icon: HIcons.mic_none_rounded,
             iconSize: 23,
             semanticLabel: widget.dictationTooltip,
             onPressed: widget.enabled ? widget.onDictationPressed : null,
@@ -204,8 +205,8 @@ class _HomePromptComposerState extends State<HomePromptComposer> {
               child: HermesTactileAction(
                 key: const ValueKey('home-prompt-send'),
                 icon: canSubmit
-                    ? Icons.arrow_upward_rounded
-                    : Icons.graphic_eq_rounded,
+                    ? HIcons.arrow_upward_rounded
+                    : HIcons.graphic_eq_rounded,
                 semanticLabel: canSubmit
                     ? widget.sendTooltip
                     : widget.voiceTooltip,

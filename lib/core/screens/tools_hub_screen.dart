@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -213,7 +214,7 @@ class _ToolsHubScreenState extends State<ToolsHubScreen> {
                     hintText: widget.searchHint ?? strings.drawerToolsSearch,
                     hintStyle: TextStyle(color: colors.textSecondary),
                     prefixIcon: Icon(
-                      Icons.search_rounded,
+                      HIcons.search_rounded,
                       size: 21,
                       color: colors.textSecondary,
                     ),
@@ -227,7 +228,7 @@ class _ToolsHubScreenState extends State<ToolsHubScreen> {
                               _searchController.clear();
                               setState(() => _query = '');
                             },
-                            icon: const Icon(Icons.close_rounded, size: 20),
+                            icon: const Icon(HIcons.close_rounded, size: 20),
                           ),
                     filled: false,
                     contentPadding: const EdgeInsets.symmetric(
@@ -247,7 +248,7 @@ class _ToolsHubScreenState extends State<ToolsHubScreen> {
                   child: Column(
                     children: [
                       Icon(
-                        Icons.search_off_rounded,
+                        HIcons.search_off_rounded,
                         size: 34,
                         color: colors.textDisabled,
                       ),
@@ -433,8 +434,8 @@ class HermesToolRow extends StatelessWidget {
                 const SizedBox(width: 6),
                 Icon(
                   destination.enabled
-                      ? Icons.chevron_right_rounded
-                      : Icons.block_rounded,
+                      ? HIcons.chevron_right_rounded
+                      : HIcons.block_rounded,
                   size: 20,
                   color: destination.enabled
                       ? colors.textSecondary

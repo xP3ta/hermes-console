@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -97,8 +98,10 @@ class ChatMessageHeader extends StatelessWidget {
     this.subtitle,
     this.nameColor,
     this.actions = const [],
+    this.inlineSubtitle = false,
   });
 
+  final bool inlineSubtitle;
   final String name;
   final Widget? avatar;
 
@@ -118,6 +121,7 @@ class ChatMessageHeader extends StatelessWidget {
     subtitle: subtitle,
     nameColor: nameColor,
     actions: actions,
+    inlineSubtitle: inlineSubtitle,
   );
 }
 
@@ -263,7 +267,7 @@ class ChatCopyMessageButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     return ChatMessageActionButton(
-      icon: Icons.copy_rounded,
+      icon: HIcons.copy_rounded,
       iconSize: 16,
       label: strings.chaCopyMessage,
       onPressed: () => _copy(context, text()),

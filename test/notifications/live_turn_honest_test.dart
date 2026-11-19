@@ -1,5 +1,5 @@
 // The live row of a chat turn in the background says only what the app
-// knows (Pixel run of build 9960, REPORT-OFICIAL-VS-CONSOLE S3):
+// knows (measured on a device with build 9960):
 // - while a background check is only pending the row keeps the last real
 //   state (phase, counts, elapsed time, Stop, 12 min expiry);
 // - only reads that fail to reach the server twice in a row make it say

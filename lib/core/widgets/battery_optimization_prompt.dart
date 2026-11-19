@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -125,7 +126,7 @@ class _BatteryOptimizationPromptState extends State<BatteryOptimizationPrompt>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
-                Icons.battery_saver_outlined,
+                HIcons.battery_saver_outlined,
                 size: HermesIcon.lg,
                 color: colors.textSecondary,
               ),

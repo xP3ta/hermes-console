@@ -96,6 +96,31 @@ abstract class HermesDesktopControlGateway {
 /// Desktop uses on a remote gateway. Kept separate from
 /// [HermesDesktopControlGateway] so legacy fakes and servers keep compiling;
 /// a screen treats a gateway without it as read-only.
+/// A project gateway whose `projects.*` calls can target one Hermes
+/// profile. Upstream every `projects.*` handler is `profile_scoped`: without
+/// `profile` it reads the profile the gateway was launched with.
+///
+/// The profile is never state of the (shared) gateway: a screen asks for a
+/// view pinned to the profile it shows, and whatever it opens keeps that
+/// view, so a later profile switch cannot redirect its writes.
+abstract interface class HermesProjectProfileScope {
+  /// This gateway's projects, every `projects.*` call (reads and writes)
+  /// sent with `profile: [profile]` (`default` included).
+  HermesPinnedProjects pinProjectProfile(String profile);
+}
+
+/// The projects of one profile ([HermesProjectProfileScope]).
+abstract interface class HermesPinnedProjects
+    implements HermesProjectManagementGateway, HermesProjectCreationGateway {
+  String get profile;
+
+  /// `projects.tree` of [profile].
+  Future<ProjectTreeSnapshot> projectTree();
+
+  /// `projects.project_sessions` of [profile].
+  Future<ProjectNode?> projectSessions(String projectId);
+}
+
 abstract class HermesProjectManagementGateway {
   /// True when this connection may write (not a read-only instance).
   bool get projectWritesAllowed;

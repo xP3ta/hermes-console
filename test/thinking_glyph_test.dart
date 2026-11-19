@@ -1,5 +1,5 @@
 // QA 9709 (ORDEN-Q9-CHAT 3, the owner): thinking is a brain, not the head with
-// a question mark of Icons.psychology_alt_rounded. Material has none and the
+// a question mark of HIcons.psychology_alt_rounded. Material has none and the
 // project carries no symbol font, so it is one drawn symbol, [ThinkingGlyph],
 // shared by the thought's line, the activity pill, the trace's state icon
 // and the saved memory.
@@ -20,7 +20,7 @@ void main() {
       final source = entity.readAsStringSync();
       if (!path.endsWith('thinking_glyph.dart')) {
         expect(
-          source.contains('Icons.psychology_alt_rounded'),
+          source.contains('HIcons.psychology_alt_rounded'),
           isFalse,
           reason: '$path still draws the head with a question mark',
         );

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../services/sftp_transfer_service.dart';
@@ -79,8 +80,8 @@ class SshTransferBar extends StatelessWidget {
     final ok = t.status == TransferStatus.done;
     final err = t.status == TransferStatus.error;
     final icon = t.direction == TransferDirection.download
-        ? Icons.download_rounded
-        : Icons.upload_rounded;
+        ? HIcons.download_rounded
+        : HIcons.upload_rounded;
     final tone = err
         ? colors.error
         : ok
@@ -94,9 +95,9 @@ class SshTransferBar extends StatelessWidget {
         children: [
           Icon(
             err
-                ? Icons.error_outline
+                ? HIcons.error_outline
                 : ok
-                    ? Icons.check_circle_outline
+                    ? HIcons.check_circle_outline
                     : icon,
             size: 16,
             color: tone,
@@ -175,7 +176,7 @@ class SshTransferBar extends StatelessWidget {
             ),
           if (!t.isRunning)
             IconButton(
-              icon: Icon(Icons.close, size: 15, color: colors.textDisabled),
+              icon: Icon(HIcons.close, size: 15, color: colors.textDisabled),
               // Objetivo táctil real de 48dp aunque el icono visible sea de
               // 15dp: `BoxConstraints()` vacío colapsaba el hit-test al
               // tamaño del icono.

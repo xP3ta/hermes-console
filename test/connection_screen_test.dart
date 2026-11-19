@@ -11,6 +11,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/connection_editor_actions.dart';
 import 'support/onboarding_fakes.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   for (final language in ['es', 'en']) {
@@ -376,7 +377,7 @@ void main() {
       expect(
         find.descendant(
           of: privateNote,
-          matching: find.byIcon(Icons.info_outline_rounded),
+          matching: find.byIcon(HIcons.info_outline_rounded),
         ),
         findsOneWidget,
       );

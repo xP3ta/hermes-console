@@ -45,7 +45,34 @@ abstract interface class BotModeGateway {
   Future<AgentProfileSessionSummary?> findBotChatByTitle(String profile);
 }
 
-final class TuiBotModeGateway implements BotModeGateway {
+/// Optional: `groups.list` with the rows Console cannot read kept apart
+/// (by id) instead of failing the whole list. [TuiBotModeGateway] has it;
+/// a gateway without it keeps the strict all-or-nothing list.
+abstract interface class BotModeListingGateway {
+  Future<HostedGroupListing> listGroupsDetailed({required int generation});
+}
+
+/// [gateway]'s listing: tolerant when it can be, strict otherwise.
+Future<HostedGroupListing> botModeListing(
+  BotModeGateway gateway, {
+  required int generation,
+}) async {
+  if (gateway is BotModeListingGateway) {
+    return (gateway as BotModeListingGateway).listGroupsDetailed(
+      generation: generation,
+    );
+  }
+  return HostedGroupListing(
+    rooms: await gateway.listGroups(generation: generation),
+  );
+}
+
+/// `groups.capabilities` answered «method not found»: no rooms on this
+/// server at all (not a failure to retry soon).
+bool isGroupsUnsupported(Object error) =>
+    error is TuiGatewayRpcError && error.code == -32601;
+
+final class TuiBotModeGateway implements BotModeGateway, BotModeListingGateway {
   final TuiGatewayClient client;
   const TuiBotModeGateway(this.client);
 
@@ -66,6 +93,9 @@ final class TuiBotModeGateway implements BotModeGateway {
   @override
   Future<List<HostedGroupRoom>> listGroups({required int generation}) =>
       client.listGroups(generation: generation);
+  @override
+  Future<HostedGroupListing> listGroupsDetailed({required int generation}) =>
+      client.listGroupsDetailed(generation: generation);
   @override
   Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})> groupState(
     String roomId, {
@@ -318,10 +348,25 @@ final class BotModeRepository {
   _loadRooms() async {
     final caps = await gateway.groupCapabilities();
     if (!caps.hasSharedRoomSurface) return (caps: caps, rooms: const <BotModeRoom>[]);
-    final listed = await gateway.listGroups(generation: caps.generation);
     final rooms = <BotModeRoom>[];
-    for (final listedRoom in listed) {
-      rooms.add(await refreshRoom(listedRoom.roomId, generation: caps.generation));
+    try {
+      final listing = await botModeListing(gateway, generation: caps.generation);
+      for (final listedRoom in listing.rooms) {
+        try {
+          rooms.add(
+            await refreshRoom(listedRoom.roomId, generation: caps.generation),
+          );
+        } catch (error) {
+          // One room's own failure leaves the others (same classifier as
+          // the Bots screen and the room watcher); the connection's fails all.
+          if (roomLocalReadFailure(error) == null) rethrow;
+          _cursors.remove(listedRoom.roomId);
+        }
+      }
+    } catch (_) {
+      // The capabilities stay known: what the server can do does not depend
+      // on reading its rooms right now.
+      return (caps: caps, rooms: const <BotModeRoom>[]);
     }
     return (caps: caps, rooms: List<BotModeRoom>.unmodifiable(rooms));
   }

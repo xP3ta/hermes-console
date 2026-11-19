@@ -1,7 +1,7 @@
 name: hermes_android
 description: "Hermes Agent — chat with your Hermes Gateway API Server over LAN. SSE streaming, Bearer auth, session management."
 publish_to: 'none'
-version: 1.4.0+9812
+version: 1.4.1+14022
 
 environment:
   sdk: ^3.12.0
@@ -129,6 +129,10 @@ flutter:
     - LICENSE
     - assets/
     - assets/fonts/OFL.txt
+    - assets/fonts/MaterialSymbols-LICENSE.txt
+    # Diagram (Mermaid, MIT) and 3D model (model-viewer, Apache-2.0) libraries
+    # of the in-app viewers, loaded from the bundle only. THIRD_PARTY_NOTICES.md.
+    - assets/viewers/
     # Identidad Console: la «C» terracota con cursor (splash/onboarding) y el
     # icono completo (Acerca de). Fuentes editables: console_*.svg.
     - assets/branding/console_mark.png
@@ -186,6 +190,12 @@ flutter:
   # runtime (no usamos google_fonts; ver docs/PRIVACY_POLICY.md).
   # Las cuatro familias son variables y cubren los pesos usados por los temas.
   fonts:
+    - family: HermesSymbols
+      fonts:
+        - asset: assets/fonts/HermesSymbols.ttf
+    - family: HermesSymbolsFilled
+      fonts:
+        - asset: assets/fonts/HermesSymbolsFilled.ttf
     - family: Inter
       fonts:
         - asset: assets/fonts/Inter.ttf

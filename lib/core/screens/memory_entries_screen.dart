@@ -11,6 +11,7 @@
 // - writes pass the approval policy (read-only blocks, ask confirms + App
 //   Lock) and the size limits (client cap here, the memory tool's own
 //   character limit on the server).
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -164,20 +165,20 @@ class _MemoryEntriesScreenState extends State<MemoryEntriesScreen>
     final colors = Theme.of(context).hermes;
     final Widget body;
     if (locked) {
-      body = _Message(s.memEntriesLocked, icon: Icons.lock_outline_rounded);
+      body = _Message(s.memEntriesLocked, icon: HIcons.lock_outline_rounded);
     } else if (_failure != null && _entries == null) {
       body = _Message(
         _failure == MemoryEntryFailureKind.unsupported
             ? s.memEntriesUnsupported
             : s.memEntriesLoadFailed,
-        icon: Icons.cloud_off_outlined,
+        icon: HIcons.cloud_off_outlined,
         actionLabel: s.commonRetry,
         onAction: _load,
       );
     } else if (_entries == null) {
       body = const Center(child: ConsoleLoader.medium());
     } else if (_entries!.isEmpty) {
-      body = _Message(s.memEntriesEmpty, icon: Icons.notes_rounded);
+      body = _Message(s.memEntriesEmpty, icon: HIcons.notes_rounded);
     } else {
       final entries = _entries!;
       body = RefreshIndicator(
@@ -216,7 +217,7 @@ class _MemoryEntriesScreenState extends State<MemoryEntriesScreen>
                       color: colors.textSecondary,
                     ),
                   )
-                : const Icon(Icons.refresh),
+                : const Icon(HIcons.refresh),
             onPressed: _loading || locked ? null : _load,
           ),
         ],
@@ -429,13 +430,13 @@ class _MemoryEntryEditorScreenState extends State<MemoryEntryEditorScreen>
     final canWrite = !widget.readOnly && _loaded != null && !locked;
     final Widget body;
     if (locked) {
-      body = _Message(s.memEntriesLocked, icon: Icons.lock_outline_rounded);
+      body = _Message(s.memEntriesLocked, icon: HIcons.lock_outline_rounded);
     } else if (_loadFailure != null) {
       body = _Message(
         _loadFailure == MemoryEntryFailureKind.unsupported
             ? s.memEntriesUnsupported
             : s.memEntryGone,
-        icon: Icons.cloud_off_outlined,
+        icon: HIcons.cloud_off_outlined,
         actionLabel: s.memEntryConflictReload,
         onAction: () => Navigator.of(context).pop(true),
       );
@@ -450,7 +451,7 @@ class _MemoryEntryEditorScreenState extends State<MemoryEntryEditorScreen>
               child: HermesInlineNotice(
                 key: const ValueKey('memory-entry-error'),
                 message: _error!,
-                icon: Icons.error_outline_rounded,
+                icon: HIcons.error_outline_rounded,
                 tone: HermesStatusTone.error,
               ),
             ),
@@ -485,7 +486,7 @@ class _MemoryEntryEditorScreenState extends State<MemoryEntryEditorScreen>
             IconButton(
               key: const ValueKey('memory-entry-delete'),
               tooltip: s.memEntryDelete,
-              icon: const Icon(Icons.delete_outline_rounded),
+              icon: const Icon(HIcons.delete_outline_rounded),
               onPressed: _busy ? null : () => _write(delete: true),
             ),
             IconButton(
@@ -500,7 +501,7 @@ class _MemoryEntryEditorScreenState extends State<MemoryEntryEditorScreen>
                         color: colors.textSecondary,
                       ),
                     )
-                  : const Icon(Icons.check_rounded),
+                  : const Icon(HIcons.check_rounded),
               onPressed: _busy ? null : () => _write(delete: false),
             ),
           ],

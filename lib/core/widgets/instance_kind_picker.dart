@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -11,11 +12,11 @@ import '../theme/app_theme.dart';
 /// every place an instance is drawn (the list of Hermes, the switchers, the
 /// first-run flow), so a kind never has two faces.
 IconData instanceKindIcon(InstanceKind kind) => switch (kind) {
-  InstanceKind.vps => Icons.dns_outlined,
-  InstanceKind.homelab => Icons.storage_outlined,
-  InstanceKind.pc => Icons.computer_outlined,
-  InstanceKind.tailscale => Icons.vpn_lock_outlined,
-  InstanceKind.localhost => Icons.terminal_outlined,
+  InstanceKind.vps => HIcons.dns_outlined,
+  InstanceKind.homelab => HIcons.storage_outlined,
+  InstanceKind.pc => HIcons.computer_outlined,
+  InstanceKind.tailscale => HIcons.vpn_lock_outlined,
+  InstanceKind.localhost => HIcons.terminal_outlined,
 };
 
 /// The plain words for a kind. A person does not say "homelab" or "VPS": they

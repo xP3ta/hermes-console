@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -269,19 +270,19 @@ class _AttachmentBytesPreviewScreenState
             IconButton(
               onPressed: widget.onOpenExternal,
               tooltip: strings.genMediaOpenWith,
-              icon: const Icon(Icons.open_in_new_rounded),
+              icon: const Icon(HIcons.open_in_new_rounded),
             ),
           if (widget.onShare != null)
             IconButton(
               onPressed: widget.onShare,
               tooltip: strings.commonShare,
-              icon: const Icon(Icons.share_outlined),
+              icon: const Icon(HIcons.share_outlined),
             ),
           if (widget.onSave != null)
             IconButton(
               onPressed: widget.onSave,
               tooltip: strings.commonSave,
-              icon: const Icon(Icons.save_alt_rounded),
+              icon: const Icon(HIcons.save_alt_rounded),
             ),
         ],
       ),
@@ -631,7 +632,7 @@ class _PreviewUnavailable extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.file_present_outlined, size: 48),
+            const Icon(HIcons.file_present_outlined, size: 48),
             const SizedBox(height: 12),
             Text(message, textAlign: TextAlign.center),
           ],

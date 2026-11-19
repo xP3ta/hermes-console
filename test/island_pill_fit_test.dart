@@ -1,4 +1,4 @@
-// The island's line at rest in narrow headers (1.4.0, REPORT-PILL). On a
+// The island's line at rest in narrow headers (1.4.0). On a
 // Fold chat panel of ~330 dp the pill read «0:08 · 2 en marcha»: the count
 // touched the pill's right edge after a wide gap behind the dot, the timer
 // was big and grey and the count small and amber, the transcript showed
@@ -19,6 +19,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _statusBar = 24.0;
 
@@ -61,20 +62,20 @@ Widget _app({
           child: FloatingChatHeader(
             leading: FloatingHeaderButton(
               key: const ValueKey('list'),
-              icon: Icons.view_sidebar_outlined,
+              icon: HIcons.view_sidebar_outlined,
               tooltip: 'Lista',
               onPressed: () {},
             ),
             trailing: FloatingHeaderButton(
               key: const ValueKey('new'),
-              icon: Icons.add_rounded,
+              icon: HIcons.add_rounded,
               tooltip: 'Nuevo chat',
               onPressed: () {},
             ),
             trailingSecondary: views
                 ? FloatingHeaderButton(
                     key: const ValueKey('views'),
-                    icon: Icons.view_column_outlined,
+                    icon: HIcons.view_column_outlined,
                     tooltip: 'Vistas',
                     onPressed: () {},
                   )

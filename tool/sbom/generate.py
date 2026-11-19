@@ -504,6 +504,10 @@ def vendored_components() -> list[dict]:
 
 def asset_licence(path: Path) -> tuple[str, str]:
     relative = path.relative_to(ROOT)
+    if relative.parts[:2] == ("assets", "fonts") and (
+        relative.name.startswith(("HermesSymbols", "MaterialSymbols"))
+    ):
+        return "Apache-2.0", "assets/fonts/MaterialSymbols-LICENSE.txt"
     if relative.parts[:2] == ("assets", "fonts") and (ROOT / "assets/fonts/OFL.txt").is_file():
         return "OFL-1.1", "assets/fonts/OFL.txt"
     if relative.parts[:2] == ("assets", "chat_icons") and (

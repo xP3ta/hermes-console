@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -237,27 +238,27 @@ class _ModeCard extends StatelessWidget {
     HermesThemeColors c,
   ) => switch (mode) {
     ApprovalMode.yolo => (
-      icon: Icons.bolt,
+      icon: HIcons.bolt,
       color: c.error,
       desc: Strings.of(context).permModeYoloDesc,
     ),
     ApprovalMode.interactive => (
-      icon: Icons.chat_bubble_outline,
+      icon: HIcons.chat_bubble_outline,
       color: c.accent,
       desc: Strings.of(context).permModeAskDesc,
     ),
     ApprovalMode.conservative => (
-      icon: Icons.shield_outlined,
+      icon: HIcons.shield_outlined,
       color: c.warning,
       desc: Strings.of(context).permModeConservativeDesc,
     ),
     ApprovalMode.readOnly => (
-      icon: Icons.visibility_outlined,
+      icon: HIcons.visibility_outlined,
       color: c.textSecondary,
       desc: Strings.of(context).permModeReadOnlyDesc,
     ),
     ApprovalMode.globalDefault => (
-      icon: Icons.settings,
+      icon: HIcons.settings,
       color: c.textSecondary,
       desc: '',
     ),
@@ -326,8 +327,8 @@ class _ModeCard extends StatelessWidget {
               const SizedBox(width: 8),
               Icon(
                 selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked,
+                    ? HIcons.radio_button_checked
+                    : HIcons.radio_button_unchecked,
                 color: selected ? m.color : colors.textDisabled,
                 size: 20,
               ),
@@ -405,7 +406,7 @@ class _SavedRulesState extends State<_SavedRules> {
               ],
             ),
             trailing: IconButton(
-              icon: Icon(Icons.delete_outline, color: colors.error),
+              icon: Icon(HIcons.delete_outline, color: colors.error),
               tooltip: Strings.of(context).permRevoke,
               onPressed: () async {
                 await widget.policy.revokeRule(widget.instanceId, r.id);
@@ -425,18 +426,18 @@ class _ActivityList extends StatelessWidget {
 
   ({IconData icon, Color color}) _meta(String kind, HermesThemeColors c) =>
       switch (kind) {
-        'auto_approved' => (icon: Icons.bolt, color: c.error),
-        'allowed_once' => (icon: Icons.check, color: c.success),
+        'auto_approved' => (icon: HIcons.bolt, color: c.error),
+        'allowed_once' => (icon: HIcons.check, color: c.success),
         'allowed_session' => (
-          icon: Icons.check_circle_outline,
+          icon: HIcons.check_circle_outline,
           color: c.success,
         ),
-        'allowed_always' => (icon: Icons.verified_outlined, color: c.success),
-        'denied' => (icon: Icons.block, color: c.error),
-        'blocked' => (icon: Icons.lock_outline, color: c.textSecondary),
-        'yolo_enabled' => (icon: Icons.bolt, color: c.error),
-        'yolo_disabled' => (icon: Icons.bolt_outlined, color: c.textSecondary),
-        _ => (icon: Icons.verified_user_outlined, color: c.accent),
+        'allowed_always' => (icon: HIcons.verified_outlined, color: c.success),
+        'denied' => (icon: HIcons.block, color: c.error),
+        'blocked' => (icon: HIcons.lock_outline, color: c.textSecondary),
+        'yolo_enabled' => (icon: HIcons.bolt, color: c.error),
+        'yolo_disabled' => (icon: HIcons.bolt_outlined, color: c.textSecondary),
+        _ => (icon: HIcons.verified_user_outlined, color: c.accent),
       };
 
   @override

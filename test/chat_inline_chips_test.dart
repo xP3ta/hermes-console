@@ -403,10 +403,11 @@ void main() {
       await _pump(tester, 'Mira `docs/a.md` y `~/b.md`.', opener: opener);
       expect(opener.canOpen(chatFileRefFor('docs/a.md')!), isTrue);
       expect(opener.canOpen(chatFileRefFor('~/b.md')!), isFalse);
-      // Folders open the explorer; archives and PDF are left to «copiar».
+      // Folders open the explorer and a PDF its viewer; archives are left
+      // to «copiar».
       expect(opener.canOpen(chatFileRefFor('/home/y/z')!), isTrue);
       expect(opener.canOpen(chatFileRefFor('/x/y.zip')!), isFalse);
-      expect(opener.canOpen(chatFileRefFor('/x/y.pdf')!), isFalse);
+      expect(opener.canOpen(chatFileRefFor('/x/y.pdf')!), isTrue);
       // A path that is no path is not asked.
       expect(opener.canOpen(chatFileRefFor('./a/b.md')!), isTrue);
       await tester.tap(find.byType(ChatFileChip).first);

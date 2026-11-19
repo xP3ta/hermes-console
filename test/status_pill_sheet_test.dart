@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/status_pill_sheet.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _surface = ValueKey('status-sheet-test');
 const _handle = ValueKey('status-sheet-handle');
@@ -81,7 +82,7 @@ void main() {
     expect(rect.left, closeTo(10, 1));
     // pm1215 (owner): no close button; swipe, outside tap, Back.
     expect(find.byTooltip('Cerrar'), findsNothing);
-    expect(find.byIcon(Icons.close_rounded), findsNothing);
+    expect(find.byIcon(HIcons.close_rounded), findsNothing);
     expect(find.byKey(const ValueKey('status-sheet-close')), findsNothing);
   });
 

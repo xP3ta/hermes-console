@@ -1,10 +1,10 @@
-// OPUS-CRISTAL: the readable glass of the chat's foot (composer and the
+// Foot glass: the readable glass of the chat's foot (composer and the
 // context pill), our own design. Prepared, not wired: no consumer uses it.
 //
 // Why a plain veil cannot do it: one veil must protect every ink over any
 // page, black and white included. On classic-dark the composer's hint sits
 // at 4.56:1 on the opaque chrome; over white behind, any veil under 1.0
-// drops it below 4.5 (lanes/REPORT-OPUS-CRISTAL.md). So the composer stayed
+// drops it below 4.5. So the composer stayed
 // opaque, and an edge finish on an opaque body reads as no glass at all.
 //
 // What this does instead, in the strip's ONE backdrop layer and without a
@@ -51,7 +51,7 @@ class HermesSmokedGlass {
   final double veil;
 
   /// Desk-checked on classic-dark: every composer and pill ink at or above
-  /// its ratio on the opaque chrome (gates/navegador-opus-cristal-20261030).
+  /// its ratio on the opaque chrome.
   static const dark = HermesSmokedGlass(
     pivot: 0,
     luminance: 0.20,
@@ -221,8 +221,8 @@ class HermesSmokedGlass {
   /// it can show more of the page: on console-light, with the user's
   /// default transparency floor (0.592), a red page reads +47.9 redness
   /// against the opaque dock, over the +30 of q9_dock_glass_test, and the
-  /// bar's inks read on all 20 light palettes (desk check,
-  /// gates/navegador-opus-cristal-20261030/dock-bar-light.json). Dark docks
+  /// bar's inks read on all 20 light palettes (desk check).
+  /// Dark docks
   /// keep the chat's [dark] tone (+37.6 on classic-dark).
   static const dockLight = HermesSmokedGlass(
     pivot: 1,
@@ -455,7 +455,7 @@ class HermesSmokedGlass {
   /// The worst ratio [ink] gets anywhere on this glass ([over] as in
   /// [underRange]). A blur only averages, so every luminance between the
   /// range's ends can sit under the ink: one inside the range meets its
-  /// own luminance, 1:1 (Git R1, OPUS-WIRING-CONTRAST-RANGE-1). Outside
+  /// own luminance, 1:1. Outside
   /// it, the nearer end decides.
   double worstRatio(Color ink, HermesChrome chrome, {Color? over}) {
     final (lo, hi) = underRange(chrome, over: over);

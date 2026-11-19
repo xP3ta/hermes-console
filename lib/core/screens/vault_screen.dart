@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -231,7 +232,7 @@ class _VaultScreenState extends State<VaultScreen> {
               key: const ValueKey('vault-add'),
               tooltip: s.commonAdd,
               onPressed: _controller.busy ? null : _openAdd,
-              icon: const Icon(Icons.add_rounded),
+              icon: const Icon(HIcons.add_rounded),
             ),
         ],
       ),
@@ -299,7 +300,7 @@ class _VaultScreenState extends State<VaultScreen> {
             HermesInfoBanner(
               s.vltReadOnly,
               key: const ValueKey('vault-read-only'),
-              icon: Icons.lock_outline_rounded,
+              icon: HIcons.lock_outline_rounded,
             ),
           ],
           HermesSectionHeader(
@@ -311,12 +312,12 @@ class _VaultScreenState extends State<VaultScreen> {
           if (items.isEmpty)
             HermesEmptyState(
               key: const ValueKey('vault-empty'),
-              icon: Icons.key_outlined,
+              icon: HIcons.key_outlined,
               title: s.vltEmpty,
               body: s.vltEmptyDesc,
               compact: true,
               primaryLabel: _readOnly ? null : s.commonAdd,
-              primaryIcon: Icons.add_rounded,
+              primaryIcon: HIcons.add_rounded,
               onPrimary: _readOnly || _controller.busy ? null : _openAdd,
             )
           else
@@ -520,7 +521,7 @@ class _ItemRow extends StatelessWidget {
               // Each row says which item it removes, also to TalkBack.
               tooltip: s.vltRemoveItem(item.label),
               onPressed: onRemove,
-              icon: Icon(Icons.delete_outline_rounded, color: colors.error),
+              icon: Icon(HIcons.delete_outline_rounded, color: colors.error),
             ),
         ],
       ),
@@ -621,13 +622,13 @@ class _SourceRow extends StatelessWidget {
                   ? TextButton.icon(
                       key: ValueKey('vault-lock-${source.name}'),
                       onPressed: canAct ? onLock : null,
-                      icon: const Icon(Icons.lock_outline_rounded, size: 18),
+                      icon: const Icon(HIcons.lock_outline_rounded, size: 18),
                       label: Text(s.vltLock),
                     )
                   : OutlinedButton.icon(
                       key: ValueKey('vault-unlock-${source.name}'),
                       onPressed: canAct ? onUnlock : null,
-                      icon: const Icon(Icons.key_rounded, size: 18),
+                      icon: const Icon(HIcons.key_rounded, size: 18),
                       label: Text(s.vltUnlock),
                     ),
             ),

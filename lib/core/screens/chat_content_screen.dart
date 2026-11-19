@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -186,7 +187,7 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
-                    Icons.warning_amber_rounded,
+                    HIcons.warning_amber_rounded,
                     size: 20,
                     color: colors.warning,
                   ),
@@ -360,7 +361,7 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
               : HermesSecondaryButton(
                   key: const ValueKey('sa1215-load-older'),
                   label: strings.sa1215LoadOlder,
-                  icon: Icons.history_rounded,
+                  icon: HIcons.history_rounded,
                   onTap: _loadOlder,
                 ),
         ),
@@ -369,7 +370,7 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
     final retry = HermesSecondaryButton(
       key: const ValueKey('sa1215-read-retry'),
       label: strings.commonRetry,
-      icon: Icons.refresh_rounded,
+      icon: HIcons.refresh_rounded,
       onTap: _readAgain,
     );
     if (_readFailed && (all.isNotEmpty || _previews.isNotEmpty)) {
@@ -383,7 +384,7 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
             key: const ValueKey('sa1215-read-failed'),
             children: [
               HermesEmptyStateView(
-                icon: Icons.error_outline_rounded,
+                icon: HIcons.error_outline_rounded,
                 title: strings.sa1215ReadFailed,
               ),
               retry,
@@ -391,13 +392,13 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
           )
         : all.isEmpty && previews.isEmpty
         ? HermesEmptyStateView(
-            icon: Icons.perm_media_outlined,
+            icon: HIcons.perm_media_outlined,
             title: strings.sa1215EmptyTitle,
             body: strings.sa1215EmptyBody,
           )
         : visible.isEmpty && previews.isEmpty
         ? HermesEmptyStateView(
-            icon: Icons.search_off_rounded,
+            icon: HIcons.search_off_rounded,
             title: strings.sa1215NoMatchesTitle,
             body: strings.sa1215NoMatchesBody,
           )
@@ -526,8 +527,8 @@ class _PreviewRow extends StatelessWidget {
             HermesListRow(
               key: ValueKey('sa1215-preview-${preview.label}'),
               icon: isFile
-                  ? Icons.insert_drive_file_outlined
-                  : Icons.link_rounded,
+                  ? HIcons.insert_drive_file_outlined
+                  : HIcons.link_rounded,
               iconColor: serverOnly || isFile
                   ? colors.textSecondary
                   : colors.accent,
@@ -541,8 +542,8 @@ class _PreviewRow extends StatelessWidget {
                   ? null
                   : Icon(
                       isFile
-                          ? Icons.chevron_right_rounded
-                          : Icons.open_in_new_rounded,
+                          ? HIcons.chevron_right_rounded
+                          : HIcons.open_in_new_rounded,
                       size: 18,
                       color: colors.textDisabled,
                     ),

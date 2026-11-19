@@ -11,6 +11,7 @@ import 'package:hermes_android/core/theme/hermes_tokens.dart';
 import 'package:hermes_android/core/widgets/ssh_transfer_bar.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // the owner, Fold horizontal (APK 9708): «email-nous.txt · listo ×» took a large
 // block at the foot of Files. The transfers are a thin pill now: one 48 dp
@@ -81,7 +82,7 @@ void main() {
     // Its dismiss keeps a 48 dp target.
     final dismiss = tester.getSize(
       find.ancestor(
-        of: find.byIcon(Icons.close),
+        of: find.byIcon(HIcons.close),
         matching: find.byType(IconButton),
       ),
     );

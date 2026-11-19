@@ -18,6 +18,7 @@ import 'package:hermes_android/l10n/app_localizations_en.dart';
 import 'package:hermes_android/l10n/app_localizations_es.dart';
 
 import 'support/fake_video_player_platform.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 class _FakeAudioPlayback implements GeneratedAudioPlayback {
   final durations = StreamController<Duration>.broadcast();
@@ -188,7 +189,7 @@ void main() {
         reason: 'texto cortado en la miniatura compacta: "${text.data}"',
       );
     }
-    expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.refresh_rounded), findsOneWidget);
   });
 
   testWidgets('adjunto en subida muestra progreso y permite quitarlo', (
@@ -208,7 +209,7 @@ void main() {
     );
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.byIcon(HIcons.close), findsOneWidget);
     expect(find.textContaining('Subiendo'), findsOneWidget);
   });
 
@@ -228,7 +229,7 @@ void main() {
 
     final target = find
         .ancestor(
-          of: find.byIcon(Icons.close),
+          of: find.byIcon(HIcons.close),
           matching: find.byType(GestureDetector),
         )
         .first;
@@ -360,10 +361,10 @@ void main() {
       await tester.pump();
       expect(find.text('0:30 / 2:00'), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.tap(find.byIcon(HIcons.play_arrow_rounded));
       await tester.pump();
       expect(playback.playCalls, 1);
-      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+      expect(find.byIcon(HIcons.pause_rounded), findsOneWidget);
     },
   );
 
@@ -396,7 +397,7 @@ void main() {
     playback.playing.add(true);
     await tester.pump();
 
-    await tester.tap(find.byIcon(Icons.pause_rounded));
+    await tester.tap(find.byIcon(HIcons.pause_rounded));
     expect(playback.pauseCalls, 1);
     final slider = tester.widget<Slider>(find.byType(Slider));
     slider.onChanged!(30000);
@@ -446,7 +447,7 @@ void main() {
     expect(find.text('Error al subir'), findsOneWidget);
     expect(find.bySemanticsLabel('Reintentar adjunto'), findsOneWidget);
     expect(find.bySemanticsLabel('Quitar adjunto'), findsOneWidget);
-    for (final icon in [Icons.refresh_rounded, Icons.close]) {
+    for (final icon in [HIcons.refresh_rounded, HIcons.close]) {
       final target = find
           .ancestor(
             of: find.byIcon(icon),
@@ -456,8 +457,8 @@ void main() {
       expect(tester.getSize(target), const Size(48, 48));
     }
 
-    await tester.tap(find.byIcon(Icons.refresh_rounded));
-    await tester.tap(find.byIcon(Icons.close));
+    await tester.tap(find.byIcon(HIcons.refresh_rounded));
+    await tester.tap(find.byIcon(HIcons.close));
     expect(retries, 1);
     expect(removes, 1);
   });

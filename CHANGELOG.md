@@ -3,6 +3,130 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.4.1 (14022) — 2026-11-18
+
+Console 1.4.1 fixes the problems reported on the 1.4.0 Reddit thread: rooms
+that disappeared, Projects ignoring the active profile, Home staying offline
+after a late VPN, and adds the text size setting that was asked for. It also
+makes a chat recover without losing or repeating text after the app was away
+or the network dropped, and restores the on-device dictation download. The
+chat also gets a lighter look and a new Usage screen. It still talks only to
+the Dashboard.
+
+### New
+
+- *Chat look.* A lighter icon family across the app. The reply sits in a soft
+  bubble; when a turn ends, a line at its foot says how long it worked and how
+  many tools it used. The composer keeps the model and the work in progress in
+  one compact row, and delegated work and tasks live in a single capsule.
+- *Usage.* Chat settings › Usage shows the session's context (used / window,
+  by category), its model and its token figures. **See all usage** opens a
+  screen with cost, tokens and plan limits, by day, provider and model, over
+  24 hours, 7, 30 or 90 days; touch a day in the chart to read its figure.
+  The figures are the server's own.
+- *Permissions* moved from the composer to Chat settings › Permissions.
+- *Model sheet.* Think and Fast are small switches; plan limits moved to
+  Usage. Favourites stay.
+- *Previews in the chat.* A file the agent delivers shows itself in the
+  reply: web pages and SVG drawn, Markdown formatted, PDFs with their first
+  page, and now diagrams and 3D models too. A `mermaid` code block is drawn
+  as a diagram; `.mmd` files and `.glb`/`.gltf` models (up to 24 MB, to turn
+  and pinch) open in the viewer. At most two live previews run at a time;
+  the rest load when you reach them. Diagrams and models are drawn on the
+  device, with no network access.
+- *PDF viewer.* A cited PDF opens inside Console, page by page; touch a page
+  to zoom.
+- *Faces across devices.* A face made in Studio for a profile is saved with
+  the profile on the server and shows on your other devices with Console.
+
+- *Text size.* Settings › Appearance › Look & Feel now has a text size control
+  (85–150 %, 5 % steps, live preview, Reset). It combines with Android's text
+  size and never caps it. 100 % is the size Console used until now.
+- *Menu by swiping, now a choice.* The menu opens from the button at the top
+  of Home, Conversations, Chat and Mission Control. Swiping from the left
+  edge to open it is a switch in Settings › Appearance › Look & Feel, **off**
+  by default, also after the update: the left edge is left to Android's Back
+  gesture and to scrolling wide tables sideways. Turn it on to swipe as
+  before; the choice is kept.
+
+### Fixed
+
+- *Chat recovery.* After returning to the app or a network cut, paragraphs
+  and tool steps already shown no longer disappear, and the reply is not
+  duplicated when the stored turn arrives. A turn that ended while the app
+  was away closes by itself, and a turn started from another device shows up
+  live in an idle chat.
+- *Sending.* A message whose delivery was not confirmed is not resent
+  automatically: it stays in the queue as «delivery unknown». When the
+  session is not confirmed as live, Console resumes it before sending.
+- *Queue.* Queued messages wait while the session is busy elsewhere and are
+  sent when the server reports it idle.
+- *Sub-agents and background processes* keep showing as running when you
+  return to a chat whose turn has ended; they are no longer shown as
+  «Stopped» while they work.
+- *Dictation.* Downloading the on-device dictation model works again; since
+  1.4.0 it failed when the download reached 100 % (#227).
+- *Rooms.* One room the app cannot read no longer empties the whole list or
+  hides **New ▸ room**: the other rooms stay, a notice says how many could not
+  be loaded and offers **Retry**. A room that fails for a moment keeps its last
+  copy, marked as not updated. Messages with files sent from Hermes Desktop are
+  shown with the file names (open them in Hermes Desktop; Console does not
+  download them). Rooms in round 3 or later, members without an explicit
+  target and member rows with extra fields are read. A server without rooms
+  is reported as such. Bot Mode and room alerts skip only the room that fails.
+- *Projects follow the active profile.* Every project request carries the
+  profile, the list reloads when the profile changes, and a project, menu or
+  dialog opened in one profile keeps acting on that profile, including the
+  chats it opens. **Move to project** lists the projects of the
+  conversation's own profile. Hiding an automatic folder hides it only in the
+  current profile.
+- *Folders whose chats are not listed.* When Hermes counts chats in a folder
+  that it does not list (automated runs, sub-agent or empty sessions), the
+  folder now says so and points to Conversations › Automation instead of
+  saying it has no chats.
+- *Home after a late connection* (for example a VPN that comes up after the
+  app). Home checks again by itself (1, 2, 4, 8 s, then every 15 s) while it is
+  visible, checks right away when the chat connection comes up, shows offline
+  as soon as Android reports the network lost (also when a check was already
+  running) and online again at the first check that succeeds after it
+  returns. Its status check now asks the Dashboard's public status without
+  signing in, so a sign-in that could not be renewed with the VPN off no
+  longer reads as «online». With a password-protected Dashboard, the list of
+  chats can take up to a minute longer to refresh after an outage.
+- *Less repeated text in a streaming reply.* With Hermes 0.23.1 or later, a
+  reply chunk the server sends twice (a superseded attempt, a second
+  connection, a replay after a reconnection) is shown once. Older servers
+  behave as before.
+- *Links to files.* A Markdown link that points to a file on the server
+  (`[the note](/path/note.md)`, also relative to the session's folder) opens
+  the file in the viewer instead of showing a blocked-link notice.
+- *Cited pages and drawings.* An `.html` or `.svg` file opened from its name
+  in a reply is shown rendered, with the source one touch away, instead of
+  only as source text.
+- *HTML preview.* A page whose script declares its own `open` function (a
+  dialog helper, for example) stayed almost blank in the viewer: Console's
+  guard on `window.open` made the browser engine reject the whole script. The
+  guard now lets the page define it; pop-ups stay blocked.
+- *Confirmation dialogs* no longer cut off their buttons (Spanish, German,
+  French, Portuguese and Italian, also at the default text size): the text
+  scrolls and the buttons stack when they do not fit.
+- *Large text.* The chat composer stays compact with Android at 200 %, and the
+  empty Home screen scrolls clear of the dock. At the largest text size the
+  menu shows «Console» whole under its logo instead of cutting it, and on a
+  short landscape window (a Fold's cover screen) Projects scrolls its loading
+  message and its empty pane instead of overflowing them.
+
+### Known limits
+
+- The Home recovery was checked on an emulator with its network cut, not with
+  the Tailscale Android app.
+- Files in rooms cannot be downloaded from Console.
+- Faces made in Studio are shown by Console only, not by Hermes Desktop.
+- The line at the foot of a turn loses the duration when the chat is reloaded.
+- Models billed by subscription show no cost in Usage.
+- 3D models: only glTF (`.glb`, self-contained `.gltf`); a link to a file
+  whose path has spaces does not open.
+
 ## 1.4.0 (9812) — 2026-11-10
 
 Console 1.4.0 adds a workspace (terminal, Git, browser, artifacts) next to the

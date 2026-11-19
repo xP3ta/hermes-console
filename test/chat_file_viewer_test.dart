@@ -152,7 +152,8 @@ void main() {
     expect(find.byKey(const ValueKey('artifact-viewer-marked-4')), findsOne);
   });
 
-  testWidgets('HTML is shown as text and nothing runs', (tester) async {
+  testWidgets('HTML and SVG are drawn in the locked page, source one touch '
+      'away', (tester) async {
     final files = FakeFiles(
       files: {
         '/srv/p/page.html': '<h1>Hola</h1><script>alert(1)</script>',
@@ -162,22 +163,29 @@ void main() {
     for (final name in ['page.html', 'logo.svg']) {
       await tester.pumpWidget(_host(_viewer(files, name)));
       await _settle(tester);
-      expect(find.byType(WebViewWidget), findsNothing, reason: name);
-      expect(webPlatform.controllers, isEmpty, reason: name);
       expect(
         find.byKey(const ValueKey('artifact-viewer-webview')),
-        findsNothing,
+        findsOneWidget,
+        reason: name,
       );
+      // Same isolation as a delivered file: no network, no bridge, nothing
+      // loaded from a URL or from disk.
+      final web = webPlatform.last;
+      expect(web.loadedHtml, hasLength(1), reason: name);
+      expect(web.loadedHtml.single, contains("default-src 'none'"));
+      expect(web.javaScriptChannels, isEmpty, reason: name);
+      expect(web.loadedFiles, isEmpty, reason: name);
+      expect(web.loadedRequests, isEmpty, reason: name);
+      // The source is one touch away.
+      await tester.tap(
+        find.byKey(const ValueKey('artifact-viewer-source-toggle')),
+      );
+      await _settle(tester);
       expect(
         find.byKey(const ValueKey('artifact-viewer-text')),
         findsOneWidget,
       );
       expect(find.textContaining('<script>', findRichText: true), findsWidgets);
-      // There is no switch to a rendered page.
-      expect(
-        find.byKey(const ValueKey('artifact-viewer-source-toggle')),
-        findsNothing,
-      );
       await tester.pumpWidget(const SizedBox.shrink());
     }
   });
@@ -520,7 +528,9 @@ void main() {
       expect(files.reads, isEmpty);
     });
 
-    testWidgets('an HTML file of a folder is not rendered', (tester) async {
+    testWidgets('an HTML file of a folder is drawn in the locked page', (
+      tester,
+    ) async {
       final files = _Listing({
         '/srv/p': [
           const ProjectFsEntry(
@@ -538,9 +548,11 @@ void main() {
       await _settle(tester);
       await tester.pump(const Duration(milliseconds: 500));
       expect(files.reads, ['/srv/p/page.html']);
-      expect(find.byType(WebViewWidget), findsNothing);
-      expect(webPlatform.controllers, isEmpty);
-      expect(find.byKey(const ValueKey('artifact-viewer-text')), findsOne);
+      expect(find.byKey(const ValueKey('artifact-viewer-webview')), findsOne);
+      final web = webPlatform.last;
+      expect(web.loadedHtml.single, contains("default-src 'none'"));
+      expect(web.javaScriptChannels, isEmpty);
+      expect(web.loadedRequests, isEmpty);
     });
 
     testWidgets('a folder opens in the explorer', (tester) async {

@@ -2,6 +2,7 @@
 // eyes, pieces and colour) on a canvas that zooms and pans, previewed in
 // fourteen animation states. It saves per profile on this device and rides
 // the existing face motion engine; nothing is sent to the gateway.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -295,44 +296,44 @@ class _CharacterEditorScreenState extends State<CharacterEditorScreen> {
           key: const ValueKey('studio-menu-redo'),
           value: _Action.redo,
           label: s.bstRedo,
-          icon: Icons.redo_rounded,
+          icon: HIcons.redo_rounded,
         ),
         HermesAction(
           key: const ValueKey('studio-menu-reset'),
           value: _Action.reset,
           label: s.bstReset,
-          icon: Icons.restart_alt_rounded,
+          icon: HIcons.restart_alt_rounded,
         ),
         HermesAction(
           key: const ValueKey('studio-menu-save'),
           value: _Action.save,
           label: s.bstSaveCharacter,
-          icon: Icons.bookmark_add_outlined,
+          icon: HIcons.bookmark_add_outlined,
           divided: true,
         ),
         HermesAction(
           key: const ValueKey('studio-menu-saved'),
           value: _Action.saved,
           label: s.bstSavedCharacters,
-          icon: Icons.collections_bookmark_outlined,
+          icon: HIcons.collections_bookmark_outlined,
         ),
         HermesAction(
           key: const ValueKey('studio-menu-share'),
           value: _Action.share,
           label: s.bstSharePng,
-          icon: Icons.ios_share_rounded,
+          icon: HIcons.ios_share_rounded,
         ),
         HermesAction(
           key: const ValueKey('studio-menu-duplicate'),
           value: _Action.duplicate,
           label: s.bstDuplicate,
-          icon: Icons.copy_all_outlined,
+          icon: HIcons.copy_all_outlined,
         ),
         HermesAction(
           key: const ValueKey('studio-menu-new'),
           value: _Action.fresh,
           label: s.bstNewCharacter,
-          icon: Icons.add_circle_outline_rounded,
+          icon: HIcons.add_circle_outline_rounded,
         ),
       ],
     );
@@ -363,7 +364,7 @@ class _CharacterEditorScreenState extends State<CharacterEditorScreen> {
       builder: (context, _) => IconButton(
         key: const ValueKey('studio-undo'),
         tooltip: s.bstUndo,
-        icon: const Icon(Icons.undo_rounded),
+        icon: const Icon(HIcons.undo_rounded),
         onPressed: _draft.canUndo ? _draft.undo : null,
       ),
     ),
@@ -371,14 +372,14 @@ class _CharacterEditorScreenState extends State<CharacterEditorScreen> {
       builder: (buttonContext) => IconButton(
         key: const ValueKey('studio-more'),
         tooltip: s.bstMore,
-        icon: const Icon(Icons.more_horiz_rounded),
+        icon: const Icon(HIcons.more_horiz_rounded),
         onPressed: () => unawaited(_openMenu(buttonContext)),
       ),
     ),
     IconButton(
       key: const ValueKey('studio-confirm'),
       tooltip: s.bstConfirm,
-      icon: const Icon(Icons.check_rounded),
+      icon: const Icon(HIcons.check_rounded),
       onPressed: () => unawaited(_apply()),
     ),
   ];
@@ -394,14 +395,14 @@ class _CharacterEditorScreenState extends State<CharacterEditorScreen> {
             key: const ValueKey('studio-pan'),
             tooltip: s.bstPan,
             isSelected: _view.panMode,
-            icon: const Icon(Icons.pan_tool_outlined),
-            selectedIcon: const Icon(Icons.pan_tool_rounded),
+            icon: const Icon(HIcons.pan_tool_outlined),
+            selectedIcon: const Icon(HIcons.pan_tool_rounded),
             onPressed: _view.togglePanMode,
           ),
           IconButton(
             key: const ValueKey('studio-zoom-out'),
             tooltip: s.bstZoomOut,
-            icon: const Icon(Icons.remove_rounded),
+            icon: const Icon(HIcons.remove_rounded),
             onPressed: _view.canZoomOut ? _view.zoomOut : null,
           ),
           StudioPill(
@@ -413,7 +414,7 @@ class _CharacterEditorScreenState extends State<CharacterEditorScreen> {
           IconButton(
             key: const ValueKey('studio-zoom-in'),
             tooltip: s.bstZoomIn,
-            icon: const Icon(Icons.add_rounded),
+            icon: const Icon(HIcons.add_rounded),
             onPressed: _view.canZoomIn ? _view.zoomIn : null,
           ),
           StudioPill(

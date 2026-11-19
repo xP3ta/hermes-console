@@ -9,6 +9,7 @@ import 'package:hermes_android/core/widgets/ssh_session_kind_picker.dart';
 import 'package:hermes_android/core/widgets/ssh_terminal_controls.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:xterm/xterm.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _app(
   Widget child, {
@@ -389,7 +390,7 @@ void main() {
           hasTapAction: true,
         ),
       );
-      expect(find.byIcon(Icons.open_in_full), findsOneWidget);
+      expect(find.byIcon(HIcons.open_in_full), findsOneWidget);
       expect(
         tester.getSize(find.byType(SshTerminalExpandButton)),
         const Size(48, 48),
@@ -400,7 +401,7 @@ void main() {
       await tester.pumpWidget(_app(button(true)));
       await tester.pump(const Duration(milliseconds: 200));
       expect(find.bySemanticsLabel('Shrink terminal'), findsOneWidget);
-      expect(find.byIcon(Icons.close_fullscreen), findsOneWidget);
+      expect(find.byIcon(HIcons.close_fullscreen), findsOneWidget);
       semantics.dispose();
     });
 
@@ -411,8 +412,8 @@ void main() {
       await tester.pumpWidget(_app(button(true), reduceMotion: true));
       await tester.pump();
 
-      expect(find.byIcon(Icons.open_in_full), findsNothing);
-      expect(find.byIcon(Icons.close_fullscreen), findsOneWidget);
+      expect(find.byIcon(HIcons.open_in_full), findsNothing);
+      expect(find.byIcon(HIcons.close_fullscreen), findsOneWidget);
     });
 
     for (final entry in _themes.entries) {
@@ -433,7 +434,7 @@ void main() {
         final decoration = box.decoration as BoxDecoration;
         expect(decoration.shape, BoxShape.circle);
         expect(decoration.color, colors.surface.withValues(alpha: 0.82));
-        final icon = tester.widget<Icon>(find.byIcon(Icons.open_in_full));
+        final icon = tester.widget<Icon>(find.byIcon(HIcons.open_in_full));
         expect(icon.color, colors.textPrimary);
       });
     }

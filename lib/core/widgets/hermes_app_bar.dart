@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -811,7 +812,7 @@ class _FloatingActions extends StatelessWidget {
         label:
             Localizations.of<Strings>(context, Strings)?.kanbanHelpTooltip ??
             '?',
-        icon: Icons.help_outline_rounded,
+        icon: HIcons.help_outline_rounded,
         help: true,
         run: () => showScreenHelp(
           context,
@@ -969,7 +970,7 @@ class _MoreButton extends StatelessWidget {
     return IconButton(
       key: const ValueKey('hermes-app-bar-more'),
       tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
-      icon: const Icon(Icons.more_horiz_rounded),
+      icon: const Icon(HIcons.more_horiz_rounded),
       onPressed: enabled.isEmpty
           ? null
           : () async {

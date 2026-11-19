@@ -4,6 +4,7 @@
 // Issue #217: Ajustes → Voz dice si Console es el asistente digital de Android
 // y abre la pantalla del sistema donde se elige. Solo informa: Console no puede
 // ponerse como asistente por su cuenta y nunca lee la pantalla.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -70,7 +71,7 @@ class _AssistantSettingsGroupState extends State<AssistantSettingsGroup>
         children: [
           HermesListRow(
             key: const ValueKey('assistant_settings_row'),
-            icon: Icons.assistant_outlined,
+            icon: HIcons.assistant_outlined,
             title: s.assistRowTitle,
             subtitle: isDefault ? s.assistRowOn : s.assistRowOff,
             subtitleMaxLines: 3,

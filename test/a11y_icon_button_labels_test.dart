@@ -47,7 +47,7 @@ void main() {
       expect(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
-  icon: const Icon(Icons.add),
+  icon: const Icon(HIcons.add),
   tooltip: label,
   onPressed: () {},
 );
@@ -60,7 +60,7 @@ Widget build() => IconButton(
       expect(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
-  icon: const Icon(Icons.add),
+  icon: const Icon(HIcons.add),
   onPressed: () {
     show(tooltip: value);
   },
@@ -74,7 +74,7 @@ Widget build() => IconButton(
       expect(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
-  icon: Icon(Icons.add, semanticLabel: 'x'),
+  icon: Icon(HIcons.add, semanticLabel: 'x'),
   onPressed: () {},
   style: Wrapper(child: Foo(tooltip: value)),
 );
@@ -87,7 +87,7 @@ Widget build() => IconButton(
       expect(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
-  icon: const Icon(Icons.add),
+  icon: const Icon(HIcons.add),
   onPressed: () => log('tooltip: none'),
 );
 '''),
@@ -100,7 +100,7 @@ Widget build() => IconButton(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => Semantics(
   label: 'Add',
-  child: IconButton(icon: const Icon(Icons.add), onPressed: () {}),
+  child: IconButton(icon: const Icon(HIcons.add), onPressed: () {}),
 );
 '''),
         isEmpty,
@@ -115,7 +115,7 @@ Widget build() => Semantics(
     children: [
       Text('x', semanticsLabel: 'x'),
       Other(label: 'unrelated'),
-      IconButton(icon: const Icon(Icons.add), onPressed: () {}),
+      IconButton(icon: const Icon(HIcons.add), onPressed: () {}),
     ],
   ),
 );
@@ -128,7 +128,7 @@ Widget build() => Semantics(
       expect(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
-  icon: const Icon(Icons.add),
+  icon: const Icon(HIcons.add),
   // sentinel, tooltip: fake,
   onPressed: () {},
 );
@@ -141,7 +141,7 @@ Widget build() => IconButton(
       expect(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
-  icon: const Icon(Icons.add),
+  icon: const Icon(HIcons.add),
   /// sentinel, tooltip: fake,
   onPressed: () {},
 );
@@ -154,7 +154,7 @@ Widget build() => IconButton(
       expect(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
-  icon: const Icon(Icons.add), /* sentinel,
+  icon: const Icon(HIcons.add), /* sentinel,
   tooltip: fake, /* nested */ still comment, tooltip: x */
   onPressed: () {},
 );
@@ -168,7 +168,7 @@ Widget build() => IconButton(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => Semantics(
   // sentinel, label: 'Add',
-  child: IconButton(icon: const Icon(Icons.add), onPressed: () {}),
+  child: IconButton(icon: const Icon(HIcons.add), onPressed: () {}),
 );
 '''),
         ['fixture.dart:3'],
@@ -179,7 +179,7 @@ Widget build() => Semantics(
       expect(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
-  icon: const Icon(Icons.add),
+  icon: const Icon(HIcons.add),
   onPressed: () => log('// tooltip: none, /*'),
 );
 '''),
@@ -192,7 +192,7 @@ Widget build() => IconButton(
         _unlabelledIconButtons('fixture.dart', '''
 Widget build() => IconButton(
   // Keep the label short (fits the tooltip).
-  icon: const Icon(Icons.add), /* ) */
+  icon: const Icon(HIcons.add), /* ) */
   tooltip: label, // tooltip: comment
   onPressed: () => open('https://example.test/path'),
 );

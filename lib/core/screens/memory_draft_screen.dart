@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -209,7 +210,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                   child: HermesInfoBanner(
                     s.memDraftLegacyNote,
-                    icon: Icons.cloud_off_outlined,
+                    icon: HIcons.cloud_off_outlined,
                   ),
                 ),
                 Expanded(
@@ -249,8 +250,8 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
                           children: [
                             Icon(
                               _updatedAt == null
-                                  ? Icons.radio_button_unchecked
-                                  : Icons.check_circle_outline,
+                                  ? HIcons.radio_button_unchecked
+                                  : HIcons.check_circle_outline,
                               size: 12,
                               color: _updatedAt == null
                                   ? colors.textDisabled
@@ -281,19 +282,19 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
                             children: [
                               HermesSecondaryButton(
                                 label: s.memButtonCopy,
-                                icon: Icons.copy_outlined,
+                                icon: HIcons.copy_outlined,
                                 onTap: _copy,
                               ),
                               const SizedBox(width: 7),
                               HermesSecondaryButton(
                                 label: s.memButtonExport,
-                                icon: Icons.ios_share_outlined,
+                                icon: HIcons.ios_share_outlined,
                                 onTap: _export,
                               ),
                               const SizedBox(width: 7),
                               HermesSecondaryButton(
                                 label: s.memButtonDiscard,
-                                icon: Icons.delete_outline,
+                                icon: HIcons.delete_outline,
                                 color: colors.error.withValues(alpha: 0.85),
                                 onTap: _discard,
                               ),

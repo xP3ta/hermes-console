@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -578,7 +579,7 @@ class _ManualConnectPageState extends State<ManualConnectPage>
   Widget _revealButton(Strings s) => IconButton(
     tooltip: _reveal ? s.onb2HidePassword : s.onb2ShowPassword,
     icon: Icon(
-      _reveal ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+      _reveal ? HIcons.visibility_off_rounded : HIcons.visibility_rounded,
     ),
     onPressed: () => setState(() => _reveal = !_reveal),
   );

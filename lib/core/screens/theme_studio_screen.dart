@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../utils/theme_error_copy.dart';
@@ -207,7 +208,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
                         setSheetState(() {});
                       },
                       icon: Icon(
-                        advanced ? Icons.palette_outlined : Icons.tune_rounded,
+                        advanced ? HIcons.palette_outlined : HIcons.tune_rounded,
                         size: 17,
                       ),
                       label: Text(
@@ -534,7 +535,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
         key: ValueKey('theme_studio_font_${_profile.typography.fontFamily}'),
         value: _profile.typography.fontFamily,
         inline: true,
-        icon: const Icon(Icons.unfold_more_rounded, size: 17),
+        icon: const Icon(HIcons.unfold_more_rounded, size: 17),
         style: TextStyle(
           color: colors.textPrimary,
           fontSize: HermesType.valueSize,
@@ -694,7 +695,7 @@ class _PaletteSummary extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Icon(
-                  Icons.chevron_right_rounded,
+                  HIcons.chevron_right_rounded,
                   color: themeColors.textDisabled,
                   size: 20,
                 ),
@@ -892,7 +893,7 @@ class _ColorTile extends StatelessWidget {
                 ),
                 const SizedBox(width: 4),
                 Icon(
-                  Icons.chevron_right_rounded,
+                  HIcons.chevron_right_rounded,
                   size: 17,
                   color: colors.textDisabled,
                 ),
@@ -959,7 +960,7 @@ class _BrightnessSelector extends StatelessWidget {
           child: _BrightnessOption(
             key: const Key('theme_studio_brightness_dark'),
             label: darkLabel,
-            icon: Icons.dark_mode_rounded,
+            icon: HIcons.dark_mode_rounded,
             selected: value == ThemeProfileBrightness.dark,
             onTap: () => onChanged(ThemeProfileBrightness.dark),
           ),
@@ -969,7 +970,7 @@ class _BrightnessSelector extends StatelessWidget {
           child: _BrightnessOption(
             key: const Key('theme_studio_brightness_light'),
             label: lightLabel,
-            icon: Icons.light_mode_rounded,
+            icon: HIcons.light_mode_rounded,
             selected: value == ThemeProfileBrightness.light,
             onTap: () => onChanged(ThemeProfileBrightness.light),
           ),
@@ -1064,7 +1065,7 @@ class _ContrastPanel extends StatelessWidget {
       child: Row(
         children: [
           Icon(
-            ready ? Icons.check_circle_outline_rounded : Icons.contrast_rounded,
+            ready ? HIcons.check_circle_outline_rounded : HIcons.contrast_rounded,
             size: 18,
             color: tone,
           ),
@@ -1365,7 +1366,7 @@ class _FullPreview extends StatelessWidget {
                 borderRadius: BorderRadius.circular(7),
               ),
               child: Icon(
-                Icons.auto_awesome_rounded,
+                HIcons.auto_awesome_rounded,
                 size: 12,
                 color: colors.accentText,
               ),
@@ -1404,7 +1405,7 @@ class _FullPreview extends StatelessWidget {
                 borderRadius: BorderRadius.circular(HermesRadius.chip),
               ),
               child: Icon(
-                Icons.arrow_forward_rounded,
+                HIcons.arrow_forward_rounded,
                 size: 11,
                 color: colors.accentText,
               ),
@@ -1457,7 +1458,7 @@ class _FullPreview extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(Icons.add_rounded, size: 14, color: colors.textSecondary),
+              Icon(HIcons.add_rounded, size: 14, color: colors.textSecondary),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -1480,7 +1481,7 @@ class _FullPreview extends StatelessWidget {
                   borderRadius: BorderRadius.circular(7),
                 ),
                 child: Icon(
-                  Icons.arrow_upward_rounded,
+                  HIcons.arrow_upward_rounded,
                   size: 12,
                   color: colors.onAccent,
                 ),

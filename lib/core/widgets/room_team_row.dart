@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -149,7 +150,7 @@ class RoomTeamRow extends StatelessWidget {
                 onPressed: onSecondaryAction,
                 tooltip: Strings.of(context).commonOpen,
                 icon: Icon(
-                  secondaryActionIcon ?? Icons.message_outlined,
+                  secondaryActionIcon ?? HIcons.message_outlined,
                   size: 20,
                 ),
                 color: colors.textSecondary,
@@ -310,7 +311,7 @@ class _NeutralRoomTeamAvatar extends StatelessWidget {
           ),
           child: Center(
             child: Icon(
-              Icons.circle_outlined,
+              HIcons.circle_outlined,
               size: size * 16 / 42,
               color: Colors.white70,
             ),

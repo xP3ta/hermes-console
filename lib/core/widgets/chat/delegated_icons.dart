@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
@@ -19,7 +20,7 @@ Widget delegatedCapsuleIcon(
 }) => _live(
   state,
   ChatLiveGlyph.agentTeam,
-  Icons.help_outline_rounded,
+  HIcons.help_outline_rounded,
   color,
   size,
 );
@@ -33,7 +34,7 @@ Widget delegatedChildIcon(
 }) => _live(
   state,
   ChatLiveGlyph.delegateTask,
-  Icons.help_outline_rounded,
+  HIcons.help_outline_rounded,
   color,
   size,
 );
@@ -47,7 +48,7 @@ Widget delegatedSheetIcon(
 }) => _live(
   state,
   ChatLiveGlyph.parallelTools,
-  Icons.help_outline_rounded,
+  HIcons.help_outline_rounded,
   color,
   size,
 );
@@ -89,4 +90,4 @@ Widget delegatedCapsuleChevron(
   BuildContext context, {
   required Color color,
   double size = 18,
-}) => Icon(Icons.chevron_right_rounded, size: size, color: color);
+}) => Icon(HIcons.chevron_right_rounded, size: size, color: color);

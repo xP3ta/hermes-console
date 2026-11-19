@@ -9,6 +9,7 @@ import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/frosted_backdrop.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// The three dots of a row or of a header: one button, one menu, the same
 /// everywhere.
@@ -64,7 +65,7 @@ void main() {
         HermesAction(
           value: 'refresh',
           label: 'Actualizar',
-          icon: Icons.refresh,
+          icon: HIcons.refresh,
         ),
         HermesAction(
           value: 'sort:recent',
@@ -95,7 +96,7 @@ void main() {
             if (inHeader) ...[
               IconButton(
                 tooltip: 'Nueva',
-                icon: const Icon(Icons.add),
+                icon: const Icon(HIcons.add),
                 onPressed: () {},
               ),
               button,
@@ -162,7 +163,7 @@ void main() {
     );
     final check = find.descendant(
       of: find.byKey(menu),
-      matching: find.byIcon(Icons.check_rounded),
+      matching: find.byIcon(HIcons.check_rounded),
     );
     expect(check, findsOneWidget);
     expect(

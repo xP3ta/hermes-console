@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -1689,25 +1690,25 @@ class _MascotOverlayState extends State<MascotOverlay>
         if (actions.onTalk != null)
           item(
             'talk',
-            Icons.graphic_eq_rounded,
+            HIcons.graphic_eq_rounded,
             strings.mascotMenuTalk,
             () => then(actions.onTalk),
           ),
         if (actions.onChange != null)
           item(
             'change',
-            Icons.refresh_rounded,
+            HIcons.refresh_rounded,
             strings.mascotChange,
             () => then(actions.onChange),
           ),
         if (_prefs.moved)
           item(
             'dock',
-            Icons.vertical_align_bottom_rounded,
+            HIcons.vertical_align_bottom_rounded,
             strings.mascotMenuDock,
             _backToDock,
           ),
-        item('hide', Icons.close_rounded, strings.mascotMenuHide, () {
+        item('hide', HIcons.close_rounded, strings.mascotMenuHide, () {
           _closeBubble(seen: false);
           unawaited(widget.pet.hide());
         }),

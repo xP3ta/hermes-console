@@ -2,6 +2,7 @@
 // selector de tableros, vista, búsqueda, filtros, selección, ajustes de
 // orquestación y "nueva tarea". En un ancho estrecho, búsqueda, selección y
 // ajustes pasan a un menú para que la fila no se desborde.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -125,7 +126,7 @@ class _KanbanHeaderRowState extends State<KanbanHeaderRow> {
         key: const ValueKey('kanban-skin-search-close'),
         tooltip: s.kanbanClearFilters,
         onPressed: _closeSearch,
-        icon: const Icon(Icons.close_rounded),
+        icon: const Icon(HIcons.close_rounded),
       ),
     ],
   );
@@ -171,8 +172,8 @@ class _KanbanHeaderRowState extends State<KanbanHeaderRow> {
                 onPressed: widget.onToggleView,
                 icon: Icon(
                   widget.boardView
-                      ? Icons.view_agenda_outlined
-                      : Icons.view_column_outlined,
+                      ? HIcons.view_agenda_outlined
+                      : HIcons.view_column_outlined,
                 ),
               ),
             if (!narrow)
@@ -181,7 +182,7 @@ class _KanbanHeaderRowState extends State<KanbanHeaderRow> {
                 tooltip: s.kanbanSearch,
                 onPressed: _openSearch,
                 icon: Icon(
-                  Icons.search_rounded,
+                  HIcons.search_rounded,
                   color: widget.query.trim().isNotEmpty ? colors.accent : null,
                 ),
               ),
@@ -191,8 +192,8 @@ class _KanbanHeaderRowState extends State<KanbanHeaderRow> {
               onPressed: widget.onFilter,
               icon: Icon(
                 widget.filtersActive
-                    ? Icons.filter_alt_rounded
-                    : Icons.filter_alt_outlined,
+                    ? HIcons.filter_alt_rounded
+                    : HIcons.filter_alt_outlined,
                 color: widget.filtersActive ? colors.accent : null,
               ),
             ),
@@ -202,7 +203,7 @@ class _KanbanHeaderRowState extends State<KanbanHeaderRow> {
                 tooltip: selectLabel,
                 onPressed: onSelect,
                 icon: Icon(
-                  Icons.checklist_rounded,
+                  HIcons.checklist_rounded,
                   color: widget.selecting ? colors.accent : null,
                 ),
               ),
@@ -211,7 +212,7 @@ class _KanbanHeaderRowState extends State<KanbanHeaderRow> {
                 key: const ValueKey('kanban-skin-settings'),
                 tooltip: s.kanbanOrchestrationTitle,
                 onPressed: onSettings,
-                icon: const Icon(Icons.tune_rounded),
+                icon: const Icon(HIcons.tune_rounded),
               ),
             if (narrow)
               HermesMenuButton<String>(
@@ -246,7 +247,7 @@ class _KanbanHeaderRowState extends State<KanbanHeaderRow> {
                 key: const ValueKey('kanban-create'),
                 tooltip: s.kanbanNewTask,
                 onPressed: widget.onCreate,
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(HIcons.add_rounded),
               ),
           ],
         );

@@ -1,4 +1,4 @@
-// OPUS-CRISTAL: FrostedBackdrop hands the smoked tone to its band, so the
+// Foot glass: FrostedBackdrop hands the smoked tone to its band, so the
 // dock (dock_style.dart) can wear the same glass as the chat's foot: one
 // blur, never the shader, the user's transparency as a floor, and the
 // fallback of before where the policy says no blur. The dock's wiring and

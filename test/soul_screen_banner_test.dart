@@ -17,6 +17,7 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Bridge that is never reachable, without touching the network.
 
@@ -133,7 +134,7 @@ void main() {
     expect(find.byKey(const ValueKey('screen-help-button')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('hermes-app-bar-more')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.help_outline_rounded));
+    await tester.tap(find.byIcon(HIcons.help_outline_rounded));
     await tester.pumpAndSettle();
     expect(find.text(en.soulLocalDocNote), findsOneWidget);
   });

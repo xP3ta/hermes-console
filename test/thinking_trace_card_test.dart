@@ -10,6 +10,7 @@ import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/hermes_pill.dart';
 import 'package:hermes_android/core/widgets/thinking_glyph.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _cardHost({
   required ThinkingTraceCard card,
@@ -107,7 +108,7 @@ void main() {
     expect(find.byType(CompanionStatusIndicator), findsNothing);
     expect(find.byType(CompanionView), findsNothing);
     // QA 9709 (the owner): thinking is a brain, drawn ([ThinkingGlyph]), no
-    // longer the head with a question mark of Icons.psychology_alt_rounded.
+    // longer the head with a question mark of HIcons.psychology_alt_rounded.
     final icon = tester.widget<ThinkingGlyph>(
       find.byKey(const ValueKey('thinking-trace-state-icon')),
     );
@@ -144,20 +145,20 @@ void main() {
 
     await expectState(
       mood: CompanionMood.connecting,
-      icon: Icons.cloud_queue_rounded,
+      icon: HIcons.cloud_queue_rounded,
     );
     await expectState(
       mood: CompanionMood.waiting,
-      icon: Icons.cloud_queue_rounded,
+      icon: HIcons.cloud_queue_rounded,
     );
     await expectState(
       mood: CompanionMood.waiting,
-      icon: Icons.help_outline_rounded,
+      icon: HIcons.help_outline_rounded,
       waitingForUser: true,
     );
     await expectState(
       mood: CompanionMood.offline,
-      icon: Icons.cloud_off_rounded,
+      icon: HIcons.cloud_off_rounded,
     );
   });
 
@@ -267,7 +268,7 @@ void main() {
     final icon = tester.widget<Icon>(
       find.byKey(const ValueKey('thinking-trace-state-icon')),
     );
-    expect(icon.icon, Icons.terminal_rounded);
+    expect(icon.icon, HIcons.terminal_rounded);
     expect(icon.size, 17);
     expect(find.text('pwd && ls'), findsNothing);
 
@@ -311,7 +312,7 @@ void main() {
     final icon = tester.widget<Icon>(
       find.byKey(const ValueKey('thinking-trace-state-icon')),
     );
-    expect(icon.icon, Icons.auto_awesome_rounded);
+    expect(icon.icon, HIcons.auto_awesome_rounded);
     expect(icon.size, 17);
   });
 
@@ -334,8 +335,8 @@ void main() {
 
     expect(find.byType(CompanionStatusIndicator), findsNothing);
     expect(find.byType(CompanionView), findsNothing);
-    expect(find.byIcon(Icons.check_circle), findsOneWidget);
-    final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle));
+    expect(find.byIcon(HIcons.check_circle), findsOneWidget);
+    final icon = tester.widget<Icon>(find.byIcon(HIcons.check_circle));
     expect(
       icon.color,
       AppTheme.hermesRedDark.extension<HermesThemeColors>()!.success,
@@ -358,7 +359,7 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.warning_amber_rounded), findsOneWidget);
     expect(find.byType(CompanionView), findsNothing);
 
     await tester.pumpWidget(
@@ -372,7 +373,7 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    expect(find.byIcon(HIcons.error_outline), findsOneWidget);
     expect(find.byType(CompanionView), findsNothing);
   });
 
@@ -393,7 +394,7 @@ void main() {
     );
     await tester.pump();
     expect(find.byType(CompanionView), findsNothing);
-    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    expect(find.byIcon(HIcons.check_circle), findsOneWidget);
   });
 
   testWidgets('320dp con escala 2 no desborda el estado terminado', (
@@ -444,7 +445,7 @@ void main() {
       final icon = tester.widget<Icon>(
         find.byKey(const ValueKey('thinking-trace-state-icon')),
       );
-      expect(icon.icon, Icons.cloud_queue_rounded);
+      expect(icon.icon, HIcons.cloud_queue_rounded);
       expect(icon.color, theme.extension<HermesThemeColors>()!.accent);
       expect(tester.takeException(), isNull);
     }
@@ -555,7 +556,7 @@ void main() {
       find.byKey(const ValueKey('thinking-trace-state-icon')),
       findsNothing,
     );
-    expect(find.byIcon(Icons.expand_more), findsNothing);
+    expect(find.byIcon(HIcons.expand_more), findsNothing);
     expect(tester.getSize(find.byType(ThinkingTraceCard)).height, 0);
 
     // Terminado: la entrada plegada «Thought ⌄» (Hermes Desktop) y, al
@@ -563,7 +564,7 @@ void main() {
     await pump(active: false);
     await tester.pump();
     expect(find.text('Thought'), findsOneWidget);
-    expect(find.byIcon(Icons.expand_more), findsOneWidget);
+    expect(find.byIcon(HIcons.expand_more), findsOneWidget);
     expect(find.byKey(const ValueKey('activity-done-section')), findsNothing);
     await tester.tap(find.text('Thought'));
     await tester.pump(const Duration(milliseconds: 250));
@@ -636,7 +637,7 @@ void main() {
         ChatTraceEvent(id: 'b', label: 'tool_call', status: 'completed'),
       ]);
       await tester.pump();
-      expect(find.byIcon(Icons.expand_more), findsNothing);
+      expect(find.byIcon(HIcons.expand_more), findsNothing);
       expect(find.textContaining('tool_'), findsNothing);
     },
   );
@@ -705,7 +706,7 @@ void main() {
     );
     expect(label.style!.color, colors.textSecondary);
     expect(label.style!.fontSize, TurnType.fold);
-    final chevron = tester.widget<Icon>(find.byIcon(Icons.expand_more));
+    final chevron = tester.widget<Icon>(find.byIcon(HIcons.expand_more));
     expect(chevron.color, colors.textSecondary);
     expect(chevron.size, lessThanOrEqualTo(16));
     expect(

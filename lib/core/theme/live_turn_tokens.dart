@@ -22,7 +22,7 @@ abstract final class HermesLiveTurn {
 
   /// The connector: a vertical line hanging from the «Trabajando» card and
   /// a horizontal elbow into each pill; the last pill gets a rounded corner.
-  static const double connectorWidth = 2;
+  static const double connectorWidth = 1;
   static const double connectorInset = 18;
   static const double elbow = 18;
   static const double corner = 11;

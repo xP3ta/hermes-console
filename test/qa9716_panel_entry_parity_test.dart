@@ -6,6 +6,7 @@ import 'package:hermes_android/core/widgets/workspace/chat_workspace_host.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _frame = ValueKey('chat-workspace-panel-frame');
 const _clip = ValueKey('chat-workspace-panel-clip');
@@ -52,7 +53,7 @@ class _PanelState extends State<_Panel> {
             ChatWorkspaceMenuEntry(
               key: const ValueKey('qa9716-child-action'),
               label: 'Child route',
-              icon: Icons.settings_outlined,
+              icon: HIcons.settings_outlined,
               onSelected: _push,
             ),
           ],

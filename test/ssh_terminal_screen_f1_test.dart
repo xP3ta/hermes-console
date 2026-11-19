@@ -28,6 +28,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 typedef _OnConnect =
     Future<SshTerminalSession> Function(
@@ -169,7 +170,7 @@ Future<_Harness> _open(
                 paneMenu: [
                   ChatWorkspaceMenuEntry(
                     label: 'Edit credentials',
-                    icon: Icons.edit_outlined,
+                    icon: HIcons.edit_outlined,
                     onSelected: () {},
                   ),
                 ],

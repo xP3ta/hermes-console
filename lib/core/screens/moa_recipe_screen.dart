@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -288,7 +289,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
     clipBehavior: hermesUnderHeader,
     padding: const EdgeInsets.all(16),
     children: [
-      Icon(Icons.cloud_off, size: 40, color: colors.textSecondary),
+      Icon(HIcons.cloud_off, size: 40, color: colors.textSecondary),
       const SizedBox(height: 12),
       Text(
         s.moaNoDashboard,
@@ -307,7 +308,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
       Center(
         child: TextButton.icon(
           onPressed: _load,
-          icon: const Icon(Icons.refresh, size: 18),
+          icon: const Icon(HIcons.refresh, size: 18),
           label: Text(s.commonRetry),
         ),
       ),
@@ -334,7 +335,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
             ),
             child: Row(
               children: [
-                Icon(Icons.cloud_off, size: 18, color: colors.warning),
+                Icon(HIcons.cloud_off, size: 18, color: colors.warning),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -398,7 +399,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
                 ),
               );
             },
-            icon: const Icon(Icons.add, size: 18),
+            icon: const Icon(HIcons.add, size: 18),
             label: Text(s.moaAddReference),
           ),
         const SizedBox(height: 18),
@@ -550,7 +551,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
                       Row(
                         children: [
                           Icon(
-                            Icons.warning_amber_rounded,
+                            HIcons.warning_amber_rounded,
                             size: 13,
                             color: colors.warning,
                           ),
@@ -572,12 +573,12 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
               ),
               if (onRemove != null)
                 IconButton(
-                  icon: Icon(Icons.close, size: 18, color: colors.textDisabled),
+                  icon: Icon(HIcons.close, size: 18, color: colors.textDisabled),
                   tooltip: Strings.of(context).commonDelete,
                   onPressed: onRemove,
                 ),
               if (onEdit != null)
-                Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
+                Icon(HIcons.chevron_right, size: 18, color: colors.textTertiary),
             ],
           ),
         ),
@@ -589,7 +590,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
     padding: const EdgeInsets.only(bottom: 6),
     child: Row(
       children: [
-        Icon(Icons.info_outline, size: 14, color: colors.textDisabled),
+        Icon(HIcons.info_outline, size: 14, color: colors.textDisabled),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -679,7 +680,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
             visualDensity: VisualDensity.compact,
             tooltip: Strings.of(context).a11yDecreaseValue(label),
             icon: Icon(
-              Icons.remove_circle_outline,
+              HIcons.remove_circle_outline,
               size: 22,
               color: onMinus == null ? colors.textDisabled : colors.accent,
             ),
@@ -701,7 +702,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
             visualDensity: VisualDensity.compact,
             tooltip: Strings.of(context).a11yIncreaseValue(label),
             icon: Icon(
-              Icons.add_circle_outline,
+              HIcons.add_circle_outline,
               size: 22,
               color: onPlus == null ? colors.textDisabled : colors.accent,
             ),

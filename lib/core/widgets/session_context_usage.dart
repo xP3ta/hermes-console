@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -6,10 +7,12 @@ import '../models/compaction_progress.dart';
 import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/session.dart';
+import '../design/tokens.dart' show HermesRadius, HermesType;
 import '../theme/app_theme.dart';
 import 'activity_pill.dart' show ActivityTicker, formatTurnElapsed;
 import 'chat_status_pill.dart' show contextLevelColor;
 import 'compaction_dock.dart';
+import 'provider_logo.dart';
 
 typedef SessionContextBreakdownLoader =
     Future<DesktopContextBreakdown?> Function();
@@ -355,8 +358,19 @@ class SessionContextSheetBody extends StatefulWidget {
     this.onCompact,
     this.compaction,
     this.clock,
+    this.model,
+    this.provider,
+    this.onOpenAllUsage,
     super.key,
   });
+
+  /// Opens the server-wide usage screen; null hides the link.
+  final VoidCallback? onOpenAllUsage;
+
+  /// The session's model and provider, for the «Modelo» section; null hides
+  /// the row.
+  final String? model;
+  final String? provider;
 
   final ValueListenable<SessionContextMetrics> metrics;
   final SessionContextBreakdownLoader loadBreakdown;
@@ -427,6 +441,9 @@ class _SessionContextSheetBodyState extends State<SessionContextSheetBody> {
             onCompact: widget.onCompact,
             compaction: progress,
             clock: widget.clock,
+            model: widget.model,
+            provider: widget.provider,
+            onOpenAllUsage: widget.onOpenAllUsage,
           );
           final compaction = widget.compaction;
           if (compaction == null) return contents(null);
@@ -449,8 +466,14 @@ class _PanelContents extends StatelessWidget {
     required this.onCompact,
     this.compaction,
     this.clock,
+    this.model,
+    this.provider,
+    this.onOpenAllUsage,
   });
 
+  final VoidCallback? onOpenAllUsage;
+  final String? model;
+  final String? provider;
   final SessionContextMetrics metrics;
   final DesktopContextBreakdown? breakdown;
   final bool loading;
@@ -462,47 +485,244 @@ class _PanelContents extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
     final compaction = this.compaction;
     final categories = breakdown?.categories ?? const [];
+    final busy = compaction != null && !compaction.isFinished;
+    final modelName = (model ?? '').trim();
+    final providerName = (provider ?? '').trim();
+    // Three soft panels with air between them (the owner, 2026-11-18): the
+    // context with its figure and bar, the model as one line with its mark,
+    // the session's figures as small tiles. Few words: a figure Hermes has
+    // not published is a dash, not a sentence.
+    // The small «compress» button of the context panel.
+    Widget compress() =>
+      Material(
+        color: colors.textPrimary.withValues(alpha: 0.08),
+        shape: const StadiumBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const ValueKey('context-compress-now'),
+          onTap: busy ? null : onCompact,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 9,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  HIcons.compress_rounded,
+                  size: 16,
+                  color: busy
+                      ? colors.textTertiary
+                      : colors.accentText,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    busy
+                        ? strings.sp1215CompactBusy
+                        : strings.sp1215Compact,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: busy
+                          ? colors.textTertiary
+                          : colors.accentText,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
     return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (compaction != null) ...[
           _CompactionPanelRow(compaction: compaction, clock: clock),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
         ],
-        _ContextOverview(
-          metrics: metrics,
-          onCompact: onCompact,
-          compacting: compaction != null && !compaction.isFinished,
-        ),
-        const SizedBox(height: 10),
-        SessionContextPerformance(metrics: metrics),
-        const SizedBox(height: 14),
-        if (categories.isNotEmpty) ...[
-          SessionContextBreakdown(categories: categories),
-        ] else if (loading)
-          _ContextNotice(
-            icon: Icons.hourglass_top_rounded,
-            text: strings.chaContextUsageLoading,
-          )
-        else if (error != null)
-          _ContextNotice(
-            icon: Icons.sync_problem_rounded,
-            text: strings.chaContextUsageError,
-          )
-        else if (breakdown == null)
-          _ContextNotice(
-            icon: Icons.info_outline_rounded,
-            text: strings.chaContextUsageUnavailable,
-          )
-        else
-          _ContextNotice(
-            icon: Icons.layers_clear_outlined,
-            text: strings.chaContextUsageEmpty,
+        _SoftPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (onCompact == null)
+                _ContextOverview(metrics: metrics)
+              else if (MediaQuery.textScalerOf(context).scale(1) > 1.3)
+                // Large text: the figure keeps the full width and the button
+                // goes under it, instead of squeezing the figure to nothing.
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _ContextOverview(metrics: metrics),
+                    const SizedBox(height: 12),
+                    compress(),
+                  ],
+                )
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(child: _ContextOverview(metrics: metrics)),
+                    const SizedBox(width: 12),
+                    compress(),
+                  ],
+                ),
+              if (categories.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                SessionContextBreakdown(
+                  categories: categories,
+                  window: metrics.contextMax,
+                ),
+              ] else if (loading) ...[
+                const SizedBox(height: 12),
+                _ContextNotice(
+                  icon: HIcons.hourglass_top_rounded,
+                  text: strings.chaContextUsageLoading,
+                ),
+              ] else if (error != null) ...[
+                const SizedBox(height: 12),
+                _ContextNotice(
+                  icon: HIcons.sync_problem_rounded,
+                  text: strings.chaContextUsageError,
+                ),
+              ],
+            ],
           ),
+        ),
+        if (modelName.isNotEmpty || providerName.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _SoftPanel(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            child: Row(
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: colors.textPrimary.withValues(alpha: 0.08),
+                  ),
+                  child: SizedBox.square(
+                    dimension: 38,
+                    child: Center(
+                      child: ProviderLogo(
+                        provider: providerName.isEmpty ? null : providerName,
+                        model: modelName.isEmpty ? null : modelName,
+                        size: 20,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (modelName.isNotEmpty)
+                        Text(
+                          modelName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textPrimary,
+                          ),
+                        ),
+                      if (providerName.isNotEmpty)
+                        Text(
+                          providerName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        SessionContextPerformance(metrics: metrics),
+        if (onOpenAllUsage != null) ...[
+          const SizedBox(height: 12),
+          Material(
+            color: colors.textPrimary.withValues(alpha: 0.055),
+            borderRadius: BorderRadius.circular(HermesRadius.card),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: const ValueKey('session-usage-see-all'),
+              onTap: onOpenAllUsage,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 14,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      HIcons.bar_chart_rounded,
+                      size: 20,
+                      color: colors.accentText,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        strings.kluUsageSeeAll,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: colors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      HIcons.chevron_right_rounded,
+                      size: 20,
+                      color: colors.textSecondary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ],
+    );
+  }
+}
+
+/// A soft rounded panel: no rim, a quiet fill.
+class _SoftPanel extends StatelessWidget {
+  const _SoftPanel({
+    required this.child,
+    this.padding = const EdgeInsets.all(18),
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.textPrimary.withValues(alpha: 0.055),
+        borderRadius: BorderRadius.circular(HermesRadius.card),
+      ),
+      child: Padding(padding: padding, child: child),
     );
   }
 }
@@ -583,100 +803,105 @@ class SessionContextPerformance extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
     final cumulative = metrics.cumulativeTotal;
     final read = metrics.cacheReadTokens;
     final write = metrics.cacheWriteTokens;
     final latency = metrics.observedFirstTokenLatencyMs;
     final cachePercent = metrics.cacheReadPercent;
+    String ttft(int ms) =>
+        ms >= 1000 ? '${(ms / 1000).toStringAsFixed(1)} s' : '$ms ms';
+    final tiles = <(IconData, String, String)>[
+      (
+        HIcons.forum_outlined,
+        cumulative == null ? '—' : compactSessionContextTokens(cumulative),
+        strings.kluUsageTokens,
+      ),
+      (HIcons.bolt_rounded, latency == null ? '—' : ttft(latency), 'TTFT'),
+      (
+        HIcons.arrow_downward_rounded,
+        read == null ? '—' : compactSessionContextTokens(read),
+        strings.chaContextCacheRead,
+      ),
+      (
+        HIcons.arrow_upward_rounded,
+        write == null ? '—' : compactSessionContextTokens(write),
+        strings.chaContextCacheWrite,
+      ),
+      if (cachePercent != null)
+        (
+          HIcons.bar_chart_rounded,
+          '${cachePercent.toStringAsFixed(1)} %',
+          strings.sesMetricCachePercent,
+        ),
+    ];
     return Semantics(
       container: true,
-      child: Column(
+      child: LayoutBuilder(
         key: const ValueKey('session-context-performance'),
-        children: [
-          if (cumulative != null)
-            _PerformanceRow(
-              label: strings.chaContextTotal,
-              value: compactSessionContextTokens(cumulative),
-            ),
-          _PerformanceRow(
-            label: strings.chaContextObservedTtft,
-            value: latency == null
-                ? strings.chaContextNotMeasured
-                : '$latency ms',
-          ),
-          _PerformanceRow(
-            label: strings.chaContextCacheRead,
-            value: read == null
-                ? strings.chaContextNotPublished
-                : compactSessionContextTokens(read),
-          ),
-          _PerformanceRow(
-            label: strings.chaContextCacheWrite,
-            value: write == null
-                ? strings.chaContextNotPublished
-                : compactSessionContextTokens(write),
-          ),
-          if (cachePercent != null)
-            _PerformanceRow(
-              label: strings.sesMetricCachePercent,
-              value: '${cachePercent.toStringAsFixed(1)}%',
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PerformanceRow extends StatelessWidget {
-  const _PerformanceRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: colors.textSecondary),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: colors.textPrimary,
-                fontWeight: FontWeight.w600,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-        ],
+        builder: (context, constraints) {
+          const gap = 10.0;
+          final width = (constraints.maxWidth - gap) / 2;
+          return Wrap(
+            spacing: gap,
+            runSpacing: gap,
+            children: [
+              for (final (icon, value, label) in tiles)
+                SizedBox(
+                  width: width,
+                  child: Semantics(
+                    container: true,
+                    label: '$label: $value',
+                    excludeSemantics: true,
+                    child: _SoftPanel(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(icon, size: 18, color: colors.accentText),
+                          const SizedBox(height: 8),
+                          Text(
+                            value,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 20,
+                              height: 1.15,
+                              fontWeight: FontWeight.w700,
+                              color: colors.textPrimary,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
 }
 
 class _ContextOverview extends StatelessWidget {
-  const _ContextOverview({
-    required this.metrics,
-    required this.onCompact,
-    required this.compacting,
-  });
+  const _ContextOverview({required this.metrics});
 
   final SessionContextMetrics metrics;
-  final VoidCallback? onCompact;
-  final bool compacting;
 
   @override
   Widget build(BuildContext context) {
@@ -688,92 +913,111 @@ class _ContextOverview extends StatelessWidget {
     final known =
         metrics.hasWindow && used != null && max != null && percent != null;
     final level = contextLevelColor(percent, colors);
-    final compact = onCompact;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Semantics(
-          container: true,
-          label: known
-              ? '${strings.chaContextUsageSummary(compactSessionContextTokens(used), compactSessionContextTokens(max))}. '
-                    '${strings.chaContextUsagePercent(percent)}'
-              : strings.chaContextWindowUnavailable,
-          excludeSemantics: true,
-          child: SizedBox.square(
-            dimension: 76,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                SessionContextRing(
-                  key: const ValueKey('context-sheet-ring'),
-                  percent: percent,
-                  size: 76,
-                  strokeWidth: 6,
-                  color: level,
-                ),
-                if (percent != null)
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Padding(
-                      padding: const EdgeInsets.all(10),
-                      child: Text(
-                        '$percent%',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: colors.textPrimary,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
+    final summary = known
+        ? '${strings.chaContextUsageSummary(compactSessionContextTokens(used), compactSessionContextTokens(max))}. '
+              '${strings.chaContextUsagePercent(percent)}'
+        : strings.chaContextWindowUnavailable;
+    if (!known) {
+      // Not published yet: a dash where the figure goes, the sentence only
+      // for assistive tech.
+      return Semantics(
+        container: true,
+        label: summary,
+        excludeSemantics: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '—',
+              style: TextStyle(
+                fontSize: HermesType.figureSize,
+                fontWeight: FontWeight.w700,
+                color: colors.textTertiary,
+              ),
+            ),
+            Text(
+              strings.plv1215Unavailable,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: colors.textSecondary),
+            ),
+          ],
+        ),
+      );
+    }
+    // «68K de 500K tokens» with the figure large, the share at the end.
+    // Figures, not words: «67.7k / 500k».
+    final figure = compactSessionContextTokens(used);
+    final rest = ' / ${compactSessionContextTokens(max)}';
+    return Semantics(
+      container: true,
+      label: summary,
+      excludeSemantics: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          // Large text on a narrow sheet: the figure shrinks to fit rather
+          // than push the share off the panel.
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerStart,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    figure,
+                    key: const ValueKey('context-sheet-ring'),
+                    style: TextStyle(
+                      fontSize: HermesType.figureSize,
+                      fontWeight: FontWeight.w700,
+                      color: colors.textPrimary,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
-              ],
+                  Text(
+                    rest,
+                    maxLines: 1,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                known
-                    ? strings.chaContextUsageSummary(
-                        compactSessionContextTokens(used),
-                        compactSessionContextTokens(max),
-                      )
-                    : strings.chaContextWindowUnavailable,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: known ? colors.textPrimary : colors.textSecondary,
-                  fontWeight: known ? FontWeight.w600 : FontWeight.normal,
-                  height: 1.35,
-                ),
-              ),
-              if (compact != null) ...[
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  key: const ValueKey('context-compress-now'),
-                  onPressed: compacting ? null : compact,
-                  icon: const Icon(Icons.compress_rounded, size: 16),
-                  label: Text(
-                    compacting
-                        ? strings.sp1215CompactBusy
-                        : strings.sp1215Compact,
-                  ),
-                ),
-              ],
-            ],
+          const SizedBox(width: 12),
+          Text(
+            '$percent%',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: level,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
 
 class SessionContextBreakdown extends StatelessWidget {
-  const SessionContextBreakdown({required this.categories, super.key});
+  const SessionContextBreakdown({
+    required this.categories,
+    this.window,
+    super.key,
+  });
 
   final List<DesktopContextUsageCategory> categories;
+
+  /// The context window; the bar then shows how much of it is taken, as the
+  /// official app's does.
+  final int? window;
 
   @override
   Widget build(BuildContext context) {
@@ -781,7 +1025,10 @@ class SessionContextBreakdown extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _SegmentedContextBar(categories: categories, total: total),
+        _SegmentedContextBar(
+          categories: categories,
+          total: window != null && window! > total ? window! : total,
+        ),
         const SizedBox(height: 14),
         for (var index = 0; index < categories.length; index++) ...[
           _ContextCategoryRow(
@@ -869,20 +1116,19 @@ class _ContextCategoryRow extends StatelessWidget {
               height: 9,
               decoration: BoxDecoration(
                 color: color,
-                borderRadius: BorderRadius.circular(3),
+                shape: BoxShape.circle,
               ),
             );
             final labelWidget = Text(
               label,
               style: Theme.of(
                 context,
-              ).textTheme.bodyMedium?.copyWith(color: colors.textSecondary),
+              ).textTheme.bodyMedium?.copyWith(color: colors.textPrimary),
             );
             final valueWidget = Text(
               value,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: colors.textPrimary,
-                fontWeight: FontWeight.w600,
+                color: colors.textSecondary,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             );

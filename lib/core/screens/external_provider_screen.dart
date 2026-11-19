@@ -13,6 +13,7 @@
 //  - Save stores the endpoint on the active profile; older servers without
 //    the saved-endpoints route apply the model with model/set instead.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -648,7 +649,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       appBar: HermesAppBar(
         title: Text(widget.isEditing ? s.extEditTitle : s.mdlAddEndpoint),
         leading: IconButton(
-          icon: const Icon(Icons.close),
+          icon: const Icon(HIcons.close),
           tooltip: s.commonClose,
           onPressed: () => Navigator.of(context).pop(_changed),
         ),
@@ -736,7 +737,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.wifi_tethering_rounded, size: 18),
+                  : const Icon(HIcons.wifi_tethering_rounded, size: 18),
               label: Text(_testing ? s.commonTesting : s.extTestConnection),
             )
           else
@@ -751,7 +752,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
                         color: colors.onAccent,
                       ),
                     )
-                  : const Icon(Icons.wifi_tethering_rounded, size: 18),
+                  : const Icon(HIcons.wifi_tethering_rounded, size: 18),
               label: Text(
                 _testing
                     ? Strings.of(context).commonTesting
@@ -770,7 +771,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
               _testMessage != null &&
               _testMessage!.trim().isNotEmpty) ...[
             const SizedBox(height: 12),
-            HermesInfoBanner(_testMessage!, icon: Icons.check_circle_outline),
+            HermesInfoBanner(_testMessage!, icon: HIcons.check_circle_outline),
           ],
           if (_models.isNotEmpty) ...[
             const SizedBox(height: 24),
@@ -821,7 +822,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
                         color: colors.onAccent,
                       ),
                     )
-                  : const Icon(Icons.save_outlined, size: 18),
+                  : const Icon(HIcons.save_outlined, size: 18),
               label: Text(
                 !_makeDefault ? s.mdlEndpointSave : s.mdlEndpointSaveAndUse,
               ),
@@ -865,7 +866,7 @@ class _ErrorBanner extends StatelessWidget {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.error_outline, size: 16, color: colors.error),
+        Icon(HIcons.error_outline, size: 16, color: colors.error),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -926,7 +927,7 @@ class _ModelTile extends StatelessWidget {
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.check_circle, size: 16, color: colors.accent),
+                Icon(HIcons.check_circle, size: 16, color: colors.accent),
                 const SizedBox(width: 6),
                 Text(
                   Strings.of(context).extActive,

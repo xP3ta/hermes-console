@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/mission_bot_task_sheet.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _host({
   required MissionBotTaskSubmit onSubmit,
@@ -55,7 +56,7 @@ void main() {
       find.byKey(const ValueKey('mission-avatar-geometry-infra')),
       findsOneWidget,
     );
-    expect(find.byIcon(Icons.smart_toy_outlined), findsNothing);
+    expect(find.byIcon(HIcons.smart_toy_outlined), findsNothing);
     expect(find.text('Qué'), findsOneWidget);
     expect(find.text('Para qué (opcional)'), findsOneWidget);
     expect(find.text('Baja'), findsOneWidget);

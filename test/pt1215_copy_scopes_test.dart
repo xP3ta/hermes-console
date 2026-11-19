@@ -7,6 +7,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/utils/markdown_clipboard.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _host(Widget child) => MaterialApp(
   locale: const Locale('en'),
@@ -62,12 +63,12 @@ void main() {
             return [
               ChatCopyScope(
                 label: 'One',
-                icon: Icons.copy_rounded,
+                icon: HIcons.copy_rounded,
                 text: () => 'ONE',
               ),
               ChatCopyScope(
                 label: 'Two',
-                icon: Icons.code_rounded,
+                icon: HIcons.code_rounded,
                 text: () => 'TWO',
               ),
             ];

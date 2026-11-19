@@ -15,6 +15,7 @@ import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 
 import 'support/bot_roster_fakes.dart';
 import 'support/profile_model_fakes.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -142,7 +143,7 @@ void main() {
         expect(labels, hasLength(1));
         Finder arrow(String key) => find.descendant(
           of: find.byKey(ValueKey(key)),
-          matching: find.byIcon(Icons.chevron_right_rounded),
+          matching: find.byIcon(HIcons.chevron_right_rounded),
         );
         final ends = {
           tester.getTopRight(find.text('Ver skills')).dx,

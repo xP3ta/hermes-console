@@ -1,6 +1,7 @@
 // Estudio de personajes: the profile's current character, the ones the user
 // saved and the presets, with a button into the editor. Picking a character
 // makes it the profile's face (on this device only).
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -167,7 +168,7 @@ class _CharacterStudioScreenState extends State<CharacterStudioScreen> {
           IconButton(
             key: const ValueKey('studio-original-face'),
             tooltip: s.bstOriginalFace,
-            icon: const Icon(Icons.face_retouching_off_rounded),
+            icon: const Icon(HIcons.face_retouching_off_rounded),
             onPressed: () => unawaited(
               _store
                   .reset(widget.connectionId, widget.profileName)
@@ -294,7 +295,7 @@ class _CharacterStudioScreenState extends State<CharacterStudioScreen> {
             child: StudioPill(
               key: const ValueKey('studio-customize'),
               label: s.bstCustomize,
-              icon: Icons.brush_rounded,
+              icon: HIcons.brush_rounded,
               accent: true,
               onTap: () => unawaited(_customize()),
             ),

@@ -8,6 +8,7 @@ import 'package:hermes_android/core/companion/models/companion_animation_state.d
 import 'package:hermes_android/core/companion/state/companion_controller.dart';
 import 'package:hermes_android/core/screens/companion/mascotas_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Companion _pet(
   String slug,
@@ -158,7 +159,7 @@ void main() {
           _pet('pixel', 'Pixel'),
         ]);
         await _pumpScreen(tester, c);
-        expect(find.byIcon(Icons.delete_outline), findsNothing);
+        expect(find.byIcon(HIcons.delete_outline), findsNothing);
       },
     );
 
@@ -168,7 +169,7 @@ void main() {
         _pet('custom', 'Custom', origin: CompanionOrigin.imported),
       ]);
       await _pumpScreen(tester, c);
-      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+      expect(find.byIcon(HIcons.delete_outline), findsOneWidget);
     });
   });
 }

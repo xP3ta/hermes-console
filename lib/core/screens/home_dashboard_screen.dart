@@ -1,6 +1,7 @@
 export '../widgets/session_status_tone.dart'
     show readableActivityTone, resolveActivityTone;
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import '../bots/data/gateway_socket_meter.dart';
 import '../services/app_lock_sensitive_read_fence.dart';
@@ -263,7 +264,188 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   bool get _socketDown => _link?.isConnected == false;
 
   void _onLinkChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    // The chat socket of this connection just came up while Home still
+    // says offline (a VPN that finished connecting): check again now
+    // instead of waiting for the next retry.
+    _onNetworkSignal();
+    final kind = _link?.kind;
+    final rose =
+        kind == ConnectionStatusKind.connected &&
+        _lastLinkKind != ConnectionStatusKind.connected;
+    _lastLinkKind = kind;
+    if (!rose || _healthOk || !_statusRetryAllowed) return;
+    if (_checking || _quietProbeInFlight) {
+      // That check may have started before the link came up: check once
+      // more as soon as it ends instead of waiting for the backoff.
+      _recheckWhenDone = true;
+      return;
+    }
+    _cancelStatusRetry();
+    unawaited(_quietStatusProbe());
+  }
+
+  ConnectionStatusKind? _lastLinkKind;
+
+  /// Android's last network signal as Home saw it (E10).
+  bool _lastNetworkLost = false;
+
+  /// Android lost or regained the network (MainActivity's validated-network
+  /// callback). Home shown online cannot keep saying so on a loss it has not
+  /// checked: it checks at once (a refused dial answers fast) and says
+  /// offline when it fails. Back on the network, an offline Home checks at
+  /// once instead of waiting for its backoff. Never two checks at once.
+  void _onNetworkSignal() {
+    final lost = ConnectionStatusRegistry.instance.networkLost;
+    if (lost == _lastNetworkLost) return;
+    _lastNetworkLost = lost;
+    if (!_statusRetryAllowed) return;
+    if (lost) {
+      if (!_healthOk) return;
+      if (_checking || _quietProbeInFlight) {
+        // H1: that check may have started before the loss and still answer
+        // fine; check once more when it ends.
+        _recheckAfterNetworkLoss = true;
+        return;
+      }
+      _cancelStatusRetry(reset: true);
+      unawaited(_refreshStatus());
+      return;
+    }
+    if (_healthOk) return;
+    if (_checking || _quietProbeInFlight) {
+      _recheckWhenDone = true;
+      return;
+    }
+    _cancelStatusRetry(reset: true);
+    unawaited(_quietStatusProbe());
+  }
+
+  /// A cheap reachability probe of an automatic retry is on the wire.
+  bool _quietProbeInFlight = false;
+
+  /// The link came up during a check: re-check once when it ends.
+  bool _recheckWhenDone = false;
+
+  /// The network was lost during a check that may still succeed (H1):
+  /// re-check once when it ends, if the network is still gone.
+  bool _recheckAfterNetworkLoss = false;
+
+  /// Re-check after a failed status check, so Home recovers by itself when
+  /// the server becomes reachable a moment later (Tailscale connecting when
+  /// the app opens): 1 s, 2 s, 4 s, 8 s, then every
+  /// [GatewayReconnectBackoff.foregroundCap]. Only while Home is on screen
+  /// and the app in the foreground; never two checks at once.
+  Timer? _statusRetryTimer;
+  int _statusRetryAttempt = 0;
+
+  /// The next status refresh is an automatic retry (see [_refreshStatus]).
+  bool _quietStatusRefresh = false;
+  static const Duration _statusRetryBase = Duration(seconds: 1);
+
+  bool get _statusRetryAllowed =>
+      mounted && _foreground && _route?.isCurrent != false && _active != null;
+
+  void _cancelStatusRetry({bool reset = false}) {
+    _statusRetryTimer?.cancel();
+    _statusRetryTimer = null;
+    if (reset) _statusRetryAttempt = 0;
+  }
+
+  void _scheduleStatusRetry() {
+    if (!_statusRetryAllowed || _statusRetryTimer != null) return;
+    final connectionId = _active!.id;
+    final exponent = _statusRetryAttempt.clamp(0, 4);
+    var delay = _statusRetryBase * (1 << exponent);
+    if (delay > GatewayReconnectBackoff.foregroundCap) {
+      delay = GatewayReconnectBackoff.foregroundCap;
+    }
+    _statusRetryAttempt++;
+    _statusRetryTimer = Timer(delay, () {
+      _statusRetryTimer = null;
+      if (!_statusRetryAllowed ||
+          _active?.id != connectionId ||
+          _healthOk ||
+          // A check already running reschedules when it ends.
+          _checking) {
+        return;
+      }
+      // A probe still on the wire (a slow dial) may be discarded by a newer
+      // check: keep the cadence instead of relying on it.
+      if (_quietProbeInFlight) {
+        _scheduleStatusRetry();
+        return;
+      }
+      unawaited(_quietStatusProbe());
+    });
+  }
+
+  /// After a failed check: once more right away if the link came up while
+  /// it ran, else the next backoff step.
+  void _afterFailedStatusCheck() {
+    if (_recheckWhenDone && _statusRetryAllowed) {
+      _recheckWhenDone = false;
+      _cancelStatusRetry();
+      unawaited(_quietStatusProbe());
+      return;
+    }
+    _recheckWhenDone = false;
+    _scheduleStatusRetry();
+  }
+
+  /// An automatic retry of a connection shown offline: only the
+  /// reachability probe (no session list, no Keystore draft read, nothing
+  /// published), and the full status check only once it answers. A manual
+  /// or lifecycle refresh started meanwhile wins (the epoch moves on).
+  Future<void> _quietStatusProbe() => GatewaySocketMeter.origin(
+    'home.observer',
+    _quietStatusProbeLabelled,
+  );
+
+  /// The one client Home builds for [conn]: the status check and the quiet
+  /// retry probe share it (a named profile's list comes from the Dashboard,
+  /// as on Desktop).
+  ApiClient _statusClient(SavedConnection conn) =>
+      widget.clientFactory?.call(conn) ??
+      ApiClient(
+        baseUrl: conn.baseUrl,
+        apiKey: conn.apiKey,
+        profileDashboard: DashboardClient.lazy(conn),
+      );
+
+  Future<void> _quietStatusProbeLabelled() async {
+    final conn = _active;
+    if (conn == null || _quietProbeInFlight || _checking) return;
+    final epoch = _refreshStatusEpoch;
+    _quietProbeInFlight = true;
+    var ok = false;
+    try {
+      final client = _statusClient(conn);
+      try {
+        ok = await client.healthReachable();
+      } finally {
+        client.close();
+      }
+    } catch (error) {
+      debugPrint('[home-dashboard] retry probe failed (${error.runtimeType})');
+      ok = false;
+    } finally {
+      _quietProbeInFlight = false;
+    }
+    if (!mounted ||
+        epoch != _refreshStatusEpoch ||
+        _active?.id != conn.id ||
+        _healthOk) {
+      return;
+    }
+    if (!ok) {
+      _afterFailedStatusCheck();
+      return;
+    }
+    // Reachable again: the full check, publishing only its outcome.
+    _quietStatusRefresh = true;
+    unawaited(_refreshStatus());
   }
 
   /// Saved Dashboard login of a healthy remote instance; a rejected or
@@ -392,6 +574,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _refreshStatusEpoch++;
+    _cancelStatusRetry();
     _activityEventRefreshTimer?.cancel();
     _activityReconnectTimer?.cancel();
     _activityStableTimer?.cancel();
@@ -477,6 +660,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // (reportado en dispositivo real). `RouteAware.didPopNext` es justo el
     // gancho para esto — se dispara siempre que esta pantalla vuelve a ser
     // visible, sin depender de qué call site abrió la pantalla anterior.
+    _cancelStatusRetry(reset: true);
     _refreshWhenUncovered();
     _scheduleActivityReconnect(immediate: true);
   }
@@ -515,6 +699,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
   @override
   void didPushNext() {
+    _cancelStatusRetry();
     _activityEventRefreshTimer?.cancel();
     _activityEventRefreshTimer = null;
     _activityReconnectTimer?.cancel();
@@ -819,6 +1004,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void _configureActivitySource(SavedConnection? connection) {
     if (_activityConnectionId == connection?.id) return;
     _activityConnectionId = connection?.id;
+    _cancelStatusRetry(reset: true);
+    _lastLinkKind = null;
     _activityEventRefreshTimer?.cancel();
     _activityEventRefreshTimer = null;
     _activityReconnectTimer?.cancel();
@@ -1039,6 +1226,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     super.didChangeAppLifecycleState(state);
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) {
+      _cancelStatusRetry();
       _missionPrewarm.cancel();
       _modelsPrewarm.cancel();
       _pickerPrewarm.cancel();
@@ -1060,6 +1248,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // answers in series, and `didPopNext` refreshes it when it is back. A
     // probe already running is not a reason to skip (it may be hung from
     // before the pause); the epoch discards the older one.
+    _cancelStatusRetry(reset: true);
     if (_active != null && _route?.isCurrent != false) _refreshStatus();
     _scheduleActivityReconnect(immediate: true);
   }
@@ -1272,6 +1461,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
   Future<void> _refreshStatusLabelled() async {
     final refreshEpoch = ++_refreshStatusEpoch;
+    // An automatic retry of a connection already shown offline publishes
+    // nothing to the launcher widget unless it comes back online: no
+    // «connecting» / «offline» flicker every few seconds.
+    final quiet = _quietStatusRefresh;
+    _quietStatusRefresh = false;
+    try {
+      await _refreshStatusChecked(refreshEpoch, quiet);
+    } catch (error) {
+      // Anything that throws outside the probe's own guard (the session
+      // archive, the client factory…) must not leave Home «checking» for
+      // ever with no retry (review m6).
+      debugPrint('[home-dashboard] status check failed (${error.runtimeType})');
+      if (!mounted || refreshEpoch != _refreshStatusEpoch) return;
+      setState(() => _checking = false);
+      _completeInitialLoad();
+      if (!_healthOk) _afterFailedStatusCheck();
+    }
+  }
+
+  Future<void> _refreshStatusChecked(int refreshEpoch, bool quiet) async {
     final conn = _active;
     final connectionId = conn?.id;
     _statusTicket = conn == null
@@ -1312,7 +1521,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // The launcher widget follows the status line: a re-check of a
     // connection already proven online keeps it online and writes nothing
     // until the result lands, so the widget neither blinks nor redraws.
-    if (_statusChecking) {
+    if (_statusChecking && !quiet) {
       unawaited(
         updateHomeWidget?.call(
           (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
@@ -1360,14 +1569,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       debugPrint('[home-dashboard] no se pudieron listar borradores: $e');
     }
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
-    final client =
-        widget.clientFactory?.call(conn) ??
-        ApiClient(
-          baseUrl: conn.baseUrl,
-          apiKey: conn.apiKey,
-          // A named profile's list comes from the Dashboard, as on Desktop.
-          profileDashboard: DashboardClient.lazy(conn),
-        );
+    final client = _statusClient(conn);
     final ownerProfile =
         _statusTicket?.owner ??
         Session.profileOwner(widget.connManager.activeProfileFor(conn.id));
@@ -1515,6 +1717,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _recentListLoginRefused = _recentListFailed && listLoginRefused;
     });
     listRead.end(rows: listReadUnavailable ? const [] : sessions);
+    if (ok) {
+      _recheckWhenDone = false;
+      _cancelStatusRetry(reset: true);
+      if (_recheckAfterNetworkLoss) {
+        _recheckAfterNetworkLoss = false;
+        if (ConnectionStatusRegistry.instance.networkLost &&
+            _statusRetryAllowed) {
+          unawaited(_refreshStatus());
+        }
+      }
+    } else {
+      _recheckAfterNetworkLoss = false;
+      _afterFailedStatusCheck();
+    }
     if (ok && !listReadUnavailable) {
       _saveColdStartRecents(
         conn,
@@ -1546,6 +1762,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     }
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+    if (quiet && !ok) return;
     unawaited(
       updateHomeWidget?.call(
         (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
@@ -2726,7 +2943,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                     BotRosterRegistry.shared.peek(active.id),
                   ),
                 ),
-                icon: Icons.chat_bubble_outline,
+                icon: HIcons.chat_bubble_outline,
                 onTap: _newChat,
               ),
           ],
@@ -2939,7 +3156,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           ),
         ),
       ),
-      drawerEnableOpenDragGesture: true,
+      drawerEnableOpenDragGesture: HermesDrawer.openDragEnabled(context),
       drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
       drawer: HermesDrawer(
         connection: _active,
@@ -2957,7 +3174,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
             child: () {
               final active = _active;
               if (_connections.isEmpty || active == null) {
-                return _EmptyHomeState(onAdd: _showAddDialog);
+                return _EmptyHomeState(
+                  onAdd: _showAddDialog,
+                  bottomClearance: FeatureFlags.instance.gestureDock.value
+                      ? gestureDockFootprint(context)
+                      : 48 + 12 + 6 + MediaQuery.paddingOf(context).bottom + 16,
+                );
               }
               final isRemoteAndOffline =
                   _initialLoadComplete && !_healthOk && !_checking;
@@ -3124,8 +3346,8 @@ class _ProfileListErrorCard extends StatelessWidget {
           : s.homeProfileListErrorBody,
       primaryLabel: onSignIn != null ? s.s2SessionExpiredSignIn : s.commonRetry,
       primaryIcon: onSignIn != null
-          ? Icons.login_rounded
-          : Icons.refresh_rounded,
+          ? HIcons.login_rounded
+          : HIcons.refresh_rounded,
       onPrimary: onSignIn ?? onRetry,
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
     );
@@ -3176,7 +3398,7 @@ class _RemoteInstanceOfflineCardState
                   Row(
                     children: [
                       Icon(
-                        Icons.cloud_off_rounded,
+                        HIcons.cloud_off_rounded,
                         size: 18,
                         color: colors.textSecondary,
                       ),
@@ -3194,7 +3416,7 @@ class _RemoteInstanceOfflineCardState
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Icon(Icons.circle, size: 7, color: colors.textDisabled),
+                      Icon(HIcons.circle, size: 7, color: colors.textDisabled),
                       const SizedBox(width: 6),
                       Text(
                         Strings.of(context).homeOfflineChip,
@@ -3214,7 +3436,7 @@ class _RemoteInstanceOfflineCardState
                       TextButton.icon(
                         key: const ValueKey('home-offline-retry'),
                         onPressed: widget.onRetry,
-                        icon: const Icon(Icons.refresh_rounded, size: 18),
+                        icon: const Icon(HIcons.refresh_rounded, size: 18),
                         label: Text(s.commonRetry),
                         style: TextButton.styleFrom(
                           minimumSize: const Size(48, 48),
@@ -3237,7 +3459,7 @@ class _RemoteInstanceOfflineCardState
                             ),
                           ),
                         ),
-                        icon: const Icon(Icons.terminal_rounded, size: 18),
+                        icon: const Icon(HIcons.terminal_rounded, size: 18),
                         label: Text(s.homeOfflineDashboardSetup),
                         style: TextButton.styleFrom(
                           minimumSize: const Size(48, 48),
@@ -3255,7 +3477,7 @@ class _RemoteInstanceOfflineCardState
                               : const Duration(milliseconds: 160),
                           curve: Curves.easeOutCubic,
                           child: const Icon(
-                            Icons.keyboard_arrow_down_rounded,
+                            HIcons.keyboard_arrow_down_rounded,
                             size: 19,
                           ),
                         ),
@@ -3300,7 +3522,7 @@ class _RemoteInstanceOfflineCardState
                           TextButton.icon(
                             onPressed: widget.onEditInstance,
                             icon: Icon(
-                              Icons.settings_rounded,
+                              HIcons.settings_rounded,
                               size: 16,
                               color: colors.textSecondary,
                             ),
@@ -3390,14 +3612,37 @@ class _HeaderTextAction extends StatelessWidget {
 class _EmptyHomeState extends StatelessWidget {
   final VoidCallback onAdd;
 
-  const _EmptyHomeState({required this.onAdd});
+  /// What the floating dock covers at the bottom (the recents list keeps
+  /// the same room).
+  final double bottomClearance;
+
+  const _EmptyHomeState({required this.onAdd, this.bottomClearance = 0});
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    return Center(
-      child: TweenAnimationBuilder<double>(
+    // Centred in the whole body as before; it scrolls only when it does not
+    // fit (very large text: Android 200 % with Hermes at 150 % overflowed a
+    // 360×690 phone by 136 px), and then its end clears the floating dock,
+    // so «Connect» can always be scrolled above it.
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        padding: EdgeInsets.only(bottom: bottomClearance),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(child: _content(context, colors, reduceMotion)),
+        ),
+      ),
+    );
+  }
+
+  Widget _content(
+    BuildContext context,
+    HermesThemeColors colors,
+    bool reduceMotion,
+  ) =>
+      TweenAnimationBuilder<double>(
         tween: Tween(begin: 0, end: 1),
         duration: reduceMotion
             ? Duration.zero
@@ -3458,7 +3703,7 @@ class _EmptyHomeState extends StatelessWidget {
             const SizedBox(height: 14),
             TextButton.icon(
               onPressed: onAdd,
-              icon: Icon(Icons.add, size: 18, color: colors.accent),
+              icon: Icon(HIcons.add, size: 18, color: colors.accent),
               label: Text(
                 Strings.of(context).homeAddInstance,
                 style: TextStyle(color: colors.accent),
@@ -3466,9 +3711,7 @@ class _EmptyHomeState extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
+      );
 }
 
 /// Add-instance dialog with live validation against the Dashboard before

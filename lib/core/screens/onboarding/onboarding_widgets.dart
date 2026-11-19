@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -292,7 +293,7 @@ class OnbBack extends StatelessWidget {
                 ),
               ),
               child: Icon(
-                Icons.chevron_left_rounded,
+                HIcons.chevron_left_rounded,
                 size: 24,
                 color: onDark ? const Color(0xFFF1EFE6) : c.textPrimary,
               ),
@@ -375,7 +376,7 @@ class OnbCheckRow extends StatelessWidget {
           shape: BoxShape.circle,
           color: c.error.withValues(alpha: .16),
         ),
-        child: Icon(Icons.close_rounded, size: 16, color: c.error),
+        child: Icon(HIcons.close_rounded, size: 16, color: c.error),
       ),
       OnbCheck.spin => Padding(
         key: const ValueKey('spin'),

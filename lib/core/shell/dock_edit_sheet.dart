@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -147,7 +148,7 @@ class _DockEditSheetState extends State<DockEditSheet> {
                           tooltip: _full
                               ? strings.gdEditFull
                               : strings.gdEditAdd,
-                          icon: const Icon(Icons.add_circle_outline_rounded),
+                          icon: const Icon(HIcons.add_circle_outline_rounded),
                           onPressed: _full ? null : () => _add(tab),
                         ),
                       ),
@@ -210,7 +211,7 @@ class _DockEditSheetState extends State<DockEditSheet> {
               IconButton(
                 key: ValueKey('dock-edit-remove-${tab.name}'),
                 tooltip: home ? strings.gdEditHomeFixed : strings.gdEditRemove,
-                icon: const Icon(Icons.remove_circle_outline_rounded),
+                icon: const Icon(HIcons.remove_circle_outline_rounded),
                 onPressed: home || _minimal ? null : () => _remove(tab),
               ),
               ReorderableDragStartListener(
@@ -219,7 +220,7 @@ class _DockEditSheetState extends State<DockEditSheet> {
                   key: ValueKey('dock-edit-drag-${tab.name}'),
                   padding: const EdgeInsets.all(12),
                   child: Icon(
-                    Icons.drag_handle_rounded,
+                    HIcons.drag_handle_rounded,
                     color: colors.textSecondary,
                   ),
                 ),

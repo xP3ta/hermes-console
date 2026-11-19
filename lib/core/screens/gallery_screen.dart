@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -247,13 +248,13 @@ class _GalleryScreenState extends State<GalleryScreen> {
         key: const ValueKey('gallery-failed'),
         children: [
           HermesEmptyStateView(
-            icon: Icons.cloud_off_outlined,
+            icon: HIcons.cloud_off_outlined,
             title: strings.artGlobalFailed,
           ),
           HermesSecondaryButton(
             key: const ValueKey('gallery-retry'),
             label: strings.commonRetry,
-            icon: Icons.refresh_rounded,
+            icon: HIcons.refresh_rounded,
             onTap: () => unawaited(_controller.refresh()),
           ),
         ],
@@ -261,7 +262,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
     } else if (images.isEmpty && read) {
       placeholder = HermesEmptyStateView(
         key: const ValueKey('gallery-empty'),
-        icon: Icons.perm_media_outlined,
+        icon: HIcons.perm_media_outlined,
         title: strings.galleryEmptyTitle,
         body: strings.galleryEmptyBody,
       );
@@ -366,7 +367,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
                       _controller.batchSize,
                     ),
                   ),
-                  icon: Icons.history_rounded,
+                  icon: HIcons.history_rounded,
                   onTap: () => unawaited(_controller.loadMore()),
                 ),
               ],
@@ -390,7 +391,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
             onPressed: state.busy
                 ? null
                 : () => unawaited(_controller.refresh()),
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(HIcons.refresh_rounded),
           ),
         ],
       ),

@@ -19,6 +19,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -1047,7 +1048,7 @@ void main() {
       );
       final title = find.text(s.setClearConvos);
       double iconToTitle() =>
-          tester.getCenter(find.byIcon(Icons.forum_outlined)).dy -
+          tester.getCenter(find.byIcon(HIcons.forum_outlined)).dy -
           tester.getCenter(title).dy;
 
       final restingOffset = iconToTitle();

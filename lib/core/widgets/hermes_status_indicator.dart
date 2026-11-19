@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -125,12 +126,12 @@ class HermesStatusIndicator extends StatelessWidget {
           ),
         );
       case CompanionMood.success:
-        return Icon(Icons.check_circle, color: colors.success, size: size);
+        return Icon(HIcons.check_circle, color: colors.success, size: size);
       case CompanionMood.error:
-        return Icon(Icons.error_outline, color: colors.error, size: size);
+        return Icon(HIcons.error_outline, color: colors.error, size: size);
       case CompanionMood.offline:
         return Icon(
-          Icons.cloud_off,
+          HIcons.cloud_off,
           color: colors.textSecondary,
           size: size * 0.9,
         );
@@ -138,7 +139,7 @@ class HermesStatusIndicator extends StatelessWidget {
       case CompanionMood.waiting:
       case CompanionMood.jump: // no se usa aquí; icono neutro por exhaustividad
         return Icon(
-          Icons.radio_button_unchecked,
+          HIcons.radio_button_unchecked,
           color: colors.textSecondary,
           size: size * 0.8,
         );

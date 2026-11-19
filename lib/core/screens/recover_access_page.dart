@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -76,7 +77,7 @@ class _RecoverAccessPageState extends State<RecoverAccessPage> {
           child: TextButton.icon(
             key: const ValueKey('recover-access-send'),
             onPressed: () => unawaited(_send(command)),
-            icon: const Icon(Icons.ios_share_rounded, size: 16),
+            icon: const Icon(HIcons.ios_share_rounded, size: 16),
             label: Text(s.o2SendToComputer),
           ),
         ),

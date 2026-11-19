@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -53,7 +54,7 @@ class CommandBlock extends StatelessWidget {
                   context,
                 ).notify(FeedbackKind.routine, s.qrCmdCopied);
               },
-              icon: const Icon(Icons.copy_rounded, size: 16),
+              icon: const Icon(HIcons.copy_rounded, size: 16),
               label: Text(s.commonCopy),
             ),
           ),

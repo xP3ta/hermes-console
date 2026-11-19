@@ -126,6 +126,64 @@ final class BotProfileClient
     throw StateError('Bot metadata changed concurrently');
   }
 
+  /// Saves (or, with null, removes) the Studio character of [profile] in
+  /// Console's own `ui_meta` namespace. `profiles.configure` merges `ui_meta`
+  /// key-wise and keeps one revision per key
+  /// (tui_gateway/methods_profiles.py:604), so this never touches Desktop's
+  /// `hermes-bots` metadata.
+  Future<void> setConsoleCharacter(
+    String profile,
+    Map<String, dynamic>? character,
+  ) async {
+    validateProfile(profile);
+    const namespace = 'hermes-console';
+    final frozen = character == null
+        ? null
+        : jsonDecode(jsonEncode(character)) as Map<String, dynamic>;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final matches = (await _profiles()).where(
+        (row) => row['name'] == profile,
+      );
+      if (matches.length != 1) throw StateError('Profile is unavailable');
+      final row = matches.single;
+      final ui = row['ui_meta'];
+      final previous = ui is Map ? ui[namespace] : null;
+      final merged = <String, dynamic>{
+        if (previous is Map) ...Map<String, dynamic>.from(previous),
+      };
+      if (frozen == null) {
+        merged.remove('character');
+      } else {
+        merged['character'] = frozen;
+      }
+      final incoming = <String, dynamic>{
+        namespace: merged.isEmpty ? null : merged,
+      };
+      if (pythonJsonLength(incoming) > 65536) {
+        throw const FormatException('Character exceeds the server limit');
+      }
+      final revisions = row['ui_meta_revisions'];
+      final cas = revisions is Map;
+      final revision = cas ? revisions[namespace] ?? 0 : null;
+      if (cas && (revision is! int || revision < 0)) {
+        throw const FormatException('Invalid metadata revision');
+      }
+      final result = await request('profiles.configure', {
+        'name': profile,
+        'ui_meta': incoming,
+        if (cas) 'ui_meta_expected_revisions': {namespace: revision},
+      });
+      final applied = result['applied'];
+      if (applied is Map && applied['ui_meta'] == true) return;
+      final conflicts = applied is Map ? applied['ui_meta_conflicts'] : null;
+      if (cas && conflicts is Map && conflicts.containsKey(namespace)) {
+        continue;
+      }
+      throw StateError('Character was not saved');
+    }
+    throw StateError('Character changed concurrently');
+  }
+
   /// Python json.dumps uses ASCII escapes and spaces after separators.
   static int pythonJsonLength(Object? value) {
     final encoded = jsonEncode(value);

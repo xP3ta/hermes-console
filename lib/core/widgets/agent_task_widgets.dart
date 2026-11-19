@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../utils/plain_preview.dart';
@@ -216,7 +217,7 @@ class _TaskRow extends StatelessWidget {
     final iconSize = dense ? 14.0 : 18.0;
     final Widget icon = switch (item.status) {
       AgentTaskStatus.completed => Icon(
-        Icons.check_circle_rounded,
+        HIcons.check_circle_rounded,
         key: const ValueKey('agent-task-icon-completed'),
         size: iconSize,
         color: colors.success,
@@ -225,7 +226,7 @@ class _TaskRow extends StatelessWidget {
         reduceMotion
             // Movimiento reducido: marca estática, sin spinner animado.
             ? Icon(
-                Icons.play_circle_outline_rounded,
+                HIcons.play_circle_outline_rounded,
                 key: const ValueKey('agent-task-icon-in-progress'),
                 size: iconSize,
                 color: colors.accent,
@@ -240,13 +241,13 @@ class _TaskRow extends StatelessWidget {
                 ),
               ),
       AgentTaskStatus.pending => Icon(
-        Icons.radio_button_unchecked_rounded,
+        HIcons.radio_button_unchecked_rounded,
         key: const ValueKey('agent-task-icon-pending'),
         size: iconSize,
         color: colors.textSecondary,
       ),
       AgentTaskStatus.cancelled => Icon(
-        Icons.block_rounded,
+        HIcons.block_rounded,
         key: const ValueKey('agent-task-icon-cancelled'),
         size: iconSize,
         color: colors.textSecondary,
@@ -360,7 +361,7 @@ class AgentTaskChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            finished ? Icons.check_rounded : Icons.checklist_rounded,
+            finished ? HIcons.check_rounded : HIcons.checklist_rounded,
             size: 12,
             color: color,
           ),

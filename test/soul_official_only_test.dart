@@ -28,6 +28,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/header_actions.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // This boundary records every access; it cannot contact or provision a server.
 
@@ -505,7 +506,7 @@ void main() {
         find.byType(TextField).first,
         'Alpha template draft',
       );
-      await tester.tap(find.byIcon(Icons.auto_fix_high_outlined));
+      await tester.tap(find.byIcon(HIcons.auto_fix_high_outlined));
       await tick(tester);
       await tester.tap(find.text('Minimalist agent'));
       await tick(tester);
@@ -555,7 +556,7 @@ void main() {
     await tapHeaderAction(
       tester,
       inBar: find.byTooltip('__never__'),
-      inMenu: find.byIcon(Icons.restore),
+      inMenu: find.byIcon(HIcons.restore),
     );
     await tick(tester);
     await f.scope.switchTo('beta');
@@ -571,7 +572,7 @@ void main() {
     (tester) async {
       final f = _Fixture();
       await f.open(tester, profile: 'alpha');
-      await tester.tap(find.byIcon(Icons.auto_fix_high_outlined));
+      await tester.tap(find.byIcon(HIcons.auto_fix_high_outlined));
       await tick(tester);
       await f.scope.switchTo('beta');
       await tick(tester);
@@ -634,7 +635,7 @@ void main() {
         find.byType(TextField).first,
         'Original local persona',
       );
-      await tester.tap(find.byIcon(Icons.auto_fix_high_outlined));
+      await tester.tap(find.byIcon(HIcons.auto_fix_high_outlined));
       await tick(tester);
       await tester.tap(find.text('Empty'));
       await tick(tester);
@@ -644,7 +645,7 @@ void main() {
       await tapHeaderAction(
         tester,
         inBar: find.byTooltip('__never__'),
-        inMenu: find.byIcon(Icons.restore),
+        inMenu: find.byIcon(HIcons.restore),
       );
       await tick(tester);
       await tester.tap(find.text('Restore').last);

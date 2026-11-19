@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -438,7 +439,7 @@ class _ChatConnectionRecoveryRowState extends State<ChatConnectionRecoveryRow> {
                             color: colors.warning,
                           )
                         : Icon(
-                            Icons.cloud_off_outlined,
+                            HIcons.cloud_off_outlined,
                             size: 14,
                             color: colors.warning,
                           ),

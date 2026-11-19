@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -874,7 +875,7 @@ class HermesSurfaceHeader extends StatelessWidget {
             IconButton(
               tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
               onPressed: () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.close_rounded),
+              icon: const Icon(HIcons.close_rounded),
             ),
         ],
       ),
@@ -1064,7 +1065,7 @@ class _HermesOptionListState<T> extends State<HermesOptionList<T>> {
                       width: 20,
                       child: isSelected
                           ? Icon(
-                              Icons.check_rounded,
+                              HIcons.check_rounded,
                               size: 20,
                               color: colors.accentText,
                             )
@@ -1111,7 +1112,7 @@ class _HermesOptionListState<T> extends State<HermesOptionList<T>> {
               decoration: InputDecoration(
                 isDense: true,
                 hintText: s.designSearch,
-                prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                prefixIcon: const Icon(HIcons.search_rounded, size: 20),
                 filled: true,
                 fillColor: colors.surfaceVariant.withValues(alpha: .6),
                 border: OutlineInputBorder(
@@ -1203,7 +1204,7 @@ class HermesMenuButton<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) => IconButton(
     tooltip: tooltip ?? MaterialLocalizations.of(context).showMenuTooltip,
-    icon: icon ?? const Icon(Icons.more_vert),
+    icon: icon ?? const Icon(HIcons.more_vert),
     iconSize: iconSize,
     color: iconColor,
     padding: padding,
@@ -1329,7 +1330,7 @@ Future<T?> showHermesMenu<T>({
                               if (ordered[i].selected == true) ...[
                                 const SizedBox(width: 12),
                                 Icon(
-                                  Icons.check_rounded,
+                                  HIcons.check_rounded,
                                   size: 20,
                                   color: HermesFloatingSurface.windowInk(
                                     colors,
@@ -1668,7 +1669,7 @@ Future<HermesModelChoice?> showHermesModelPicker({
         value: const HermesModelChoice.defaultModel(),
         label: defaultLabel,
         subtitle: defaultSubtitle,
-        icon: Icons.auto_mode_rounded,
+        icon: HIcons.auto_mode_rounded,
       ),
     // An explicit "follow the main model" row: provider `main`, no model.
     if (inheritLabel != null)
@@ -1677,7 +1678,7 @@ Future<HermesModelChoice?> showHermesModelPicker({
         value: const HermesModelChoice(kHermesInheritMainProvider, ''),
         label: inheritLabel,
         subtitle: inheritSubtitle,
-        icon: Icons.subdirectory_arrow_right_rounded,
+        icon: HIcons.subdirectory_arrow_right_rounded,
       ),
     for (final group in groups)
       for (final model in group.models)

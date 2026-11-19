@@ -1,4 +1,4 @@
-// F3 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §2.3.2-3, §2.4): the
+// F3 of the fluidity plan: the
 // live reply is revealed by words at the pace it has had since 1.2, on the
 // screen's frames. Measured: no word cut by a step, never behind by more
 // than the drain, monotonic, and the final text is the text.

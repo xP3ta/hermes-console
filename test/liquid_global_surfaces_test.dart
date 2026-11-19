@@ -12,6 +12,7 @@ import 'package:hermes_android/core/widgets/dock_style.dart';
 import 'package:hermes_android/core/widgets/frosted_backdrop.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _menu = ValueKey('open-menu');
 const _options = ValueKey('open-options');
@@ -38,7 +39,7 @@ Widget _page() => Builder(
         IconButton(
           key: _menu,
           tooltip: 'Acciones',
-          icon: const Icon(Icons.more_horiz),
+          icon: const Icon(HIcons.more_horiz),
           onPressed: () => unawaited(
             showHermesMenu<int>(
               context: context,
@@ -46,7 +47,7 @@ Widget _page() => Builder(
                 HermesAction(
                   value: 1,
                   label: 'Actualizar',
-                  icon: Icons.refresh,
+                  icon: HIcons.refresh,
                 ),
                 HermesAction(value: 2, label: 'Ordenar', icon: Icons.sort),
               ],
@@ -90,7 +91,7 @@ Widget _page() => Builder(
     bottomNavigationBar: DockBar(
       style: const DockStyle(transparency: .6),
       children: [
-        for (final icon in [Icons.home, Icons.forum, Icons.settings])
+        for (final icon in [Icons.home, Icons.forum, HIcons.settings])
           Expanded(
             child: IconButton(
               icon: Icon(icon),

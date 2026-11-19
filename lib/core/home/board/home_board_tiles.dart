@@ -5,6 +5,7 @@
 /// that fit, so nothing overflows and nothing is cut in half.
 library;
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -348,7 +349,7 @@ class _Who extends StatelessWidget {
     required this.profile,
     required this.t,
     this.size = 30,
-    this.icon = Icons.chat_bubble_outline_rounded,
+    this.icon = HIcons.chat_bubble_outline_rounded,
   });
   final String? profile;
   final HomeTileContext t;
@@ -569,7 +570,7 @@ class _Status extends StatelessWidget {
   final String text;
   final _Mark mark;
 
-  /// Quiet text after everything else («luego, Astra»).
+  /// Quiet text after everything else («luego, Ada»).
   final String? suffix;
 
   /// Text colour instead of muted (what is alive, what asks).
@@ -591,10 +592,10 @@ class _Status extends StatelessWidget {
     final lead = switch (mark) {
       _Mark.none => null,
       _Mark.live => _Dot(HomeType.live(p)),
-      _Mark.done => Icon(Icons.check_rounded, size: 14, color: p.ok),
-      _Mark.failed => Icon(Icons.close_rounded, size: 14, color: p.failure),
-      _Mark.draft => Icon(Icons.edit_outlined, size: 13, color: p.textMuted),
-      _Mark.asks => Icon(Icons.help_rounded, size: 14, color: HomeType.live(p)),
+      _Mark.done => Icon(HIcons.check_rounded, size: 14, color: p.ok),
+      _Mark.failed => Icon(HIcons.close_rounded, size: 14, color: p.failure),
+      _Mark.draft => Icon(HIcons.edit_outlined, size: 13, color: p.textMuted),
+      _Mark.asks => Icon(HIcons.help_rounded, size: 14, color: HomeType.live(p)),
     };
     return LayoutBuilder(
       builder: (context, box) {
@@ -1297,7 +1298,7 @@ class _NowTileState extends State<_NowTile> {
 
   String _name(String who) => who.isEmpty ? t.data.mainName : who;
 
-  /// «Astra te pregunta», «Forja pide permiso».
+  /// «Ada te pregunta», «Leo pide permiso».
   String _askLine(Strings s, HomeNowAsk ask) {
     final who = _name(ask.who);
     return switch (ask.kind) {
@@ -1575,7 +1576,7 @@ class _NowTileState extends State<_NowTile> {
             ),
             child: SizedBox.square(
               dimension: mark,
-              child: Icon(Icons.check_rounded, size: mark * 0.6, color: p.ok),
+              child: Icon(HIcons.check_rounded, size: mark * 0.6, color: p.ok),
             ),
           ),
           SizedBox(width: small ? 8 : 10),
@@ -1684,7 +1685,7 @@ class _NowTileState extends State<_NowTile> {
             'allow',
             () => _send(ask.key, () => t.actions.answer(approval, allow: true)),
             true,
-            Icons.check_rounded,
+            HIcons.check_rounded,
           ));
         }
         if (approval.canDeny) {
@@ -1694,7 +1695,7 @@ class _NowTileState extends State<_NowTile> {
             () =>
                 _send(ask.key, () => t.actions.answer(approval, allow: false)),
             false,
-            Icons.close_rounded,
+            HIcons.close_rounded,
           ));
         }
       case final HomeQuestionItem question:
@@ -1813,8 +1814,8 @@ class _NowTileState extends State<_NowTile> {
               profile: run.profileName,
               t: t,
               icon: run.target is HomeBoardRoom
-                  ? Icons.forum_outlined
-                  : Icons.chat_bubble_outline_rounded,
+                  ? HIcons.forum_outlined
+                  : HIcons.chat_bubble_outline_rounded,
             ),
             title: Column(
               mainAxisSize: MainAxisSize.min,
@@ -2000,7 +2001,7 @@ class _ChatsTile extends StatelessWidget {
         gap: 2,
         onHeader: t.actions.openSessions,
         trailing: Icon(
-          Icons.chevron_right_rounded,
+          HIcons.chevron_right_rounded,
           size: 18,
           color: p.textMuted,
         ),
@@ -2631,7 +2632,7 @@ class _RoomsTile extends StatelessWidget {
       ? s.hwRoomResponding(room.responding.single)
       : s.hwRoomRespondingMany(room.responding.length);
 
-  /// The newest line: «Astra: Lo reviso cuando acabe Forja.»
+  /// The newest line: «Ada: Lo reviso cuando acabe Leo.»
   Widget? _lastLine(BuildContext context, HomeBoardRoom room, {int lines = 1}) {
     final p = HomePalette.ofContext(context);
     final line = room.lines.lastOrNull;
@@ -3123,7 +3124,7 @@ class _CronTile extends StatelessWidget {
                 ),
               ),
               end: job.failed
-                  ? Icon(Icons.close_rounded, size: 14, color: p.failure)
+                  ? Icon(HIcons.close_rounded, size: 14, color: p.failure)
                   : Text(
                       next == null
                           ? s.hwNextPaused
@@ -3384,10 +3385,10 @@ class _TasksTile extends StatelessWidget {
         children: [
           Icon(
             running
-                ? Icons.data_usage_rounded
+                ? HIcons.data_usage_rounded
                 : task.attention
-                ? Icons.error_outline_rounded
-                : Icons.radio_button_unchecked_rounded,
+                ? HIcons.error_outline_rounded
+                : HIcons.radio_button_unchecked_rounded,
             size: 15,
             color: running
                 ? HomeType.live(p)

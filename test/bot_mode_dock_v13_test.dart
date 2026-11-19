@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/dock.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Monta el dock unificado con el perfil "Bots" tal y como lo monta Mission
 /// Control: sus mismas acciones, sus mismas dos órbitas de creación y el
@@ -46,13 +47,13 @@ Widget _host({
         DockCreateOrbit(
           controlKey: const ValueKey('bot-mode-create-bot'),
           label: 'Nuevo bot',
-          icon: Icons.smart_toy_outlined,
+          icon: HIcons.smart_toy_outlined,
           onTap: onCreateBot,
         ),
         DockCreateOrbit(
           controlKey: const ValueKey('bot-mode-create-room'),
           label: 'Nueva sala',
-          icon: Icons.groups_2_outlined,
+          icon: HIcons.groups_2_outlined,
           onTap: onCreateRoom,
         ),
       ],

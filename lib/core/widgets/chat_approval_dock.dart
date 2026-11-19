@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -157,7 +158,7 @@ class _ChatApprovalDockState extends State<ChatApprovalDock> {
                 minimumSize: const Size(HermesSpace.tap, HermesSpace.tap),
               ),
               onPressed: () => Clipboard.setData(ClipboardData(text: text)),
-              icon: const Icon(Icons.content_copy),
+              icon: const Icon(HIcons.content_copy),
               label: Text(s.cevCopyTooltip),
             ),
           ],
@@ -286,7 +287,7 @@ class _ChatApprovalDockState extends State<ChatApprovalDock> {
                   children: [
                     ?widget.navigation,
                     Icon(
-                      Icons.build_outlined,
+                      HIcons.build_outlined,
                       color: colors.warning,
                       size: HermesSpace.x5,
                     ),

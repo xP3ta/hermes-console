@@ -124,6 +124,12 @@ const int chatFileMaxTextChars = 2 * 1024 * 1024;
 /// Largest image shown, decoded.
 const int chatFileMaxImageBytes = 20 * 1024 * 1024;
 
+/// Largest 3D model shown.
+const int chatFileMaxModelBytes = 24 * 1024 * 1024;
+
+/// Largest PDF shown.
+const int chatFileMaxPdfBytes = 50 * 1024 * 1024;
+
 ChatFileErrorKind _kindOf(Object error) {
   if (error is ChatFileLoadException) return error.kind;
   if (error is TimeoutException) return ChatFileErrorKind.timeout;
@@ -276,6 +282,40 @@ Future<ChatFileContent> _read(
       name: name,
       bytes: bytes,
       mimeType: 'image/*',
+      truncated: false,
+      sensitive: sensitive,
+      byteSize: bytes.length,
+    );
+  }
+  if (artifactViewerKindFor(name: name, mimeType: '') ==
+      ArtifactViewerKind.pdf) {
+    final bytes = await files.readProjectFileBytes(path).timeout(timeout);
+    if (bytes.length > chatFileMaxPdfBytes) {
+      throw const ChatFileLoadException(ChatFileErrorKind.tooLarge);
+    }
+    return ChatFileContent(
+      path: path,
+      name: name,
+      bytes: bytes,
+      mimeType: 'application/pdf',
+      truncated: false,
+      sensitive: sensitive,
+      byteSize: bytes.length,
+    );
+  }
+  if (artifactViewerKindFor(name: name, mimeType: '') ==
+      ArtifactViewerKind.model3d) {
+    final bytes = await files.readProjectFileBytes(path).timeout(timeout);
+    if (bytes.length > chatFileMaxModelBytes) {
+      throw const ChatFileLoadException(ChatFileErrorKind.tooLarge);
+    }
+    return ChatFileContent(
+      path: path,
+      name: name,
+      bytes: bytes,
+      mimeType: name.toLowerCase().endsWith('.gltf')
+          ? 'model/gltf+json'
+          : 'model/gltf-binary',
       truncated: false,
       sensitive: sensitive,
       byteSize: bytes.length,

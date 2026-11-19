@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -193,7 +194,7 @@ class _ChatFindBarState extends State<ChatFindBar> {
                           minHeight: componentMinimumTapTarget,
                         ),
                         onPressed: status.total > 1 ? widget.onOlder : null,
-                        icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                        icon: const Icon(HIcons.keyboard_arrow_up_rounded),
                       ),
                       IconButton(
                         key: const ValueKey('chat-find-newer'),
@@ -203,7 +204,7 @@ class _ChatFindBarState extends State<ChatFindBar> {
                           minHeight: componentMinimumTapTarget,
                         ),
                         onPressed: status.total > 1 ? widget.onNewer : null,
-                        icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                        icon: const Icon(HIcons.keyboard_arrow_down_rounded),
                       ),
                       IconButton(
                         key: const ValueKey('chat-find-close'),
@@ -213,7 +214,7 @@ class _ChatFindBarState extends State<ChatFindBar> {
                           minHeight: componentMinimumTapTarget,
                         ),
                         onPressed: widget.onClose,
-                        icon: const Icon(Icons.close_rounded),
+                        icon: const Icon(HIcons.close_rounded),
                       ),
                     ],
                   ),
@@ -251,7 +252,7 @@ class _ChatFindBarState extends State<ChatFindBar> {
                           ? TextButton.icon(
                               key: const ValueKey('chat-find-search-older'),
                               onPressed: widget.onSearchOlderMessages,
-                              icon: const Icon(Icons.history_rounded, size: 18),
+                              icon: const Icon(HIcons.history_rounded, size: 18),
                               label: Text(str.cs1215SearchOlder),
                             )
                           : Padding(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/page.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Future<void> revealEditorControl(WidgetTester tester, Finder control) async {
   if (control.evaluate().isEmpty) {
@@ -32,7 +33,7 @@ Future<void> openEditorAdvanced(WidgetTester tester) async {
   final row = find.byKey(const ValueKey('instance-advanced'));
   await revealEditorControl(tester, row);
   if (find
-      .descendant(of: row, matching: find.byIcon(Icons.expand_less))
+      .descendant(of: row, matching: find.byIcon(HIcons.expand_less))
       .evaluate()
       .isEmpty) {
     await tester.tap(row);

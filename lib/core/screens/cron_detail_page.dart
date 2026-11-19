@@ -1,6 +1,7 @@
 // Cron detail page (spec 080, mock screen 1): ONE page scroll, inline
 // status (no boxed "SCHEDULED" pill), Run now + Pause, "What it does" as a
 // HermesTextBlock, visible notification toggles and the last runs as rows.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -407,14 +408,14 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
           HermesAction(
             key: const ValueKey('cron-detail-edit'),
             value: 'edit',
-            icon: Icons.edit_outlined,
+            icon: HIcons.edit_outlined,
             label: s.commonEdit,
           ),
         if (widget.onDelete != null)
           HermesAction(
             key: const ValueKey('cron-detail-delete'),
             value: 'delete',
-            icon: Icons.delete_outline_rounded,
+            icon: HIcons.delete_outline_rounded,
             label: s.crnDeleteTask,
             destructive: true,
           ),
@@ -495,7 +496,7 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
           ? HermesActionButton(
               key: const ValueKey('cron-detail-run'),
               primary: true,
-              icon: Icons.play_arrow_rounded,
+              icon: HIcons.play_arrow_rounded,
               label: s.crnRunNow,
               onPressed: _busy ? null : _trigger,
             )
@@ -512,7 +513,7 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
           IconButton(
             key: _moreKey,
             tooltip: s.crnMore,
-            icon: const Icon(Icons.more_vert_rounded),
+            icon: const Icon(HIcons.more_vert_rounded),
             onPressed: _more,
           ),
       ],
@@ -521,7 +522,7 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
           const SizedBox(height: HermesSpace.x3),
           HermesInlineNotice(
             key: const ValueKey('cron-detail-error'),
-            icon: Icons.error_outline_rounded,
+            icon: HIcons.error_outline_rounded,
             tone: HermesStatusTone.error,
             message: _job.lastError!,
           ),
@@ -531,7 +532,7 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
           children: [
             HermesListRow(
               key: const ValueKey('cron-detail-schedule'),
-              icon: Icons.schedule_rounded,
+              icon: HIcons.schedule_rounded,
               title: cronScheduleLabel(s, _job),
               subtitle: next == null
                   ? null
@@ -582,7 +583,7 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
           const SizedBox(height: HermesSpace.x1),
           HermesInlineNotice(
             key: const ValueKey('cron-detail-global-off'),
-            icon: Icons.notifications_off_outlined,
+            icon: HIcons.notifications_off_outlined,
             message: s.crnNotifyGlobalOff,
             actionLabel: widget.onOpenNotificationSettings == null
                 ? null

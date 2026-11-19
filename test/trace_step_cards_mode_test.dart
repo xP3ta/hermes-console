@@ -10,6 +10,7 @@ import 'package:hermes_android/core/widgets/chat/tool_steps_summary.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/message_avatar_header.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _host(Widget child) => MaterialApp(
   locale: const Locale('es'),
@@ -232,7 +233,7 @@ void main() {
     expect(
       find.descendant(
         of: _card('outcome'),
-        matching: find.byIcon(Icons.stop_circle_outlined),
+        matching: find.byIcon(HIcons.stop_circle_outlined),
       ),
       findsOneWidget,
     );
@@ -257,7 +258,7 @@ void main() {
     expect(
       find.descendant(
         of: _card('outcome'),
-        matching: find.byIcon(Icons.warning_amber_rounded),
+        matching: find.byIcon(HIcons.warning_amber_rounded),
       ),
       findsOneWidget,
     );
@@ -374,11 +375,9 @@ void main() {
           (w) =>
               w is Icon &&
               <IconData>{
-                Icons.check,
-                Icons.check_circle,
-                Icons.check_circle_outline,
-                Icons.done,
-                Icons.done_all,
+                HIcons.check,
+                HIcons.check_circle,
+                HIcons.done_rounded,
               }.contains(w.icon),
         ),
       ),

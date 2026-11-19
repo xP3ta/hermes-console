@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import '../../l10n/app_localizations.dart';
 import '../models/desktop_control_center.dart';
 import '../navigation/chat_route.dart';
 import '../design/modal.dart' show HermesAction, showHermesMenu;
+import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/desktop_control_gateway.dart';
 import '../services/new_session_factory.dart';
@@ -37,13 +39,28 @@ final class ProjectChatRequest {
   final ProjectSessionPreview? existing;
   final String? workspace;
 
-  const ProjectChatRequest.existing(ProjectSessionPreview session)
+  /// The profile owner of the surface that asked (review P2): a project
+  /// opened under profile A opens its chats under A even after the active
+  /// profile changed. Null until the screen stamps it.
+  final String? profile;
+
+  const ProjectChatRequest.existing(ProjectSessionPreview session, {this.profile})
     : existing = session,
       workspace = null;
 
-  const ProjectChatRequest.newChat(this.workspace) : existing = null;
+  const ProjectChatRequest.newChat(this.workspace, {this.profile})
+    : existing = null;
 
   bool get isNewChat => existing == null;
+
+  /// This request under [owner] unless it already names a profile.
+  ProjectChatRequest inProfile(String owner) {
+    if (profile != null) return this;
+    final session = existing;
+    return session != null
+        ? ProjectChatRequest.existing(session, profile: owner)
+        : ProjectChatRequest.newChat(workspace, profile: owner);
+  }
 }
 
 typedef ProjectChatLauncher =
@@ -98,27 +115,53 @@ class ProjectsCenterScreen extends StatefulWidget {
   State<ProjectsCenterScreen> createState() => _ProjectsCenterScreenState();
 }
 
-/// Shared write/capability state between the list and the entered project.
+/// Shared write/capability state between the list and the entered project,
+/// for ONE profile: every `projects.*` call made through it (reads of the
+/// entered project included) goes to [pinned]'s profile. A detail, a menu or
+/// a dialog keeps the context it was opened with, so a profile switch never
+/// redirects its writes to the new profile (review B2).
 class _ProjectWriteContext {
   final HermesDesktopControlGateway gateway;
   final SavedConnection connection;
+
+  /// The gateway's projects pinned to the profile this context belongs to;
+  /// null for a gateway without profile scoping (legacy fakes and servers).
+  final HermesPinnedProjects? pinned;
   bool writesUnsupported = false;
   bool gitUnsupported = false;
 
   /// Server folder picker (set by the screen); null without one.
   Future<String?> Function(BuildContext context)? pickFolder;
 
-  _ProjectWriteContext(this.gateway, this.connection);
+  /// The profile owner this context belongs to (`default` included).
+  final String profileOwner;
+
+  _ProjectWriteContext(
+    this.gateway,
+    this.connection, {
+    this.pinned,
+    this.profileOwner = 'default',
+  });
 
   HermesProjectManagementGateway? get management =>
-      gateway is HermesProjectManagementGateway
-      ? gateway as HermesProjectManagementGateway
-      : null;
+      pinned ??
+      (gateway is HermesProjectManagementGateway
+          ? gateway as HermesProjectManagementGateway
+          : null);
 
   HermesProjectCreationGateway? get creation =>
-      gateway is HermesProjectCreationGateway
-      ? gateway as HermesProjectCreationGateway
-      : null;
+      pinned ??
+      (gateway is HermesProjectCreationGateway
+          ? gateway as HermesProjectCreationGateway
+          : null);
+
+  /// `projects.tree` of this context's profile.
+  Future<ProjectTreeSnapshot> tree() =>
+      pinned?.projectTree() ?? gateway.projectTree();
+
+  /// `projects.project_sessions` of this context's profile.
+  Future<ProjectNode?> sessions(String projectId) =>
+      pinned?.projectSessions(projectId) ?? gateway.projectSessions(projectId);
 
   HermesProjectFilesGateway? get files => gateway is HermesProjectFilesGateway
       ? gateway as HermesProjectFilesGateway
@@ -208,6 +251,9 @@ void _defaultChatLauncher(
           title: existing.title,
           model: '',
           source: 'desktop',
+          profile: existing.profile.trim().isNotEmpty
+              ? existing.profile
+              : request.profile,
           messageCount: existing.messageCount,
           isActive: false,
           preview: existing.preview,
@@ -218,9 +264,11 @@ void _defaultChatLauncher(
     );
     return;
   }
-  final draft = NewSessionFactory().create(
+  final created = NewSessionFactory().create(
     title: Strings.of(context).drawerNewChat,
   );
+  final owner = request.profile;
+  final draft = owner == null ? created : created.copyWith(profile: owner);
   openChatFromHome<void>(
     context,
     builder: (_) => ChatScreen(
@@ -232,8 +280,14 @@ void _defaultChatLauncher(
   );
 }
 
-String _hiddenKey(String connectionId) =>
-    'pj1215.hiddenAutoProjects.$connectionId';
+/// Auto projects hidden on this phone, per connection AND profile (review
+/// P1): an auto project's id is its folder path, the same in every profile,
+/// so one shared list hid a folder in every profile at once. The default
+/// profile keeps the original key (what was hidden before stays hidden).
+String _hiddenKey(String connectionId, String profileOwner) =>
+    profileOwner == 'default'
+    ? 'pj1215.hiddenAutoProjects.$connectionId'
+    : 'pj1215.hiddenAutoProjects.$connectionId.profile.$profileOwner';
 
 class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
   static const int _cacheLimit = 8;
@@ -255,22 +309,59 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
   late _ProjectWriteContext _writes;
   Set<String> _hidden = {};
 
+  /// The profile whose projects this screen shows: the active one. Hermes
+  /// keeps one projects.db per profile (`projects.*` are `profile_scoped`).
+  late ActiveProfileScope _profileScope;
+
+  /// Bumped by every load; only the newest one may paint.
+  int _loadEpoch = 0;
+
+  /// Cache key: projects of one profile of one connection.
+  String get _cacheKey => '${widget.connection.id}|${_profileScope.owner}';
+
   @override
   void initState() {
     super.initState();
+    _bindProfile();
     _writes = _newWriteContext();
-    _snapshot = _memoryCache[widget.connection.id];
+    _snapshot = _memoryCache[_cacheKey];
     _hidden = _readHidden();
+    unawaited(_load());
+  }
+
+  void _bindProfile() {
+    _profileScope = ActiveProfileScope.of(
+      widget.connectionManager,
+      widget.connection.id,
+    )..addListener(_onProfileChanged);
+  }
+
+  void _onProfileChanged() {
+    if (!mounted) return;
+    // A new context for the new profile; whatever was opened under the
+    // previous one keeps its own (and writes there).
+    _writes = _newWriteContext(from: _writes);
+    setState(() {
+      // Never another profile's projects, not even while the read runs.
+      _snapshot = _memoryCache[_cacheKey];
+      _failure = null;
+      _hidden = _readHidden();
+    });
     unawaited(_load());
   }
 
   @override
   void didUpdateWidget(covariant ProjectsCenterScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.connectionManager != widget.connectionManager ||
+        oldWidget.connection.id != widget.connection.id) {
+      _profileScope.removeListener(_onProfileChanged);
+      _bindProfile();
+    }
     if (oldWidget.gateway != widget.gateway ||
         oldWidget.connection.id != widget.connection.id) {
       _writes = _newWriteContext();
-      _snapshot = _memoryCache[widget.connection.id];
+      _snapshot = _memoryCache[_cacheKey];
       _failure = null;
       _hidden = _readHidden();
       unawaited(_load());
@@ -279,15 +370,33 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
 
   @override
   void dispose() {
+    _profileScope.removeListener(_onProfileChanged);
     _search.dispose();
     final close = widget.disposeGateway;
     if (close != null) unawaited(close());
     super.dispose();
   }
 
-  _ProjectWriteContext _newWriteContext() =>
-      _ProjectWriteContext(widget.gateway, widget.connection)
-        ..pickFolder = _pickServerFolder;
+  /// Every `projects.*` call, reads and writes, goes to the active profile
+  /// (explicit, `default` included: without it the server would answer for
+  /// its launch profile). [from] carries what this connection already
+  /// proved (unsupported writes or git) over a profile switch.
+  _ProjectWriteContext _newWriteContext({_ProjectWriteContext? from}) {
+    final gateway = widget.gateway;
+    return _ProjectWriteContext(
+        gateway,
+        widget.connection,
+        pinned: gateway is HermesProjectProfileScope
+            ? (gateway as HermesProjectProfileScope).pinProjectProfile(
+                _profileScope.owner,
+              )
+            : null,
+        profileOwner: _profileScope.owner,
+      )
+      ..pickFolder = _pickServerFolder
+      ..writesUnsupported = from?.writesUnsupported ?? false
+      ..gitUnsupported = from?.gitUnsupported ?? false;
+  }
 
   /// Desktop `pickProjectFolder`: the remote picker seeded at the server's
   /// default folder (`/api/fs/default-cwd`).
@@ -409,13 +518,13 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
         HermesAction(
           key: const ValueKey('pc1215-add-create'),
           value: 'create',
-          icon: Icons.create_new_folder_outlined,
+          icon: HIcons.create_new_folder_outlined,
           label: strings.pc1215NewProject,
         ),
         HermesAction(
           key: const ValueKey('pc1215-add-open-folder'),
           value: 'open',
-          icon: Icons.folder_open_outlined,
+          icon: HIcons.folder_open_outlined,
           label: strings.pc1215OpenFolder,
         ),
       ],
@@ -444,7 +553,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
 
   Set<String> _readHidden() =>
       (widget.connectionManager.prefs.getStringList(
-                _hiddenKey(widget.connection.id),
+                _hiddenKey(widget.connection.id, _profileScope.owner),
               ) ??
               const <String>[])
           .toSet();
@@ -452,12 +561,19 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
   Future<void> _writeHidden(Set<String> hidden) async {
     setState(() => _hidden = hidden);
     await widget.connectionManager.prefs.setStringList(
-      _hiddenKey(widget.connection.id),
+      _hiddenKey(widget.connection.id, _profileScope.owner),
       hidden.toList()..sort(),
     );
   }
 
   Future<void> _load() async {
+    final epoch = ++_loadEpoch;
+    final ticket = _profileScope.capture();
+    final key = _cacheKey;
+    final writes = _writes;
+    // A read for a profile that is no longer active (or overtaken by a newer
+    // read) never paints: its rows belong to another projects.db.
+    bool current() => mounted && epoch == _loadEpoch && ticket.isCurrent;
     if (mounted) {
       setState(() {
         _loading = true;
@@ -465,19 +581,19 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
       });
     }
     try {
-      final snapshot = await widget.gateway.projectTree();
-      if (!mounted) return;
-      _memoryCache.remove(widget.connection.id);
-      _memoryCache[widget.connection.id] = snapshot;
+      final snapshot = await writes.tree();
+      if (!current()) return;
+      _memoryCache.remove(key);
+      _memoryCache[key] = snapshot;
       while (_memoryCache.length > _cacheLimit) {
         _memoryCache.remove(_memoryCache.keys.first);
       }
       setState(() => _snapshot = snapshot);
     } catch (error) {
-      if (!mounted) return;
+      if (!current()) return;
       setState(() => _failure = error);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (current()) setState(() => _loading = false);
     }
   }
 
@@ -486,6 +602,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
     // detail pane, but a chat still opens on the app navigator exactly as it
     // does on a phone.
     final host = mounted ? this.context : context;
+    request = request.inProfile(_writes.profileOwner);
     final launcher = widget.chatLauncher;
     if (launcher != null) {
       launcher(host, request);
@@ -505,15 +622,20 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
     final panes = _panes.currentState;
     final inPane = panes != null && panes.active;
     if (inPane && _paneProjectId == project.id && panes.hasDetail) return;
+    // Captured now: the route's builder runs again on every rebuild, and
+    // must not pick up the context of a profile selected later (review B2).
+    final writes = _writes;
     final route = MaterialPageRoute<void>(
       settings: RouteSettings(name: 'project-pane:${project.id}'),
       builder: (_) => _ProjectDetailScreen(
         project: project,
         connection: widget.connection,
         gateway: widget.gateway,
-        writes: _writes,
+        writes: writes,
         isActive: () => _snapshot?.activeId == project.id,
-        launch: _launch,
+        // Its chats open under the profile it was opened with (review P2).
+        launch: (context, request) =>
+            _launch(context, request.inProfile(writes.profileOwner)),
         onChanged: _load,
         onHide: (id) => _writeHidden({..._hidden, id}),
         uploadPicker: widget.projectUploadPicker,
@@ -539,13 +661,15 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
   }
 
   Future<void> _menu(ProjectNode project) async {
+    final writes = _writes;
     await _runProjectMenu(
       context,
       project: project,
       repositories: project.repositories,
-      writes: _writes,
+      writes: writes,
       isActive: _snapshot?.activeId == project.id,
-      launch: _launch,
+      launch: (context, request) =>
+          _launch(context, request.inProfile(writes.profileOwner)),
       reload: _load,
       hide: (id) => _writeHidden({..._hidden, id}),
       onRemoved: () {},
@@ -666,7 +790,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
         if (!hasRealProjects)
           ProjectEmptyState(
             stateKey: const ValueKey('pj1215-empty'),
-            icon: Icons.folder_open_rounded,
+            icon: HIcons.folder_open_rounded,
             title: strings.projectsCenterEmptyTitle,
             body: canCreate
                 ? strings.pb1215EmptyBody
@@ -675,7 +799,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
                 ? FilledButton.icon(
                     key: const ValueKey('pc1215-empty-create'),
                     onPressed: _createProject,
-                    icon: const Icon(Icons.create_new_folder_outlined),
+                    icon: const Icon(HIcons.create_new_folder_outlined),
                     label: Text(strings.pc1215NewProject),
                   )
                 : null,
@@ -710,7 +834,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
             key: const ValueKey('pj1215-help'),
             tooltip: strings.pj1215WhatIsThis,
             onPressed: _showExplainer,
-            icon: const Icon(Icons.help_outline_rounded),
+            icon: const Icon(HIcons.help_outline_rounded),
           ),
           if (canCreate)
             IconButton(
@@ -719,7 +843,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
               onPressed: _openAddMenu,
               icon: KeyedSubtree(
                 key: _addAnchor,
-                child: const Icon(Icons.add_rounded),
+                child: const Icon(HIcons.add_rounded),
               ),
             ),
         ],
@@ -737,11 +861,23 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
           onCollapsedWithDetail: _reopenPaneProjectFullScreen,
           list: SafeArea(
             child: _loading && snapshot == null
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(28),
-                      child: ConsoleLoader.large(
-                        label: strings.projectsCenterLoading,
+                // Centred; with a large text size on a short window the
+                // loading message scrolls instead of overflowing.
+                ? LayoutBuilder(
+                    builder: (context, constraints) => SingleChildScrollView(
+                      primary: false,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
+                        child: Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(28),
+                            child: ConsoleLoader.large(
+                              label: strings.projectsCenterLoading,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   )
@@ -1040,27 +1176,27 @@ class _ProjectsExplainer extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           point(
-            Icons.folder_outlined,
+            HIcons.folder_outlined,
             strings.pj1215ExplainFolderTitle,
             strings.pj1215ExplainFolderBody,
           ),
           point(
-            Icons.auto_awesome_outlined,
+            HIcons.auto_awesome_outlined,
             strings.pj1215ExplainAutoTitle,
             strings.pj1215ExplainAutoBody,
           ),
           point(
-            Icons.call_split_rounded,
+            HIcons.call_split_rounded,
             strings.pj1215ExplainWorktreeTitle,
             strings.pj1215ExplainWorktreeBody,
           ),
           point(
-            Icons.add_comment_outlined,
+            HIcons.add_comment_outlined,
             strings.pj1215ExplainNewChatTitle,
             strings.pj1215ExplainNewChatBody,
           ),
           point(
-            Icons.lock_outline_rounded,
+            HIcons.lock_outline_rounded,
             strings.pj1215ExplainSafeTitle,
             strings.pj1215ExplainSafeBody,
           ),
@@ -1220,6 +1356,13 @@ class _ProjectDetailScreen extends StatefulWidget {
 
 class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
   ProjectNode? _detail;
+
+  /// The drill-in (`projects.project_sessions`) did not return this project
+  /// although the overview counts chats in it: Hermes 0.23.1 counts every
+  /// session cwd in its discovery tier (one-shot and scheduled runs too)
+  /// but its tree never lists those sources (E7). Then the folder is not
+  /// «empty»: its chats are just not listed here.
+  bool _notInDrillIn = false;
   Object? _failure;
   bool _showFiles = false;
   String _query = '';
@@ -1255,10 +1398,12 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
 
   Future<void> _load() async {
     try {
-      final detail = await widget.gateway.projectSessions(widget.project.id);
+      // The project's own profile, even after a switch (review B2).
+      final detail = await widget.writes.sessions(widget.project.id);
       if (!mounted) return;
       setState(() {
         _failure = null;
+        _notInDrillIn = detail == null;
         _detail = detail == null
             ? widget.project
             : _project.withHydrated(detail);
@@ -1346,14 +1491,14 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
                   ? strings.pj1215NewChatNoFolder
                   : strings.pb1215NewChatTooltip,
               onPressed: () => _newChat(),
-              icon: const Icon(Icons.add_rounded),
+              icon: const Icon(HIcons.add_rounded),
             ),
           if (!project.noProject)
             IconButton(
               key: const ValueKey('pj1215-detail-menu'),
               tooltip: strings.pj1215MenuTooltip,
               onPressed: _menu,
-              icon: const Icon(Icons.more_horiz_rounded),
+              icon: const Icon(HIcons.more_horiz_rounded),
             ),
         ],
       ),
@@ -1390,6 +1535,13 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
                   loading: loading,
                   stale: _failure != null,
                   canStartChat: true,
+                  // Only an automatic folder can be counted without being
+                  // listable (the discovery tier); a saved project is
+                  // always in the drill-in, even with no chats.
+                  unlistedCount:
+                      _notInDrillIn && project.automatic && !project.noProject
+                      ? project.sessionCount
+                      : 0,
                   leading: [
                     if (files != null)
                       ProjectFolderRow(
@@ -1490,7 +1642,7 @@ class _SubfolderScreenState extends State<_SubfolderScreen> {
                 context,
                 ProjectChatRequest.newChat(folder.path.trim()),
               ),
-              icon: const Icon(Icons.add_rounded),
+              icon: const Icon(HIcons.add_rounded),
             ),
         ],
       ),
@@ -1582,7 +1734,7 @@ class _FilesCrumb extends StatelessWidget {
             child: TextButton.icon(
               key: const ValueKey('pf1215-tab-chats'),
               onPressed: onBack,
-              icon: const Icon(Icons.chevron_left_rounded, size: 20),
+              icon: const Icon(HIcons.chevron_left_rounded, size: 20),
               label: Text(
                 projectTitle,
                 maxLines: 1,
@@ -1591,7 +1743,7 @@ class _FilesCrumb extends StatelessWidget {
             ),
           ),
           Icon(
-            Icons.chevron_right_rounded,
+            HIcons.chevron_right_rounded,
             size: 18,
             color: colors.textDisabled,
           ),
@@ -1622,6 +1774,10 @@ final class _FolderBody {
   final ValueChanged<ProjectSessionPreview> onOpenChat;
   final ValueChanged<_SubfolderModel> onOpenSubfolder;
 
+  /// Chats the server counts in this folder but does not list (see
+  /// `_notInDrillIn`); 0 when every counted chat can be listed.
+  final int unlistedCount;
+
   const _FolderBody({
     required this.folder,
     required this.query,
@@ -1632,6 +1788,7 @@ final class _FolderBody {
     required this.leading,
     required this.onOpenChat,
     required this.onOpenSubfolder,
+    this.unlistedCount = 0,
   });
 
   List<Widget> children(BuildContext context) {
@@ -1707,10 +1864,17 @@ final class _FolderBody {
         ], 60),
       ] else if (searching) ...[
         if (subfolders.isEmpty) _NoResults(query: query.trim()),
-      ] else
+      ] else if (unlistedCount > 0 && subfolders.isEmpty)
+        ProjectEmptyState(
+          stateKey: const ValueKey('pb1215-unlisted-folder'),
+          icon: HIcons.history_toggle_off_outlined,
+          title: strings.pb1215UnlistedChatsTitle(unlistedCount),
+          body: strings.pb1215UnlistedChatsBody,
+        )
+      else
         ProjectEmptyState(
           stateKey: const ValueKey('pb1215-empty-folder'),
-          icon: Icons.forum_outlined,
+          icon: HIcons.forum_outlined,
           title: strings.pb1215EmptyFolderTitle,
           body: canStartChat
               ? strings.pb1215EmptyFolderBody
@@ -1733,13 +1897,13 @@ class _CenterFailure extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.cloud_off_outlined, size: 36),
+          const Icon(HIcons.cloud_off_outlined, size: 36),
           const SizedBox(height: 12),
           Text(message, textAlign: TextAlign.center),
           const SizedBox(height: 16),
           OutlinedButton.icon(
             onPressed: onRetry,
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(HIcons.refresh_rounded),
             label: Text(Strings.of(context).commonRetry),
           ),
         ],
@@ -1755,27 +1919,38 @@ class _ProjectPanePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    // Centred in the pane; with a large text size on a short window (the
+    // Fold cover in landscape) the pane scrolls instead of overflowing.
     return ColoredBox(
       color: Theme.of(context).hermes.background,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.folder_open_rounded,
-                size: 40,
-                color: colors.textSecondary,
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          // The list beside it owns the primary scroll controller.
+          primary: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      HIcons.folder_open_rounded,
+                      size: 40,
+                      color: colors.textSecondary,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      Strings.of(context).tabletPickProject,
+                      key: const ValueKey('projects-pane-placeholder'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: colors.textSecondary),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                Strings.of(context).tabletPickProject,
-                key: const ValueKey('projects-pane-placeholder'),
-                textAlign: TextAlign.center,
-                style: TextStyle(color: colors.textSecondary),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1813,7 +1988,7 @@ class _NoResults extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ProjectEmptyState(
     stateKey: const ValueKey('pb1215-no-results'),
-    icon: Icons.search_off_rounded,
+    icon: HIcons.search_off_rounded,
     title: Strings.of(context).pb1215NoResults(query),
     body: '',
   );

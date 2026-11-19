@@ -3,6 +3,7 @@
 // chat of its own. This form only checks and words the request: it reads no
 // link, downloads nothing and talks to no server. It closes with the request
 // text; the hub opens the chat.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -72,7 +73,7 @@ class _LasLearnScreenState extends State<LasLearnScreen> {
       children: [
         HermesInlineNotice(
           key: const ValueKey('las-agent-note'),
-          icon: Icons.info_outline_rounded,
+          icon: HIcons.info_outline_rounded,
           message: s.lasAgentNote,
         ),
         const SizedBox(height: HermesSpace.x4),
@@ -109,7 +110,7 @@ class _LasLearnScreenState extends State<LasLearnScreen> {
                   HermesInlineNotice(
                     key: const ValueKey('las-warn-http'),
                     tone: HermesStatusTone.warn,
-                    icon: Icons.warning_amber_rounded,
+                    icon: HIcons.warning_amber_rounded,
                     message: s.lasLinkHttp,
                   ),
                 if (links.insecure && links.unusual)
@@ -118,7 +119,7 @@ class _LasLearnScreenState extends State<LasLearnScreen> {
                   HermesInlineNotice(
                     key: const ValueKey('las-warn-odd'),
                     tone: HermesStatusTone.warn,
-                    icon: Icons.warning_amber_rounded,
+                    icon: HIcons.warning_amber_rounded,
                     message: s.lasLinkOdd,
                   ),
               ],

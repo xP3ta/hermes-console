@@ -111,6 +111,42 @@ class TuiGatewayRpcError implements Exception {
 
 const String rosterSessionNotActiveReason = 'ROSTER_SESSION_NOT_ACTIVE';
 
+/// Hermes answered a room read (`groups.list`/`groups.state`/`groups.log`),
+/// but with data Console does not accept. It concerns that answer, never
+/// the connection.
+final class GroupInvalidResponseError extends TuiGatewayRpcError {
+  const GroupInvalidResponseError(super.method, super.message);
+}
+
+/// Whether [error] of one room's read (`groups.state`/`groups.log`) belongs
+/// to that room — the room is shown as unreadable (or kept from its last
+/// good read) and the other rooms load — rather than to the connection.
+/// Shared by the Bots screen, Bot Mode and the background room watcher so
+/// they classify the same failure the same way.
+///
+/// * Data Console rejects ([FormatException], [GroupInvalidResponseError]):
+///   [HostedGroupUnreadableReason.invalidData].
+/// * The server's own coded error for this room's read (4114 not found,
+///   5113/5115 …; upstream `_room_method` maps any room exception to one):
+///   [HostedGroupUnreadableReason.serverError].
+/// * Anything else — timeout, lost socket, stale generation, `-32601`, an
+///   error of another method (`gateway.connect`, `groups.capabilities`) —
+///   is the connection's: null.
+HostedGroupUnreadableReason? roomLocalReadFailure(Object error) {
+  if (error is FormatException || error is GroupInvalidResponseError) {
+    return HostedGroupUnreadableReason.invalidData;
+  }
+  if (error is TuiGatewayRpcError &&
+      error.failureKind == null &&
+      error.code != null &&
+      error.code != -32601 &&
+      (error.method == GroupMethod.state.wire ||
+          error.method == GroupMethod.log.wire)) {
+    return HostedGroupUnreadableReason.serverError;
+  }
+  return null;
+}
+
 /// Non-sensitive local failure metadata for policies that must not inspect copy.
 enum TuiGatewayRpcFailureKind { timeout, connectionLost }
 
@@ -1658,6 +1694,7 @@ class TuiGatewayClient
         HermesDesktopTurnSideGateway,
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
+        HermesProjectProfileScope,
         HermesPullRequestGateway,
         HermesGitReviewGateway,
         HermesGitHubGateway,
@@ -1725,7 +1762,12 @@ class TuiGatewayClient
   final WebSocketChannel Function(Uri uri, Map<String, dynamic> headers)?
   _channelFactory;
   final DesktopGatewayCapabilityCache _capabilityCache;
-  final GroupsCapabilityCache _groupsCapabilityCache = GroupsCapabilityCache();
+  /// A server without `groups.*` answers `groups.capabilities` with
+  /// «method not found»: that is passed on (the caller reads it as
+  /// unsupported), never taken for missing evidence.
+  final GroupsCapabilityCache _groupsCapabilityCache = GroupsCapabilityCache(
+    unsupported: (error) => error is TuiGatewayRpcError && error.code == -32601,
+  );
   final Duration _heartbeatInterval;
   final Duration _heartbeatDeadline;
   final Duration _fanoutInactivityDeadline;
@@ -1790,7 +1832,6 @@ class TuiGatewayClient
   final Map<String, _WatchdogRuntime> _watchdogs = <String, _WatchdogRuntime>{};
   // N10h-2: runtimes whose end of turn was withheld while quarantined.
   final Set<String> _withheldTurnEnds = <String>{};
-  bool _fanoutWatchdogInFlight = false;
   Future<void>? _connecting;
 
   /// Several chats ride this socket (Desktop's single `JsonRpcGatewayClient`
@@ -3221,7 +3262,10 @@ class TuiGatewayClient
             // N10h-1, Desktop parity (json-rpc-gateway.ts fetchReplay /
             // flushReplayHold): a contiguous, same-epoch, non-truncated batch
             // is projected with the held live frames and the stream goes on.
-            // Truncated, other epoch or a gap keep the quarantine + REST.
+            // A truncated window of the same epoch paints nothing and only the
+            // held frames newer than the server head go on (ReplayCoordinator.
+            // validateReplay; json-rpc-gateway.ts:620-631, 709-719). Another
+            // epoch or a gap keep the quarantine + REST.
             if (decision is ReplayBatchCommit &&
                 !_replayCoordinator.isQuarantined(entry.key)) {
               for (final replayed in [...decision.replay, ...decision.held]) {
@@ -3479,7 +3523,13 @@ class TuiGatewayClient
         }),
       );
       _heartbeatAwaitingReply = true;
-      await _probeSilentFanout(generation, channel, now);
+      // Desktop parity: the heartbeat only pings; any inbound frame is
+      // liveness (apps/shared/src/json-rpc-channel.ts:170-177,
+      // json-rpc-gateway.ts:204-207). A silent live turn on a healthy socket
+      // is asked of Hermes through `session.active_list` after
+      // LIVE_TURN_EVENT_SILENCE_MS (apps/desktop/src/store/session-states.ts
+      // :347-566, ActiveChat._armSilentTurnProbe), not by a per-runtime
+      // `session.events.since` probe that quarantines the runtime.
     } catch (error, stackTrace) {
       _handleSocketError(generation, channel, error, stackTrace);
     }
@@ -3619,153 +3669,6 @@ class TuiGatewayClient
     await _heartbeatTick(_socketGeneration, channel);
   }
 
-  Future<void> _probeSilentFanout(
-    int generation,
-    WebSocketChannel channel,
-    DateTime now,
-  ) async {
-    final epoch = _replayEpoch;
-    if (_fanoutWatchdogInFlight ||
-        epoch == null ||
-        !_connectionReplayCapable ||
-        generation != _socketGeneration ||
-        !identical(_channel, channel) ||
-        !_connected) {
-      return;
-    }
-    final due = <MapEntry<String, _WatchdogRuntime>>[
-      for (final entry in _watchdogs.entries)
-        if (entry.value.busy &&
-            (entry.value.lastActivityAt == null ||
-                now.difference(entry.value.lastActivityAt!) >=
-                    _fanoutInactivityDeadline))
-          entry,
-    ];
-    if (due.isEmpty) return;
-    _fanoutWatchdogInFlight = true;
-    try {
-      for (final entry in due) {
-        if (generation != _socketGeneration ||
-            !identical(_channel, channel) ||
-            _replayEpoch != epoch ||
-            !_connected) {
-          return;
-        }
-        await _probeSilentRuntime(
-          generation,
-          channel,
-          epoch,
-          entry.key,
-          entry.value,
-          now,
-        );
-      }
-    } finally {
-      _fanoutWatchdogInFlight = false;
-    }
-  }
-
-  Future<void> _probeSilentRuntime(
-    int generation,
-    WebSocketChannel channel,
-    String epoch,
-    String runtime,
-    _WatchdogRuntime watched,
-    DateTime now,
-  ) async {
-    if (!identical(_watchdogs[runtime], watched) || !watched.busy) return;
-    // N10h-2: a quarantined runtime has no watermark, so `since(0)` always
-    // looks like a gap and looped /messages for the whole live turn. Until a
-    // withheld turn end arrives, the roster decides (no /messages reads).
-    if (_replayCoordinator.isQuarantined(runtime) &&
-        !_withheldTurnEnds.contains(runtime)) {
-      return _probeQuarantinedRoster(generation, channel, runtime, watched);
-    }
-    final registration = watched.revision;
-    final lastSeen = _replayCoordinator.watermarks[runtime] ?? 0;
-    // A completed no-gap probe also bounds traffic to one request per busy
-    // inactivity window. Heartbeat responses deliberately do not update this
-    // runtime-specific clock: a fanout-detached peer still answers ping.
-    watched.lastActivityAt = now;
-    try {
-      final result = await _requestConnected(
-        'session.events.since',
-        <String, dynamic>{'session_id': runtime, 'last_seen': lastSeen},
-        timeout: const Duration(seconds: 10),
-      );
-      if (generation != _socketGeneration ||
-          !identical(_channel, channel) ||
-          _replayEpoch != epoch ||
-          !identical(_watchdogs[runtime], watched) ||
-          !watched.busy ||
-          watched.revision != registration ||
-          !_connected) {
-        return;
-      }
-      final current = _replayCoordinator.watermarks[runtime];
-      if (current != null && current != lastSeen) return;
-      final decision = ReplayBatchProof.validate(
-        runtime: runtime,
-        epoch: epoch,
-        lastSeen: lastSeen,
-        result: result,
-        held: const <SessionGatewayEvent>[],
-      );
-      final gapRemains =
-          decision is ReplayBatchCommit && decision.newWatermark > lastSeen;
-      if (decision is ReplayBatchCommit && !gapRemains) return;
-
-      // Replay can identify a silent gap, but current upstream cannot prove a
-      // full snapshot-to-tail cut. Quarantine before notifying ActiveChat so it
-      // rehydrates authoritative REST/roster state instead of publishing the
-      // replay payload directly.
-      _requestRuntimeRehydration(runtime);
-    } catch (_) {
-      // A failed diagnostic read is not itself proof that the healthy socket or
-      // fanout lease is lost. Retry only after another bounded idle window.
-    }
-  }
-
-  /// N10h-2: a quarantined turn whose end frame never arrives. Hermes lists
-  /// every live session (methods_session.py:1143-1153) and calls it `idle`
-  /// once `running` is false (server.py:3041-3048): an idle or gone row means
-  /// the turn is over, so rehydrate once. A busy row does nothing; roster reads
-  /// back off 2x per answer (cap 120 s, as in `rearmRuntimeWatchdog`).
-  Future<void> _probeQuarantinedRoster(
-    int generation,
-    WebSocketChannel channel,
-    String runtime,
-    _WatchdogRuntime watched,
-  ) async {
-    final epoch = _replayEpoch;
-    final registration = watched.revision;
-    final window = _fanoutInactivityDeadline * (1 << ++watched.rosterReads);
-    final capped = window > _rosterCap ? _rosterCap : window;
-    watched.lastActivityAt = _now().add(capped - _fanoutInactivityDeadline);
-    try {
-      final roster = await listActiveSessions();
-      if (generation != _socketGeneration ||
-          !identical(_channel, channel) ||
-          _replayEpoch != epoch ||
-          !identical(_watchdogs[runtime], watched) ||
-          !watched.busy ||
-          watched.revision != registration ||
-          !_connected ||
-          !_replayCoordinator.isQuarantined(runtime)) {
-        return;
-      }
-      final row = roster.sessions
-          .where((s) => s.runtimeSessionId == runtime)
-          .firstOrNull;
-      if (row == null ? roster.hasMalformedRows : row.status != 'idle') return;
-      _requestRuntimeRehydration(runtime, meterReason: 'roster_idle');
-    } catch (_) {
-      // A failed roster read proves nothing; retry after the next window.
-    }
-  }
-
-  static const Duration _rosterCap = Duration(seconds: 120);
-
   /// Quarantines [runtime] and asks its owner chat to rehydrate from
   /// authoritative REST/roster state. Retiring the watchdog bounds it to one
   /// request per bind: the next resume/activate arms the runtime again.
@@ -3826,13 +3729,6 @@ class TuiGatewayClient
       _meterSocketKey,
       _meterQuarantined.length,
     );
-  }
-
-  @visibleForTesting
-  Future<void> debugProbeSilentFanout() async {
-    final channel = _channel;
-    if (channel == null) return;
-    await _probeSilentFanout(_socketGeneration, channel, _now());
   }
 
   /// Runtime the watchdog follows next. A single-chat socket follows one
@@ -4891,6 +4787,16 @@ class TuiGatewayClient
     }
   }
 
+  /// Dispatch marker of `prompt.submit` per target session: how many were
+  /// written to the socket. The official mobile app sets the same kind of
+  /// marker right before the RPC (ds6.java:4819-4822 `qi2Var.k()`), and its
+  /// queue reads it to tell a failure before dispatch from a lost reply
+  /// (i30.java:1334-1347, zh2.java:140-145).
+  final Map<String, int> _promptSubmitsWritten = <String, int>{};
+
+  int promptSubmitsWrittenFor(String runtimeSessionId) =>
+      _promptSubmitsWritten[runtimeSessionId] ?? 0;
+
   Future<Map<String, dynamic>> _requestConnected(
     String method,
     Map<String, dynamic> params, {
@@ -4940,6 +4846,13 @@ class TuiGatewayClient
           'params': params,
         }),
       );
+      if (method == 'prompt.submit') {
+        final target = params['session_id'];
+        if (target is String) {
+          _promptSubmitsWritten[target] =
+              (_promptSubmitsWritten[target] ?? 0) + 1;
+        }
+      }
     } catch (error, stackTrace) {
       final pending = _pending.remove(id);
       pending?.timer.cancel();
@@ -5105,8 +5018,13 @@ class TuiGatewayClient
   Future<({GroupsCapabilities capabilities, _GroupSocketLease lease})>
   _requireGroupMethod(GroupMethod method, {int? generation}) async {
     final capabilities = await groupCapabilities();
-    if ((generation != null && capabilities.generation != generation) ||
-        !capabilities.supports(method)) {
+    // The caller's capability evidence belongs to a socket that is gone (a
+    // reconnect in between): that is a lost connection to retry, never
+    // proof that the server lacks the method.
+    if (generation != null && capabilities.generation != generation) {
+      throw _groupConnectionLost(method.wire);
+    }
+    if (!capabilities.supports(method)) {
       throw TuiGatewayRpcError(
         method.wire,
         'Group operation is unavailable',
@@ -5178,7 +5096,31 @@ class TuiGatewayClient
     return result;
   }
 
+  /// Every listed room, all-or-nothing: one row Console cannot read fails
+  /// the whole list (Bot Mode and the room watcher keep this contract).
   Future<List<HostedGroupRoom>> listGroups({
+    int limit = 500,
+    int offset = 0,
+    int? generation,
+  }) async {
+    final listing = await listGroupsDetailed(
+      limit: limit,
+      offset: offset,
+      generation: generation,
+    );
+    if (listing.unreadable.isNotEmpty) {
+      throw const GroupInvalidResponseError(
+        'groups.list',
+        'Hermes returned an invalid room list',
+      );
+    }
+    return listing.rooms;
+  }
+
+  /// Every listed room, with the rows Console could not read kept apart
+  /// ([HostedGroupListing.unreadable]) instead of failing the list. The
+  /// envelope, pagination and duplicate checks stay strict.
+  Future<HostedGroupListing> listGroupsDetailed({
     int limit = 500,
     int offset = 0,
     int? generation,
@@ -5191,6 +5133,7 @@ class TuiGatewayClient
       throw const FormatException('invalid group list window');
     }
     final rooms = <HostedGroupRoom>[];
+    final unreadable = <HostedGroupUnreadableRoom>[];
     final roomIds = <String>{};
     var nextOffset = offset;
     try {
@@ -5208,17 +5151,29 @@ class TuiGatewayClient
           }
           rooms.add(room);
         }
+        for (final room in page.unreadable) {
+          final id = room.roomId;
+          if (id != null && !roomIds.add(id)) {
+            throw const FormatException('duplicate room across list pages');
+          }
+          unreadable.add(room);
+        }
         final officialNext = page.nextOffset;
-        if (officialNext == null) return List.unmodifiable(rooms);
+        if (officialNext == null) {
+          return HostedGroupListing(
+            rooms: List.unmodifiable(rooms),
+            unreadable: List.unmodifiable(unreadable),
+          );
+        }
         if (officialNext <= requestedOffset ||
-            officialNext != requestedOffset + page.rooms.length) {
+            officialNext != requestedOffset + page.rowCount) {
           throw const FormatException('invalid room list continuation');
         }
         nextOffset = officialNext;
       }
       throw const FormatException('room list pagination limit exceeded');
     } on FormatException {
-      throw const TuiGatewayRpcError(
+      throw const GroupInvalidResponseError(
         'groups.list',
         'Hermes returned an invalid room list',
       );
@@ -5291,7 +5246,7 @@ class TuiGatewayClient
       }
       return state;
     } on FormatException {
-      throw const TuiGatewayRpcError(
+      throw const GroupInvalidResponseError(
         'groups.state',
         'Hermes returned invalid room state',
       );
@@ -5367,7 +5322,7 @@ class TuiGatewayClient
         sinceSeq: sinceSeq,
       );
     } on FormatException {
-      throw const TuiGatewayRpcError(
+      throw const GroupInvalidResponseError(
         'groups.log',
         'Hermes returned an invalid room log',
       );
@@ -6141,6 +6096,12 @@ class TuiGatewayClient
     Map<String, dynamic> patch, {
     Set<String> remove = const {},
   }) => _botProfiles.patchBotMetadata(profile, patch, remove: remove);
+
+  /// See [BotProfileClient.setConsoleCharacter].
+  Future<void> setConsoleCharacter(
+    String profile,
+    Map<String, dynamic>? character,
+  ) => _botProfiles.setConsoleCharacter(profile, character);
 
   @override
   Future<Map<String, dynamic>> describeBotProfile(String profile) =>
@@ -8687,10 +8648,34 @@ class TuiGatewayClient
   }
 
   @override
-  Future<ProjectTreeSnapshot> projectTree() async {
-    final result = await _controlRequest('projects.tree', const {
-      'preview_limit': 3,
-    }, capability: DesktopGatewayCapability.projectsCenter);
+  HermesPinnedProjects pinProjectProfile(String profile) =>
+      _PinnedProjects(this, _validatedControlValue(profile.trim(), maxLength: 128));
+
+  /// [params] for a `projects.*` call, scoped to [profile], or else to the
+  /// profile of the [pinProjectProfile] view the call runs under (a value of
+  /// that call's own zone: it follows the call across awaits and is never
+  /// state of this shared client). Without either the server answers for
+  /// its launch profile, as before.
+  Map<String, dynamic> _projectParams(
+    Map<String, dynamic> params, {
+    String? profile,
+  }) {
+    final explicit = profile?.trim() ?? '';
+    final owner = explicit.isNotEmpty
+        ? _validatedControlValue(explicit, maxLength: 128)
+        : Zone.current[_pinnedProjectProfileKey] as String?;
+    return {...params, 'profile': ?owner};
+  }
+
+  /// `projects.tree`. [profile] overrides the pinned profile for one read
+  /// (a session's own profile when moving it to a project).
+  @override
+  Future<ProjectTreeSnapshot> projectTree({String? profile}) async {
+    final result = await _controlRequest(
+      'projects.tree',
+      _projectParams(const {'preview_limit': 3}, profile: profile),
+      capability: DesktopGatewayCapability.projectsCenter,
+    );
     try {
       if (result['projects'] is! List) {
         return _invalidControlResponse(DesktopGatewayCapability.projectsCenter);
@@ -8703,9 +8688,13 @@ class TuiGatewayClient
 
   @override
   Future<ProjectNode?> projectSessions(String projectId) async {
-    final result = await _controlRequest('projects.project_sessions', {
-      'project_id': _validatedControlValue(projectId, maxLength: 2048),
-    }, capability: DesktopGatewayCapability.projectsCenter);
+    final result = await _controlRequest(
+      'projects.project_sessions',
+      _projectParams({
+        'project_id': _validatedControlValue(projectId, maxLength: 2048),
+      }),
+      capability: DesktopGatewayCapability.projectsCenter,
+    );
     final rawProject = result['project'];
     if (rawProject == null) return null;
     if (rawProject is! Map) {
@@ -8774,14 +8763,18 @@ class TuiGatewayClient
     String? icon,
   }) async {
     _requireWritableControlConnection();
-    final result = await _controlRequest('projects.update', {
-      'id': _savedProjectId(id),
-      if (name != null) 'name': _projectName(name),
-      if (color != null)
-        'color': _projectAppearanceValue(color, _projectColorPattern),
-      if (icon != null)
-        'icon': _projectAppearanceValue(icon, _projectIconPattern),
-    }, capability: DesktopGatewayCapability.projectManagement);
+    final result = await _controlRequest(
+      'projects.update',
+      _projectParams({
+        'id': _savedProjectId(id),
+        if (name != null) 'name': _projectName(name),
+        if (color != null)
+          'color': _projectAppearanceValue(color, _projectColorPattern),
+        if (icon != null)
+          'icon': _projectAppearanceValue(icon, _projectIconPattern),
+      }),
+      capability: DesktopGatewayCapability.projectManagement,
+    );
     if (result['project'] is! Map) {
       _invalidControlResponse(DesktopGatewayCapability.projectManagement);
     }
@@ -8802,14 +8795,18 @@ class TuiGatewayClient
     final safeIcon = icon == null
         ? ''
         : _projectAppearanceValue(icon, _projectIconPattern);
-    final result = await _controlRequest('projects.create', {
-      'name': _projectName(name),
-      'folders': [path],
-      'primary_path': path,
-      if (safeColor.isNotEmpty) 'color': safeColor,
-      if (safeIcon.isNotEmpty) 'icon': safeIcon,
-      'use': false,
-    }, capability: DesktopGatewayCapability.projectManagement);
+    final result = await _controlRequest(
+      'projects.create',
+      _projectParams({
+        'name': _projectName(name),
+        'folders': [path],
+        'primary_path': path,
+        if (safeColor.isNotEmpty) 'color': safeColor,
+        if (safeIcon.isNotEmpty) 'icon': safeIcon,
+        'use': false,
+      }),
+      capability: DesktopGatewayCapability.projectManagement,
+    );
     if (result['project'] is! Map) {
       _invalidControlResponse(DesktopGatewayCapability.projectManagement);
     }
@@ -8818,9 +8815,11 @@ class TuiGatewayClient
   @override
   Future<void> deleteProject(String id) async {
     _requireWritableControlConnection();
-    final result = await _controlRequest('projects.delete', {
-      'id': _savedProjectId(id),
-    }, capability: DesktopGatewayCapability.projectManagement);
+    final result = await _controlRequest(
+      'projects.delete',
+      _projectParams({'id': _savedProjectId(id)}),
+      capability: DesktopGatewayCapability.projectManagement,
+    );
     if (result['projects'] is! List) {
       _invalidControlResponse(DesktopGatewayCapability.projectManagement);
     }
@@ -8829,9 +8828,11 @@ class TuiGatewayClient
   @override
   Future<void> setActiveProject(String id) async {
     _requireWritableControlConnection();
-    await _controlRequest('projects.set_active', {
-      'id': _savedProjectId(id),
-    }, capability: DesktopGatewayCapability.projectManagement);
+    await _controlRequest(
+      'projects.set_active',
+      _projectParams({'id': _savedProjectId(id)}),
+      capability: DesktopGatewayCapability.projectManagement,
+    );
   }
 
   // ── Project creation (Desktop project dialog / "Open folder…") ─────────
@@ -8857,12 +8858,16 @@ class TuiGatewayClient
     final primary = primaryPath == null
         ? null
         : _validatedProjectFolder(primaryPath);
-    final result = await _controlRequest('projects.create', {
-      'name': _projectName(name),
-      'folders': paths,
-      'primary_path': ?primary,
-      'use': use,
-    }, capability: DesktopGatewayCapability.projectManagement);
+    final result = await _controlRequest(
+      'projects.create',
+      _projectParams({
+        'name': _projectName(name),
+        'folders': paths,
+        'primary_path': ?primary,
+        'use': use,
+      }),
+      capability: DesktopGatewayCapability.projectManagement,
+    );
     final project = result['project'];
     if (project is! Map || project['id'] is! String) {
       _invalidControlResponse(DesktopGatewayCapability.projectManagement);
@@ -8895,11 +8900,15 @@ class TuiGatewayClient
   @override
   Future<void> addProjectFolder(String id, String path) async {
     _requireWritableControlConnection();
-    final result = await _controlRequest('projects.add_folder', {
-      'id': _savedProjectId(id),
-      'path': _validatedProjectFolder(path),
-      'is_primary': false,
-    }, capability: DesktopGatewayCapability.projectManagement);
+    final result = await _controlRequest(
+      'projects.add_folder',
+      _projectParams({
+        'id': _savedProjectId(id),
+        'path': _validatedProjectFolder(path),
+        'is_primary': false,
+      }),
+      capability: DesktopGatewayCapability.projectManagement,
+    );
     if (result['project'] is! Map) {
       _invalidControlResponse(DesktopGatewayCapability.projectManagement);
     }
@@ -8925,7 +8934,10 @@ class TuiGatewayClient
     try {
       // The scan rewrites host state, so a read-only connection skips it.
       _requireWritableControlConnection();
-      await _controlRequest('projects.discover_repos', {'scan': true});
+      await _controlRequest(
+        'projects.discover_repos',
+        _projectParams({'scan': true}),
+      );
     } catch (_) {
       // Best effort, like Desktop: the last known tree stays on screen.
     }
@@ -11225,4 +11237,107 @@ class _PendingRpc {
     this.timer, {
     this.redactRemoteError = false,
   });
+}
+
+/// Zone key of the profile a [_PinnedProjects] call runs under.
+final Object _pinnedProjectProfileKey = Object();
+
+/// [TuiGatewayClient]'s projects pinned to [profile]: each call runs in a
+/// zone carrying the profile, so its `projects.*` request (built after any
+/// await of the call) is sent with it.
+final class _PinnedProjects implements HermesPinnedProjects {
+  _PinnedProjects(this._client, this.profile);
+
+  final TuiGatewayClient _client;
+  @override
+  final String profile;
+
+  Future<T> _as<T>(Future<T> Function() call) =>
+      runZoned(call, zoneValues: {_pinnedProjectProfileKey: profile});
+
+  @override
+  Future<ProjectTreeSnapshot> projectTree() => _as(_client.projectTree);
+  @override
+  Future<ProjectNode?> projectSessions(String projectId) =>
+      _as(() => _client.projectSessions(projectId));
+
+  @override
+  bool get projectWritesAllowed => _client.projectWritesAllowed;
+  @override
+  bool get projectCreationKnownUnsupported =>
+      _client.projectCreationKnownUnsupported;
+
+  @override
+  Future<void> updateProject(
+    String id, {
+    String? name,
+    String? color,
+    String? icon,
+  }) => _as(
+    () => _client.updateProject(id, name: name, color: color, icon: icon),
+  );
+  @override
+  Future<void> createProject({
+    required String name,
+    required String primaryPath,
+    String? color,
+    String? icon,
+  }) => _as(
+    () => _client.createProject(
+      name: name,
+      primaryPath: primaryPath,
+      color: color,
+      icon: icon,
+    ),
+  );
+  @override
+  Future<void> deleteProject(String id) =>
+      _as(() => _client.deleteProject(id));
+  @override
+  Future<void> setActiveProject(String id) =>
+      _as(() => _client.setActiveProject(id));
+  @override
+  Future<ProjectCreated> createProjectFromFolders({
+    required String name,
+    required List<String> folders,
+    String? primaryPath,
+    bool use = true,
+  }) => _as(
+    () => _client.createProjectFromFolders(
+      name: name,
+      folders: folders,
+      primaryPath: primaryPath,
+      use: use,
+    ),
+  );
+  @override
+  Future<void> addProjectFolder(String id, String path) =>
+      _as(() => _client.addProjectFolder(id, path));
+  @override
+  Future<void> scanProjectRepos() => _as(_client.scanProjectRepos);
+
+  // Not `projects.*` (Dashboard routes, not profile scoped): as is.
+  @override
+  Future<String?> projectDefaultFolder() => _client.projectDefaultFolder();
+  @override
+  Future<List<ProjectGitBaseBranch>> listBaseBranches(String repoPath) =>
+      _client.listBaseBranches(repoPath);
+  @override
+  Future<List<ProjectGitBranch>> listBranches(String repoPath) =>
+      _client.listBranches(repoPath);
+  @override
+  Future<ProjectWorktreeResult> addWorktree(
+    String repoPath, {
+    String? branch,
+    String? base,
+    String? existingBranch,
+  }) => _client.addWorktree(
+    repoPath,
+    branch: branch,
+    base: base,
+    existingBranch: existingBranch,
+  );
+  @override
+  Future<void> switchBranch(String repoPath, String branch) =>
+      _client.switchBranch(repoPath, branch);
 }

@@ -9,6 +9,7 @@ import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import '../support/inter_font.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Owner QA (room composer with an attached image): the staged image sat
 /// in a card above the text, the text looked indented and the bubble was
@@ -121,7 +122,7 @@ Rect _closeVisual(WidgetTester tester, String id) => tester.getRect(
       .ancestor(
         of: find.descendant(
           of: find.byKey(ValueKey('attachment-card-$id')),
-          matching: find.byIcon(Icons.close),
+          matching: find.byIcon(HIcons.close),
         ),
         matching: find.byType(Container),
       )
@@ -149,7 +150,7 @@ void main() {
             .getRect(
               find.descendant(
                 of: find.byKey(const ValueKey('composer-add')),
-                matching: find.byIcon(Icons.add_rounded),
+                matching: find.byIcon(HIcons.add_rounded),
               ),
             )
             .left
@@ -218,8 +219,8 @@ void main() {
     }
     // Files and videos show an icon and a short name inside the tile.
     for (final (id, icon) in [
-      ('pdf', Icons.description_outlined),
-      ('vid', Icons.movie_outlined),
+      ('pdf', HIcons.description_outlined),
+      ('vid', HIcons.movie_outlined),
     ]) {
       final tile = find.byKey(ValueKey('attachment-card-$id'));
       expect(
@@ -270,7 +271,7 @@ void main() {
         .ancestor(
           of: find.descendant(
             of: find.byKey(const ValueKey('attachment-card-pdf')),
-            matching: find.byIcon(Icons.close),
+            matching: find.byIcon(HIcons.close),
           ),
           matching: find.byType(GestureDetector),
         )

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -851,7 +852,7 @@ class _GestureDockState extends State<GestureDock>
                     ],
                   ),
                   child: Icon(
-                    Icons.keyboard_arrow_up_rounded,
+                    HIcons.keyboard_arrow_up_rounded,
                     size: 24,
                     color: colors.accentText,
                   ),
@@ -872,27 +873,27 @@ IconData gestureDockTabIcon(
   GestureDockTab tab, {
   bool selected = false,
 }) => switch (tab) {
-  GestureDockTab.home => selected ? Icons.home_rounded : Icons.home_outlined,
-  GestureDockTab.create => Icons.add_rounded,
+  GestureDockTab.home => selected ? HIcons.home_rounded : HIcons.home_outlined,
+  GestureDockTab.create => HIcons.add_rounded,
   GestureDockTab.projects =>
-    selected ? Icons.folder_rounded : Icons.folder_outlined,
+    selected ? HIcons.folder_rounded : HIcons.folder_outlined,
   GestureDockTab.settings =>
-    selected ? Icons.settings_rounded : Icons.settings_outlined,
+    selected ? HIcons.settings_rounded : HIcons.settings_outlined,
   GestureDockTab.bots =>
-    selected ? Icons.smart_toy_rounded : Icons.smart_toy_outlined,
+    selected ? HIcons.smart_toy_rounded : HIcons.smart_toy_outlined,
   // The conversation list. Its stored name is still `search`.
   GestureDockTab.search =>
-    selected ? Icons.chat_bubble_rounded : Icons.chat_bubble_outline_rounded,
+    selected ? HIcons.chat_bubble_rounded : HIcons.chat_bubble_outline_rounded,
   GestureDockTab.cron =>
-    selected ? Icons.watch_later_rounded : Icons.schedule_outlined,
+    selected ? HIcons.watch_later_rounded : HIcons.schedule_outlined,
   // The board's own icon in the drawer, which has both forms.
   GestureDockTab.tasks =>
-    selected ? Icons.view_kanban_rounded : Icons.view_kanban_outlined,
+    selected ? HIcons.view_kanban_rounded : HIcons.view_kanban_outlined,
   // Agents (the terminal's agent mode): a robot at a prompt, not the bot
   // face of Bots.
   GestureDockTab.agents =>
-    selected ? Icons.terminal_rounded : Icons.terminal_outlined,
-  GestureDockTab.activity => Icons.bolt_outlined,
+    selected ? HIcons.terminal_rounded : HIcons.terminal_outlined,
+  GestureDockTab.activity => HIcons.bolt_outlined,
 };
 
 String gestureDockTabLabel(Strings strings, GestureDockTab tab) =>

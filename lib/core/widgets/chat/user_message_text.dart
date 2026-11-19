@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
@@ -125,9 +126,9 @@ class ReferenceChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final icon = switch (kind) {
-      ComposerReferenceKind.url => Icons.link_rounded,
-      ComposerReferenceKind.folder => Icons.folder_outlined,
-      ComposerReferenceKind.file => Icons.description_outlined,
+      ComposerReferenceKind.url => HIcons.link_rounded,
+      ComposerReferenceKind.folder => HIcons.folder_outlined,
+      ComposerReferenceKind.file => HIcons.description_outlined,
     };
     final fontSize = (textStyle?.fontSize ?? 14) * 0.92;
     final body = Container(

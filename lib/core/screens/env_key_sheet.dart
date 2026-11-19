@@ -23,6 +23,7 @@
 //  * the text lives only in the controller. It is handed to [onSave] once,
 //    and the controller is emptied and disposed when the sheet leaves;
 //  * no message, log or semantics label ever carries it.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -479,7 +480,7 @@ class _EnvKeyValueSheetState extends State<EnvKeyValueSheet>
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.visibility_off_outlined, size: 16, color: colors.error),
+            Icon(HIcons.visibility_off_outlined, size: 16, color: colors.error),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -546,13 +547,13 @@ class _EnvKeyValueSheetState extends State<EnvKeyValueSheet>
                     HermesGlassActionButton(
                       key: const ValueKey('env-reveal-copy'),
                       label: s.commonCopy,
-                      icon: Icons.copy_rounded,
+                      icon: HIcons.copy_rounded,
                       onPressed: _copyShown,
                     ),
                     HermesGlassActionButton(
                       key: const ValueKey('env-reveal-hide'),
                       label: s.krhRevealHide,
-                      icon: Icons.visibility_off_outlined,
+                      icon: HIcons.visibility_off_outlined,
                       onPressed: () => setState(_dropValue),
                     ),
                   ],
@@ -574,7 +575,7 @@ class _EnvKeyValueSheetState extends State<EnvKeyValueSheet>
               child: HermesGlassActionButton(
                 key: const ValueKey('env-reveal'),
                 label: _fetching ? s.krhRevealLoading : s.krhRevealAction,
-                icon: Icons.visibility_outlined,
+                icon: HIcons.visibility_outlined,
                 onPressed: _busy || _fetching ? null : _startReveal,
               ),
             ),
@@ -663,7 +664,7 @@ class _EnvKeyValueSheetState extends State<EnvKeyValueSheet>
           if (widget.writesBlocked)
             HermesInlineNotice(
               message: s.kluCleartextBlocked,
-              icon: Icons.lock_outline_rounded,
+              icon: HIcons.lock_outline_rounded,
               tone: HermesStatusTone.error,
             ),
           if (entry != null && entry.isSet) _revealSection(s, colors),
@@ -728,8 +729,8 @@ class _EnvKeyValueSheetState extends State<EnvKeyValueSheet>
                   onPressed: _busy ? null : _toggleReveal,
                   icon: Icon(
                     _reveal
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
+                        ? HIcons.visibility_off_outlined
+                        : HIcons.visibility_outlined,
                     size: 20,
                     color: colors.textSecondary,
                   ),
@@ -753,7 +754,7 @@ class _EnvKeyValueSheetState extends State<EnvKeyValueSheet>
             key: const ValueKey('env-save'),
             primary: true,
             label: s.kluSaveKey,
-            icon: Icons.check_circle_outline_rounded,
+            icon: HIcons.check_circle_outline_rounded,
             onPressed: _busy || widget.writesBlocked ? null : _save,
           ),
           if (entry != null && entry.isSet) ...[
@@ -762,7 +763,7 @@ class _EnvKeyValueSheetState extends State<EnvKeyValueSheet>
               child: HermesGlassActionButton(
                 key: const ValueKey('env-delete'),
                 label: s.kluDeleteKey,
-                icon: Icons.delete_outline_rounded,
+                icon: HIcons.delete_outline_rounded,
                 destructive: true,
                 onPressed: _busy || widget.writesBlocked ? null : _delete,
               ),

@@ -8,6 +8,7 @@ import 'package:hermes_android/core/services/bot_profile_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _description = 'Hermes: orquestador';
 
@@ -116,7 +117,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.descendant(of: row, matching: find.byIcon(Icons.extension_outlined)),
+      find.descendant(of: row, matching: find.byIcon(HIcons.extension_outlined)),
       findsOneWidget,
     );
   });

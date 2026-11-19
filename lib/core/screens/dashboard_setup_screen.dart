@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -504,7 +505,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
         key: const ValueKey('onb2-password-reveal'),
         tooltip: _reveal ? s.onb2HidePassword : s.onb2ShowPassword,
         icon: Icon(
-          _reveal ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+          _reveal ? HIcons.visibility_off_rounded : HIcons.visibility_rounded,
         ),
         onPressed: () => setState(() => _reveal = !_reveal),
       ),
@@ -655,7 +656,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen>
                     ),
                   ),
                 ),
-                icon: const Icon(Icons.terminal_rounded, size: 18),
+                icon: const Icon(HIcons.terminal_rounded, size: 18),
                 label: Text(s.homeOfflineDashboardSetup),
               ),
             if (_requiresConsent && _authRequired != null)

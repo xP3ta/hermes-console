@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/widgets/pill_morph.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _surface = ValueKey('morph-surface');
 final _pill = GlobalKey();
@@ -130,7 +131,7 @@ void main() {
     final open = _morph(tester).currentRect;
     expect(_near(open, _morph(tester).targetRect), isTrue);
     expect(open.top, greaterThanOrEqualTo(pill.bottom), reason: 'under pill');
-    expect(find.byIcon(Icons.close_rounded), findsNothing);
+    expect(find.byIcon(HIcons.close_rounded), findsNothing);
   });
 
   testWidgets('closing shrinks back into the pill with no stuck frame', (
@@ -271,7 +272,7 @@ void main() {
     _dismissCalls = 0;
     await _pump(tester);
     await _open(tester);
-    expect(find.byIcon(Icons.close_rounded), findsNothing);
+    expect(find.byIcon(HIcons.close_rounded), findsNothing);
     var node = tester.getSemantics(find.byKey(_surface));
     while (!node.getSemanticsData().hasAction(SemanticsAction.dismiss)) {
       node = node.parent!;

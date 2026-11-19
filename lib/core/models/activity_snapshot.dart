@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, setEquals;
 
 import 'agent_task_list.dart';
 import 'desktop_control_center.dart' show safeCommandProjection;
@@ -699,11 +699,17 @@ final class ActivitySnapshot {
     this.subagentGenericCount = 0,
     this.passiveRemote = false,
     this.liveReasoning,
+    this.subagentsAbsentConfirmed = const {},
   });
 
   static const ActivitySnapshot idle = ActivitySnapshot();
 
   final bool turnActive;
+
+  /// S1: filas de [subagents] que una lista con valla de este binding ya no
+  /// nombra, sin fila viva ni terminal: «no activos», resultado no
+  /// disponible. Solo el agregado de ocupación deja de contarlas.
+  final Set<SubagentActivityKey> subagentsAbsentConfirmed;
 
   /// Las tareas se enseñan mientras hay un turno vivo, también de otra
   /// superficie; por defecto, el mismo [turnActive].
@@ -807,7 +813,8 @@ final class ActivitySnapshot {
           _listEqualsBy(subagents, other.subagents, _subagentEquals) &&
           subagentGenericCount == other.subagentGenericCount &&
           passiveRemote == other.passiveRemote &&
-          liveReasoning == other.liveReasoning;
+          liveReasoning == other.liveReasoning &&
+          setEquals(subagentsAbsentConfirmed, other.subagentsAbsentConfirmed);
 
   @override
   int get hashCode => Object.hashAll([
@@ -830,6 +837,7 @@ final class ActivitySnapshot {
     subagentGenericCount,
     passiveRemote,
     liveReasoning,
+    Object.hashAllUnordered(subagentsAbsentConfirmed),
   ]);
 
   ActivitySnapshot withTasksActive(bool value) => ActivitySnapshot(
@@ -852,6 +860,7 @@ final class ActivitySnapshot {
     subagentGenericCount: subagentGenericCount,
     passiveRemote: passiveRemote,
     liveReasoning: liveReasoning,
+    subagentsAbsentConfirmed: subagentsAbsentConfirmed,
   );
 
   ActivitySnapshot copyWith({
@@ -883,6 +892,7 @@ final class ActivitySnapshot {
     subagentGenericCount: subagentGenericCount,
     passiveRemote: passiveRemote,
     liveReasoning: liveReasoning,
+    subagentsAbsentConfirmed: subagentsAbsentConfirmed,
   );
 
   static const ActivitySteps noSteps = (

@@ -9,6 +9,7 @@ import 'package:hermes_android/core/widgets/generated_video_card.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/fake_video_player_platform.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// The chat video card and the full-screen viewer behave like a normal
 /// mobile player: replay at the end, a draggable timeline, ±10 s seeks, live
@@ -155,7 +156,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(playKey),
-        matching: find.byIcon(Icons.play_arrow_rounded),
+        matching: find.byIcon(HIcons.play_arrow_rounded),
       ),
       findsOneWidget,
     );
@@ -181,7 +182,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(playKey),
-        matching: find.byIcon(Icons.replay_rounded),
+        matching: find.byIcon(HIcons.replay_rounded),
       ),
       findsOneWidget,
     );

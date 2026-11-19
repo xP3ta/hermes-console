@@ -17,6 +17,7 @@ import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _statusBar = 24.0;
 
@@ -53,12 +54,12 @@ Widget _header({double textScale = 1, bool glass = false}) => MaterialApp(
           child: FloatingChatHeader(
             glass: glass,
             leading: FloatingHeaderButton(
-              icon: Icons.menu_rounded,
+              icon: HIcons.menu_rounded,
               tooltip: 'Menú',
               onPressed: () {},
             ),
             trailing: FloatingHeaderButton(
-              icon: Icons.more_horiz_rounded,
+              icon: HIcons.more_horiz_rounded,
               tooltip: 'Ajustes',
               onPressed: () {},
             ),

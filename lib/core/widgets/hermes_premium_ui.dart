@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -141,7 +142,9 @@ class _HermesConfirmDialogBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    return Padding(
+    // Scrolls only when the text is taller than the surface allows (large
+    // text, long translations); otherwise it lays out exactly as before.
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(22, 22, 18, 14),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -168,8 +171,14 @@ class _HermesConfirmDialogBody extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          // One row when both buttons fit; stacked (confirm last, at the
+          // end) when a long label or large text does not fit beside the
+          // other.
+          OverflowBar(
+            alignment: MainAxisAlignment.end,
+            spacing: 4,
+            overflowAlignment: OverflowBarAlignment.end,
+            overflowSpacing: 4,
             children: [
               _HermesDialogTextPill(
                 key: const ValueKey('hermes-confirm-dialog-cancel'),
@@ -177,7 +186,6 @@ class _HermesConfirmDialogBody extends StatelessWidget {
                 foreground: colors.textPrimary,
                 onTap: () => Navigator.of(context).pop(false),
               ),
-              const SizedBox(width: 4),
               _HermesDialogTextPill(
                 key: const ValueKey('hermes-confirm-dialog-confirm'),
                 label: confirmLabel,
@@ -224,18 +232,23 @@ class _HermesDialogTextPill extends StatelessWidget {
         onTap: onTap,
         child: Container(
           constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
-          alignment: Alignment.center,
           padding: EdgeInsets.symmetric(
             horizontal: background == null ? 16 : 22,
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: background == null
-                  ? FontWeight.w500
-                  : FontWeight.w600,
-              color: foreground,
+          // Sized to its label (not to the width it is offered), so the
+          // pills stay pills when the action bar stacks them.
+          child: Align(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: background == null
+                    ? FontWeight.w500
+                    : FontWeight.w600,
+                color: foreground,
+              ),
             ),
           ),
         ),
@@ -331,7 +344,7 @@ class HermesEmptyState extends StatelessWidget {
         const SizedBox(height: 20),
         FilledButton.icon(
           onPressed: onPrimary,
-          icon: Icon(primaryIcon ?? Icons.add_rounded, size: 19),
+          icon: Icon(primaryIcon ?? HIcons.add_rounded, size: 19),
           label: Text(primaryLabel!),
         ),
       ],
@@ -784,7 +797,7 @@ class _HermesSearchFieldState extends State<HermesSearchField> {
             fontSize: HermesType.hintSize,
           ),
           prefixIcon: Icon(
-            Icons.search_rounded,
+            HIcons.search_rounded,
             size: 20,
             color: focused ? colors.accentHover : colors.textSecondary,
           ),
@@ -793,7 +806,7 @@ class _HermesSearchFieldState extends State<HermesSearchField> {
               : IconButton(
                   tooltip: widget.clearTooltip,
                   onPressed: _clear,
-                  icon: const Icon(Icons.close_rounded, size: 19),
+                  icon: const Icon(HIcons.close_rounded, size: 19),
                 ),
           filled: false,
           border: InputBorder.none,
@@ -1532,7 +1545,7 @@ class _HermesEditorialBlock extends StatelessWidget {
                                   ? Duration.zero
                                   : const Duration(milliseconds: 160),
                               child: Icon(
-                                Icons.expand_more_rounded,
+                                HIcons.expand_more_rounded,
                                 size: 19,
                                 color: colors.textSecondary,
                               ),
@@ -1858,7 +1871,7 @@ class HermesComposerSurface extends StatelessWidget {
     // Ola 3 (AUDITORIA-PULIDO T2/T3): the one tone of what floats.
     final chrome = HermesChrome.of(colors);
     final duration = HermesMotion.duration(context, HermesMotion.fast);
-    // OPUS-CRISTAL: a piece of the chat foot's toned strip when it sits in
+    // Foot glass: a piece of the chat foot's toned strip when it sits in
     // one. The strip hands a veil only where its smoked glass reads;
     // otherwise, and anywhere else (Home, rooms, a header's or an overlay's
     // strip), the opaque chrome of before.
@@ -1927,7 +1940,7 @@ class HermesComposerSurface extends StatelessWidget {
   }
 }
 
-/// The composer's opaque base under a fading fill (OPUS-CRISTAL).
+/// The composer's opaque base under a fading fill.
 class _OpaqueBase extends CustomPainter {
   const _OpaqueBase(this.color, this.radius);
 

@@ -15,6 +15,7 @@ import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/frosted_backdrop.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _titleKey = ValueKey('hermes-app-bar-title');
 const _actionsKey = ValueKey('hermes-app-bar-actions');
@@ -42,12 +43,12 @@ Widget _app({
       glass: glass,
       actions: [
         IconButton(
-          icon: const Icon(Icons.edit_square),
+          icon: const Icon(HIcons.edit_square),
           tooltip: 'Nueva',
           onPressed: () {},
         ),
         IconButton(
-          icon: const Icon(Icons.more_vert),
+          icon: const Icon(HIcons.more_vert),
           tooltip: 'Más',
           onPressed: () {},
         ),

@@ -32,6 +32,7 @@ import 'package:hermes_android/core/widgets/dock_style.dart'
     show resolveDockVisual;
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // 360 x 780 dp phone, 24 dp gesture-navigation inset, 30 dp back-gesture
 // edges. QA 9709 (dock-final): the places in one pill (x 47..247, items 64
@@ -110,7 +111,7 @@ Widget _dock(
                 GestureDockTab.settings: [
                   DockShortcut(
                     label: 'Atajo uno',
-                    icon: Icons.star,
+                    icon: HIcons.star,
                     onTap: calls.call('shortcut'),
                   ),
                 ],
@@ -627,19 +628,22 @@ void main() {
     }
 
     for (final tab in GestureDockTab.values.where((t) => t.isPlace)) {
-      // Chats gets its filled icon with its new name (next commit).
+      // Chats gets its own icon with its new name (next commit).
       if (tab == GestureDockTab.search) continue;
-      testWidgets('${tab.name}: the filled icon in the accent colour, and '
+      testWidgets('${tab.name}: the icon in the accent colour, and '
           'nothing else', (tester) async {
         _phone(tester);
         await tester.pumpWidget(on(tab));
         final colors = AppTheme.fromId('classic-dark').hermes;
         final selected = iconOf(tester, tab);
         expect(selected.icon, gestureDockTabIcon(tab, selected: true));
+        // The symbol family has a single line weight: no filled twin. The
+        // selected item is told apart by its accent colour (checked below)
+        // and not by another glyph.
         expect(
           selected.icon,
-          isNot(gestureDockTabIcon(tab)),
-          reason: 'the filled form is another glyph than the outlined one',
+          gestureDockTabIcon(tab),
+          reason: 'one glyph for both states, the accent marks the selected',
         );
         final hue = HSLColor.fromColor(selected.color!).hue;
         final accentHue = HSLColor.fromColor(colors.accentText).hue;

@@ -2,6 +2,7 @@
 // between them, the state at the right as a word + colour + icon, the folder
 // headings, the small «they need you» tray, the filter chips and the folded
 // «finished» section. Presentation only; the data is HerdrFlatList's.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -540,8 +541,8 @@ class HerdrFoldSection extends StatelessWidget {
                     ),
                     Icon(
                       expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
+                          ? HIcons.expand_less_rounded
+                          : HIcons.expand_more_rounded,
                       color: colors.textSecondary,
                     ),
                   ],
@@ -609,7 +610,7 @@ class HerdrShellRow extends StatelessWidget {
                 ),
                 if (onTap != null)
                   Icon(
-                    Icons.terminal_rounded,
+                    HIcons.terminal_rounded,
                     size: HermesIcon.md,
                     color: colors.textSecondary,
                   ),

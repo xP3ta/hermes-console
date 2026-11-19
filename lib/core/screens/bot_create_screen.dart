@@ -9,6 +9,7 @@
 //   `profiles.configure disabled_skills` como paso best-effort posterior.
 // - La identidad visible (título + sello `created`) se publica en el
 //   namespace `hermes-bots` de `ui_meta`, como `saveBotMeta` de Desktop.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import '../../l10n/app_localizations.dart';
 import '../services/bot_profile_client.dart';
@@ -1246,7 +1247,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       _modeTile(
         key: const ValueKey('bot-create-mode-pet'),
         label: _strings.i18n131CreatePet,
-        icon: Icons.pets_outlined,
+        icon: HIcons.pets_outlined,
         selected: _identityMode == _CreateIdentityMode.pet,
         onTap: () => _selectIdentityMode(_CreateIdentityMode.pet),
         colors: colors,
@@ -1254,7 +1255,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       _modeTile(
         key: const ValueKey('bot-create-mode-image'),
         label: _strings.i18n131CreateImage,
-        icon: Icons.image_outlined,
+        icon: HIcons.image_outlined,
         selected: _identityMode == _CreateIdentityMode.image,
         onTap: () => _selectIdentityMode(_CreateIdentityMode.image),
         colors: colors,
@@ -1262,7 +1263,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       _modeTile(
         key: const ValueKey('bot-create-mode-face'),
         label: _strings.i18n131CreateFace,
-        icon: Icons.face_outlined,
+        icon: HIcons.face_outlined,
         selected: _identityMode == _CreateIdentityMode.face,
         onTap: () => _selectIdentityMode(_CreateIdentityMode.face),
         colors: colors,
@@ -1356,7 +1357,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     final entry = _petEntry(_selectedPetSlug);
     if (entry == null) {
       return Icon(
-        Icons.pets_outlined,
+        HIcons.pets_outlined,
         size: 42,
         color: Theme.of(context).hermes.textDisabled,
       );
@@ -1367,7 +1368,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         final avatar = _decodeAvatar(snapshot.data);
         if (avatar == null) {
           return Icon(
-            Icons.pets_outlined,
+            HIcons.pets_outlined,
             size: 42,
             color: Theme.of(context).hermes.textDisabled,
           );
@@ -1391,7 +1392,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     final avatar = _pickedAvatar;
     if (avatar == null) {
       return Icon(
-        Icons.add_photo_alternate_outlined,
+        HIcons.add_photo_alternate_outlined,
         size: 42,
         color: Theme.of(context).hermes.textDisabled,
       );
@@ -1443,7 +1444,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       OutlinedButton.icon(
         key: const ValueKey('bot-create-pick-image'),
         onPressed: _pickingImage || _busy ? null : _pickImage,
-        icon: Icon(_pickingImage ? Icons.hourglass_top : Icons.photo_library),
+        icon: Icon(_pickingImage ? HIcons.hourglass_top : HIcons.photo_library),
         label: Text(
           _pickedAvatar == null
               ? _strings.i18n131CreateChooseImage
@@ -1547,7 +1548,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
               OutlinedButton.icon(
                 key: const ValueKey('bot-create-petdex'),
                 onPressed: _busy || _identityLocked ? null : _pickFromPetdex,
-                icon: const Icon(Icons.travel_explore_outlined),
+                icon: const Icon(HIcons.travel_explore_outlined),
                 label: Text(Strings.of(context).petdexGalleryTitle),
               ),
             ],
@@ -1610,7 +1611,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                   final avatar = _decodeAvatar(snapshot.data);
                   if (avatar == null) {
                     return Icon(
-                      Icons.pets,
+                      HIcons.pets,
                       size: 22,
                       color: colors.textDisabled,
                     );
@@ -1693,7 +1694,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                       : _profileCreated
                       ? _strings.i18n131CreateRetryIdentity
                       : copy.createAgentSubmit,
-                  icon: _busy ? Icons.sync : Icons.smart_toy_outlined,
+                  icon: _busy ? HIcons.sync : HIcons.smart_toy_outlined,
                   onTap: _valid && !_taken && !_busy ? _create : null,
                 ),
               ],
@@ -1748,8 +1749,8 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
               else
                 Icon(
                   _modelFailed
-                      ? Icons.refresh_rounded
-                      : Icons.chevron_right_rounded,
+                      ? HIcons.refresh_rounded
+                      : HIcons.chevron_right_rounded,
                   size: 20,
                   color: colors.textSecondary,
                   semanticLabel: _modelFailed

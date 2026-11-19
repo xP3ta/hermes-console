@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -331,7 +332,7 @@ class _HermesScheduleBuilderState extends State<HermesScheduleBuilder> {
         leading: IconButton(
           key: const ValueKey('schedule-cancel'),
           tooltip: s.commonCancel,
-          icon: const Icon(Icons.close_rounded),
+          icon: const Icon(HIcons.close_rounded),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(s.schTitle),
@@ -347,7 +348,7 @@ class _HermesScheduleBuilderState extends State<HermesScheduleBuilder> {
                 disabledBackgroundColor: colors.surfaceVariant,
               ),
               onPressed: valid ? _submit : null,
-              icon: const Icon(Icons.check_rounded),
+              icon: const Icon(HIcons.check_rounded),
             ),
           ),
         ],
@@ -481,8 +482,8 @@ class _HermesScheduleBuilderState extends State<HermesScheduleBuilder> {
                   subtitle: s.schAdvancedSub,
                   trailing: Icon(
                     _advanced
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
+                        ? HIcons.expand_less_rounded
+                        : HIcons.expand_more_rounded,
                     size: 20,
                     color: colors.textDisabled,
                   ),

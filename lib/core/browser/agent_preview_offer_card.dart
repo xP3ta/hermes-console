@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -64,7 +65,7 @@ class AgentPreviewOfferCard extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.language_rounded, color: colors.accent),
+                      Icon(HIcons.language_rounded, color: colors.accent),
                       const SizedBox(width: HermesSpace.x3),
                       Expanded(
                         child: Column(

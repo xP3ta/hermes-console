@@ -12,6 +12,7 @@ import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _app(Widget home, {double textScale = 1}) => MaterialApp(
   locale: const Locale('es'),
@@ -46,19 +47,19 @@ Widget _chatHeader() => Scaffold(
         child: FloatingChatHeader(
           faces: const SizedBox.square(dimension: FloatingChatHeader.faceSize),
           leading: FloatingHeaderButton(
-            icon: Icons.menu_rounded,
+            icon: HIcons.menu_rounded,
             tooltip: 'Menú',
             onPressed: () {},
           ),
           trailingSecondary: FloatingHeaderButton(
             key: const ValueKey('test-views'),
-            icon: Icons.view_column_outlined,
+            icon: HIcons.view_column_outlined,
             tooltip: 'Vistas',
             onPressed: () {},
           ),
           trailing: FloatingHeaderButton(
             key: const ValueKey('test-new'),
-            icon: Icons.add_rounded,
+            icon: HIcons.add_rounded,
             tooltip: 'Nuevo chat',
             onPressed: () {},
           ),
@@ -79,9 +80,9 @@ Widget _listHeader() => Scaffold(
     titleBadge: const SizedBox.square(key: ValueKey('test-dot'), dimension: 8),
     actions: [
       for (final (icon, label) in const [
-        (Icons.edit_outlined, 'Nuevo'),
-        (Icons.inventory_2_outlined, 'Archivo'),
-        (Icons.more_vert, 'Más'),
+        (HIcons.edit_outlined, 'Nuevo'),
+        (HIcons.inventory_2_outlined, 'Archivo'),
+        (HIcons.more_vert, 'Más'),
       ])
         IconButton(icon: Icon(icon), tooltip: label, onPressed: () {}),
     ],

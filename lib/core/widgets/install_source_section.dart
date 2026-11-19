@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -51,7 +52,7 @@ class _InstallSourceSectionState extends State<InstallSourceSection> {
           children: [
             HermesListRow(
               key: const ValueKey('install-source-row'),
-              icon: Icons.system_update_alt_rounded,
+              icon: HIcons.system_update_alt_rounded,
               title: s.aboutUpdatesTitle,
               value: label,
               showChevron: false,
@@ -59,7 +60,7 @@ class _InstallSourceSectionState extends State<InstallSourceSection> {
             if (source != null)
               HermesListRow(
                 key: const ValueKey('install-source-open'),
-                icon: Icons.open_in_new_rounded,
+                icon: HIcons.open_in_new_rounded,
                 iconColor: colors.accentText,
                 title: isPlay
                     ? s.aboutUpdatesOpenPlay

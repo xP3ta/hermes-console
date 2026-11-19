@@ -228,7 +228,14 @@ class ConnectionStatusRegistry {
     for (final id in _sources.keys.toList()) {
       _recompute(id);
     }
+    // Screens without a chat socket bound here (Home on its own REST
+    // check) still hear it: a loss proves nothing until checked, and a
+    // network back is the moment to check again (E10).
+    _changes.notify();
   }
+
+  /// The platform's last network signal was a loss.
+  bool get networkLost => _networkLost;
 
   /// The auxiliary REST probe of [connectionId] answered.
   void reportRest(String connectionId, {required bool reachable}) {

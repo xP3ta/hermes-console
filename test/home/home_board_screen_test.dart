@@ -60,6 +60,7 @@ import '../support/desktop_chat_socket.dart';
 import '../support/in_memory_compression_restore_storage.dart';
 import '../support/spec070_fixtures.dart';
 import '../support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _clock = DateTime(2026, 10, 6, 16, 30);
 double _ago(Duration d) => _clock.subtract(d).millisecondsSinceEpoch / 1000;
@@ -527,7 +528,7 @@ void main() {
         findsOneWidget,
         reason: 'the active profile shows its own face, not a person icon',
       );
-      expect(find.byIcon(Icons.account_circle_outlined), findsNothing);
+      expect(find.byIcon(HIcons.account_circle_outlined), findsNothing);
       // QA 9494: the face sits straight on the button's fill, no backing
       // squircle (it read as a dark square around the face).
       expect(
@@ -663,14 +664,14 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('profile-switcher-option-ana')),
-          matching: find.byIcon(Icons.check_rounded),
+          matching: find.byIcon(HIcons.check_rounded),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('profile-switcher-option-default')),
-          matching: find.byIcon(Icons.check_rounded),
+          matching: find.byIcon(HIcons.check_rounded),
         ),
         findsNothing,
       );
@@ -858,7 +859,7 @@ void main() {
           reason: '$name is listed with its own face',
         );
       }
-      expect(find.byIcon(Icons.account_circle_outlined), findsNothing);
+      expect(find.byIcon(HIcons.account_circle_outlined), findsNothing);
       await unmount(tester);
     });
 

@@ -12,6 +12,7 @@ import 'package:hermes_android/core/widgets/generated_image_card.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/core/widgets/stacked_image_cards.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // fh1215: every chat surface gets a floating header (no app bar band): a
 // round back button, a round button on the right and, in the centre, the
@@ -67,14 +68,14 @@ Widget _screen({
               ? null
               : FloatingHeaderButton(
                   key: const ValueKey('floating-header-back'),
-                  icon: Icons.arrow_back_rounded,
+                  icon: HIcons.arrow_back_rounded,
                   tooltip: 'Back',
                   onPressed: onBack,
                 ),
           trailing: newChat
               ? FloatingHeaderButton(
                   key: const ValueKey('test-new'),
-                  icon: Icons.add_rounded,
+                  icon: HIcons.add_rounded,
                   tooltip: 'New',
                   onPressed: () {},
                 )
@@ -498,19 +499,19 @@ void main() {
               faces: _face(FloatingChatHeader.faceSize),
               leading: FloatingHeaderButton(
                 key: const ValueKey('test-list'),
-                icon: Icons.menu_rounded,
+                icon: HIcons.menu_rounded,
                 tooltip: 'List',
                 onPressed: () {},
               ),
               trailingSecondary: FloatingHeaderButton(
                 key: const ValueKey('test-views'),
-                icon: Icons.view_column_outlined,
+                icon: HIcons.view_column_outlined,
                 tooltip: 'Views',
                 onPressed: () {},
               ),
               trailing: FloatingHeaderButton(
                 key: const ValueKey('test-new'),
-                icon: Icons.add_rounded,
+                icon: HIcons.add_rounded,
                 tooltip: 'New',
                 onPressed: () {},
               ),

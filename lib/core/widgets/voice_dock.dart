@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -123,8 +124,8 @@ class VoiceDock extends StatelessWidget {
                 ? 'voice-strip-pause'
                 : 'voice-dock-mute',
             icon: resume != null || state == VoiceStripState.paused
-                ? Icons.mic_off_rounded
-                : Icons.mic_rounded,
+                ? HIcons.mic_off_rounded
+                : HIcons.mic_rounded,
             label: resume != null ? labels.resume : labels.pause,
             onPressed: resume ?? pause,
             foreground: colors.textPrimary,
@@ -182,7 +183,7 @@ class VoiceDock extends StatelessWidget {
           ),
           _DockRound(
             actionKey: 'voice-strip-close',
-            icon: Icons.close_rounded,
+            icon: HIcons.close_rounded,
             label: labels.close,
             onPressed: onClose,
             foreground: colors.textPrimary,
@@ -199,7 +200,7 @@ class VoiceDock extends StatelessWidget {
     if (state.canFinishListening && onFinishListening != null) {
       return _DockChip(
         key: const ValueKey('voice-strip-finish-listening'),
-        icon: Icons.arrow_upward_rounded,
+        icon: HIcons.arrow_upward_rounded,
         label: labels.sendNow,
         onPressed: onFinishListening!,
         tint: colors.accent,
@@ -208,7 +209,7 @@ class VoiceDock extends StatelessWidget {
     if (state.offersRetry && onRetry != null) {
       return _DockChip(
         key: const ValueKey('voice-strip-retry'),
-        icon: Icons.refresh_rounded,
+        icon: HIcons.refresh_rounded,
         label: labels.retry,
         onPressed: onRetry!,
         tint: colors.error,
@@ -217,7 +218,7 @@ class VoiceDock extends StatelessWidget {
     if (state.offersReview && onReview != null) {
       return _DockChip(
         key: const ValueKey('voice-strip-review'),
-        icon: Icons.shield_outlined,
+        icon: HIcons.shield_outlined,
         label: labels.review,
         onPressed: onReview!,
         tint: colors.warning,
@@ -226,7 +227,7 @@ class VoiceDock extends StatelessWidget {
     if (state.dockInterrupts && onStopAndTalk != null) {
       return _DockChip(
         key: const ValueKey('voice-strip-stop-and-talk'),
-        icon: Icons.mic_rounded,
+        icon: HIcons.mic_rounded,
         label: labels.interrupt,
         onPressed: onStopAndTalk!,
         tint: colors.accent,
@@ -235,7 +236,7 @@ class VoiceDock extends StatelessWidget {
     if (onStop != null) {
       return _DockChip(
         key: const ValueKey('voice-dock-stop'),
-        icon: Icons.stop_rounded,
+        icon: HIcons.stop_rounded,
         label: labels.stop,
         onPressed: onStop!,
         tint: colors.error,

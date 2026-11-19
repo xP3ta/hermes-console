@@ -13,6 +13,7 @@
 // program's login file. The provider such a login connects is removed from
 // its own group instead.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -103,7 +104,7 @@ class ModelsAccountsSection extends StatelessWidget {
                   title: account.name,
                   subtitle: _subtitle(context, s, account),
                   trailing: Icon(
-                    Icons.chevron_right,
+                    HIcons.chevron_right,
                     size: 18,
                     color: colors.textDisabled,
                   ),

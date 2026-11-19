@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -169,7 +170,7 @@ class _DashboardPasswordScreenState extends State<DashboardPasswordScreen> {
               HermesListRow(
                 key: const ValueKey('dashboard-password-how'),
                 title: s.sPasswordHow,
-                icon: Icons.terminal,
+                icon: HIcons.terminal,
                 onTap: () => showDashboardPasswordHelp(context),
               ),
             ],

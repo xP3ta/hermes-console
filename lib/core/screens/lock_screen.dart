@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -181,7 +182,7 @@ class _LockScreenState extends State<LockScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.lock_outline, size: 40, color: colors.accent),
+                    Icon(HIcons.lock_outline, size: 40, color: colors.accent),
                     const SizedBox(height: 16),
                     Text(
                       'HERMES',
@@ -246,7 +247,7 @@ class _LockScreenState extends State<LockScreen> {
                       const SizedBox(height: 12),
                       TextButton.icon(
                         onPressed: _tryBiometric,
-                        icon: const Icon(Icons.fingerprint, size: 20),
+                        icon: const Icon(HIcons.fingerprint, size: 20),
                         label: Text(Strings.of(context).lockUseBiometrics),
                       ),
                     ],

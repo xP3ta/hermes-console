@@ -15,6 +15,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/pj1215_fake_projects_gateway.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _root = '/home/demo/code/hermes-console';
 const _worktree = '/home/demo/code/hermes-console-wt/projects';
@@ -117,7 +118,7 @@ void main() {
         find.byKey(const ValueKey('pj1215-card-menu-p_console')),
         findsNothing,
       );
-      expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
+      expect(find.byIcon(HIcons.more_vert_rounded), findsNothing);
       expect(find.byKey(const ValueKey('pj1215-intro-more')), findsNothing);
       // A single "+" in the app bar, only when the server can create.
       expect(

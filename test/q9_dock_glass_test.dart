@@ -26,6 +26,7 @@ import 'package:hermes_android/core/widgets/dock_style.dart';
 import 'package:hermes_android/core/widgets/frosted_backdrop.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 GestureDockController get _c => GestureDockController.instance;
 
@@ -69,7 +70,7 @@ Widget _app({
                   GestureDockTab.create: [
                     DockShortcut(
                       label: 'Atajo de nuevo',
-                      icon: Icons.add,
+                      icon: HIcons.add,
                       onTap: () {},
                     ),
                   ],

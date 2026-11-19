@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -395,7 +396,7 @@ class _GitHubScreenState extends State<GitHubScreen> {
             key: const ValueKey('ght-branch-new'),
             value: _newBranchChoice,
             label: strings.ghtBranchNew,
-            icon: Icons.add_rounded,
+            icon: HIcons.add_rounded,
           ),
         for (final branch in controller.branches)
           HermesOption(
@@ -403,8 +404,8 @@ class _GitHubScreenState extends State<GitHubScreen> {
             value: branch.name,
             label: branch.name,
             icon: branch.isRemote
-                ? Icons.cloud_outlined
-                : Icons.call_split_rounded,
+                ? HIcons.cloud_outlined
+                : HIcons.call_split_rounded,
             subtitle: branch.name == current
                 ? strings.ghtBranchCurrent
                 : branch.worktreePath.isNotEmpty &&
@@ -527,7 +528,7 @@ class _GitHubScreenState extends State<GitHubScreen> {
                 );
                 if (picked != null) setState(() => base = picked);
               },
-              icon: const Icon(Icons.call_split_rounded, size: HermesIcon.sm),
+              icon: const Icon(HIcons.call_split_rounded, size: HermesIcon.sm),
               label: Text(
                 '${strings.ghtBranchNewBase}: $base',
                 maxLines: 2,
@@ -742,7 +743,7 @@ class _GitHubScreenState extends State<GitHubScreen> {
       case GitReviewPhase.notRepo:
         return GitStateMessage(
           key: const ValueKey('git-state-not-repo'),
-          icon: Icons.folder_off_outlined,
+          icon: HIcons.folder_off_outlined,
           title: strings.gitNotRepo,
           text: strings.ghtNotRepoBody,
           onRetry: controller.refresh,
@@ -750,7 +751,7 @@ class _GitHubScreenState extends State<GitHubScreen> {
       case GitReviewPhase.unsupported:
         return GitStateMessage(
           key: const ValueKey('git-state-unsupported'),
-          icon: Icons.cloud_off_outlined,
+          icon: HIcons.cloud_off_outlined,
           title: strings.gitFailureUnsupported,
           text: strings.ghtUnsupportedBody,
         );
@@ -813,14 +814,14 @@ class _TopRow extends StatelessWidget {
               key: const ValueKey('git-back'),
               tooltip: MaterialLocalizations.of(context).backButtonTooltip,
               onPressed: () => Navigator.of(context).maybePop(),
-              icon: Icon(Icons.arrow_back_rounded, color: colors.textPrimary),
+              icon: Icon(HIcons.arrow_back_rounded, color: colors.textPrimary),
             ),
           const Spacer(),
           IconButton(
             key: const ValueKey('git-refresh'),
             tooltip: strings.gitRefresh,
             onPressed: controller.loading ? null : controller.refresh,
-            icon: Icon(Icons.refresh_rounded, color: colors.textSecondary),
+            icon: Icon(HIcons.refresh_rounded, color: colors.textSecondary),
           ),
           if (ready)
             HermesMenuButton<_GitHubMenu>(
@@ -835,19 +836,19 @@ class _TopRow extends StatelessWidget {
                     key: const ValueKey('ght-menu-ship'),
                     value: _GitHubMenu.ship,
                     label: strings.ghtShipTitle,
-                    icon: Icons.cloud_upload_outlined,
+                    icon: HIcons.cloud_upload_outlined,
                   ),
                 HermesAction(
                   key: const ValueKey('ght-menu-worktrees'),
                   value: _GitHubMenu.worktrees,
                   label: strings.ghtWorktrees,
-                  icon: Icons.account_tree_outlined,
+                  icon: HIcons.account_tree_outlined,
                 ),
                 HermesAction(
                   key: const ValueKey('ght-menu-refresh-github'),
                   value: _GitHubMenu.refreshGitHub,
                   label: strings.ghtRefreshGitHub,
-                  icon: Icons.cloud_sync_outlined,
+                  icon: HIcons.cloud_sync_outlined,
                 ),
                 if (writes &&
                     controller.hasFiles &&
@@ -856,7 +857,7 @@ class _TopRow extends StatelessWidget {
                     key: const ValueKey('ght-discard-all'),
                     value: _GitHubMenu.discardAll,
                     label: strings.ghtDiscardAll,
-                    icon: Icons.undo_rounded,
+                    icon: HIcons.undo_rounded,
                     destructive: true,
                   ),
               ],
@@ -954,7 +955,7 @@ class _FolderTitle extends StatelessWidget {
                     ),
                     if (onPick != null)
                       Icon(
-                        Icons.expand_more_rounded,
+                        HIcons.expand_more_rounded,
                         size: HermesIcon.sm,
                         color: colors.accentText,
                       ),
@@ -1017,28 +1018,28 @@ class _StatusStrip extends StatelessWidget {
       if (auth != null && !auth.available)
         (
           const ValueKey('ght-github-state'),
-          Icons.cloud_off_outlined,
+          HIcons.cloud_off_outlined,
           strings.ghtGitHubMissing,
           colors.textSecondary,
         )
       else if (auth != null && !auth.authenticated)
         (
           const ValueKey('ght-github-state'),
-          Icons.cloud_outlined,
+          HIcons.cloud_outlined,
           strings.ghtGitHubSignedOut,
           colors.warning,
         ),
       if (controller.identity == GitIdentityState.missing)
         (
           const ValueKey('ght-identity'),
-          Icons.badge_outlined,
+          HIcons.badge_outlined,
           strings.ghtIdentityMissing,
           colors.warning,
         ),
       if (readOnly)
         (
           const ValueKey('ght-read-only'),
-          Icons.lock_outline_rounded,
+          HIcons.lock_outline_rounded,
           strings.statusReadOnly,
           colors.textTertiary,
         ),
@@ -1111,7 +1112,7 @@ class _SearchField extends StatelessWidget {
           hintText: strings.ghtSearchPaths,
           hintStyle: TextStyle(color: chrome.mutedInk),
           prefixIcon: Icon(
-            Icons.search_rounded,
+            HIcons.search_rounded,
             size: HermesIcon.lg,
             color: chrome.mutedInk,
           ),
@@ -1121,7 +1122,7 @@ class _SearchField extends StatelessWidget {
                   key: const ValueKey('ght-search-clear'),
                   tooltip: MaterialLocalizations.of(context).clearButtonTooltip,
                   onPressed: controller.clear,
-                  icon: const Icon(Icons.close_rounded, size: HermesIcon.lg),
+                  icon: const Icon(HIcons.close_rounded, size: HermesIcon.lg),
                 ),
           filled: true,
           fillColor: chrome.opaque,
@@ -1225,7 +1226,7 @@ class _CountRow extends StatelessWidget {
                               ),
                             ),
                             Icon(
-                              Icons.chevron_right_rounded,
+                              HIcons.chevron_right_rounded,
                               size: HermesIcon.md,
                               color: colors.accentText,
                             ),
@@ -1301,7 +1302,7 @@ class _ChangesList extends StatelessWidget {
               padding: const EdgeInsets.only(top: HermesSpace.x8),
               child: GitStateMessage(
                 key: ValueKey(uncommitted ? 'ght-clean' : 'ght-branch-clean'),
-                icon: Icons.check_circle_outline_rounded,
+                icon: HIcons.check_circle_outline_rounded,
                 title: uncommitted
                     ? strings.ghtCleanTitle
                     : strings.ghtBranchCleanTitle,
@@ -1394,27 +1395,27 @@ class _ChangesList extends StatelessWidget {
                       HermesAction(
                         value: _FileAction.diff,
                         label: strings.ghtViewDiff,
-                        icon: Icons.difference_outlined,
+                        icon: HIcons.difference_outlined,
                       ),
                       if (file.staged)
                         HermesAction(
                           key: ValueKey('ght-file-unstage-${file.path}'),
                           value: _FileAction.unstage,
                           label: strings.gitUnstage,
-                          icon: Icons.remove_rounded,
+                          icon: HIcons.remove_rounded,
                         )
                       else
                         HermesAction(
                           key: ValueKey('ght-file-stage-${file.path}'),
                           value: _FileAction.stage,
                           label: strings.gitStage,
-                          icon: Icons.add_rounded,
+                          icon: HIcons.add_rounded,
                         ),
                       HermesAction(
                         key: ValueKey('ght-file-discard-${file.path}'),
                         value: _FileAction.discard,
                         label: strings.ghtDiscardFile,
-                        icon: Icons.undo_rounded,
+                        icon: HIcons.undo_rounded,
                         destructive: true,
                       ),
                     ],
@@ -1667,8 +1668,8 @@ class _CommitBar extends StatelessWidget {
                         onPressed: onToggleOptions,
                         icon: Icon(
                           options
-                              ? Icons.expand_more_rounded
-                              : Icons.tune_rounded,
+                              ? HIcons.expand_more_rounded
+                              : HIcons.tune_rounded,
                           size: HermesIcon.lg,
                           color: pushAfterCommit
                               ? colors.accentText
@@ -1864,7 +1865,7 @@ class _ShipScreen extends StatelessWidget {
                     ).backButtonTooltip,
                     onPressed: () => Navigator.of(context).maybePop(),
                     icon: Icon(
-                      Icons.arrow_back_rounded,
+                      HIcons.arrow_back_rounded,
                       color: colors.textPrimary,
                     ),
                   ),
@@ -2156,7 +2157,7 @@ class _PullRequestRow extends StatelessWidget {
             tooltip: strings.ghtPrOpenLink,
             onPressed: canOpen ? () => onOpen(url) : null,
             icon: Icon(
-              Icons.open_in_new_rounded,
+              HIcons.open_in_new_rounded,
               size: HermesIcon.md,
               color: canOpen ? colors.accentText : colors.textDisabled,
             ),

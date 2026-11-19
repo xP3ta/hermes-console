@@ -9,6 +9,7 @@ import 'package:hermes_android/core/design/tokens.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _app(
   Widget child, {
@@ -61,7 +62,7 @@ void main() {
       await tester.pumpWidget(
         _app(
           HermesFloatingIconButton(
-            icon: Icons.search_rounded,
+            icon: HIcons.search_rounded,
             tooltip: 'Buscar',
             onPressed: () => taps++,
           ),
@@ -90,7 +91,7 @@ void main() {
     await tester.pumpWidget(
       _app(
         HermesFloatingIconButton(
-          icon: Icons.search_rounded,
+          icon: HIcons.search_rounded,
           tooltip: 'Buscar',
           onPressed: () {},
         ),
@@ -113,7 +114,7 @@ void main() {
     await tester.pumpWidget(
       _app(
         HermesFloatingIconButton(
-          icon: Icons.search_rounded,
+          icon: HIcons.search_rounded,
           tooltip: 'Buscar',
           onPressed: () {},
         ),
@@ -143,7 +144,7 @@ void main() {
       await tester.pumpWidget(
         _app(
           HermesTactileAction(
-            icon: Icons.arrow_upward_rounded,
+            icon: HIcons.arrow_upward_rounded,
             semanticLabel: 'Enviar',
             onPressed: () => taps++,
           ),
@@ -155,7 +156,7 @@ void main() {
       );
       expect(gel.tone, HermesGelTone.accent);
       expect(gel.accent, theme.hermes.accent);
-      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(find.byIcon(HIcons.arrow_upward_rounded), findsOneWidget);
       await tester.tap(find.byType(HermesTactileAction));
       expect(taps, 1);
     });
@@ -170,12 +171,12 @@ void main() {
           mainAxisSize: MainAxisSize.min,
           children: [
             HermesTactileAction(
-              icon: Icons.arrow_upward_rounded,
+              icon: HIcons.arrow_upward_rounded,
               semanticLabel: 'Enviar',
               onPressed: null,
             ),
             HermesTactileAction(
-              icon: Icons.mic_none_rounded,
+              icon: HIcons.mic_none_rounded,
               semanticLabel: 'Voz',
               onPressed: null,
               visual: HermesTactileActionVisual.quiet,

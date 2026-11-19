@@ -13,6 +13,7 @@
 //   - 4 plantillas integradas con confirmación previa si hay contenido
 //   - Banner discreto sobre el estado local
 //   - Botón copiar todo al portapapeles
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -664,7 +665,7 @@ class _SoulScreenState extends State<SoulScreen>
               )
             : _saved
             ? Icon(
-                Icons.check_circle_rounded,
+                HIcons.check_circle_rounded,
                 key: const ValueKey('saved'),
                 size: 16,
                 color: colors.success,
@@ -675,23 +676,23 @@ class _SoulScreenState extends State<SoulScreen>
           // Saving and the templates come first: they are the two that stay
           // in the header's pill; the rest go behind its "more".
           IconButton(
-            icon: const Icon(Icons.save_outlined),
+            icon: const Icon(HIcons.save_outlined),
             tooltip: Strings.of(context).soulSaveDraft,
             onPressed: _forceSave,
           ),
           IconButton(
-            icon: const Icon(Icons.auto_fix_high_outlined),
+            icon: const Icon(HIcons.auto_fix_high_outlined),
             tooltip: Strings.of(context).soulTemplatesTitle,
             onPressed: _showTemplateMenu,
           ),
           IconButton(
-            icon: const Icon(Icons.copy_outlined),
+            icon: const Icon(HIcons.copy_outlined),
             tooltip: Strings.of(context).soulCopyAll,
             onPressed: _controller.text.isEmpty ? null : _copyAll,
           ),
           if (_hasBackup)
             IconButton(
-              icon: const Icon(Icons.restore),
+              icon: const Icon(HIcons.restore),
               tooltip: Strings.of(context).soulRestorePrevTitle,
               onPressed: _restoreBackup,
             ),
@@ -763,7 +764,7 @@ class _SoulScreenState extends State<SoulScreen>
                             label: _profileBusy
                                 ? Strings.of(context).commonLoading
                                 : Strings.of(context).soulReload,
-                            icon: Icons.cloud_download_outlined,
+                            icon: HIcons.cloud_download_outlined,
                             onTap: _profileBusy ? null : _loadProfileSoul,
                           ),
                           const SizedBox(width: 7),
@@ -771,7 +772,7 @@ class _SoulScreenState extends State<SoulScreen>
                             label: _profileBusy
                                 ? Strings.of(context).soulApplying
                                 : Strings.of(context).soulApply,
-                            icon: Icons.cloud_upload_outlined,
+                            icon: HIcons.cloud_upload_outlined,
                             color: colors.accent,
                             onTap: _profileBusy ? null : _applyProfileSoul,
                           ),
@@ -877,7 +878,7 @@ class _TemplateTile extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, size: 16, color: colors.textTertiary),
+            Icon(HIcons.chevron_right, size: 16, color: colors.textTertiary),
           ],
         ),
       ),

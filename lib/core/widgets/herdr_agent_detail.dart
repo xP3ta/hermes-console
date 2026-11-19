@@ -4,6 +4,7 @@
 // The screen is a list of lines that grows from the bottom: it stays on the
 // latest line unless the user scrolled up to read, and a changed screen
 // repaints only the lines that changed.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -137,7 +138,7 @@ class _HerdrAgentDetailState extends State<HerdrAgentDetail> {
               minHeight: HermesSpace.tap,
             ),
             onPressed: widget.onBack,
-            icon: const Icon(Icons.arrow_back_rounded),
+            icon: const Icon(HIcons.arrow_back_rounded),
           ),
         Expanded(
           child: row == null
@@ -336,7 +337,7 @@ class _HerdrAgentDetailState extends State<HerdrAgentDetail> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.arrow_downward_rounded),
+                          const Icon(HIcons.arrow_downward_rounded),
                           const SizedBox(width: HermesSpace.x1),
                           Text(strings.hdpJumpToEnd),
                         ],
@@ -362,7 +363,7 @@ class _HerdrAgentDetailState extends State<HerdrAgentDetail> {
           child: HermesMenuButton<HerdrKey>(
             key: const ValueKey('hda-keys'),
             tooltip: strings.agfKeysMenu,
-            icon: const Icon(Icons.keyboard_rounded),
+            icon: const Icon(HIcons.keyboard_rounded),
             onSelected: widget.onKey,
             actions: (_) => [
               for (final key in HerdrKey.quick)
@@ -401,7 +402,7 @@ class _HerdrAgentDetailState extends State<HerdrAgentDetail> {
             accent: true,
             semanticLabel: strings.hdaSend,
             onTap: _sending ? null : _send,
-            child: const Icon(Icons.arrow_upward_rounded),
+            child: const Icon(HIcons.arrow_upward_rounded),
           ),
         ),
       ],

@@ -4,11 +4,11 @@
 // The refresh of the models page asks the server to refresh its own model
 // cache too: an account that gained models (a subscription upgrade, a new
 // release) shows them in the list without waiting for that cache to expire.
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/active_profile_scope.dart';
 
 import 'support/models_server.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   late ActiveProfileScope scope;
@@ -32,7 +32,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(server.optionsRefreshes, 0, reason: 'opening reads the cache');
 
-    await tester.tap(find.byIcon(Icons.refresh).first);
+    await tester.tap(find.byIcon(HIcons.refresh).first);
     await tester.pumpAndSettle();
     expect(server.optionsRefreshes, 1);
   });

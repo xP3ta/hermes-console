@@ -333,10 +333,14 @@ void main() {
     final client = _sharedClient(pool, gateway);
     expect(client.knownPerSessionReplayTransport, isTrue);
 
-    // The server came back as a legacy build.
+    // The server came back as a legacy build. It refuses while the cut is
+    // observed: the client redials within milliseconds, faster than the
+    // poll below can see it down.
     gateway.replayEpoch = null;
+    gateway.refuse = true;
     gateway.dropAll();
     await _waitUntil(() => !client.isConnected, reason: 'cut noticed');
+    gateway.refuse = false;
     await client.connectForeground();
     expect(client.knownPerSessionReplayTransport, isFalse);
   });

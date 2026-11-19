@@ -1,4 +1,4 @@
-// OPUS-CRISTAL: the chat foot's strip contract, outside ChatScreen. One
+// Foot glass: the chat foot's strip contract, outside ChatScreen. One
 // toned strip in FrostedZone.bottom holds the composer and the context pill
 // as its two pieces: one backdrop layer, the smoked glass's veil where every
 // ink reads, the opaque chrome of before everywhere else. Never the shader.
@@ -336,7 +336,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  // Git R1, OPUS-WIRING-ZONE-FIRST-PAINT-1: a higher strip takes the zone
+  // A higher strip takes the zone
   // while the foot is retained. The foot loses its blur at once but its
   // scope only rebuilds after the frame: that very paint must not show a
   // bare veil over the content behind.

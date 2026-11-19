@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../utils/enum_labels.dart';
@@ -179,7 +180,7 @@ Future<bool> _confirmDialog(
           const SizedBox(height: 12),
           Row(
             children: [
-              Icon(Icons.shield_outlined, size: 14, color: riskColor),
+              Icon(HIcons.shield_outlined, size: 14, color: riskColor),
               const SizedBox(width: 6),
               Text(
                 commandRiskLabel(Strings.of(context), risk),

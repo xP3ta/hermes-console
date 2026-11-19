@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -197,7 +198,7 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
         ? OnbSmallPill(
             key: ValueKey(key),
             label: s.qrPasteLink,
-            icon: Icons.content_paste,
+            icon: HIcons.content_paste,
             onDark: true,
             onTap: _paste,
           )
@@ -209,7 +210,7 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
           );
     final body = _denied
         ? _stateBody(
-            icon: Icons.no_photography_outlined,
+            icon: HIcons.no_photography_outlined,
             text: s.qrCameraError,
             actions: [
               alt('qr-denied-paste'),
@@ -223,7 +224,7 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
           )
         : _invalid
         ? _stateBody(
-            icon: Icons.qr_code_2_rounded,
+            icon: HIcons.qr_code_2_rounded,
             text: s.o2InvalidCode,
             actions: [
               OnbSmallPill(
@@ -360,7 +361,7 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
               OnbSmallPill(
                 key: const ValueKey('qr-torch'),
                 label: s.qrTorch,
-                icon: Icons.flash_on_rounded,
+                icon: HIcons.flash_on_rounded,
                 onDark: true,
                 onTap: _torch,
               ),
@@ -470,14 +471,14 @@ class _QrScanViewState extends State<QrScanView> with TickerProviderStateMixin {
                           OnbSmallPill(
                             key: const ValueKey('qr-torch'),
                             label: s.qrTorch,
-                            icon: Icons.flash_on_rounded,
+                            icon: HIcons.flash_on_rounded,
                             onDark: true,
                             onTap: _torch,
                           ),
                           OnbSmallPill(
                             key: const ValueKey('qr-paste'),
                             label: s.qrPasteLink,
-                            icon: Icons.content_paste,
+                            icon: HIcons.content_paste,
                             onDark: true,
                             onTap: _paste,
                           ),

@@ -8,6 +8,7 @@
 // tablet or the work pane. On a phone on its side the tabs share the bar's
 // row; while the address is being typed the strip steps aside, so the page
 // keeps its room.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -499,7 +500,7 @@ class _TabStrip extends StatelessWidget {
             tooltip: strings.brwTabNew,
             color: colors.textPrimary,
             onPressed: onNew,
-            icon: const Icon(Icons.add_rounded),
+            icon: const Icon(HIcons.add_rounded),
           ),
           _CountButton(
             count: tabs.length,
@@ -635,7 +636,7 @@ class _TabChip extends StatelessWidget {
                   onTap: onClose,
                   child: SizedBox.square(
                     dimension: HermesSpace.tap,
-                    child: Icon(Icons.close_rounded, size: 16, color: ink),
+                    child: Icon(HIcons.close_rounded, size: 16, color: ink),
                   ),
                 ),
               ),
@@ -721,7 +722,7 @@ class _Favicon extends StatelessWidget {
     final host = tab.url?.host ?? '';
     if (host.isEmpty) {
       return Icon(
-        Icons.language_rounded,
+        HIcons.language_rounded,
         size: size,
         color: colors.textSecondary,
       );
@@ -865,7 +866,7 @@ class _WhoLine extends StatelessWidget {
           ),
         ),
         const Spacer(),
-        Icon(Icons.visibility_outlined, size: 14, color: colors.accentText),
+        Icon(HIcons.visibility_outlined, size: 14, color: colors.accentText),
         const SizedBox(width: HermesSpace.x1),
         Text(
           strings.brwTabHermesSees,
@@ -1018,7 +1019,7 @@ class _TabGrid extends StatelessWidget {
                     minimumSize: const Size(HermesSpace.tap, HermesSpace.tap),
                   ),
                   onPressed: onNew,
-                  icon: const Icon(Icons.add_rounded),
+                  icon: const Icon(HIcons.add_rounded),
                   label: Text(strings.brwTabNew),
                 ),
               ),
@@ -1176,7 +1177,7 @@ class _TabCard extends StatelessWidget {
                       child: Padding(
                         padding: const EdgeInsets.all(HermesSpace.x1),
                         child: Icon(
-                          Icons.close_rounded,
+                          HIcons.close_rounded,
                           size: 16,
                           color: colors.textPrimary,
                         ),

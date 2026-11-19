@@ -362,15 +362,17 @@ void main() {
 
     // The Dashboard's public /api/status is the liveness probe: a server
     // that refuses the login is there, and the login is what is missing.
+    // 1.4.1: the probe carries no credentials, so neither answer is retried
+    // with a session, and nothing logs in or refreshes a token for it.
     for (final status in [401, 403]) {
       test('healthCheck keeps a Dashboard that refuses the login online '
           '($status)', () async {
-        var probes = 0;
+        final requests = <http.BaseRequest>[];
         final client = testApiClient(
           baseUrl: 'http://hermes.local:8642',
           httpClient: MockClient((request) async {
+            requests.add(request);
             if (request.url.path == '/api/status') {
-              probes++;
               return http.Response('{"detail":"unauthorized"}', status);
             }
             return http.Response('not found', 404);
@@ -378,8 +380,14 @@ void main() {
         );
 
         expect(await client.healthCheck(), isTrue);
-        // A 401 is retried once with the session; a 403 is final.
-        expect(probes, status == 401 ? 2 : 1);
+        // Exactly one request, the probe: no retry, login or token refresh.
+        expect(requests.map((request) => request.url.path), ['/api/status']);
+        final headers = requests.single.headers.keys.map(
+          (name) => name.toLowerCase(),
+        );
+        expect(headers, isNot(contains('cookie')));
+        expect(headers, isNot(contains('authorization')));
+        expect(headers, isNot(contains('x-hermes-session-token')));
         client.close();
       });
     }

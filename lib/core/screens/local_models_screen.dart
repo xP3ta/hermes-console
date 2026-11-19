@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -392,20 +393,20 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
             key: const ValueKey('lm1215-action-use'),
             value: _ModelAction.use,
             label: s.lm1215ActionUse,
-            icon: Icons.check_circle_outline_rounded,
+            icon: HIcons.check_circle_outline_rounded,
           ),
         if (status.isLoaded(model.id))
           HermesAction(
             key: const ValueKey('lm1215-action-eject'),
             value: _ModelAction.eject,
             label: s.lm1215ActionEject,
-            icon: Icons.eject_rounded,
+            icon: HIcons.eject_rounded,
           ),
         HermesAction(
           key: const ValueKey('lm1215-action-delete'),
           value: _ModelAction.delete,
           label: s.lm1215ActionDelete,
-          icon: Icons.delete_outline_rounded,
+          icon: HIcons.delete_outline_rounded,
           destructive: true,
         ),
       ],
@@ -451,14 +452,14 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
       children.add(
         _Message(
           key: const ValueKey('lm1215-unavailable'),
-          icon: Icons.memory_outlined,
+          icon: HIcons.memory_outlined,
           text: s.lm1215Unavailable,
         ),
       );
     } else if (status == null) {
       children.addAll([
         _Message(
-          icon: Icons.cloud_off_rounded,
+          icon: HIcons.cloud_off_rounded,
           text: s.lm1215LoadFailed,
           detail: _error,
         ),
@@ -479,7 +480,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
         ScreenHelpButton(title: s.lm1215Title, paragraphs: [s.lm1215Intro]),
         IconButton(
           tooltip: s.lm1215Refresh,
-          icon: const Icon(Icons.refresh_rounded),
+          icon: const Icon(HIcons.refresh_rounded),
           onPressed: _loading ? null : _load,
         ),
       ],
@@ -508,7 +509,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
         HermesListGroup(
           children: [
             HermesListRow(
-              icon: Icons.inventory_2_outlined,
+              icon: HIcons.inventory_2_outlined,
               title: s.lm1215InstalledEmpty,
               muted: true,
               showChevron: false,
@@ -527,7 +528,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
         children: [
           HermesListRow(
             key: const ValueKey('lm1215-search-entry'),
-            icon: Icons.travel_explore_rounded,
+            icon: HIcons.travel_explore_rounded,
             title: s.lm1215SearchTitle,
             subtitle: s.lm1215SearchSubtitle,
             onTap: _openSearch,
@@ -550,7 +551,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
   ) {
     if (!status.runtimeInstalled) {
       return HermesListRow(
-        icon: Icons.download_for_offline_outlined,
+        icon: HIcons.download_for_offline_outlined,
         title: s.lm1215RuntimeMissing,
         showChevron: false,
         trailing: _SmallButton(
@@ -563,7 +564,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
     }
     final backend = status.runtimeBackend ?? '';
     return HermesListRow(
-      icon: Icons.memory_rounded,
+      icon: HIcons.memory_rounded,
       iconColor: status.serverRunning ? colors.success : null,
       title: status.serverRunning ? s.lm1215ServerOn : s.lm1215ServerOff,
       subtitle: s.lm1215RuntimeReady(status.tag, backend),
@@ -634,7 +635,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
             IconButton(
               key: ValueKey('lm1215-job-pause-${job.jobId}'),
               tooltip: s.lm1215Pause,
-              icon: const Icon(Icons.pause_rounded),
+              icon: const Icon(HIcons.pause_rounded),
               onPressed: _busy.contains('pause:${job.jobId}')
                   ? null
                   : () => _pause(job),
@@ -643,7 +644,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
             IconButton(
               key: ValueKey('lm1215-job-resume-${job.jobId}'),
               tooltip: s.lm1215Resume,
-              icon: const Icon(Icons.play_arrow_rounded),
+              icon: const Icon(HIcons.play_arrow_rounded),
               onPressed: _busy.contains('resume:${job.jobId}')
                   ? null
                   : () => _resume(job),
@@ -713,7 +714,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
             IconButton(
               key: ValueKey('lm1215-model-menu-${model.id}'),
               tooltip: s.lm1215MoreActions,
-              icon: Icon(Icons.more_vert_rounded, key: anchor),
+              icon: Icon(HIcons.more_vert_rounded, key: anchor),
               onPressed: () => _openMenu(model, anchor),
             ),
         ],
@@ -758,8 +759,8 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
     return HermesListRow(
       key: ValueKey('lm1215-catalog-row-${model.id}'),
       icon: model.recommended
-          ? Icons.auto_awesome_rounded
-          : Icons.cloud_download_outlined,
+          ? HIcons.auto_awesome_rounded
+          : HIcons.cloud_download_outlined,
       iconColor: model.recommended ? colors.accent : null,
       title: model.displayName,
       subtitle: [meta, summary].where((e) => e.isNotEmpty).join('\n'),
@@ -863,7 +864,7 @@ class _LocalModelsSearchScreenState extends State<LocalModelsSearchScreen> {
             label: group.label,
             subtitle:
                 '${formatLocalBytes(group.totalBytes)} · ${_fitLabel(s, group.fit)}',
-            icon: Icons.download_rounded,
+            icon: HIcons.download_rounded,
             enabled: group.fit != 'too-big' && group.paths.isNotEmpty,
           ),
       ],
@@ -923,7 +924,7 @@ class _LocalModelsSearchScreenState extends State<LocalModelsSearchScreen> {
           onSubmitted: (_) => _search(),
           decoration: InputDecoration(
             hintText: s.lm1215SearchHint,
-            prefixIcon: const Icon(Icons.search_rounded),
+            prefixIcon: const Icon(HIcons.search_rounded),
             suffixIcon: _searching
                 ? const Padding(
                     padding: EdgeInsets.all(14),
@@ -934,7 +935,7 @@ class _LocalModelsSearchScreenState extends State<LocalModelsSearchScreen> {
                   )
                 : IconButton(
                     key: const ValueKey('lm1215-search-go'),
-                    icon: const Icon(Icons.arrow_forward_rounded),
+                    icon: const Icon(HIcons.arrow_forward_rounded),
                     tooltip: s.designSearch,
                     onPressed: _search,
                   ),
@@ -952,9 +953,9 @@ class _LocalModelsSearchScreenState extends State<LocalModelsSearchScreen> {
           ),
         ),
         if (_error != null)
-          _Message(icon: Icons.cloud_off_rounded, text: _error!)
+          _Message(icon: HIcons.cloud_off_rounded, text: _error!)
         else if (hits != null && hits.isEmpty)
-          _Message(icon: Icons.search_off_rounded, text: s.lm1215SearchEmpty)
+          _Message(icon: HIcons.search_off_rounded, text: s.lm1215SearchEmpty)
         else if (hits != null) ...[
           const SizedBox(height: 12),
           HermesListGroup(
@@ -962,7 +963,7 @@ class _LocalModelsSearchScreenState extends State<LocalModelsSearchScreen> {
               for (final hit in hits)
                 HermesListRow(
                   key: ValueKey('lm1215-hit-${hit.repo}'),
-                  icon: Icons.inventory_2_outlined,
+                  icon: HIcons.inventory_2_outlined,
                   title: hit.repo,
                   subtitle: hit.gated
                       ? s.lm1215SearchGated

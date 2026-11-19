@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -55,7 +56,7 @@ class _SessionRowStopControlState extends State<SessionRowStopControl> {
                         ),
                       )
                     : Icon(
-                        Icons.stop_rounded,
+                        HIcons.stop_rounded,
                         size: 18,
                         color: colors.textPrimary,
                       ),

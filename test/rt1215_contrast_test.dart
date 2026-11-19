@@ -191,7 +191,11 @@ void main() {
           if (span is! TextSpan) return;
           final style = inherited.merge(span.style);
           final text = span.text ?? '';
-          final isIcon = (style.fontFamily ?? '').contains('MaterialIcons');
+          // Glyphs of an icon font are drawn text-like but are not read as text.
+          final family = style.fontFamily ?? '';
+          final isIcon =
+              family.contains('MaterialIcons') ||
+              family.contains('HermesSymbols');
           if (text.trim().isNotEmpty && !isIcon && style.color != null) {
             final ink = ThemeContrast.composite(style.color!, c.background);
             checked++;

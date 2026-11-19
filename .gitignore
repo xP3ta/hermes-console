@@ -73,15 +73,11 @@ GoogleService-Info.plist
 
 # Salida de goldens fallidos y caché de herramientas (no versionar)
 test/failures/
-.understand-anything/
 releases/
 /artifacts/
 
 # Local tool state and handoff material; never public source.
-/.claude/
-/.serena/
 /.rollback-snapshots/
-/docs/agent-handoffs/
 
 # Local worktrees and plans; never public source. Listed so a stray
 # `git add -A` cannot publish them.

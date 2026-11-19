@@ -7,6 +7,7 @@
 // catalog: a key that is set is listed and removable whatever the catalog
 // says about its provider.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -108,7 +109,7 @@ class ModelsApiKeysSection extends StatelessWidget {
                   title: group.name,
                   subtitle: s.commonConnected,
                   trailing: Icon(
-                    Icons.chevron_right,
+                    HIcons.chevron_right,
                     size: 18,
                     color: colors.textDisabled,
                   ),
@@ -206,7 +207,7 @@ class _ProviderKeyScreenState extends State<ProviderKeyScreen> {
       appBar: HermesAppBar(
         title: Text(widget.providerName),
         leading: IconButton(
-          icon: const Icon(Icons.close),
+          icon: const Icon(HIcons.close),
           tooltip: s.commonClose,
           onPressed: _saving
               ? null

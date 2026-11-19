@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -24,6 +25,8 @@ import 'core/widgets/mission_profile_avatar.dart';
 import 'core/widgets/profile_face.dart';
 import 'core/models/profile_identity.dart';
 import 'core/characters/bot_character_store.dart';
+import 'core/characters/character_sync.dart';
+import 'core/services/bot_roster_store.dart';
 import 'core/characters/bot_motion.dart';
 import 'core/characters/character_library.dart';
 import 'core/services/release_log.dart';
@@ -161,6 +164,7 @@ import 'core/services/notifications/ui_notification_actions.dart';
 import 'l10n/app_localizations.dart';
 import 'core/feedback/feedback_policy.dart';
 import 'core/feedback/haptics.dart';
+import 'core/services/drawer_swipe_prefs.dart';
 
 /// Observador global de rutas. Lo usa [ChatScreen] (vía RouteAware) para saber
 /// cuándo su pantalla es la visible en pila y fijar/limpiar
@@ -342,7 +346,9 @@ Future<Widget> bootstrapHermesApp() async {
   await HermesStylePrefs.load(prefs);
   await BotMotionPrefs.load(prefs);
   await HapticPrefs.load(prefs);
+  await DrawerSwipePrefs.load(prefs);
   await BotCharacterStore.load(prefs);
+  CharacterSync.shared.attach(BotRosterRegistry.shared.connectionOf);
   await BotCharacterLibrary.load(prefs);
   await clearRetiredPrefs(prefs);
   // desktop_preview read/act are answered by the in-app browser (consent
@@ -2128,14 +2134,14 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final colors = Theme.of(ctx).hermes;
     final (IconData icon, Color tint) = switch (notice.kind) {
       NotificationKind.approval => (
-        Icons.verified_user_outlined,
+        HIcons.verified_user_outlined,
         colors.warning,
       ),
-      NotificationKind.reply => (Icons.check_circle_outline, colors.success),
-      NotificationKind.run => (Icons.task_alt, colors.accent),
-      NotificationKind.localAgent => (Icons.devices_outlined, colors.accent),
-      NotificationKind.goal => (Icons.flag_outlined, colors.warning),
-      _ => (Icons.notifications_none, colors.accent),
+      NotificationKind.reply => (HIcons.check_circle_outline, colors.success),
+      NotificationKind.run => (HIcons.task_alt, colors.accent),
+      NotificationKind.localAgent => (HIcons.devices_outlined, colors.accent),
+      NotificationKind.goal => (HIcons.flag_outlined, colors.warning),
+      _ => (HIcons.notifications_none, colors.accent),
     };
     void open() {
       unawaited(() async {
@@ -3541,7 +3547,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                 // el nivel, sin reiniciar la app. Envuelve también el AppLockGate
                 // para que la pantalla de bloqueo respete el tamaño elegido.
                 listenable: widget.fontSize,
-                builder: (context, _) => MediaQuery(
+                // «Abrir el menú deslizando»: the screens with the menu read it
+                // through this scope, so a change in Settings reaches them at
+                // once, covered routes included.
+                builder: (context, _) => DrawerSwipeScope(
+                  notifier: DrawerSwipePrefs.shared,
+                  child: MediaQuery(
                   data: MediaQuery.of(context).copyWith(
                     // Composición, no reemplazo: si el usuario activó texto
                     // grande en Ajustes del sistema (accesibilidad), esa
@@ -3549,9 +3560,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                     // tamaño interno de la app. Multiplicar el factor del
                     // sistema por el nuestro respeta ambos ajustes a la vez
                     // (auditoría 2026-07-02, hallazgo C5b).
-                    textScaler: TextScaler.linear(
-                      MediaQuery.of(context).textScaler.scale(1.0) *
-                          widget.fontSize.scale,
+                    textScaler: composeAppTextScaler(
+                      MediaQuery.of(context).textScaler,
+                      widget.fontSize.scale,
                     ),
                   ),
                   child: WithForegroundTask(
@@ -3606,6 +3617,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
+                ),
                 ),
               ),
               home: _showOnboarding

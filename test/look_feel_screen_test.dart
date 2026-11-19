@@ -13,6 +13,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/look_feel.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _tall = Size(400, 2600);
 
@@ -116,7 +117,7 @@ Brightness _brightness(WidgetTester tester) =>
 
 Finder _check(Key owner) => find.descendant(
   of: find.byKey(owner),
-  matching: find.byIcon(Icons.check_rounded),
+  matching: find.byIcon(HIcons.check_rounded),
 );
 
 const _accentIds = [
@@ -582,11 +583,14 @@ void main() {
       testWidgets('${locale.languageCode}: 200 % text, list in force', (
         tester,
       ) async {
+        // 6400: the whole list must be laid out to reach its last row; the
+        // «Abrir el menú deslizando» switch (1.4.1) made it longer than 5200
+        // at 200 % in de/fr/it.
         await _pump(
           tester,
           locale: locale,
           textScale: 2,
-          size: const Size(360, 5200),
+          size: const Size(360, 6400),
         );
         expect(tester.takeException(), isNull);
         expect(find.byKey(const ValueKey('lfl-list-banner')), findsOneWidget);

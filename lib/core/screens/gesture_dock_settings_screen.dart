@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -59,7 +60,7 @@ class GestureDockSettingsScreen extends StatelessWidget {
               children: [
                 HermesNavRow(
                   key: const ValueKey('gesture-dock-edit'),
-                  icon: Icons.edit_outlined,
+                  icon: HIcons.edit_outlined,
                   title: strings.gdEditDock,
                   subtitle: strings.gdEditHint,
                   onTap: () =>

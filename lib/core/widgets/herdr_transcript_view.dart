@@ -4,6 +4,7 @@
 // steps ›») with their state. A question waiting for an answer shows as a
 // question with its options. It grows from the bottom like a chat: it stays on
 // the latest message unless the reader scrolled up.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -274,8 +275,8 @@ class _Fold extends StatelessWidget {
                   ),
                   Icon(
                     open
-                        ? Icons.expand_more_rounded
-                        : Icons.chevron_right_rounded,
+                        ? HIcons.expand_more_rounded
+                        : HIcons.chevron_right_rounded,
                     size: HermesIcon.md,
                     color: colors.textSecondary,
                   ),

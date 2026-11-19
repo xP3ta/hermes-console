@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 
@@ -214,13 +215,14 @@ class RunningWork extends StatelessWidget {
         _process(s, process, now, staleWork),
       if (showSubagents)
         for (final activity in value.subagents)
-          if (!activity.isTerminal)
+          if (!activity.isTerminal &&
+              !value.subagentsAbsentConfirmed.contains(activity.key))
             _subagent(s, colors, activity, now, staleAgents),
       // Subagents known only by their number.
       if (showSubagents && value.subagents.isEmpty && value.hasSubagents)
         _RunningRow(
           key: const ValueKey('running-subagents-count'),
-          icon: Icons.smart_toy_outlined,
+          icon: HIcons.smart_toy_outlined,
           kind: s.runKindSubagent,
           live: !value.subagentsStale,
           title: value.subagentsStale
@@ -304,7 +306,7 @@ class RunningWork extends StatelessWidget {
     return _RunningRow(
       key: ValueKey('running-process-${process.id}'),
       // The icon the transcript gives a command that runs.
-      icon: Icons.terminal_rounded,
+      icon: HIcons.terminal_rounded,
       kind: s.runKindProcess,
       live: true,
       title: command.isEmpty ? s.chaBackgroundProcessRunning : command,
@@ -345,7 +347,7 @@ class RunningWork extends StatelessWidget {
     return _RunningRow(
       key: ValueKey('running-subagent-${activity.key.stableId}'),
       // The app's icon for an agent (the Bots tab, Mission Control).
-      icon: Icons.smart_toy_outlined,
+      icon: HIcons.smart_toy_outlined,
       kind: s.runKindSubagent,
       live: !ended,
       muted: ended,
@@ -397,7 +399,7 @@ class RunningWork extends StatelessWidget {
     return _RunningRow(
       key: ValueKey('running-${isLoop ? 'loop' : 'heartbeat'}-$index'),
       // The clock of everything scheduled (Cron, the drawer, the dock).
-      icon: Icons.schedule_rounded,
+      icon: HIcons.schedule_rounded,
       kind: name,
       title: name,
       meta: [
@@ -425,7 +427,7 @@ class RunningWork extends StatelessWidget {
     return _RunningRow(
       key: const ValueKey('running-goal'),
       // The flag of the goal's notices.
-      icon: Icons.flag_outlined,
+      icon: HIcons.flag_outlined,
       kind: s.runKindGoal,
       title: goal.title.trim().isEmpty ? s.chaGoalSheetTitle : goal.title,
       meta: '${s.runKindGoal} · ${_statusWord(s, goal.status).toLowerCase()}',

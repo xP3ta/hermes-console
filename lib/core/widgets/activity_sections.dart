@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -109,7 +110,7 @@ class _TaskStatusIconState extends State<_TaskStatusIcon>
         key: const ValueKey('activity-task-check-pop'),
         scale: _scale,
         child: Icon(
-          Icons.check_circle_rounded,
+          HIcons.check_circle_rounded,
           key: const ValueKey('activity-task-icon-completed'),
           size: size,
           color: colors.success,
@@ -118,7 +119,7 @@ class _TaskStatusIconState extends State<_TaskStatusIcon>
       AgentTaskStatus.inProgress =>
         reduceMotion
             ? Icon(
-                Icons.play_circle_outline_rounded,
+                HIcons.play_circle_outline_rounded,
                 key: const ValueKey('activity-task-icon-in-progress'),
                 size: size,
                 color: colors.accent,
@@ -133,13 +134,13 @@ class _TaskStatusIconState extends State<_TaskStatusIcon>
                 ),
               ),
       AgentTaskStatus.pending => Icon(
-        Icons.radio_button_unchecked_rounded,
+        HIcons.radio_button_unchecked_rounded,
         key: const ValueKey('activity-task-icon-pending'),
         size: size,
         color: colors.textSecondary,
       ),
       AgentTaskStatus.cancelled => Icon(
-        Icons.block_rounded,
+        HIcons.block_rounded,
         key: const ValueKey('activity-task-icon-cancelled'),
         size: size,
         color: colors.textSecondary,
@@ -271,7 +272,7 @@ class _DoneFoldRow extends StatelessWidget {
               SizedBox(
                 width: iconSize + 2,
                 child: Icon(
-                  Icons.check_circle_rounded,
+                  HIcons.check_circle_rounded,
                   size: iconSize,
                   color: colors.success.withValues(alpha: 0.7),
                 ),
@@ -291,8 +292,8 @@ class _DoneFoldRow extends StatelessWidget {
               ),
               Icon(
                 folded
-                    ? Icons.keyboard_arrow_down_rounded
-                    : Icons.keyboard_arrow_up_rounded,
+                    ? HIcons.keyboard_arrow_down_rounded
+                    : HIcons.keyboard_arrow_up_rounded,
                 size: 18,
                 color: muted,
               ),
@@ -468,20 +469,20 @@ class ActivityStepRow extends StatelessWidget {
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final Widget icon = switch (step.status) {
       ActivityStepStatus.done => Icon(
-        Icons.check_rounded,
+        HIcons.check_rounded,
         size: 15,
         color: muted
             ? colors.textSecondary.withValues(alpha: 0.7)
             : colors.success.withValues(alpha: 0.9),
       ),
       ActivityStepStatus.failed => Icon(
-        Icons.close_rounded,
+        HIcons.close_rounded,
         size: 15,
         color: colors.error,
       ),
       ActivityStepStatus.running =>
         reduceMotion
-            ? Icon(Icons.more_horiz_rounded, size: 15, color: colors.accent)
+            ? Icon(HIcons.more_horiz_rounded, size: 15, color: colors.accent)
             : SizedBox(
                 width: 13,
                 height: 13,

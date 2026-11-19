@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import '../../l10n/app_localizations.dart';
 import '../services/bot_profile_client.dart';
@@ -945,6 +946,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                                       builder: (_) => BotProfileSettingsScreen(
                                         profile: _profileName,
                                         gateway: model as BotProfileGateway,
+                                        connection: widget.connection,
                                       ),
                                     ),
                                   ),
@@ -1250,7 +1252,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     final slug = _selectedSlug;
     if (slug == null) {
       return Icon(
-        Icons.pets_outlined,
+        HIcons.pets_outlined,
         size: size * 0.45,
         color: Theme.of(context).hermes.textDisabled,
       );
@@ -1299,7 +1301,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
         final avatar = _decodeAvatar(snapshot.data);
         if (avatar == null) {
           return Icon(
-            Icons.pets_outlined,
+            HIcons.pets_outlined,
             size: 42,
             color: Theme.of(context).hermes.textDisabled,
           );
@@ -1329,7 +1331,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
         final avatar = snapshot.data;
         if (avatar != null) return _avatarImage(avatar, size);
         return Icon(
-          Icons.add_photo_alternate_outlined,
+          HIcons.add_photo_alternate_outlined,
           size: 42,
           color: Theme.of(context).hermes.textDisabled,
         );
@@ -1382,7 +1384,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       OutlinedButton.icon(
         key: const ValueKey('profile-editor-pick-image'),
         onPressed: _pickingImage || _saving ? null : _pickImage,
-        icon: Icon(_pickingImage ? Icons.hourglass_top : Icons.photo_library),
+        icon: Icon(_pickingImage ? HIcons.hourglass_top : HIcons.photo_library),
         label: Text(
           _pickedAvatar == null && _remoteAvatar == null
               ? _strings.i18n131ProfileChooseImage
@@ -1481,7 +1483,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                   onChanged: (value) => setState(() => _query = value),
                   decoration: InputDecoration(
                     hintText: copy.botSpriteSearchHint,
-                    prefixIcon: const Icon(Icons.search, size: 20),
+                    prefixIcon: const Icon(HIcons.search, size: 20),
                     isDense: true,
                     filled: true,
                     fillColor: colors.surfaceVariant.withValues(alpha: 0.3),
@@ -1628,7 +1630,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                   final avatar = _decodeAvatar(snapshot.data);
                   if (avatar == null) {
                     return Icon(
-                      Icons.pets,
+                      HIcons.pets,
                       size: 22,
                       color: colors.textDisabled,
                     );
@@ -1726,7 +1728,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                 HermesPrimaryButton(
                   key: const ValueKey('profile-editor-save'),
                   label: _saving ? _strings.i18n131ProfileSaving : copy.save,
-                  icon: _saving ? Icons.sync : Icons.check,
+                  icon: _saving ? HIcons.sync : HIcons.check,
                   onTap: !_canEdit || !_dirty ? null : _save,
                 ),
               ],

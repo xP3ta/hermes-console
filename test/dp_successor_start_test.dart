@@ -17,6 +17,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
@@ -314,6 +315,197 @@ void main() {
     await _settle();
 
     expect(chat.isStreaming, isFalse);
+  });
+
+  // Hermes stamps a `turn_id` on `message.start` (tui_gateway/
+  // stream_segments.py:28-34). Desktop ignores a start that names the turn
+  // the session already has (message-stream.ts:146-153, #144609).
+  test('a re-sent start of the turn that already ended is ignored, with no '
+      'snapshot read', () async {
+    final gateway = _LiveTransportGateway();
+    final chat = _chat(gateway);
+    expect(
+      await chat.send(
+        fullText: 'Lanza el ensayo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    gateway.emit('message.start', payload: const {'turn_id': 'turn-a'});
+    gateway.emit(
+      'message.complete',
+      payload: const {'text': 'El ensayo ya está en marcha.'},
+    );
+    await _waitUntil(() => !chat.isStreaming);
+    final revision = chat.turnRevision;
+
+    gateway.renewSocket();
+    gateway.emit(
+      'message.start',
+      payload: const {'turn_id': 'turn-a'},
+      replayed: true,
+    );
+    await _settle();
+
+    expect(chat.isStreaming, isFalse);
+    expect(chat.turnRevision, revision);
+    expect(gateway.recoveryReads, 0);
+  });
+
+  test('a re-sent start of the running turn does not re-arm it', () async {
+    SharedPreferences.setMockInitialValues(const {});
+    final gateway = _LiveTransportGateway();
+    final chat = _chat(gateway);
+    expect(
+      await chat.send(
+        fullText: 'Lanza el ensayo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    gateway.emit('message.start', payload: const {'turn_id': 'turn-a'});
+    gateway.emit('message.delta', payload: const {'text': 'Voy'});
+    await _waitUntil(() => chat.state == ChatPipelineState.streaming);
+
+    gateway.emit('message.start', payload: const {'turn_id': 'turn-a'});
+    await _settle();
+
+    expect(chat.state, ChatPipelineState.streaming);
+
+    // A start that names another turn is a new occurrence and arms as before.
+    gateway.emit('message.start', payload: const {'turn_id': 'turn-b'});
+    await _settle();
+    expect(chat.state, ChatPipelineState.waiting);
+  });
+
+  group('a start stamped with another turn_id', () {
+    // message-stream.ts:143-222: Desktop arms on every start that does not
+    // name the turn it has, unless the user stopped it.
+    Future<ActiveChat> afterStampedTurn(_LiveTransportGateway gateway) async {
+      final chat = _chat(gateway);
+      expect(
+        await chat.send(
+          fullText: 'Lanza el ensayo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start', payload: const {'turn_id': 'turn-a'});
+      gateway.emit(
+        'message.complete',
+        payload: const {'text': 'El ensayo ya está en marcha.'},
+      );
+      await _waitUntil(() => !chat.isStreaming);
+      return chat;
+    }
+
+    test('live on the renewed socket it opens at once though the replay '
+        'epoch rotated, with no snapshot read', () async {
+      final gateway = _LiveTransportGateway();
+      final chat = await afterStampedTurn(gateway);
+      final revision = chat.turnRevision;
+
+      gateway.renewSocket();
+      gateway.epoch = 'epoch-2';
+      gateway.sequence = 0;
+      gateway.emit('message.start', payload: const {'turn_id': 'turn-b'});
+      await _settle();
+
+      expect(chat.isStreaming, isTrue);
+      expect(chat.turnRevision, greaterThan(revision));
+      expect(gateway.recoveryReads, 0);
+
+      gateway.emit(
+        'message.complete',
+        payload: const {'text': 'Los subagentes terminaron.'},
+      );
+      await _waitUntil(() => !chat.isStreaming);
+      expect(
+        chat.messages.where(
+          (m) => m['content'] == 'Los subagentes terminaron.',
+        ),
+        hasLength(1),
+      );
+      expect(
+        chat.messages.where(
+          (m) => m['content'] == 'El ensayo ya está en marcha.',
+        ),
+        hasLength(1),
+      );
+    });
+
+    test('replayed it stays closed (the probe decides)', () async {
+      final gateway = _LiveTransportGateway();
+      final chat = await afterStampedTurn(gateway);
+
+      gateway.renewSocket();
+      gateway.emit(
+        'message.start',
+        payload: const {'turn_id': 'turn-b'},
+        replayed: true,
+      );
+      await _settle();
+
+      expect(chat.isStreaming, isFalse);
+      expect(gateway.recoveryReads, 1);
+    });
+
+    test('from a socket the gateway no longer holds it stays closed',
+        () async {
+      final gateway = _LiveTransportGateway();
+      final chat = await afterStampedTurn(gateway);
+
+      gateway.renewSocket();
+      gateway.emit(
+        'message.start',
+        payload: const {'turn_id': 'turn-b'},
+        generationOverride: gateway.generation - 1,
+      );
+      await _settle();
+
+      expect(chat.isStreaming, isFalse);
+    });
+
+    test('after Stop it does not reopen the stopped chat', () async {
+      final gateway = _LiveTransportGateway();
+      final chat = await afterStampedTurn(gateway);
+      expect(
+        await chat.send(
+          fullText: 'Otro turno',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start', payload: const {'turn_id': 'turn-b'});
+      await _waitUntil(() => chat.isStreaming);
+      await chat.cancel();
+      await _waitUntil(() => !chat.isStreaming);
+      expect(chat.state, ChatPipelineState.cancelled);
+
+      gateway.renewSocket();
+      gateway.epoch = 'epoch-2';
+      gateway.emit('message.start', payload: const {'turn_id': 'turn-c'});
+      await _settle();
+
+      expect(chat.isStreaming, isFalse);
+    });
+
+    test('while the earlier turn carried no turn_id the rotated epoch still '
+        'keeps it closed', () async {
+      final gateway = _LiveTransportGateway();
+      final chat = await _afterAnsweredTurn(gateway);
+
+      gateway.renewSocket();
+      gateway.epoch = 'epoch-2';
+      gateway.emit('message.start', payload: const {'turn_id': 'turn-b'});
+      await _settle();
+
+      expect(chat.isStreaming, isFalse);
+    });
   });
 
   test('a start on the same socket as the terminal still opens (fence)',

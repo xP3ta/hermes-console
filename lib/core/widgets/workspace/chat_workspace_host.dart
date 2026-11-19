@@ -16,6 +16,7 @@
 // Navegador, con su contador; deslizar sobre él pasa al vecino; «Chat»
 // pliega el panel) y una pastilla de acciones (teclas, Herdr, ampliar, ⋯).
 // Ya no hay pestañas con «+» y «×» ni barra flotante sobre el contenido.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show ValueListenable, listEquals, visibleForTesting;
@@ -1132,7 +1133,7 @@ class _ChatRail extends StatelessWidget {
         child: IconButton(
           key: const ValueKey('chat-workspace-show-chat'),
           tooltip: Strings.of(context).cwsShowChat,
-          icon: Icon(Icons.chat_bubble_outline, color: colors.textSecondary),
+          icon: Icon(HIcons.chat_bubble_outline, color: colors.textSecondary),
           onPressed: onShowChat,
         ),
       ),
@@ -1179,7 +1180,7 @@ class _PaneRail extends StatelessWidget {
             tooltip: label,
             icon: Icon(
               tab == null
-                  ? Icons.vertical_split_outlined
+                  ? HIcons.vertical_split_outlined
                   : chatWorkspaceTabIcon(tab),
               color: colors.textSecondary,
             ),
@@ -1386,13 +1387,13 @@ class _WorkspaceTabBackState extends State<_WorkspaceTabBack> {
 }
 
 IconData chatWorkspaceTabIcon(ChatWorkspaceTab tab) => switch (tab) {
-  ChatWorkspaceTab.terminal => Icons.terminal_rounded,
-  ChatWorkspaceTab.files => Icons.folder_open_outlined,
+  ChatWorkspaceTab.terminal => HIcons.terminal_rounded,
+  ChatWorkspaceTab.files => HIcons.folder_open_outlined,
   // Same glyphs as the notch sheet's Git and Navegador.
-  ChatWorkspaceTab.git => Icons.call_split_rounded,
-  ChatWorkspaceTab.browser => Icons.language_rounded,
+  ChatWorkspaceTab.git => HIcons.call_split_rounded,
+  ChatWorkspaceTab.browser => HIcons.language_rounded,
   // The agents of Herdr on the server.
-  ChatWorkspaceTab.agents => Icons.smart_toy_outlined,
+  ChatWorkspaceTab.agents => HIcons.smart_toy_outlined,
 };
 
 String chatWorkspaceTabLabel(Strings strings, ChatWorkspaceTab tab) =>
@@ -1950,7 +1951,7 @@ class _Segment extends StatelessWidget {
     final tab = this.tab;
     final label = labelOf(strings, tab);
     final icon = tab == null
-        ? Icons.chat_bubble_outline
+        ? HIcons.chat_bubble_outline
         : chatWorkspaceTabIcon(tab);
     final foreground = active ? colors.accent : colors.textSecondary;
     final count = badge;
@@ -2154,7 +2155,7 @@ class _PaneActions extends StatelessWidget {
             if (tools.onToggleKeys case final toggle?)
               button(
                 key: const ValueKey('chat-workspace-keys'),
-                icon: Icons.keyboard_outlined,
+                icon: HIcons.keyboard_outlined,
                 tooltip: strings.cwsTerminalKeys,
                 selected: tools.keysShown,
                 onPressed: toggle,
@@ -2162,7 +2163,7 @@ class _PaneActions extends StatelessWidget {
             if (tools.onHerdr case final openHerdr?)
               button(
                 key: const ValueKey('chat-workspace-herdr'),
-                icon: Icons.tag,
+                icon: HIcons.tag,
                 tooltip: herdrAttention > 0
                     ? strings.herdrNeedsYouCount(herdrAttention)
                     : strings.herdrPanelTooltip,
@@ -2181,7 +2182,7 @@ class _PaneActions extends StatelessWidget {
               ),
             button(
               key: const ValueKey('chat-workspace-expand'),
-              icon: expanded ? Icons.close_fullscreen : Icons.open_in_full,
+              icon: expanded ? HIcons.close_fullscreen : HIcons.open_in_full,
               tooltip: expanded
                   ? strings.cwsRestoreSplit
                   : strings.cwsExpandWorkspace,
@@ -2193,7 +2194,7 @@ class _PaneActions extends StatelessWidget {
               Builder(
                 builder: (buttonContext) => button(
                   key: const ValueKey('chat-workspace-views-button'),
-                  icon: Icons.view_column_outlined,
+                  icon: HIcons.view_column_outlined,
                   tooltip: chatWorkspaceViewsLabel(strings, controller),
                   onPressed: () => showChatWorkspaceViews(
                     buttonContext,
@@ -2205,7 +2206,7 @@ class _PaneActions extends StatelessWidget {
             HermesMenuButton<Object>(
               key: const ValueKey('chat-workspace-layout-menu'),
               tooltip: strings.cwsMore,
-              icon: Icon(Icons.more_horiz, size: 20, color: ink),
+              icon: Icon(HIcons.more_horiz, size: 20, color: ink),
               onSelected: (choice) {
                 if (choice is ChatWorkspaceMode) {
                   controller.setMode(choice);
@@ -2220,17 +2221,17 @@ class _PaneActions extends StatelessWidget {
                 for (final (mode, icon, label) in [
                   (
                     ChatWorkspaceMode.chat,
-                    Icons.view_sidebar_outlined,
+                    HIcons.view_sidebar_outlined,
                     strings.cwsLayoutChat,
                   ),
                   (
                     ChatWorkspaceMode.split,
-                    Icons.vertical_split_outlined,
+                    HIcons.vertical_split_outlined,
                     strings.cwsLayoutSplit,
                   ),
                   (
                     ChatWorkspaceMode.workspace,
-                    Icons.web_asset_outlined,
+                    HIcons.web_asset_outlined,
                     strings.cwsLayoutWorkspace,
                   ),
                 ])
@@ -2248,7 +2249,7 @@ class _PaneActions extends StatelessWidget {
                     key: const ValueKey('chat-workspace-close-tab'),
                     value: active,
                     label: strings.cwsCloseTab,
-                    icon: Icons.close,
+                    icon: HIcons.close,
                     divided: true,
                   ),
                 for (final (i, entry) in tools.menu.indexed)
@@ -2294,7 +2295,7 @@ class _ToolsHandle extends StatelessWidget {
           child: SizedBox.square(
             dimension: ChatWorkspaceTokens.target,
             child: Icon(
-              Icons.more_horiz,
+              HIcons.more_horiz,
               size: 18,
               color: colors.textSecondary,
             ),

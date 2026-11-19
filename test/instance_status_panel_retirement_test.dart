@@ -9,6 +9,7 @@ import 'package:hermes_android/core/widgets/instance_status_panel.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   test('Bridge HTTP detector catches the real client health request', () async {
@@ -42,7 +43,7 @@ void main() {
       expect(find.text('Repair bridge'), findsNothing);
       expect(find.text('Installing and restarting…'), findsNothing);
       expect(find.text('Open safe setup'), findsNothing);
-      await tester.tap(find.byIcon(Icons.refresh));
+      await tester.tap(find.byIcon(HIcons.refresh));
       await tester.pumpAndSettle();
       expect(requests.where((path) => path.contains('bridge')), isEmpty);
       expect(requests.where((path) => path.contains('repair')), isEmpty);
@@ -102,7 +103,7 @@ void main() {
               findsOneWidget,
             );
             if (pass == 0) {
-              await tester.tap(find.byIcon(Icons.refresh));
+              await tester.tap(find.byIcon(HIcons.refresh));
               await tester.pumpAndSettle();
             }
           }

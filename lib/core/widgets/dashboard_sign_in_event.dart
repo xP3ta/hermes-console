@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -30,7 +31,7 @@ IslandEvent dashboardSignInEvent({
   id: 'dashboard-sign-in',
   key: const ValueKey('chat-dashboard-auth-required'),
   tone: IslandTone.warning,
-  icon: Icons.lock_outline_rounded,
+  icon: HIcons.lock_outline_rounded,
   sticky: true,
   line: browserSession ? str.s2SessionExpiredLine : str.islandSignIn,
   more: browserSession

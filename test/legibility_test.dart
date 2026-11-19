@@ -20,6 +20,7 @@ import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/legibility_probe.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _host(
   ThemeData theme,
@@ -346,7 +347,7 @@ void main() {
                 onChanged: (_) {},
               ),
               HermesNavRow(
-                icon: Icons.settings,
+                icon: HIcons.settings,
                 title: 'Nav title',
                 subtitle: 'Nav subtitle',
                 value: 'Value',
@@ -400,7 +401,7 @@ void main() {
                   title: 'A long section title that has to wrap somewhere',
                   children: [
                     HermesNavRow(
-                      icon: Icons.settings,
+                      icon: HIcons.settings,
                       title: 'A navigation row with a long title',
                       subtitle: 'And a subtitle that runs to a second line',
                       value: 'Value',

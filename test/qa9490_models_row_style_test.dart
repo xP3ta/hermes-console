@@ -12,6 +12,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/fake_local_models_server.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // QA 9490: in Models, the collapsible rows "Modelos por función" and
 // "Proveedores sin configurar" used their own text style instead of the
@@ -153,8 +154,8 @@ void main() {
         .dx;
 
     for (final (title, icon) in [
-      ('Modelos por función', Icons.tune),
-      ('Proveedores sin configurar', Icons.lock_outline),
+      ('Modelos por función', HIcons.tune),
+      ('Proveedores sin configurar', HIcons.lock_outline),
     ]) {
       expect(
         tester.getTopLeft(find.text(title)).dx,

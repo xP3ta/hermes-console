@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:collection';
 import 'dart:math' as math;
 
@@ -124,7 +125,7 @@ class _FoldRow extends StatelessWidget {
                         ? Duration.zero
                         : const Duration(milliseconds: 150),
                     child: Icon(
-                      Icons.expand_more,
+                      HIcons.expand_more,
                       size: 16,
                       color: colors.textDisabled,
                     ),
@@ -203,7 +204,7 @@ class _FileDiffCardState extends State<FileDiffCard> {
         children: [
           _FoldRow(
             rowKey: ValueKey('file-diff-row-${file.path}'),
-            icon: Icons.difference_outlined,
+            icon: HIcons.difference_outlined,
             label: diffSummaryText(file.stats, name),
             labelSpan: TextSpan(
               children: [
@@ -523,7 +524,7 @@ class _TerminalOutputCardState extends State<TerminalOutputCard> {
         children: [
           _FoldRow(
             rowKey: const ValueKey('terminal-output-row'),
-            icon: Icons.terminal_rounded,
+            icon: HIcons.terminal_rounded,
             label: label,
             expanded: _expanded,
             semanticsLabel: failed ? '$label, ${s.cevExitFailed(exit)}' : label,

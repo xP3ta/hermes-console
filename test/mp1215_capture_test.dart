@@ -16,6 +16,7 @@ import 'package:hermes_android/core/widgets/message_avatar_header.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _shotKey = ValueKey('mp1215-shot');
 const _ok = {'success': true, 'done': true, 'entry_count': 5};
@@ -48,7 +49,7 @@ Widget _block(List<ChatTraceEvent> events, String answer) => Builder(
               name: 'Hermes',
               subtitle: summary,
               actions: [
-                for (final icon in [Icons.copy_rounded, Icons.refresh_rounded])
+                for (final icon in [HIcons.copy_rounded, HIcons.refresh_rounded])
                   SizedBox.square(dimension: 48, child: Icon(icon, size: 16)),
               ],
             ),

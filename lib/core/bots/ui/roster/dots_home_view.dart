@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
@@ -53,6 +54,10 @@ class DotsHomeView extends StatefulWidget {
   final VoidCallback? onAttention;
   final Future<void> Function()? onRefresh;
   final Widget? emptyState;
+
+  /// Shown where the Rooms section goes (after it when there are rooms):
+  /// rooms the server listed that could not be loaded.
+  final Widget? roomsNotice;
   final List<Widget> header;
   final List<Widget> footer;
 
@@ -78,6 +83,7 @@ class DotsHomeView extends StatefulWidget {
     this.onAttention,
     this.onRefresh,
     this.emptyState,
+    this.roomsNotice,
     this.header = const [],
     this.footer = const [],
     this.clipBehavior = Clip.hardEdge,
@@ -366,6 +372,9 @@ class _DotsHomeViewState extends State<DotsHomeView> {
         ),
       );
     }
+    if (widget.roomsNotice case final notice? when query.trim().isEmpty) {
+      items.add(notice);
+    }
     final team = [?layout.main, ...layout.team];
     if (team.isNotEmpty) {
       items.add(
@@ -404,8 +413,8 @@ class _DotsHomeViewState extends State<DotsHomeView> {
             onPressed: () => setState(() => _showHidden = !_showHidden),
             icon: Icon(
               _showHidden
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
+                  ? HIcons.visibility_outlined
+                  : HIcons.visibility_off_outlined,
               size: 17,
             ),
             label: Text(
@@ -528,7 +537,7 @@ class _ActivityChip extends StatelessWidget {
                     ),
                   ),
                   Icon(
-                    Icons.chevron_right_rounded,
+                    HIcons.chevron_right_rounded,
                     size: 18,
                     color: colors.textDisabled,
                   ),
@@ -566,7 +575,7 @@ class _AttentionRow extends StatelessWidget {
           constraints: const BoxConstraints(minHeight: 24),
           child: Row(
             children: [
-              Icon(Icons.shield_outlined, color: colors.accentText, size: 22),
+              Icon(HIcons.shield_outlined, color: colors.accentText, size: 22),
               const SizedBox(width: HermesSpace.x3),
               Expanded(
                 child: Text(
@@ -580,7 +589,7 @@ class _AttentionRow extends StatelessWidget {
                   ),
                 ),
               ),
-              Icon(Icons.chevron_right_rounded, color: colors.textSecondary),
+              Icon(HIcons.chevron_right_rounded, color: colors.textSecondary),
             ],
           ),
         ),
@@ -819,7 +828,7 @@ class _ScreenBadge extends StatelessWidget {
               child: SizedBox.square(
                 dimension: 22,
                 child: Icon(
-                  Icons.desktop_windows_outlined,
+                  HIcons.desktop_windows_outlined,
                   size: 13,
                   color: colors.textPrimary,
                 ),

@@ -37,6 +37,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/design_shots.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _size = Size(412, 915);
 const _key = ValueKey('legibility-shot');
@@ -220,19 +221,19 @@ class _BoardState extends State<_Board> {
             title: 'Filas con icono',
             children: [
               HermesListRow(
-                icon: Icons.shield_outlined,
+                icon: HIcons.shield_outlined,
                 title: 'Bloqueo y privacidad',
                 subtitle: 'Bloqueo, privacidad y protección de credenciales',
                 onTap: () {},
               ),
               HermesListRow(
-                icon: Icons.key_outlined,
+                icon: HIcons.key_outlined,
                 title: 'Contraseñas e inicios de sesión',
                 subtitle: 'Lo que el agente usa para iniciar sesión por ti',
                 onTap: () {},
               ),
               const HermesListRow(
-                icon: Icons.block,
+                icon: HIcons.block,
                 title: 'Fila deshabilitada',
                 subtitle: 'No disponible en esta instancia',
                 enabled: false,
@@ -266,7 +267,7 @@ class _BoardState extends State<_Board> {
                 onChanged: null,
               ),
               HermesNavRow(
-                icon: Icons.tune_rounded,
+                icon: HIcons.tune_rounded,
                 title: 'Fila de navegación',
                 subtitle: 'Con un valor y un chevron',
                 value: 'Alto',
@@ -462,7 +463,7 @@ void main() {
             actions: [
               IconButton(
                 tooltip: 'Nueva',
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(HIcons.add_rounded),
                 onPressed: () {},
               ),
             ],

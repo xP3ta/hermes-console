@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/voice_meter.dart';
 import 'package:hermes_android/core/widgets/voice_strip.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _labels = VoiceStripLabels(
   finishListening: 'Terminar de hablar',
@@ -357,7 +358,7 @@ void main() {
         final action = _key('voice-strip-review');
         final glyph = find.descendant(
           of: action,
-          matching: find.byIcon(Icons.shield_outlined),
+          matching: find.byIcon(HIcons.shield_outlined),
         );
         Future<void> pump(double width) => tester.pumpWidget(
           _line(

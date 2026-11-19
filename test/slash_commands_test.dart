@@ -36,6 +36,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 class _SlashGateway
     implements
@@ -1021,6 +1022,9 @@ void main() {
         final host = find.byKey(const ValueKey('chat-composer-host'));
 
         await tester.tap(composer);
+        // Focus stacks the controls under the text: build that frame, then
+        // let the animation finish before measuring.
+        await tester.pump();
         await tester.pump(const Duration(milliseconds: 250));
         expect(tester.widget<TextField>(composer).focusNode?.hasFocus, isTrue);
         final heightBeforePalette = tester.getSize(host).height;
@@ -1608,7 +1612,7 @@ void main() {
 
       final more = find.descendant(
         of: find.byType(CapabilitiesHub),
-        matching: find.byIcon(Icons.more_vert_rounded),
+        matching: find.byIcon(HIcons.more_vert_rounded),
       );
       expect(more, findsOneWidget);
       await tester.tap(more);

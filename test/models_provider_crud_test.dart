@@ -17,6 +17,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _listPath = '/api/providers/custom-endpoints';
 
@@ -144,7 +145,7 @@ void main() {
 
   Finder menu() => find.descendant(
     of: find.byKey(const ValueKey('saved-endpoint-ana-endpoint')),
-    matching: find.byIcon(Icons.more_vert),
+    matching: find.byIcon(HIcons.more_vert),
   );
   Finder overlay(String label, String key) => find.descendant(
     of: find.byKey(ValueKey(key)),

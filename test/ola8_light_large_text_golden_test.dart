@@ -12,6 +12,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/inter_font.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Ola 8 (AUDITORIA-PULIDO §5, T2-E): what wave 8 touches, dark and light,
 /// at normal and 200 % text, on a phone width: the settings pieces (section
@@ -62,13 +63,13 @@ void main() {
           HermesGroup(
             children: [
               HermesNavRow(
-                icon: Icons.notifications_none_rounded,
+                icon: HIcons.notifications_none_rounded,
                 title: 'Avisos del agente',
                 subtitle: 'Cuando termina un turno o necesita tu respuesta',
                 onTap: () {},
               ),
               HermesNavRow(
-                icon: Icons.lock_outline_rounded,
+                icon: HIcons.lock_outline_rounded,
                 title: 'Bloqueo de la app',
                 subtitle: 'Huella',
                 onTap: () {},

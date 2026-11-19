@@ -5,6 +5,7 @@
 // are in Ajustes. Where nothing sits beside the chat (a phone, the Fold
 // held upright) only «Chat» can be chosen, with one line that says why.
 // Everything [ChatWorkspaceController] does stays as it was.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -82,8 +83,8 @@ class ChatViewsButton extends StatelessWidget {
       final strings = Strings.of(context);
       return Builder(
         builder: (buttonContext) => FloatingHeaderButton(
-          icon: Icons.view_sidebar_outlined,
-          selectedIcon: Icons.view_sidebar,
+          icon: HIcons.view_sidebar_outlined,
+          selectedIcon: HIcons.view_sidebar,
           highlighted: chatWorkspaceShownBeside(controller),
           tooltip: chatWorkspaceViewsLabel(strings, controller),
           onPressed: () {
@@ -150,9 +151,9 @@ String chatWorkspaceViewsLabel(
 
 /// The icon of each layout in the menu.
 IconData chatWorkspaceLayoutIcon(ChatWorkspaceMode mode) => switch (mode) {
-  ChatWorkspaceMode.chat => Icons.chat_bubble_outline_rounded,
-  ChatWorkspaceMode.split => Icons.vertical_split_outlined,
-  ChatWorkspaceMode.workspace => Icons.terminal_rounded,
+  ChatWorkspaceMode.chat => HIcons.chat_bubble_outline_rounded,
+  ChatWorkspaceMode.split => HIcons.vertical_split_outlined,
+  ChatWorkspaceMode.workspace => HIcons.terminal_rounded,
 };
 
 class _ViewsPanel extends StatelessWidget {

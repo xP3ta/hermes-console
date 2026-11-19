@@ -19,6 +19,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// 1x1 transparent PNG: a real raster the avatar decoder accepts.
 const _png =
@@ -206,7 +207,7 @@ void main() {
     );
     expect(inRow(find.byType(Image)), findsOneWidget);
     expect(loads, contains('vozlive'));
-    expect(inRow(find.byIcon(Icons.account_circle_outlined)), findsNothing);
+    expect(inRow(find.byIcon(HIcons.account_circle_outlined)), findsNothing);
   });
 
   testWidgets('drawer row: the main profile shows its own custom image', (
@@ -229,7 +230,7 @@ void main() {
     expect(inRow(find.byType(HermesBotFace)), findsOneWidget);
     expect(inRow(find.byType(Image)), findsNothing);
     expect(loads, isNot(contains('ana')));
-    expect(inRow(find.byIcon(Icons.account_circle_outlined)), findsNothing);
+    expect(inRow(find.byIcon(HIcons.account_circle_outlined)), findsNothing);
   });
 
   testWidgets('drawer row: the active face wears an accent ring', (
@@ -252,7 +253,7 @@ void main() {
         reason: name,
       );
       expect(
-        inOption(name, find.byIcon(Icons.account_circle_outlined)),
+        inOption(name, find.byIcon(HIcons.account_circle_outlined)),
         findsNothing,
         reason: name,
       );

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -266,14 +267,14 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     HermesToolDestination(
       id: 'instances',
       group: groupConnection,
-      icon: Icons.router_outlined,
+      icon: HIcons.router_outlined,
       label: strings.drawerInstances,
       builder: (_) => GatewayManagerScreen(connManager: connManager),
     ),
     HermesToolDestination(
       id: 'ssh',
       group: groupConnection,
-      icon: Icons.terminal_outlined,
+      icon: HIcons.terminal_outlined,
       label: strings.drawerSsh,
       subtitle: hasSshProfile ? null : strings.navSshStartHint,
       enabled: enabled(),
@@ -283,13 +284,13 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     settingsSection(
       id: 'security',
       group: groupSecurity,
-      icon: Icons.shield_outlined,
+      icon: HIcons.shield_outlined,
       section: SettingsSection.security,
     ),
     HermesToolDestination(
       id: 'cache',
       group: groupSecurity,
-      icon: Icons.storage_rounded,
+      icon: HIcons.storage_rounded,
       label: strings.cacheTitle,
       enabled: enabled(),
       disabledReason: disabledReason(),
@@ -306,13 +307,13 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     settingsSection(
       id: 'data',
       group: groupSecurity,
-      icon: Icons.settings_backup_restore_rounded,
+      icon: HIcons.settings_backup_restore_rounded,
       section: SettingsSection.data,
     ),
     HermesToolDestination(
       id: 'appearance',
       group: groupLook,
-      icon: Icons.palette_outlined,
+      icon: HIcons.palette_outlined,
       label: strings.lflTitle,
       enabled: enabled(),
       disabledReason: disabledReason(),
@@ -321,7 +322,7 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     HermesToolDestination(
       id: 'mascotas',
       group: groupLook,
-      icon: Icons.pets_outlined,
+      icon: HIcons.pets_outlined,
       label: strings.navCharactersPets,
       enabled: enabled(),
       disabledReason: disabledReason(),
@@ -330,19 +331,19 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     settingsSection(
       id: 'chat',
       group: groupLook,
-      icon: Icons.chat_bubble_outline_rounded,
+      icon: HIcons.chat_bubble_outline_rounded,
       section: SettingsSection.chat,
     ),
     settingsSection(
       id: 'appearance-more',
       group: groupLook,
-      icon: Icons.tune_rounded,
+      icon: HIcons.tune_rounded,
       section: SettingsSection.appearance,
     ),
     HermesToolDestination(
       id: 'notifications',
       group: groupAlerts,
-      icon: Icons.notifications_outlined,
+      icon: HIcons.notifications_outlined,
       label: strings.notifTitle,
       subtitle: strings.navAlertsSub,
       builder: (_) => const NotificationSettingsScreen(),
@@ -352,7 +353,7 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     HermesToolDestination(
       id: 'voice-app',
       group: groupAlerts,
-      icon: Icons.record_voice_over_outlined,
+      icon: HIcons.record_voice_over_outlined,
       label: settingsSectionScreenTitle(strings, SettingsSection.voice),
       subtitle: strings.setVoice,
       enabled: enabled(),
@@ -366,7 +367,7 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     HermesToolDestination(
       id: 'models',
       group: groupServer,
-      icon: Icons.memory_outlined,
+      icon: HIcons.memory_outlined,
       label: strings.navModelsProviders,
       enabled: enabled(capabilities.modelsRead),
       disabledReason: disabledReason(capabilities.modelsRead),
@@ -375,7 +376,7 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     HermesToolDestination(
       id: 'nous-account',
       group: groupServer,
-      icon: Icons.account_circle_outlined,
+      icon: HIcons.account_circle_outlined,
       label: strings.nacScreenTitle,
       subtitle: strings.nacSettingsSubtitle,
       enabled: enabled(capabilities.modelsRead),
@@ -385,7 +386,7 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     HermesToolDestination(
       id: 'profiles',
       group: groupServer,
-      icon: Icons.account_tree_outlined,
+      icon: HIcons.account_tree_outlined,
       label: strings.pfuManageProfiles,
       subtitle: strings.pfuManageProfilesSub,
       enabled: enabled(),
@@ -398,7 +399,7 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     HermesToolDestination(
       id: 'extensions',
       group: groupServer,
-      icon: Icons.extension_outlined,
+      icon: HIcons.extension_outlined,
       label: strings.drawerExtensions,
       enabled: enabled(),
       disabledReason: disabledReason(),
@@ -417,7 +418,7 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     HermesToolDestination(
       id: 'logs',
       group: groupServer,
-      icon: Icons.receipt_long_outlined,
+      icon: HIcons.receipt_long_outlined,
       label: strings.drawerActivity,
       enabled: enabled(capabilities.logsRead),
       disabledReason: disabledReason(capabilities.logsRead),
@@ -426,13 +427,13 @@ List<HermesToolDestination> buildAppSettingsDestinations({
     settingsSection(
       id: 'maintenance',
       group: groupServer,
-      icon: Icons.build_outlined,
+      icon: HIcons.build_outlined,
       section: SettingsSection.system,
     ),
     HermesToolDestination(
       id: 'about',
       group: groupHelp,
-      icon: Icons.info_outline_rounded,
+      icon: HIcons.info_outline_rounded,
       label: strings.navAboutHelp,
       builder: (_) => const AboutScreen(),
     ),

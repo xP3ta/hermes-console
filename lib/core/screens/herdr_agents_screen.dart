@@ -3,6 +3,7 @@
 // detalle con su salida, instrucción y teclas, alta de un agente nuevo y UNA
 // línea discreta cuando Herdr no está instalado. No abre puertos, no instala
 // nada y no toca el pty del terminal.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -358,11 +359,11 @@ class _HerdrAgentsScreenState extends State<HerdrAgentsScreen> {
     } else if (_loadFailed) {
       body = Center(
         child: HermesEmptyState(
-          icon: Icons.error_outline,
+          icon: HIcons.error_outline,
           title: strings.sftpUnreadableTitle,
           body: strings.sshHubLoadError,
           primaryLabel: strings.sftpTryAgain,
-          primaryIcon: Icons.refresh,
+          primaryIcon: HIcons.refresh,
           onPrimary: () {
             setState(() {
               _loading = true;
@@ -375,11 +376,11 @@ class _HerdrAgentsScreenState extends State<HerdrAgentsScreen> {
     } else if (_denied) {
       body = Center(
         child: HermesEmptyState(
-          icon: Icons.lock_outline,
+          icon: HIcons.lock_outline,
           title: strings.hdaTitle,
           body: strings.hdaUnlockReason(widget.connection.label),
           primaryLabel: strings.commonRetry,
-          primaryIcon: Icons.refresh,
+          primaryIcon: HIcons.refresh,
           onPrimary: () {
             setState(() {
               _loading = true;
@@ -392,11 +393,11 @@ class _HerdrAgentsScreenState extends State<HerdrAgentsScreen> {
     } else if (!_configured || controller == null) {
       body = Center(
         child: HermesEmptyState(
-          icon: Icons.terminal_rounded,
+          icon: HIcons.terminal_rounded,
           title: strings.ssh2AccessTitle,
           body: strings.ssh2AccessBody(widget.connection.label),
           primaryLabel: strings.ssh2Configure,
-          primaryIcon: Icons.settings_ethernet_rounded,
+          primaryIcon: HIcons.settings_ethernet_rounded,
           onPrimary: _configure,
         ),
       );
@@ -704,7 +705,7 @@ class _HerdrAgentsViewState extends State<HerdrAgentsView>
                   ),
                   child: detail == null
                       ? HerdrAgentsMessage(
-                          icon: Icons.smart_toy_outlined,
+                          icon: HIcons.smart_toy_outlined,
                           title: Strings.of(context).tplAgentsPickAgent,
                         )
                       : _detail(wide: true),
@@ -783,7 +784,7 @@ class _HerdrAgentsViewState extends State<HerdrAgentsView>
             mainAxisSize: MainAxisSize.min,
             children: [
               Flexible(child: name),
-              Icon(Icons.arrow_drop_down_rounded, color: colors.textSecondary),
+              Icon(HIcons.arrow_drop_down_rounded, color: colors.textSecondary),
             ],
           ),
         ),
@@ -810,7 +811,7 @@ class _HerdrAgentsViewState extends State<HerdrAgentsView>
                 minHeight: HermesSpace.tap,
               ),
               onPressed: widget.onClose,
-              icon: const Icon(Icons.arrow_back_rounded),
+              icon: const Icon(HIcons.arrow_back_rounded),
             ),
           Expanded(
             child: Column(
@@ -843,7 +844,7 @@ class _HerdrAgentsViewState extends State<HerdrAgentsView>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.add_rounded),
+                    const Icon(HIcons.add_rounded),
                     if (labelled) ...[
                       const SizedBox(width: HermesSpace.x2),
                       Flexible(child: Text(strings.hdaNew)),
@@ -1041,7 +1042,7 @@ class _HerdrAgentsViewState extends State<HerdrAgentsView>
           children: [
             if (_c.hintDismissed)
               HerdrAgentsMessage(
-                icon: Icons.smart_toy_outlined,
+                icon: HIcons.smart_toy_outlined,
                 title: strings.hdaEmptyTitle,
               )
             else
@@ -1060,7 +1061,7 @@ class _HerdrAgentsViewState extends State<HerdrAgentsView>
           padding: const EdgeInsets.symmetric(horizontal: HermesSpace.inset),
           children: [
             HerdrAgentsMessage(
-              icon: Icons.power_settings_new_rounded,
+              icon: HIcons.power_settings_new_rounded,
               title: strings.hdaServerStoppedTitle,
               body: strings.hdaServerStoppedBody,
               actionLabel: strings.commonRetry,
@@ -1073,7 +1074,7 @@ class _HerdrAgentsViewState extends State<HerdrAgentsView>
       case HerdrAgentsPhase.timedOut:
         content = Center(
           child: HerdrAgentsMessage(
-            icon: Icons.cloud_off_rounded,
+            icon: HIcons.cloud_off_rounded,
             title: phase == HerdrAgentsPhase.timedOut
                 ? strings.hdaTimedOut
                 : strings.hdaConnectionError,
@@ -1111,7 +1112,7 @@ class _HerdrAgentsViewState extends State<HerdrAgentsView>
           children: [
             if (nothing)
               HerdrAgentsMessage(
-                icon: Icons.smart_toy_outlined,
+                icon: HIcons.smart_toy_outlined,
                 title: strings.hdaEmptyTitle,
                 body: strings.hdaEmptyBody,
                 actionLabel: canCreate ? strings.hdaNew : null,
@@ -1428,11 +1429,11 @@ class _AgentsHomeScreenState extends State<AgentsHomeScreen> {
     if (_failed) {
       body = Center(
         child: HermesEmptyState(
-          icon: Icons.error_outline,
+          icon: HIcons.error_outline,
           title: strings.sftpUnreadableTitle,
           body: strings.sshHubLoadError,
           primaryLabel: strings.sftpTryAgain,
-          primaryIcon: Icons.refresh,
+          primaryIcon: HIcons.refresh,
           onPrimary: _load,
         ),
       );
@@ -1442,11 +1443,11 @@ class _AgentsHomeScreenState extends State<AgentsHomeScreen> {
       body = Center(
         child: HermesEmptyState(
           key: const ValueKey('agents-no-ssh'),
-          icon: Icons.terminal_rounded,
+          icon: HIcons.terminal_rounded,
           title: strings.tplAgentsAddSshTitle,
           body: strings.tplAgentsAddSshBody,
           primaryLabel: _setupTarget == null ? null : strings.ssh2Configure,
-          primaryIcon: Icons.settings_ethernet_rounded,
+          primaryIcon: HIcons.settings_ethernet_rounded,
           onPrimary: _setupTarget == null ? null : _configure,
         ),
       );
@@ -1493,7 +1494,7 @@ class _AgentsHomeScreenState extends State<AgentsHomeScreen> {
                       key: const ValueKey('hda-close'),
                       tooltip: strings.hdaBack,
                       onPressed: () => Navigator.of(context).maybePop(),
-                      icon: const Icon(Icons.arrow_back_rounded),
+                      icon: const Icon(HIcons.arrow_back_rounded),
                     ),
                   ),
                   Expanded(child: body),

@@ -9,6 +9,7 @@ import 'package:hermes_android/core/models/dock_config.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/dock_style.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _bar(
   String themeId,
@@ -31,16 +32,16 @@ Widget _bar(
           selectedIndex: 1,
           children: [
             for (final icon in const [
-              Icons.home_outlined,
-              Icons.add,
-              Icons.smart_toy_outlined,
-              Icons.settings_outlined,
+              HIcons.home_outlined,
+              HIcons.add,
+              HIcons.smart_toy_outlined,
+              HIcons.settings_outlined,
             ])
               DockItemTile(
                 icon: icon,
                 label: 'x',
                 compact: true,
-                selected: icon == Icons.add,
+                selected: icon == HIcons.add,
                 selectionBackground: false,
                 innerRadius: resolveDockVisual(
                   AppTheme.fromId(themeId).hermes,

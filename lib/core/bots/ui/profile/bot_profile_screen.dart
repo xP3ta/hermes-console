@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -331,7 +332,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
             IconButton(
               key: const ValueKey('bot-profile-edit-identity'),
               tooltip: s.botProfileEditIdentity,
-              icon: const Icon(Icons.edit_outlined),
+              icon: const Icon(HIcons.edit_outlined),
               onPressed: widget.onEditIdentity,
             ),
           if (widget.moreActions.isNotEmpty)
@@ -340,7 +341,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
               child: IconButton(
                 key: const ValueKey('bot-profile-more'),
                 tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
-                icon: const Icon(Icons.more_vert_rounded),
+                icon: const Icon(HIcons.more_vert_rounded),
                 onPressed: _showMore,
               ),
             ),
@@ -410,7 +411,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
               children: [
                 _Shortcut(
                   key: const ValueKey('bot-profile-chat'),
-                  icon: Icons.chat_bubble_outline_rounded,
+                  icon: HIcons.chat_bubble_outline_rounded,
                   label: s.botProfileChat,
                   onTap: widget.onChat,
                   primary: true,
@@ -418,14 +419,14 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                 const SizedBox(width: 10),
                 _Shortcut(
                   key: const ValueKey('bot-profile-rooms'),
-                  icon: Icons.forum_outlined,
+                  icon: HIcons.forum_outlined,
                   label: s.botProfileRooms(data.roomCount),
                   onTap: widget.onRooms,
                 ),
                 const SizedBox(width: 10),
                 _Shortcut(
                   key: const ValueKey('bot-profile-routines'),
-                  icon: Icons.schedule_outlined,
+                  icon: HIcons.schedule_outlined,
                   label: s.botProfileRoutines,
                   onTap: widget.onRoutines,
                 ),
@@ -437,7 +438,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
               children: data.now.isEmpty
                   ? [
                       HermesListRow(
-                        icon: Icons.bedtime_outlined,
+                        icon: HIcons.bedtime_outlined,
                         title: s.botProfileIdle,
                         muted: true,
                       ),
@@ -447,8 +448,8 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                         HermesListRow(
                           key: ValueKey('bot-profile-now-$i'),
                           icon: data.now[i].attention
-                              ? Icons.front_hand_outlined
-                              : Icons.bolt_rounded,
+                              ? HIcons.front_hand_outlined
+                              : HIcons.bolt_rounded,
                           iconColor: data.now[i].attention
                               ? colors.warning
                               : colors.accentText,
@@ -462,7 +463,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                                       ? null
                                       : () => _stop(i, data.now[i]),
                                   icon: const Icon(
-                                    Icons.stop_rounded,
+                                    HIcons.stop_rounded,
                                     size: 18,
                                   ),
                                   label: Text(s.botProfileStop),
@@ -494,7 +495,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                       onChanged: widget.onChanged,
                       builder: (context, row) => HermesListRow(
                         key: const ValueKey('bot-profile-model'),
-                        icon: Icons.memory_rounded,
+                        icon: HIcons.memory_rounded,
                         title: s.botProfileModel,
                         value: [
                           if (row.provider.isNotEmpty) row.provider,
@@ -511,7 +512,7 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                     ),
                     HermesListRow(
                       key: const ValueKey('bot-profile-reasoning'),
-                      icon: Icons.psychology_alt_outlined,
+                      icon: HIcons.psychology_alt_outlined,
                       title: s.botProfileReasoning,
                       value: !_reasoningLoaded
                           ? '…'
@@ -529,13 +530,13 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                   children: [
                     HermesListRow(
                       key: const ValueKey('bot-profile-soul'),
-                      icon: Icons.auto_awesome_outlined,
+                      icon: HIcons.auto_awesome_outlined,
                       title: s.botProfileSoul,
                       onTap: widget.onSoul,
                     ),
                     HermesListRow(
                       key: const ValueKey('bot-profile-skills'),
-                      icon: Icons.extension_outlined,
+                      icon: HIcons.extension_outlined,
                       title: s.botProfileSkills,
                       value: profile.skillCount > 0
                           ? '${profile.skillCount}'
@@ -544,21 +545,21 @@ class _BotProfileScreenState extends State<BotProfileScreen> {
                     ),
                     HermesListRow(
                       key: const ValueKey('bot-profile-memory'),
-                      icon: Icons.bookmark_border_rounded,
+                      icon: HIcons.bookmark_border_rounded,
                       title: s.botProfileMemory,
                       onTap: widget.onMemory,
                     ),
                     if (widget.onTasks != null)
                       HermesListRow(
                         key: const ValueKey('bot-profile-tasks'),
-                        icon: Icons.view_kanban_outlined,
+                        icon: HIcons.view_kanban_outlined,
                         title: s.botProfileTasks,
                         value: data.taskCount > 0 ? '${data.taskCount}' : null,
                         onTap: widget.onTasks,
                       ),
                     HermesListRow(
                       key: const ValueKey('bot-profile-machine'),
-                      icon: Icons.dns_outlined,
+                      icon: HIcons.dns_outlined,
                       title: s.botProfileMachine,
                       value: widget.machineLabel,
                     ),
@@ -633,7 +634,7 @@ class _ScreenPill extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.desktop_windows_outlined, size: 18, color: fg),
+                    Icon(HIcons.desktop_windows_outlined, size: 18, color: fg),
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(

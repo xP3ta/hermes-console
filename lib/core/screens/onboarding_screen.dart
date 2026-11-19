@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -1872,7 +1873,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             return OnbSmallPill(
               key: const ValueKey('pairing-helper-copy'),
               label: done ? s.o2Copied : s.o2Copy,
-              icon: done ? Icons.check_rounded : Icons.copy_rounded,
+              icon: done ? HIcons.check_rounded : HIcons.copy_rounded,
               filled: true,
               onTap: () => unawaited(_copy(command)),
             );
@@ -1881,7 +1882,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         OnbSmallPill(
           key: const ValueKey('pairing-helper-send'),
           label: s.o2SendToComputer,
-          icon: Icons.ios_share_rounded,
+          icon: HIcons.ios_share_rounded,
           onTap: () => unawaited(_send(command)),
         ),
       ],
@@ -2070,7 +2071,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         OnbPrimary(
           key: const ValueKey('onboarding-help-scan'),
           label: s.o2Scan,
-          icon: Icons.qr_code_scanner_rounded,
+          icon: HIcons.qr_code_scanner_rounded,
           onTap: _scan,
         ),
         const SizedBox(height: 6),
@@ -2112,8 +2113,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 tooltip: _v2Reveal ? s.onb2HidePassword : s.onb2ShowPassword,
                 icon: Icon(
                   _v2Reveal
-                      ? Icons.visibility_off_rounded
-                      : Icons.visibility_rounded,
+                      ? HIcons.visibility_off_rounded
+                      : HIcons.visibility_rounded,
                 ),
                 onPressed: () => setState(() => _v2Reveal = !_v2Reveal),
               ),
@@ -2366,7 +2367,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     color: tone.withValues(alpha: .16),
                   ),
                   child: Icon(
-                    duplicate ? Icons.link_rounded : Icons.wifi_off_rounded,
+                    duplicate ? HIcons.link_rounded : HIcons.wifi_off_rounded,
                     size: 17,
                     color: tone,
                   ),
@@ -2405,7 +2406,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                           OnbSmallPill(
                             key: const ValueKey('onboarding-retry'),
                             label: s.commonRetry,
-                            icon: Icons.refresh_rounded,
+                            icon: HIcons.refresh_rounded,
                             filled: true,
                             onTap: _retry,
                           ),
@@ -2564,8 +2565,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     key: const ValueKey('onboarding-open-chat'),
                     label: needsModel ? s.o2ChooseModel : s.o2OpenChat,
                     icon: needsModel
-                        ? Icons.tune_outlined
-                        : Icons.chat_bubble_outline,
+                        ? HIcons.tune_outlined
+                        : HIcons.chat_bubble_outline,
                     onTap: () {
                       _successTapped = true;
                       unawaited(
@@ -2590,7 +2591,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   OnbPrimary(
                     key: const ValueKey('onboarding-done'),
                     label: s.o2GoHome,
-                    icon: Icons.home_outlined,
+                    icon: HIcons.home_outlined,
                     onTap: _finish,
                   ),
                   if (nousOffer) ...[

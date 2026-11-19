@@ -8,6 +8,7 @@ import 'package:hermes_android/core/services/global_activity_aggregate.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // Chat notch (owner design, GUIA-CHAT §5 and §9; notch «mínimo 7» in 1.4.0):
 // a small glass tab above the composer opens the "Esta conversación" sheet,
@@ -108,7 +109,7 @@ void main() {
           0.5,
         ),
       );
-      expect(find.byIcon(Icons.expand_less_rounded), findsNothing);
+      expect(find.byIcon(HIcons.expand_less_rounded), findsNothing);
       expect(find.byType(Icon), findsNothing);
     });
 
@@ -509,7 +510,7 @@ void main() {
       final screen = tester.view.physicalSize / tester.view.devicePixelRatio;
       expect(landed.bottom, lessThanOrEqualTo(screen.height - 10));
       expect(landed.bottom, greaterThan(screen.height - 40));
-      expect(find.byIcon(Icons.close_rounded), findsNothing);
+      expect(find.byIcon(HIcons.close_rounded), findsNothing);
       // Closing ends on the grabber.
       await tester.binding.handlePopRoute();
       Rect? last;

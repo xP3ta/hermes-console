@@ -1,5 +1,6 @@
 // Voz inline (§5): what the user is saying, as a draft of their message at
 // the bottom of the transcript.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -87,7 +88,7 @@ class VoiceDraftBubble extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.mic_rounded, size: 14, color: colors.accent),
+                    Icon(HIcons.mic_rounded, size: 14, color: colors.accent),
                     const SizedBox(width: HermesSpace.x1),
                     Flexible(
                       child: Text(

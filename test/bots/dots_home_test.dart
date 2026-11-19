@@ -10,6 +10,7 @@ import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/models/room_member_status.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 MissionAgent _agent(
   String name, {
@@ -948,13 +949,13 @@ void main() {
       final bar = find.byKey(const ValueKey('mission-attention'));
       expect(bar, findsOneWidget);
       expect(
-        find.descendant(of: bar, matching: find.byIcon(Icons.shield_outlined)),
+        find.descendant(of: bar, matching: find.byIcon(HIcons.shield_outlined)),
         findsOneWidget,
       );
       expect(
         find.descendant(
           of: bar,
-          matching: find.byIcon(Icons.chevron_right_rounded),
+          matching: find.byIcon(HIcons.chevron_right_rounded),
         ),
         findsOneWidget,
       );

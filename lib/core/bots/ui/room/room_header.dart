@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/app_localizations.dart';
@@ -16,7 +17,7 @@ import 'room_widgets.dart';
 /// the room's ISLAND with 2–4 overlapping member faces (+N) standing on
 /// it, still. At rest the island is the room's name after one state dot.
 /// When someone starts working, waits for you or failed, it grows to say
-/// that one line («Forja está respondiendo», amber with «Ver» when it needs
+/// that one line («Leo está respondiendo», amber with «Ver» when it needs
 /// you) and shrinks back. The idle summary stays in the semantics label.
 /// Tapping the island opens the room detail (round / members); a long
 /// press opens the room menu.
@@ -140,7 +141,7 @@ class RoomHeaderBar extends StatelessWidget {
       leading: navigator.canPop()
           ? FloatingHeaderButton(
               key: const ValueKey('room-back'),
-              icon: Icons.arrow_back_rounded,
+              icon: HIcons.arrow_back_rounded,
               tooltip: MaterialLocalizations.of(context).backButtonTooltip,
               onPressed: () => navigator.maybePop(),
             )
@@ -173,7 +174,7 @@ class RoomHeaderBar extends StatelessWidget {
               revision: Object.hash(said, tone),
               key: const ValueKey('room-header-status'),
               tone: waiting ? IslandTone.needsYou : IslandTone.info,
-              icon: idle || waiting ? null : Icons.bolt_rounded,
+              icon: idle || waiting ? null : HIcons.bolt_rounded,
               sticky: waiting,
               duration: const Duration(seconds: 3),
               line: said,

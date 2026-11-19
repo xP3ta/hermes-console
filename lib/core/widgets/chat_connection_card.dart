@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -58,7 +59,7 @@ class ChatConnectionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.link_rounded, size: 20, color: colors.textSecondary),
+                Icon(HIcons.link_rounded, size: 20, color: colors.textSecondary),
                 const SizedBox(width: 9),
                 Expanded(
                   child: Text(

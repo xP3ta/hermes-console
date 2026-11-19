@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -279,7 +280,7 @@ class _ExtensionsToolsScreenState extends State<ExtensionsToolsScreen> {
         if (widget.readOnly) ...[
           HermesInlineNotice(
             key: const ValueKey('extensions-readonly'),
-            icon: Icons.lock_outline_rounded,
+            icon: HIcons.lock_outline_rounded,
             tone: HermesStatusTone.warn,
             message: strings.extensionsCenterReadOnlyNotice,
           ),
@@ -339,14 +340,14 @@ class _ExtensionsToolsScreenState extends State<ExtensionsToolsScreen> {
         if (total == 0)
           HermesEmptyState(
             compact: true,
-            icon: Icons.handyman_outlined,
+            icon: HIcons.handyman_outlined,
             title: strings.exuBuiltinToolsEmpty,
             body: strings.exuBuiltinToolsEmptyBody,
           )
         else if (toolsets.isEmpty)
           HermesEmptyState(
             compact: true,
-            icon: Icons.filter_alt_off_outlined,
+            icon: HIcons.filter_alt_off_outlined,
             title: strings.extensionsCenterNoMatches,
             body: strings.extensionsCenterNoMatchesBody,
           )
@@ -371,7 +372,7 @@ class _ExtensionsToolsScreenState extends State<ExtensionsToolsScreen> {
           children: [
             HermesListRow(
               key: const ValueKey('extensions-reload-mcp'),
-              icon: Icons.sync_rounded,
+              icon: HIcons.sync_rounded,
               title: strings.extensionsCenterReloadTitle,
               subtitle: strings.extensionsCenterReloadDescription,
               enabled: !widget.readOnly && !reloading,
@@ -381,7 +382,7 @@ class _ExtensionsToolsScreenState extends State<ExtensionsToolsScreen> {
                       dimension: 22,
                       child: ConsoleLoader.small(),
                     )
-                  : const Icon(Icons.chevron_right_rounded),
+                  : const Icon(HIcons.chevron_right_rounded),
             ),
           ],
         ),
@@ -389,7 +390,7 @@ class _ExtensionsToolsScreenState extends State<ExtensionsToolsScreen> {
           const SizedBox(height: HermesSpace.x3),
           HermesInlineNotice(
             tone: HermesStatusTone.warn,
-            icon: Icons.warning_amber_rounded,
+            icon: HIcons.warning_amber_rounded,
             message: strings.extensionsCenterStaleInventory(
               _extensionsFailureText(_failure!, strings),
             ),
@@ -413,7 +414,7 @@ class _ExtensionsToolsScreenState extends State<ExtensionsToolsScreen> {
         IconButton(
           tooltip: strings.extensionsCenterRefreshTooltip,
           onPressed: _loading ? null : _load,
-          icon: const Icon(Icons.refresh_rounded),
+          icon: const Icon(HIcons.refresh_rounded),
         ),
       ],
       children: children,
@@ -445,7 +446,7 @@ class _ToolsetRow extends StatelessWidget {
             sppRedactHostText(toolset.description, strings),
           );
     return HermesListRow(
-      icon: Icons.handyman_outlined,
+      icon: HIcons.handyman_outlined,
       title: name,
       subtitle: detail,
       trailing: HermesRowSwitch(
@@ -467,11 +468,11 @@ class _ExtensionsFailure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => HermesEmptyState(
-    icon: Icons.extension_off_outlined,
+    icon: HIcons.extension_off_outlined,
     title: Strings.of(context).extensionsCenterFailureTitle,
     body: message,
     primaryLabel: Strings.of(context).commonRetry,
-    primaryIcon: Icons.refresh_rounded,
+    primaryIcon: HIcons.refresh_rounded,
     onPrimary: onRetry,
   );
 }

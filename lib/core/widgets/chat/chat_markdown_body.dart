@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
@@ -34,12 +35,16 @@ import '../latex/latex_view.dart';
 import '../hermes_file_tree.dart';
 import '../hermes_notice.dart';
 import '../markdown_table.dart';
+import '../../utils/chat_inline_refs.dart';
+import 'chat_file_opener.dart';
 import 'chat_inline_chips.dart';
 import 'chat_link_card.dart';
 import 'chat_message_selection_area.dart';
 import 'chat_sources_list.dart';
 import 'mention_chips.dart';
 import 'tool_output_cards.dart' show FileDiffBody;
+import '../artifact_viewer/web_preview.dart' show kMermaidMaxChars;
+import 'embeds/document_previews.dart';
 import 'embeds/embed_card.dart';
 import 'embeds/embed_consent_store.dart';
 import 'embeds/embed_detector.dart';
@@ -347,6 +352,18 @@ bool isAllowedMarkdownLinkScheme(String? href) {
 /// integrado ([openWebLinkInApp], decisión de the owner para 1.4.0; Desktop lo
 /// abre fuera); `mailto:` sigue yendo a la app de correo.
 Future<void> openChatMarkdownLink(BuildContext context, String? href) async {
+  // A link to a file of the agent's machine opens as the file chip does:
+  // in the viewer when the conversation can read it, else its path is copied.
+  final fileRef = chatLinkFileRef(href);
+  if (fileRef != null) {
+    final opener = ChatFileChipScope.maybeOf(context);
+    if (opener != null && opener.canOpen(fileRef)) {
+      await opener.open(context, fileRef);
+    } else {
+      await copyChatFilePath(context, fileRef.path);
+    }
+    return;
+  }
   if (!isAllowedMarkdownLinkScheme(href)) {
     debugPrint(
       'Enlace de markdown bloqueado (esquema no permitido: '
@@ -698,7 +715,7 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  Icons.image_outlined,
+                  HIcons.image_outlined,
                   color: colors.textDisabled,
                   size: 26,
                 ),
@@ -738,7 +755,7 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : Icon(
-                    Icons.refresh_rounded,
+                    HIcons.refresh_rounded,
                     color: colors.textSecondary,
                     size: 28,
                   ),
@@ -794,7 +811,7 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
                       ),
                       child: Center(
                         child: Icon(
-                          Icons.broken_image_outlined,
+                          HIcons.broken_image_outlined,
                           color: colors.textDisabled,
                           size: 28,
                         ),
@@ -961,6 +978,14 @@ class ChatCodeBlockBuilder extends MarkdownElementBuilder {
     final block = _CodeBlockWrapper(code: code, lang: lang);
     if (embeds && normalizedLanguage == 'svg') {
       return EmbedCard(svgSource: code, fallback: block);
+    }
+    // A finished ```mermaid fence is drawn in place; its source stays one
+    // tap away in the full screen view, and it is the fallback.
+    if (embeds &&
+        normalizedLanguage == 'mermaid' &&
+        code.trim().isNotEmpty &&
+        code.length <= kMermaidMaxChars) {
+      return MermaidFencePreview(source: code, fallback: block);
     }
     return block;
   }
@@ -1272,8 +1297,8 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
                 const SizedBox(width: 4),
                 Icon(
                   _expanded
-                      ? Icons.keyboard_arrow_up_rounded
-                      : Icons.keyboard_arrow_down_rounded,
+                      ? HIcons.keyboard_arrow_up_rounded
+                      : HIcons.keyboard_arrow_down_rounded,
                   size: 18,
                   color: colors.accent,
                 ),
@@ -1311,7 +1336,7 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
               onPressed: _openInViewer,
               iconSize: 17,
               color: colors.textSecondary,
-              icon: const Icon(Icons.open_in_full_rounded),
+              icon: const Icon(HIcons.open_in_full_rounded),
             ),
           ),
           SizedBox.square(
@@ -1328,7 +1353,7 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
                 transitionBuilder: (child, anim) =>
                     ScaleTransition(scale: anim, child: child),
                 child: Icon(
-                  _copied ? Icons.check : Icons.content_copy,
+                  _copied ? HIcons.check : HIcons.content_copy,
                   key: ValueKey<bool>(_copied),
                   color: _copied ? colors.accent : colors.textSecondary,
                 ),

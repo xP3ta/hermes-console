@@ -9,6 +9,7 @@ import 'package:hermes_android/core/widgets/voice_dock.dart';
 import 'package:hermes_android/core/widgets/voice_strip.dart'
     show VoiceStripState;
 import 'package:hermes_android/core/widgets/voice_wave.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _labels = VoiceDockLabels(
   pause: 'Pausar',
@@ -201,7 +202,7 @@ void main() {
 
     await tester.pumpWidget(_host(_dock(VoiceStripState.paused)));
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.byIcon(Icons.mic_off_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.mic_off_rounded), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('voice-strip-resume')));
     expect(_calls, ['pause', 'resume']);
 

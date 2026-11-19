@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -14,7 +15,6 @@ import '../models/provider_usage.dart';
 import '../design/tokens.dart' show HermesChrome, HermesSpace, HermesType;
 import '../theme/app_theme.dart';
 import '../theme/hermes_tokens.dart' show HermesIcon, HermesMotion;
-import 'account_limits_section.dart';
 import 'hermes_reasoning_pill.dart';
 import 'provider_logo.dart';
 import 'sheet_outline.dart';
@@ -846,18 +846,6 @@ class _SessionModelSheetBodyState extends State<SessionModelSheetBody>
           favorite(frequent[i]),
         ],
       ],
-      if (starred.isEmpty) ...[
-        const SizedBox(height: HermesSpace.x2),
-        Text(
-          strings.msvFavoritesHint,
-          key: const ValueKey('msv-fav-hint'),
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: HermesType.supportSize,
-            color: colors.textSecondary,
-          ),
-        ),
-      ],
       ...tail,
     ];
   }
@@ -912,7 +900,6 @@ class _SessionModelSheetBodyState extends State<SessionModelSheetBody>
   }
 
   Widget _tiles(Strings strings, {required _ChipLayout layout}) {
-    final stacked = layout == _ChipLayout.stacked;
     final onFast = widget.onFastMode;
     final fastOn =
         widget.fastSupported && widget.fastMode == DesktopFastMode.fast;
@@ -921,7 +908,7 @@ class _SessionModelSheetBodyState extends State<SessionModelSheetBody>
         widget.reasoningSupported && widget.onReasoning != null;
     final think = _SettingTile(
       key: const ValueKey('msv-tile-think'),
-      icon: Icons.auto_awesome_rounded,
+      icon: HIcons.auto_awesome_rounded,
       title: strings.msvThink,
       state: _thinking ? strings.msvThinkOn : strings.msvThinkOff,
       on: _thinking,
@@ -937,7 +924,7 @@ class _SessionModelSheetBodyState extends State<SessionModelSheetBody>
     );
     final fast = _SettingTile(
       key: const ValueKey('session-fast-switch'),
-      icon: Icons.speed_rounded,
+      icon: HIcons.speed_rounded,
       title: strings.sp1215CapFast,
       state: fastOn ? strings.msvFastActive : strings.msvFastNormal,
       on: fastOn,
@@ -952,67 +939,28 @@ class _SessionModelSheetBodyState extends State<SessionModelSheetBody>
           : _kChipTightHeight,
       glyph: layout != _ChipLayout.noGlyph,
     );
-    if (stacked) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          think,
-          const SizedBox(height: _kPillGap),
-          fast,
-        ],
-      );
-    }
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(child: think),
-          const SizedBox(width: _kPillGap),
-          Expanded(child: fast),
-        ],
+    // Small chips (the owner, 2026-11-18): as wide as their words, side by
+    // side, wrapping when they do not fit.
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Wrap(
+        spacing: _kPillGap,
+        runSpacing: _kPillGap,
+        children: [think, fast],
       ),
     );
   }
 
   /// Real plan data precedes favourites so it remains easy to reach.
-  List<Widget> _planLimits() => [
-    if (widget.limits case final limits?) ...[
-      const SizedBox(height: HermesSpace.x3),
-      SubscriptionLimitBlock(limits: limits),
-    ],
-    if (widget.accountLimits case final account?)
-      ValueListenableBuilder<AccountUsageLimits?>(
-        valueListenable: account,
-        builder: (context, value, _) {
-          final limits = value == null || value.isEmpty
-              ? widget.catalogLimits
-              : value;
-          return limits == null || limits.isEmpty
-              ? const SizedBox.shrink()
-              : Padding(
-                  padding: const EdgeInsets.symmetric(vertical: HermesSpace.x3),
-                  child: AccountLimitsSection(
-                    limits: limits,
-                    preferredProvider:
-                        _current()?.$1.slug ??
-                        widget.currentModel?.providerSlug,
-                  ),
-                );
-        },
-      ),
-  ];
+  /// The plan limits live in «Uso» now (the usage screen's «Límites»);
+  /// the model sheet keeps the model, its switches and the favourites.
+  List<Widget> _planLimits() => const [];
 
   List<Widget> _tail(Strings strings, HermesThemeColors colors) {
     final profile = widget.profileName?.trim();
+    // No explanatory lines under the favourites (the owner, 2026-11-18):
+    // only whose profile this is.
     return [
-      const SizedBox(height: HermesSpace.x3),
-      Text(
-        strings.sp1215AppliesNextTurn,
-        style: TextStyle(
-          fontSize: HermesType.supportSize,
-          color: colors.textSecondary,
-        ),
-      ),
       if (profile != null && profile.isNotEmpty) ...[
         const SizedBox(height: HermesSpace.x2),
         Text(
@@ -1233,7 +1181,7 @@ class _SessionModelSheetBodyState extends State<SessionModelSheetBody>
       children: [
         _RoundButton(
           key: const ValueKey('msv-back'),
-          icon: Icons.arrow_back_rounded,
+          icon: HIcons.arrow_back_rounded,
           label: MaterialLocalizations.of(context).backButtonTooltip,
           onTap: () => _showPage(all: false),
         ),
@@ -1372,7 +1320,7 @@ class _ConnectAccountRow extends StatelessWidget {
           TextButton.icon(
             key: const ValueKey('model-sheet-connect-account-button'),
             onPressed: onTap,
-            icon: const Icon(Icons.login_rounded, size: 18),
+            icon: const Icon(HIcons.login_rounded, size: 18),
             label: Text(strings.nacSheetConnect),
           ),
         ],
@@ -1462,7 +1410,7 @@ class _SearchButton extends StatelessWidget {
                 child: SizedBox.square(
                   dimension: HermesSpace.x8 + HermesSpace.x2,
                   child: Icon(
-                    active ? Icons.close_rounded : Icons.search_rounded,
+                    active ? HIcons.close_rounded : HIcons.search_rounded,
                     size: HermesSpace.x4 + HermesSpace.x1,
                     color: colors.textPrimary,
                   ),
@@ -2018,7 +1966,7 @@ class _StarButton extends StatelessWidget {
               child: Opacity(
                 opacity: enabled || starred ? 1 : _kDimmed,
                 child: Icon(
-                  starred ? Icons.star_rounded : Icons.star_outline_rounded,
+                  starred ? HIcons.star_rounded : HIcons.star_outline_rounded,
                   size: HermesIcon.xl,
                   color: starred ? colors.accentText : colors.textSecondary,
                 ),
@@ -2117,7 +2065,7 @@ class _CurrentCard extends StatelessWidget {
             )
           else
             Icon(
-              loading ? Icons.hourglass_top_rounded : Icons.smart_toy_outlined,
+              loading ? HIcons.hourglass_top_rounded : HIcons.smart_toy_outlined,
               size: _kCurrentLogo,
               color: colors.textSecondary,
             ),
@@ -2155,7 +2103,7 @@ class _CurrentCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: HermesSpace.x2),
-          Icon(Icons.chevron_right_rounded, color: colors.textSecondary),
+          Icon(HIcons.chevron_right_rounded, color: colors.textSecondary),
         ],
       ),
     );
@@ -2216,23 +2164,7 @@ class _SettingTile extends StatelessWidget {
       tween: ColorTween(end: on ? colors.accentText : colors.textSecondary),
       duration: duration,
       builder: (context, color, _) =>
-          Icon(icon, size: HermesIcon.lg, color: color),
-    );
-    final words = Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: _kTileTitleStyle.copyWith(color: colors.textPrimary),
-        ),
-        Text(
-          reason ?? state,
-          style: _kTileStateStyle.copyWith(
-            color: on ? colors.accentText : colors.textSecondary,
-          ),
-        ),
-      ],
+          Icon(icon, size: HermesIcon.md, color: color),
     );
     final usable = onTap != null && !dim;
     return _Pill(
@@ -2245,21 +2177,22 @@ class _SettingTile extends StatelessWidget {
               onTap!();
             }
           : null,
-      minHeight: minHeight,
+      minHeight: 36,
       padding: const EdgeInsets.symmetric(
         horizontal: HermesSpace.x3,
-        vertical: HermesSpace.x2,
+        vertical: HermesSpace.x1,
       ),
       semanticsLabel: [title, state, ?reason].join('. '),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (glyph) ...[glyphIcon, const SizedBox(width: HermesSpace.x2)],
-          Expanded(child: words),
+          glyphIcon,
           const SizedBox(width: HermesSpace.x2),
-          Icon(
-            on ? Icons.check_circle_rounded : Icons.circle_outlined,
-            size: HermesIcon.md,
-            color: on ? colors.accentText : colors.textSecondary,
+          Text(
+            title,
+            style: _kTileTitleStyle.copyWith(
+              color: on ? colors.accentText : colors.textPrimary,
+            ),
           ),
         ],
       ),

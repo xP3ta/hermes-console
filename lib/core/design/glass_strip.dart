@@ -5,7 +5,7 @@
 // page colour: denser at the top edge and over the status bar, lighter
 // towards the pieces' foot, never a solid band.
 //
-// Cost (the owner's rules, REPORT-Q9-CHAT5): ONE blur per strip, whatever the
+// Cost (the design's rules): ONE blur per strip, whatever the
 // number of pieces. The strip paints a single backdrop filter clipped to
 // the union of its pieces' outlines; each piece only paints its veil and
 // its hairline. The strip is a repaint boundary of its own: the list behind
@@ -53,7 +53,7 @@ class HermesGlass {
 
   final bool blurs;
 
-  /// OPUS-CRISTAL: the smoked glass under the piece, when its strip is
+  /// Foot glass: the smoked glass under the piece, when its strip is
   /// toned and frosting; a piece that adjusts an ink to what is under it
   /// (the context pill's status inks) measures with it.
   final HermesSmokedGlass? tone;
@@ -101,7 +101,7 @@ class HermesGlassStrip extends StatefulWidget {
 
   final Widget child;
 
-  /// OPUS-CRISTAL: the smoked glass of the chat's foot. A toned strip has
+  /// Foot glass: the smoked glass of the chat's foot. A toned strip has
   /// one look: its tone over the zone's one blur, where it owns the blur
   /// and every ink in [toneInks] reads on it ([HermesSmokedGlass.readsFor]);
   /// otherwise its pieces keep the opaque chrome of before. Never a veil
@@ -112,7 +112,7 @@ class HermesGlassStrip extends StatefulWidget {
   /// pieces keep the opaque chrome (nothing was checked).
   final List<Color> toneInks;
 
-  /// OPUS-CRISTAL: where a toned strip that frosts tells the page's foot
+  /// Foot glass: where a toned strip that frosts tells the page's foot
   /// scrim (HermesBottomScrim.holes) to leave its still pieces alone, so
   /// the blur takes the real content under them. Null: as before.
   final HermesScrimHoles? scrimHoles;
@@ -175,7 +175,7 @@ class HermesGlassStrip extends StatefulWidget {
   static bool contains(BuildContext context) =>
       context.getInheritedWidgetOfExactType<_GlassScope>() != null;
 
-  /// OPUS-CRISTAL: whether the nearest strip around [context] is toned
+  /// Foot glass: whether the nearest strip around [context] is toned
   /// (the chat's foot). Fixed by where the widget sits, not by the policy.
   static bool tonedAround(BuildContext context) =>
       context.getInheritedWidgetOfExactType<_GlassScope>()?.toned ?? false;
@@ -771,7 +771,7 @@ class _RenderGlassStrip extends RenderProxyBox
     });
   }
 
-  /// OPUS-CRISTAL: the foot scrim's holes this strip publishes, or null.
+  /// Foot glass: the foot scrim's holes this strip publishes, or null.
   HermesScrimHoles? _scrimHoles;
   set scrimHoles(HermesScrimHoles? value) {
     if (identical(value, _scrimHoles)) return;
@@ -853,7 +853,7 @@ class _RenderGlassStrip extends RenderProxyBox
     super.detach();
   }
 
-  /// OPUS-CRISTAL: toned after the blur, in the same layer, or null.
+  /// Foot glass: toned after the blur, in the same layer, or null.
   HermesSmokedGlass? _tone;
   set tone(HermesSmokedGlass? value) {
     if (_tone == value) return;
@@ -1063,7 +1063,7 @@ class _RenderGlassStrip extends RenderProxyBox
         Paint()..color = tooLarge ? _opaque : _veil,
       );
     }
-    // OPUS-CRISTAL (Git R1, OPUS-WIRING-ZONE-FIRST-PAINT-1): a toned strip
+    // Foot glass: a toned strip
     // that loses its zone drops its blur at once (frostedZoneLost), but its
     // pieces still wear the veil until the scope rebuilds after the frame.
     // In this same paint, back them with the opaque chrome: the veil is that

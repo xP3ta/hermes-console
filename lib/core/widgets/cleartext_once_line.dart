@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -77,7 +78,7 @@ class _CleartextOnceLineState extends State<CleartextOnceLine> {
       padding: const EdgeInsets.only(top: HermesSpace.x2),
       child: HermesInlineNotice(
         message: widget.message,
-        icon: Icons.lock_open_outlined,
+        icon: HIcons.lock_open_outlined,
         tone: HermesStatusTone.warn,
         onDismiss: () => setState(() => _visible = false),
       ),

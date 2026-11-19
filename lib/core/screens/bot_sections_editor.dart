@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -96,12 +97,12 @@ Future<Map<String, BotSectionChange>?> chooseBotSection(
             for (final id in ids)
               ListTile(
                 title: Text(names[id]!),
-                leading: const Icon(Icons.folder_outlined),
+                leading: const Icon(HIcons.folder_outlined),
                 onTap: () => Navigator.pop(context, id),
               ),
             ListTile(
               title: Text(s.botSectionNew),
-              leading: const Icon(Icons.create_new_folder_outlined),
+              leading: const Icon(HIcons.create_new_folder_outlined),
               onTap: () => Navigator.pop(context, 'new'),
             ),
             if (bot.botSectionId != null)

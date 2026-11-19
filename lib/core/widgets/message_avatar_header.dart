@@ -67,8 +67,12 @@ class MessageAvatarHeader extends StatelessWidget {
     this.subtitle,
     this.nameColor,
     this.actions = const [],
+    this.inlineSubtitle = false,
     super.key,
   });
+
+  /// The second line sits beside the name instead of under it.
+  final bool inlineSubtitle;
 
   final String name;
 
@@ -91,12 +95,7 @@ class MessageAvatarHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final face = mascot;
-    final text = Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
+    final title = Text(
             displayAgentName(name),
             key: const ValueKey('assistant-header-name'),
             maxLines: 1,
@@ -111,10 +110,21 @@ class MessageAvatarHeader extends StatelessWidget {
                   : readableLabelColor(nameColor!, colors.background),
               letterSpacing: 0.3,
             ),
-          ),
-          ?subtitle,
-        ],
-      ),
+          );
+    final text = Expanded(
+      child: inlineSubtitle && subtitle != null
+          ? Row(
+              children: [
+                title,
+                const SizedBox(width: 8),
+                Expanded(child: subtitle!),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [title, ?subtitle],
+            ),
     );
     // No face, no slot: the name starts where the message does.
     if (face == null) return Row(children: [text, ...actions]);
@@ -124,7 +134,9 @@ class MessageAvatarHeader extends StatelessWidget {
       child: Row(
         // The face sits at the top, level with the name, however tall the
         // block under the name grows (the live card, its window).
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: inlineSubtitle
+            ? CrossAxisAlignment.center
+            : CrossAxisAlignment.start,
         children: [
           SizedBox(
             key: const ValueKey('assistant-avatar-slot'),

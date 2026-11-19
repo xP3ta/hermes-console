@@ -18,6 +18,7 @@ import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/core/widgets/session_context_usage.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _host(
   Widget child, {
@@ -121,7 +122,7 @@ void main() {
         await tester.pumpWidget(
           _host(
             FloatingHeaderButton(
-              icon: Icons.menu_rounded,
+              icon: HIcons.menu_rounded,
               tooltip: 'Menú',
               onPressed: () => taps++,
             ),
@@ -150,7 +151,7 @@ void main() {
           tester.getSize(_gel('floating-header-button-gel')),
           const Size(48, 48),
         );
-        await tester.tap(find.byIcon(Icons.menu_rounded));
+        await tester.tap(find.byIcon(HIcons.menu_rounded));
         expect(taps, 1);
       });
 

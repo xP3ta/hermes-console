@@ -6,6 +6,7 @@
 // `fallback_providers` list; rows are added, changed and removed one at a
 // time and the list on screen is always the one the server returned.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -204,7 +205,7 @@ class _ModelsFallbackSectionState extends State<ModelsFallbackSection> {
                 trailing: IconButton(
                   key: ValueKey('models-fallback-remove-$index'),
                   tooltip: s.mdlRemove,
-                  icon: Icon(Icons.close, size: 18, color: colors.textDisabled),
+                  icon: Icon(HIcons.close, size: 18, color: colors.textDisabled),
                   onPressed: widget.enabled
                       ? () => _remove(index, entry)
                       : null,
@@ -213,11 +214,11 @@ class _ModelsFallbackSectionState extends State<ModelsFallbackSection> {
             HermesListRow(
               key: const ValueKey('models-fallback-add'),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              icon: Icons.alt_route,
+              icon: HIcons.alt_route,
               iconColor: colors.accentHover,
               title: s.mdlFallbackAdd,
               trailing: Icon(
-                Icons.chevron_right,
+                HIcons.chevron_right,
                 size: 18,
                 color: colors.textDisabled,
               ),

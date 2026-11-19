@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -268,7 +269,7 @@ class _WebhookReceiptSurfaceState extends State<WebhookReceiptSurface> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.key_rounded, color: colors.warning, size: 25),
+              Icon(HIcons.key_rounded, color: colors.warning, size: 25),
               const SizedBox(width: 11),
               Expanded(
                 child: Text(
@@ -368,7 +369,7 @@ class _CopyValueRow extends StatelessWidget {
                 IconButton(
                   tooltip: copyTooltip,
                   onPressed: onCopy,
-                  icon: const Icon(Icons.copy_rounded, size: 19),
+                  icon: const Icon(HIcons.copy_rounded, size: 19),
                 ),
               ],
             ),

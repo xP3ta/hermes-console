@@ -22,6 +22,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _connectionId = 'conn-spec-046';
 
@@ -464,7 +465,7 @@ void main() {
       expect(find.text('Refresh'), findsOneWidget);
       expect(find.text('Show sub-sessions'), findsNothing);
       expect(find.text('Hide sub-sessions'), findsNothing);
-      expect(find.byIcon(Icons.account_tree_outlined), findsNothing);
+      expect(find.byIcon(HIcons.account_tree_outlined), findsNothing);
       expect(queries, hasLength(1));
       expect(tester.takeException(), isNull);
     },

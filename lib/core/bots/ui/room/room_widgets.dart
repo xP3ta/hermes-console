@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -34,7 +35,7 @@ typedef RoomProfileResolver = AgentProfile? Function(HostedGroupMember member);
 String roomMemberName(HostedGroupMember? member, HostedGroupActor? actor) =>
     member?.displayName ?? member?.handle ?? actor?.publicLabel ?? '?';
 
-/// Speaker name in the room: the local Bot's display name ("Astra"), the
+/// Speaker name in the room: the local Bot's display name ("Ada"), the
 /// same one the roster and its Bot Chat show, else [roomMemberName].
 String roomSpeakerName(
   HostedGroupMember? member,
@@ -279,7 +280,7 @@ class RoomPendingMessageTile extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  Icons.error_outline_rounded,
+                  HIcons.error_outline_rounded,
                   size: 14,
                   color: colors.error,
                 ),
@@ -395,6 +396,29 @@ class RoomMessageTile extends StatelessWidget {
           actions: attachmentActions,
         ),
       ),
+    // Files sent through the room's own attachment store (Desktop): named
+    // here, opened on Desktop (Console does not download them).
+    for (final file in entry.event.attachments)
+      Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: RoomServerAttachmentChip(
+          key: ValueKey(
+            'room-server-attachment-${entry.event.eventId}-${file.attachmentId}',
+          ),
+          attachment: file,
+        ),
+      ),
+    // A member's files whose manifest this Console does not accept: said,
+    // never hidden silently (review M3).
+    if (entry.event.attachmentsRejected)
+      Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: RoomUnreadableAttachmentsNote(
+          key: ValueKey(
+            'room-attachments-unreadable-${entry.event.eventId}',
+          ),
+        ),
+      ),
   ];
 
   Widget _actions(BuildContext context) {
@@ -406,7 +430,7 @@ class RoomMessageTile extends StatelessWidget {
         if (onReplyInThread != null)
           ChatMessageActionButton(
             key: ValueKey('room-reply-${entry.event.eventId}'),
-            icon: Icons.reply_rounded,
+            icon: HIcons.reply_rounded,
             label: entry.isUser
                 ? s.roomReplyInThread
                 : s.roomReplyTo(
@@ -454,7 +478,7 @@ class RoomMessageTile extends StatelessWidget {
                     ),
                   ),
                   Icon(
-                    Icons.subdirectory_arrow_right_rounded,
+                    HIcons.subdirectory_arrow_right_rounded,
                     size: 14,
                     color: colors.textSecondary,
                   ),
@@ -606,7 +630,7 @@ class RoomMessageTile extends StatelessWidget {
                     if (onReplyInThread != null)
                       ChatMessageActionButton(
                         key: ValueKey('room-reply-${event.eventId}'),
-                        icon: Icons.reply_rounded,
+                        icon: HIcons.reply_rounded,
                         iconSize: 15,
                         label: Strings.of(context).roomReplyInThread,
                         onPressed: onReplyInThread,
@@ -1215,10 +1239,10 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
             else if (onTap != null)
               Icon(
                 expanded
-                    ? Icons.expand_less_rounded
+                    ? HIcons.expand_less_rounded
                     : row.replyEventId != null
-                    ? Icons.chevron_right_rounded
-                    : Icons.expand_more_rounded,
+                    ? HIcons.chevron_right_rounded
+                    : HIcons.expand_more_rounded,
                 size: 18,
                 color: colors.textSecondary,
               ),
@@ -1262,7 +1286,7 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                   ),
                   if (step.done)
                     Icon(
-                      Icons.check_rounded,
+                      HIcons.check_rounded,
                       size: 13,
                       color: colors.textSecondary,
                     ),
@@ -1386,8 +1410,8 @@ class _RoomRoundDetailState extends State<RoomRoundDetail> {
                     ),
                     Icon(
                       _previousOpen
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
+                          ? HIcons.expand_less_rounded
+                          : HIcons.expand_more_rounded,
                       size: 18,
                       color: colors.textSecondary,
                     ),
@@ -1501,7 +1525,7 @@ class RoomNewPill extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                Icons.arrow_downward_rounded,
+                HIcons.arrow_downward_rounded,
                 size: 15,
                 color: colors.onAccent,
               ),
@@ -1765,7 +1789,7 @@ class _RoomMemberClarifyCardState extends State<RoomMemberClarifyCard> {
         children: [
           Row(
             children: [
-              Icon(Icons.help_outline_rounded, size: 16, color: colors.warning),
+              Icon(HIcons.help_outline_rounded, size: 16, color: colors.warning),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -1893,7 +1917,7 @@ class RoomMemberWaitingBanner extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
-                Icons.hourglass_top_rounded,
+                HIcons.hourglass_top_rounded,
                 size: 18,
                 color: colors.warning,
               ),
@@ -1995,7 +2019,7 @@ class RoomMemberStallBanner extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.sync_problem_rounded, size: 18, color: colors.warning),
+              Icon(HIcons.sync_problem_rounded, size: 18, color: colors.warning),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -2093,7 +2117,7 @@ class RoomRetryCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.error_outline_rounded, size: 18, color: colors.error),
+          Icon(HIcons.error_outline_rounded, size: 18, color: colors.error),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
@@ -2143,6 +2167,91 @@ class RoomRetryCard extends StatelessWidget {
 }
 
 // ─── Attachment card (T309) ─────────────────────────────────────────────────
+
+/// A file of the room's attachment store (`attachments` manifest): its kind
+/// and name, and where to open it. Not actionable in Console.
+class RoomServerAttachmentChip extends StatelessWidget {
+  final HostedGroupAttachment attachment;
+
+  const RoomServerAttachmentChip({super.key, required this.attachment});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final icon = switch (attachment.kind) {
+      'image' => HIcons.image_outlined,
+      'pdf' => HIcons.picture_as_pdf_outlined,
+      _ => HIcons.insert_drive_file_outlined,
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colors.divider),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: colors.textSecondary),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  attachment.displayName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: HermesType.supportSize,
+                    color: colors.textPrimary,
+                  ),
+                ),
+                Text(
+                  s.roomAttachmentOnDesktop,
+                  style: TextStyle(
+                    fontSize: HermesType.captionSize,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A member message carried files Console could not read.
+class RoomUnreadableAttachmentsNote extends StatelessWidget {
+  const RoomUnreadableAttachmentsNote({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(HIcons.attach_file_rounded, size: 16, color: colors.textSecondary),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            Strings.of(context).roomAttachmentsUnreadable,
+            style: TextStyle(
+              fontSize: HermesType.captionSize,
+              color: colors.textSecondary,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class RoomAttachmentCard extends StatefulWidget {
   final RoomAttachmentRef attachment;
@@ -2334,10 +2443,10 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
             padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x3),
             child: Icon(
               _kind == AttachmentPreviewKind.video
-                  ? Icons.movie_outlined
+                  ? HIcons.movie_outlined
                   : _kind == AttachmentPreviewKind.audio
-                  ? Icons.graphic_eq_rounded
-                  : Icons.image_outlined,
+                  ? HIcons.graphic_eq_rounded
+                  : HIcons.image_outlined,
               size: 18,
               color: colors.textSecondary,
             ),
@@ -2361,10 +2470,10 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
                     )
                   : Icon(
                       _kind == AttachmentPreviewKind.video
-                          ? Icons.movie_outlined
+                          ? HIcons.movie_outlined
                           : ref.isImage
-                          ? Icons.image_outlined
-                          : Icons.insert_drive_file_outlined,
+                          ? HIcons.image_outlined
+                          : HIcons.insert_drive_file_outlined,
                       color: colors.textSecondary,
                     ),
             ),
@@ -2416,19 +2525,19 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
         if (widget.localFile == null) ...[
           action(
             'download',
-            Icons.download_rounded,
+            HIcons.download_rounded,
             s.roomFileDownload,
             _AttachmentOp.download,
           ),
           action(
             'open',
-            Icons.open_in_new_rounded,
+            HIcons.open_in_new_rounded,
             s.roomFileOpen,
             _AttachmentOp.open,
           ),
           action(
             'share',
-            Icons.ios_share_rounded,
+            HIcons.ios_share_rounded,
             s.roomFileShare,
             _AttachmentOp.share,
           ),

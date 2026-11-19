@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -291,7 +292,7 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
                 key: const ValueKey('mission-routine-close'),
                 tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
                 onPressed: _submitting ? null : _close,
-                icon: const Icon(Icons.close_rounded),
+                icon: const Icon(HIcons.close_rounded),
               ),
             ],
           ),
@@ -358,7 +359,7 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
                         child: Row(
                           children: [
                             Icon(
-                              Icons.tune_rounded,
+                              HIcons.tune_rounded,
                               size: 18,
                               color: colors.textSecondary,
                             ),
@@ -374,8 +375,8 @@ class _MissionBotRoutineSheetState extends State<MissionBotRoutineSheet> {
                             ),
                             Icon(
                               _showMore
-                                  ? Icons.expand_less_rounded
-                                  : Icons.expand_more_rounded,
+                                  ? HIcons.expand_less_rounded
+                                  : HIcons.expand_more_rounded,
                               color: colors.textSecondary,
                             ),
                           ],
@@ -525,7 +526,7 @@ class _LockedBotIdentity extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Icon(
-              Icons.lock_outline_rounded,
+              HIcons.lock_outline_rounded,
               size: 18,
               color: colors.textDisabled,
             ),
@@ -584,7 +585,7 @@ class _ScheduleRow extends StatelessWidget {
             child: Row(
               children: [
                 Icon(
-                  Icons.schedule_rounded,
+                  HIcons.schedule_rounded,
                   size: 20,
                   color: colors.textSecondary,
                 ),
@@ -613,7 +614,7 @@ class _ScheduleRow extends StatelessWidget {
                   ),
                 ),
                 Icon(
-                  Icons.chevron_right_rounded,
+                  HIcons.chevron_right_rounded,
                   size: 18,
                   color: colors.textDisabled,
                 ),

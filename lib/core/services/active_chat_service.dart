@@ -129,6 +129,7 @@ import 'session_authority.dart' show SessionAuthorityCapability;
 import 'tui_gateway_client.dart';
 import 'turn_keepalive_hold.dart';
 import 'turn_outbox_store.dart';
+import 'stream_segments.dart';
 
 /// Hermes Desktop espera hasta cinco segundos a que el turno interrumpido deje
 /// de estar busy antes de entregar la corrección capturada por barge-in.
@@ -1084,6 +1085,18 @@ const _privateTranscriptProjectionKeys = <String>{
   '_submittedText',
   '_desktopInterimKey',
   '_desktopPostInterimKey',
+  // The live reply's per-segment marks: which part of the row is the sealed
+  // paragraphs of earlier segments and which is this segment's partial. A
+  // recovery re-projects the row; without them the next seal takes the whole
+  // reply for its own partial and replaces it, while Desktop seals each
+  // interim in its own bubble and a later seal never touches an earlier one
+  // (use-message-stream/index.ts:701-712).
+  '_desktopInterimText',
+  '_desktopInterimHead',
+  '_desktopInterimSegmentPrefix',
+  '_desktopInterimWasPreserved',
+  '_desktopReplaceInterimOnDelta',
+  '_desktopPreserveInterimOnDelta',
   '_localTranscriptProjectionId',
   '_localTranscriptPairId',
   '_localTerminalProjectionId',
@@ -1994,6 +2007,112 @@ bool _transcriptRowsHaveUnambiguousIdentityEvidence(
     seen.add(identity);
   }
   return true;
+}
+
+/// Tool call ids a transcript row shows: its own calls and its activity
+/// steps. An activity row without a durable id (a tool run whose calling
+/// assistant the server's display projection left out) is recognised in
+/// another page by these ids, as Hermes Desktop recognises a page-local tool
+/// fold by its id.
+Set<String> _toolCallIdsShownBy(Map<String, dynamic> message) {
+  final ids = <String>{};
+  void add(Object? raw) {
+    final id = raw?.toString().trim();
+    if (id != null && id.isNotEmpty) ids.add(id);
+  }
+
+  final calls = message['tool_calls'];
+  if (calls is List) {
+    for (final call in calls) {
+      if (call is Map) add(call['id']);
+    }
+  }
+  final trace = message[assistantActivityTraceKey];
+  if (trace is List) {
+    for (final step in trace) {
+      if (step is Map && (step['kind'] == 'tool' || step['kind'] == 'skill')) {
+        add(step['id']);
+      }
+    }
+  }
+  return ids;
+}
+
+/// Hermes Desktop `mergeOverlappingTail` (apps/desktop/src/app/chat/
+/// transcript-backfill.ts, 3b421578), on newest-first lists. The page always
+/// enters:
+/// - no durable row shared with the view (compaction, rewind): the page;
+/// - otherwise one slot per durable row, ordered by row id; the page's copy
+///   replaces the view's; a row without a durable id travels in front of the
+///   next durable row after it (the page's leading rows win, the view's are
+///   kept when the page brought none for that slot); a view row the page
+///   already carries is dropped; trailing rows: the page's, then the view's.
+/// Null when the rows cannot be ordered by row id (message ids only).
+List<Map<String, dynamic>>? _mergeOverlappingTailLikeDesktop(
+  List<Map<String, dynamic>> previousNewestFirst,
+  List<Map<String, dynamic>> refreshedNewestFirst,
+) {
+  final previousIdentities = _transcriptIdentities(previousNewestFirst);
+  final shares = refreshedNewestFirst.any((message) {
+    final identity = _transcriptMessageIdentity(message);
+    return identity != null &&
+        previousIdentities.any(identity.sharesExactCoordinate);
+  });
+  if (!shares) return refreshedNewestFirst;
+  final pageToolCalls = <String>{
+    for (final message in refreshedNewestFirst) ..._toolCallIdsShownBy(message),
+  };
+  bool pageCarries(Map<String, dynamic> message) {
+    final ids = _toolCallIdsShownBy(message);
+    return ids.isNotEmpty && ids.every(pageToolCalls.contains);
+  }
+
+  final slots =
+      <
+        int,
+        ({Map<String, dynamic> message, List<Map<String, dynamic>> leading})
+      >{};
+  List<Map<String, dynamic>>? place(
+    List<Map<String, dynamic>> newestFirst, {
+    required bool fresh,
+  }) {
+    var pending = <Map<String, dynamic>>[];
+    for (final message in newestFirst.reversed) {
+      final identity = _transcriptMessageIdentity(message);
+      if (identity == null) {
+        if (fresh || !pageCarries(message)) pending.add(message);
+        continue;
+      }
+      final rowId = identity.rowId;
+      if (rowId == null) return null;
+      final existing = slots[rowId];
+      if (!fresh && existing != null) {
+        pending = <Map<String, dynamic>>[];
+        continue;
+      }
+      final leading = fresh && existing != null && pending.isEmpty
+          ? existing.leading
+          : pending;
+      slots[rowId] = (message: message, leading: leading);
+      pending = <Map<String, dynamic>>[];
+    }
+    return pending;
+  }
+
+  final previousTrailing = place(previousNewestFirst, fresh: false);
+  if (previousTrailing == null) return null;
+  final refreshedTrailing = place(refreshedNewestFirst, fresh: true);
+  if (refreshedTrailing == null) return null;
+  final rowIds = slots.keys.toList()..sort();
+  final chronological = <Map<String, dynamic>>[
+    for (final rowId in rowIds) ...[
+      ...slots[rowId]!.leading,
+      slots[rowId]!.message,
+    ],
+    ...refreshedTrailing,
+    ...previousTrailing,
+  ];
+  return chronological.reversed.toList(growable: false);
 }
 
 bool _isKnownLocalTranscriptProjection(
@@ -5296,6 +5415,22 @@ class ActiveChat with WidgetsBindingObserver {
   Future<void>? _subagentHistoryRepairFlight;
   final Set<({String runtime, SubagentActivityKey key})>
       _subagentHistoryRepairAttempted = {};
+  // The binding (session epoch) the attempts above belong to: a new binding,
+  // even of the same runtime id, may read once more.
+  int? _subagentHistoryRepairEpoch;
+  // Identities whose durable read failed (exception, timeout, page not fully
+  // parsed) in this binding: one retry on the next fenced list, no more.
+  final Set<SubagentActivityKey> _subagentHistoryRepairFailedOnce = {};
+  // S1: identities a fenced `subagent.list` of this binding (session epoch)
+  // and runtime no longer names, with no live row in the current runtime and
+  // no terminal evidence: «not active, final result unavailable». Written
+  // only in [_performSubagentHydration]; never inferred from the public
+  // projection. The row itself keeps its phase (`unknown`) and identity.
+  final Map<
+    SubagentActivityKey,
+    ({int sessionEpoch, String runtimeId, String subagentId})
+  >
+  _subagentAbsentConfirmed = {};
   final Set<SubagentActivityKey> _subagentPublicEligibleKeys = {};
   Future<void>? _subagentRefreshFlight;
   _SubagentRefreshAuthority? _subagentRefreshAuthority;
@@ -5872,6 +6007,12 @@ class ActiveChat with WidgetsBindingObserver {
   /// Último runtime que este chat vio anunciado por un roster completo.
   String? _rosterLiveRuntimeSessionId;
   int _rosterRuntimeAbsenceStreak = 0;
+
+  /// Turn epoch closed because the roster stopped announcing its runtime
+  /// while the same roster reported the stored session busy on another one:
+  /// the session moved, it is not at rest, and the queue waits for a roster
+  /// that says idle.
+  int? _queueHeldForBusySessionEpoch;
   int? _viewerTurnConvergenceEpoch;
 
   /// Turn epoch whose post-cut viewer saw fresh busy evidence (a resume
@@ -6345,9 +6486,17 @@ class ActiveChat with WidgetsBindingObserver {
       if (activityChanged || staleStopCleared) {
         _emit(ActiveChatEvent.sessionInfo);
       }
+      // Desktop parity: the queue drains whenever the session is not busy,
+      // edge-independent (apps/desktop/src/store/composer-queue.ts:711-729
+      // `shouldAutoDrain`), and `session.active_list` is the authority on
+      // busy, including the ABSENCE of a turn whose terminal never reached
+      // this client (apps/desktop/src/app/contrib/hooks/use-background-sync.ts
+      // :797-860), whether or not a runtime is bound.
+      if (activityState == DesktopPassiveActivityState.idle) {
+        _queueHeldForBusySessionEpoch = null;
+      }
       if (activityState == DesktopPassiveActivityState.idle &&
           !_queueDrainSuspended &&
-          !hasDesktopRuntime &&
           !isStreaming) {
         // The inventory result is already authoritative for this generation.
         // Start the async drain directly: a zero-delay Timer can outlive a
@@ -6404,6 +6553,21 @@ class ActiveChat with WidgetsBindingObserver {
     if (++_rosterRuntimeAbsenceStreak < _terminalAuthorityAbsenceStreak) return;
     _rosterRuntimeAbsenceStreak = 0;
     _rosterLiveRuntimeSessionId = null;
+    // The turn is over on this runtime, yet the same list reports the stored
+    // session working on another one: the session is busy, so nothing queued
+    // goes behind this close. Desktop drains only while the session is not
+    // busy and `session.active_list` is its authority on busy, by stored
+    // session (apps/desktop/src/store/composer-queue.ts:711-729
+    // `shouldAutoDrain`; app/contrib/hooks/use-background-sync.ts:797-860).
+    final storedId = (_desktopStoredSessionId ?? serverSessionId).trim();
+    if (storedId.isNotEmpty &&
+        roster.sessions.any(
+          (row) =>
+              row.storedSessionId?.trim() == storedId &&
+              rosterStatusIsBusy(row.status),
+        )) {
+      _queueHeldForBusySessionEpoch = _turnEpoch;
+    }
     _sealRecoveredLiveActivity(completed: true);
     await _completeRun(
       finalOutput: assistantContent.isEmpty ? null : assistantContent,
@@ -7361,6 +7525,7 @@ class ActiveChat with WidgetsBindingObserver {
   }
 
   void retireConversationSubagents() {
+    _subagentAbsentConfirmed.clear(); // S1: a new turn prunes the roster.
     final retired = {
       for (final a in _conversationSubagents)
         if (a.isTerminal || subagentLiveRosterConfirmedEmpty) a.key,
@@ -7944,7 +8109,7 @@ class ActiveChat with WidgetsBindingObserver {
           _subagentForegroundPresentationGeneration == presentationGeneration) {
         _adaptiveSnapshotFailureRevision += 1;
         _subagentListFailureRevision += 1;
-        // subagent-roster (REPORT-MODELO-DESKTOP plan E): a failed read proves
+        // subagent-roster: a failed read proves
         // nothing, so the roster, its public rows and their controls stay as
         // they were (Desktop use-subagent-snapshot.ts keeps the event-fed
         // frame on a failed `subagent.list`). The next read or event settles.
@@ -8050,13 +8215,48 @@ class ActiveChat with WidgetsBindingObserver {
     _subagentLiveRosterConfirmed = true;
     _subagentHydrationUnconfirmed = false;
     final listedIds = rows.map((a) => a.subagentId).toSet();
+    final absentBefore = subagentAbsentConfirmedKeys;
+    _subagentAbsentConfirmed.removeWhere(
+      (_, fact) => listedIds.contains(fact.subagentId),
+    );
+    for (final row in _conversationSubagents) {
+      final id = row.subagentId;
+      if (row.isTerminal || id == null || listedIds.contains(id)) continue;
+      final known =
+          _subagentActivities?.activities.any(
+            (a) =>
+                _sameDurableSubagentIdentity(a, row) &&
+                (a.isTerminal || a.key.scope.runtimeSessionId == runtimeId),
+          ) ??
+          false;
+      if (known) continue;
+      _subagentAbsentConfirmed[row.key] = (
+        sessionEpoch: sessionEpoch,
+        runtimeId: runtimeId,
+        subagentId: id,
+      );
+    }
+    final absentChanged = !setEquals(absentBefore, subagentAbsentConfirmedKeys);
     missing.addAll(
       _conversationSubagents.where(
-        (a) => !a.isTerminal && !listedIds.contains(a.subagentId),
+        (a) =>
+            !a.isTerminal &&
+            !listedIds.contains(a.subagentId) &&
+            // Terminal evidence already in the private state (a durable
+            // repair applied it) settles the identity: no further reads.
+            !(_subagentActivities?.activities.any(
+                  (t) => t.isTerminal && _sameDurableSubagentIdentity(t, a),
+                ) ??
+                false),
       ),
     );
     // One attempt per identity/runtime until fresh native evidence arrives.
     // A live-only list repeating the same absence is no new evidence.
+    if (_subagentHistoryRepairEpoch != sessionEpoch) {
+      _subagentHistoryRepairAttempted.clear();
+      _subagentHistoryRepairFailedOnce.clear();
+      _subagentHistoryRepairEpoch = sessionEpoch;
+    }
     _subagentHistoryRepairAttempted.removeWhere(
       (attempt) => attempt.runtime != runtimeId,
     );
@@ -8069,14 +8269,55 @@ class ActiveChat with WidgetsBindingObserver {
       );
       final repair = _repairMissingSubagentsFromHistory(unrepaired);
       _subagentHistoryRepairFlight = repair;
-      unawaited(repair.whenComplete(() => _subagentHistoryRepairFlight = null));
+      unawaited(
+        repair.whenComplete(() {
+          _subagentHistoryRepairFlight = null;
+          // S1: the gate waits for the repair; tell the UI it settled.
+          if (!_disposed && _subagentAbsentConfirmed.isNotEmpty) {
+            _emit(ActiveChatEvent.subagentActivity);
+          }
+        }),
+      );
     }
     final retainedCleared = _clearRetainedSubagentLiveness();
     if (canProvePresentation ||
         retainedCleared ||
+        absentChanged ||
         ((hadControlAuthority || rosterChanged) && rows.isEmpty)) {
       _emit(ActiveChatEvent.subagentActivity);
     }
+  }
+
+  /// S1 gate: the fact holds only in its own binding and runtime, while the
+  /// last list did not fail, no durable repair is in flight and the identity
+  /// is not live again.
+  bool _subagentAbsenceHolds(SubagentActivity row) {
+    final fact = _subagentAbsentConfirmed[row.key];
+    final runtime = _desktopRuntimeSessionId;
+    return fact != null &&
+        !row.isTerminal &&
+        runtime != null &&
+        fact.sessionEpoch == _desktopSessionEpoch &&
+        fact.runtimeId == runtime &&
+        gatewayConnected &&
+        !_subagentHydrationUnconfirmed &&
+        _subagentHistoryRepairFlight == null &&
+        // Any row of this identity in the private state (live again, or with
+        // terminal evidence) means it is not «confirmed absent».
+        !(_subagentActivities?.activities.any(
+              (a) => _sameDurableSubagentIdentity(a, row),
+            ) ??
+            false);
+  }
+
+  /// Keys of roster rows that are confirmed not active (S1). Presentation
+  /// only: the rows stay in [conversationSubagents] with their phase.
+  Set<SubagentActivityKey> get subagentAbsentConfirmedKeys {
+    if (_subagentAbsentConfirmed.isEmpty) return const {};
+    return {
+      for (final row in _conversationSubagents)
+        if (_subagentAbsenceHolds(row)) row.key,
+    };
   }
 
   /// A fenced `subagent.list` has been applied for the current runtime and no
@@ -8099,20 +8340,38 @@ class ActiveChat with WidgetsBindingObserver {
       return;
     }
     final scope = _subagentScope(runtime);
-    final generation = _subagentListRequestGeneration;
+    final sessionEpoch = _desktopSessionEpoch;
     final presentation = _subagentForegroundPresentationGeneration;
+    // Durable evidence is fenced by the authority that produced the request:
+    // gateway, runtime, scope and binding. A newer roster read of the same
+    // runtime does not make a written closure false, so it is no fence here.
+    bool authorityChanged() =>
+        _disposed ||
+        !identical(gateway, _desktopGateway) ||
+        _desktopRuntimeSessionId != runtime ||
+        _subagentScope(runtime) != scope ||
+        _desktopSessionEpoch != sessionEpoch;
+    // A failed read (not «read without evidence») may be retried once, on the
+    // next fenced list of the same binding.
+    void readFailed() {
+      if (authorityChanged()) return;
+      for (final activity in missing) {
+        if (_subagentHistoryRepairFailedOnce.add(activity.key)) {
+          _subagentHistoryRepairAttempted.remove((
+            runtime: runtime,
+            key: activity.key,
+          ));
+        }
+      }
+    }
+
     try {
       final page = await (gateway as HermesDesktopSessionHistoryGateway)
           .sessionHistory(sessionId: runtime, profile: _storedSessionProfile)
           .timeout(_desktopRecoveryAttemptTimeout);
-      if (_disposed ||
-          !identical(gateway, _desktopGateway) ||
-          _desktopRuntimeSessionId != runtime ||
-          _subagentScope(runtime) != scope ||
-          _subagentListRequestGeneration != generation ||
-          _subagentForegroundPresentationGeneration != presentation ||
-          !_subagentForegroundPresentationLeased ||
-          !page.messagesFullyParsed) {
+      if (authorityChanged()) return;
+      if (!page.messagesFullyParsed) {
+        readFailed();
         return;
       }
       final entries = <SubagentActivityKey, SubagentActivity>{
@@ -8133,6 +8392,11 @@ class ActiveChat with WidgetsBindingObserver {
         current: SubagentActivityState.withEntries(scope, entries),
         includeEarlierTurns: true,
       );
+      // Without the UI lease (or with a newer one) the evidence is admitted
+      // privately: no public eligibility, no control authority.
+      final presentationProof =
+          _subagentForegroundPresentationLeased &&
+          _subagentForegroundPresentationGeneration == presentation;
       for (final activity
           in projected.state?.activities ?? const <SubagentActivity>[]) {
         if (!activity.isTerminal ||
@@ -8143,6 +8407,17 @@ class ActiveChat with WidgetsBindingObserver {
             )) {
           continue;
         }
+        // Live again in the current runtime when the result applies: the
+        // live child wins.
+        final liveAgain =
+            _subagentActivities?.activities.any(
+              (a) =>
+                  !a.isTerminal &&
+                  a.key.scope.runtimeSessionId == runtime &&
+                  _sameDurableSubagentIdentity(a, activity),
+            ) ??
+            false;
+        if (liveAgain) continue;
         _handleNativeSubagentEvent('subagent.complete', runtime, {
           'subagent_id': ?activity.subagentId,
           'delegation_id': ?activity.delegationId,
@@ -8154,10 +8429,11 @@ class ActiveChat with WidgetsBindingObserver {
           if (activity.details.completedAt case final end?)
             'completed_at': end.toIso8601String(),
           'duration_seconds': ?activity.details.durationSeconds,
-        });
+        }, presentationProof: presentationProof);
       }
     } catch (_) {
-      // Unknown stays unknown; the next fenced roster may retry the repair.
+      // Unknown stays unknown; one retry on the next fenced list.
+      readFailed();
     }
   }
 
@@ -8847,6 +9123,23 @@ class ActiveChat with WidgetsBindingObserver {
   @visibleForTesting
   set internalMessagesForTesting(List<Map<String, dynamic>> value) {
     _messages = value.toList(growable: true);
+  }
+
+  /// The page graft as a caller sees it: the resulting rows and whether the
+  /// page was accepted.
+  @visibleForTesting
+  ({List<Map<String, dynamic>> messages, bool accepted})
+  graftRefreshedTailForTesting(
+    List<Map<String, dynamic>> refreshedNewestFirst,
+    List<Map<String, dynamic>> previous, {
+    required bool refreshedTranscriptComplete,
+  }) {
+    final graft = _graftRefreshedTail(
+      refreshedNewestFirst,
+      previous,
+      refreshedTranscriptComplete: refreshedTranscriptComplete,
+    );
+    return (messages: graft.messages, accepted: graft.acceptedRefreshed);
   }
 
   @visibleForTesting
@@ -9714,6 +10007,122 @@ class ActiveChat with WidgetsBindingObserver {
   }
 
   bool _streamingConfirmed = false;
+
+  /// The `turn_id` of the last `message.start` this chat applied (Hermes
+  /// stamps one per turn, tui_gateway/stream_segments.py:28-34). It outlives
+  /// the turn's end, as Desktop's `streamTurnId` does (use-message-stream/
+  /// gateway-event/message-stream.ts:222): a start that names it again is
+  /// that same turn re-sent. Null while the server sends none.
+  String? _desktopStreamTurnId;
+
+  static String? _startTurnId(Map<String, dynamic> payload) {
+    final turnId = payload['turn_id'];
+    return turnId is String && turnId.isNotEmpty ? turnId : null;
+  }
+
+  /// How far the current turn's stamped reply has been applied (Hermes
+  /// 0.23.1 `turn_id`/`segment`/`offset`): re-sent chunks are dropped.
+  final ReplySegments _replySegments = ReplySegments();
+
+  /// A snapshot of the running turn now drives the live reply (recovery,
+  /// re-attach, open mid-turn): the stamped-reply cursor follows it (review
+  /// A1). See [ReplySegments.alignTo].
+  void _alignReplyCursorToSnapshot(DesktopSessionSnapshot snapshot) {
+    final assistant = snapshot.inflight?.assistant;
+    if (assistant == null) return;
+    _replySegments.alignTo(assistant.length);
+  }
+
+  /// Reply frames (stamped text chunks and seals, tool steps) of the runtime
+  /// a transport loss retired, received
+  /// on the new socket before the recovery snapshot re-adopted it. The
+  /// producer attaches the socket and cuts `inflight` in one locked section
+  /// and answers `session.resume` afterwards, so a chunk written after the
+  /// cut precedes the answer and is in neither the snapshot nor any later
+  /// frame. Desktop keeps the session bound while it resumes, applies such a
+  /// chunk live and overlays it on the resumed rows
+  /// (use-session-actions/index.ts:2109-2113 overlayConcurrentMessageChanges;
+  /// segment-identity.ts:48-66 admitSegmentDelta drops what the snapshot
+  /// already holds). Console unbinds on the loss, so it keeps them here and
+  /// applies them once the snapshot is adopted.
+  final List<TuiGatewayEvent> _recoveryHeldReplyChunks = <TuiGatewayEvent>[];
+  String? _recoveryHeldRuntimeSessionId;
+  bool _recoveryHeldTurnStarted = false;
+  static const int _recoveryHeldReplyChunkLimit = 2048;
+
+  void _holdReplyChunkDuringRecovery(TuiGatewayEvent event) {
+    if (event.sessionId != _recoveryHeldRuntimeSessionId) return;
+    switch (event.type) {
+      case 'message.start' || 'message.complete' || 'error':
+        // A turn boundary of the reconnect replay precedes the cut: the
+        // snapshot already tells it, and what was held before it belongs to
+        // a turn the snapshot may not describe. A live one was written
+        // after the cut (the socket only receives the session's frames once
+        // `session.resume` attached it, in the same locked section that
+        // cuts `inflight`): the snapshot still says the turn runs and no
+        // later frame repeats the end, so it is kept in order.
+        if (event.replayed) {
+          _recoveryHeldReplyChunks.clear();
+          // The replay is what the producer wrote after the last frame this
+          // client received: a start in it is a turn begun while away.
+          _recoveryHeldTurnStarted = event.type == 'message.start';
+          return;
+        }
+      case 'message.delta':
+        // Only a stamped chunk can be told from what the snapshot holds.
+        if (ReplyStamp.of(event.payload)?.offset == null) return;
+      case 'message.interim':
+        if (ReplyStamp.of(event.payload) == null) return;
+      case 'tool.start' || 'tool.progress' || 'tool.complete':
+        // The snapshot describes the running turn by its text only; a tool
+        // step of the reconnect replay (session.events.since) is in no
+        // other frame.
+        break;
+      default:
+        return;
+    }
+    if (_recoveryHeldReplyChunks.length >= _recoveryHeldReplyChunkLimit) {
+      return;
+    }
+    _recoveryHeldReplyChunks.add(event);
+  }
+
+  /// After a running snapshot of [runtimeSessionId] was adopted and the
+  /// reply cursor aligned to it: the held chunks go through the normal
+  /// stamped admission, so one the snapshot holds changes nothing.
+  void _applyReplyChunksHeldDuringRecovery(String runtimeSessionId) {
+    final held = List<TuiGatewayEvent>.of(_recoveryHeldReplyChunks);
+    final heldFor = _recoveryHeldRuntimeSessionId;
+    _recoveryHeldReplyChunks.clear();
+    _recoveryHeldRuntimeSessionId = null;
+    _recoveryHeldTurnStarted = false;
+    if (heldFor != runtimeSessionId ||
+        _desktopRuntimeSessionId != runtimeSessionId) {
+      return;
+    }
+    for (final event in held) {
+      if (_desktopRuntimeSessionId != runtimeSessionId) return;
+      // A step the adopted rows already show finished (the snapshot carried
+      // its durable round) is not run again.
+      if (event.type.startsWith('tool.') &&
+          _liveTraceShowsToolCompleted(event.payload['tool_id'])) {
+        continue;
+      }
+      _onDesktopEvent(event);
+    }
+  }
+
+  bool _liveTraceShowsToolCompleted(Object? toolId) {
+    if (toolId == null || _messages.isEmpty) return false;
+    final trace = _messages.first[assistantActivityTraceKey];
+    if (trace is! List) return false;
+    return trace.any(
+      (step) =>
+          step is Map &&
+          '${step['id']}' == '$toolId' &&
+          (step['status'] ?? step['state']) == 'completed',
+    );
+  }
   bool _cancelling = false;
   bool _disposed = false;
   final Completer<void> _disposeSignal = Completer<void>();
@@ -10317,6 +10726,12 @@ class ActiveChat with WidgetsBindingObserver {
       );
       _usingDesktopGateway = true;
       _backgroundLostRuntime = null;
+      // The frames of the reconnect replay were received before this
+      // adoption: they go first, in their order, so a live frame that
+      // follows (a later seal) does not make them look like copies.
+      if (snapshot.running) {
+        _applyReplyChunksHeldDuringRecovery(snapshot.runtimeSessionId);
+      }
       turnRegistryTrace('background_reattach', {
         'running': snapshot.running,
         'committed': committed,
@@ -10359,6 +10774,7 @@ class ActiveChat with WidgetsBindingObserver {
     final cameUp = up && !_desktopLinkWasUp;
     _desktopLinkWasUp = up;
     if (cameUp) {
+      _desktopLinkGeneration += 1;
       _feedTurnRegistry(const TurnTransportReconnected());
       if (!_transportForeground) unawaited(_reattachRuntimeUnderHold(gateway));
       _publishDashboardAuthRequired(false);
@@ -10370,6 +10786,17 @@ class ActiveChat with WidgetsBindingObserver {
 
   /// The chat's socket was ready at the last link change.
   bool _desktopLinkWasUp = false;
+
+  /// C1 (official mobile app, decompiled 1.0.0 vc44): the connection
+  /// generation `o9e.f`, incremented on every new connection
+  /// (ju6.java:4645 `o9eVar.f++` in the runtime.describe handshake), and the
+  /// generation at which the bound runtime was last confirmed by a snapshot
+  /// (`t8e.a()`, recorded by `E.e(this.f)` when a snapshot is applied,
+  /// o9e.java:1274). Before a mutation, a state from another generation is
+  /// resumed first (o9e.java:2064 `t8e.a() == this.f` else `D()` =
+  /// session.resume).
+  int _desktopLinkGeneration = 0;
+  int? _desktopRuntimeConfirmedLinkGeneration;
 
   MessageReactionPrefs? _watchedReactionPrefs;
   bool _reactionsWereEnabled = false;
@@ -10914,10 +11341,24 @@ class ActiveChat with WidgetsBindingObserver {
   }
 
   void _emit(ActiveChatEvent e) {
+    // The stamped-reply cursor lives as long as the turn it describes: a
+    // turn boundary starts it again (see ReplySegments.reset). A rebuild
+    // from the server does not: a running snapshot aligns it instead
+    // (_alignReplyCursorToSnapshot, review A1), and Hermes' snapshot is
+    // never behind what was already streamed (Desktop never resets it).
+    if (e == ActiveChatEvent.started ||
+        e == ActiveChatEvent.done ||
+        e == ActiveChatEvent.error ||
+        e == ActiveChatEvent.cancelled) {
+      _replySegments.reset();
+    }
     _syncAgentTaskTurn();
     // dp-A: some publications (a passive load) announce themselves only as
     // sessionInfo; at rest every event is cheap enough to check.
     if (!isStreaming) _retireAnsweredNoReplyNotice();
+    if (_settledLiveCopyEpoch != null) {
+      _dropSettledLiveCopyTheStoredTurnCarries();
+    }
     if (e == ActiveChatEvent.connected && MessageReactionPrefs.shared.enabled) {
       Timer.run(() => unawaited(confirmReactions()));
     }
@@ -11070,6 +11511,11 @@ class ActiveChat with WidgetsBindingObserver {
     // this call commits itself (`commitAfterCaller`). Without a snapshot there
     // is no proof of owning a deferred attach and nothing is committed.
     if (!commitAfterCaller) _commitOwnerAdoption(runtimeId, snapshot);
+    // C1: o9e.java:1274 `E.e(this.f)`: a snapshot confirms the runtime on the
+    // current connection generation.
+    if (snapshot != null) {
+      _desktopRuntimeConfirmedLinkGeneration = _desktopLinkGeneration;
+    }
   }
 
   @visibleForTesting
@@ -11156,6 +11602,10 @@ class ActiveChat with WidgetsBindingObserver {
       // callback cannot register or submit new work for the retiring runtime.
       _retiringDesktopRuntimeSessionId = retiredRuntimeId;
       _desktopRuntimeSessionId = null;
+      _recoveryHeldReplyChunks.clear();
+      _recoveryHeldTurnStarted = false;
+      _recoveryHeldRuntimeSessionId =
+          reason == _RuntimeRetirement.transportLoss ? retiredRuntimeId : null;
       _expireInteractivePromptsForRuntime(retiredRuntimeId);
       if (reason != _RuntimeRetirement.transportLoss) {
         _serverAwaitsInput = false;
@@ -11568,6 +12018,7 @@ class ActiveChat with WidgetsBindingObserver {
     bool observePassiveActivity = true,
     bool Function()? stillOwningVisible,
     bool Function()? stillCurrentRead,
+    bool extendRestPageToOverlap = false,
   }) {
     Future<void> load() => _loadMessagesUnlabelled(
       expectedMessageCount: expectedMessageCount,
@@ -11577,9 +12028,13 @@ class ActiveChat with WidgetsBindingObserver {
       observePassiveActivity: observePassiveActivity,
       stillOwningVisible: stillOwningVisible,
       stillCurrentRead: stillCurrentRead,
+      extendRestPageToOverlap: extendRestPageToOverlap,
     ).whenComplete(() {
       // dp-A: a load can publish without an event of its own.
       if (!_disposed && !isStreaming) _retireAnsweredNoReplyNotice();
+      if (!_disposed && _dropSettledLiveCopyTheStoredTurnCarries()) {
+        _emit(ActiveChatEvent.messagesHydrated);
+      }
     });
     return passiveOnly
         ? GatewaySocketMeter.originIfNone('chat.passive', load)
@@ -11594,6 +12049,7 @@ class ActiveChat with WidgetsBindingObserver {
     bool observePassiveActivity = true,
     bool Function()? stillOwningVisible,
     bool Function()? stillCurrentRead,
+    bool extendRestPageToOverlap = false,
   }) async {
     final loadEpoch = ++_messageLoadEpoch;
     final coldOpen = !messagesLoaded;
@@ -11615,6 +12071,42 @@ class ActiveChat with WidgetsBindingObserver {
         ),
       ),
     );
+    // Desktop parity (hermes-agent 3b421578), port of
+    // apps/desktop/src/app/session/hooks/use-session-actions/:
+    // - resume-reconcile.ts:1-13: a resume snapshot predates what the live
+    //   stream painted since; «the live transcript is the newer truth for that
+    //   session, so the resume keeps it».
+    // - index.ts:2058-2063: the REST page is painted when it lands and the
+    //   runtime path grafts only its live projection onto that snapshot.
+    // - index.ts:2131-2139 + utils.ts:1384-1400 (overlayConcurrentMessageChanges):
+    //   rows that changed since the snapshot baseline replace the older
+    //   activation rows; the live stream row replaces the activation one.
+    // - index.ts:1188-1191 (isCurrentResume) / :2059 (resumedSameSelectedSession):
+    //   only while the same resume of the same session is still current.
+    // Here: Resume and REST run in parallel and each publishes; a later
+    // republication of the same snapshot keeps the chat's live rows of the same
+    // running turn (same turn epoch, runtime and bind/session epochs this load
+    // adopted). Any other move, or a new turn, inherits nothing.
+    final loadTurnEpoch = _turnEpoch;
+    ({String runtime, int bind, int session})? loadAdoption;
+    bool republishesSameLiveTurn(String runtime) {
+      final adopted = loadAdoption;
+      return adopted != null &&
+          _turnEpoch == loadTurnEpoch &&
+          adopted.runtime == runtime &&
+          _desktopRuntimeSessionId == runtime &&
+          _desktopBindEpoch == adopted.bind &&
+          _desktopSessionEpoch == adopted.session;
+    }
+
+    List<Map<String, dynamic>> liveActivityBaseline(String runtime) {
+      if (_turnEpoch != loadTurnEpoch) return const [];
+      if (loadAdoption == null) return previousMessagesNewestFirst;
+      return republishesSameLiveTurn(runtime)
+          ? List<Map<String, dynamic>>.of(_messages)
+          : const <Map<String, dynamic>>[];
+    }
+
     final bridgeOwnedLiveUser =
         _usingDesktopGateway && isStreaming && !_runTerminal;
     final loadTerminalFences = _terminalReconciliationFences(_messages);
@@ -12013,10 +12505,20 @@ class ActiveChat with WidgetsBindingObserver {
             );
         final snapshotHasLiveActivity =
             snapshot.running || snapshot.inflight != null;
+        // The reconnect replay brought a `message.start` after the last
+        // frame this chat received: the running turn of this snapshot began
+        // while it was away (the proof the viewer re-attach accepts).
+        final turnBegunAway =
+            snapshot.running &&
+            _runTerminal &&
+            !isStreaming &&
+            _recoveryHeldTurnStarted &&
+            _recoveryHeldRuntimeSessionId == snapshot.runtimeSessionId;
         final rejectSnapshotLiveActivity =
             snapshotHasLiveActivity &&
             (snapshotRejectedByTerminalFence ||
                 (_runTerminal &&
+                    !turnBegunAway &&
                     (liveAuthorityFences.isEmpty ||
                         !snapshotCoversLiveTerminal ||
                         !snapshotHasDistinctInflightUser)));
@@ -12128,13 +12630,26 @@ class ActiveChat with WidgetsBindingObserver {
           bridgeOwnedLiveUser: bridgeOwnedLiveUser,
           retainMediaEvidence: true,
         );
-        final projected = _carryLiveTurnActivity(
-          previousMessagesNewestFirst,
+        final carried = _carryLiveTurnActivity(
+          liveActivityBaseline(snapshot.runtimeSessionId),
           _sanitizeDesktopFailureProjection(
             projection.messagesNewestFirst.map(Map<String, dynamic>.from),
           ),
           running: projection.running && isStreaming && !_runTerminal,
         );
+        // utils.ts:1395-1400: the live stream row replaces the snapshot's
+        // activation (inflight) row of the same running turn.
+        final keptLiveReply =
+            projection.running &&
+                isStreaming &&
+                !_runTerminal &&
+                republishesSameLiveTurn(snapshot.runtimeSessionId)
+            ? _withCurrentLiveReply(carried)
+            : null;
+        // Only a republication that actually kept the chat's own live reply
+        // also keeps its reply cursor and state (below).
+        final keepsLiveReply = keptLiveReply != null;
+        final projected = keptLiveReply ?? carried;
         if (_runTerminal && (projection.running || projection.failed)) {
           _beginExternallyObservedDesktopTurn(snapshot);
         }
@@ -12171,6 +12686,11 @@ class ActiveChat with WidgetsBindingObserver {
           info: snapshot.info,
           snapshot: snapshot,
           commitAfterCaller: true,
+        );
+        loadAdoption ??= (
+          runtime: snapshot.runtimeSessionId,
+          bind: _desktopBindEpoch,
+          session: _desktopSessionEpoch,
         );
         _hydrateAgentTasks(snapshot.todoState, running: projection.running);
         _reconcileSubagentsFromTranscript();
@@ -12209,9 +12729,16 @@ class ActiveChat with WidgetsBindingObserver {
           state = ChatPipelineState.failed;
         } else if (projection.running) {
           _usingDesktopGateway = true;
-          state = snapshot.inflight?.assistant?.isNotEmpty == true
-              ? ChatPipelineState.streaming
-              : ChatPipelineState.executing;
+          // index.ts:2137-2139: when the live view is kept, the current rows
+          // (and the stream they receive) stay as they are; the snapshot's
+          // reply cursor is not re-applied over a newer live reply.
+          if (!keepsLiveReply) {
+            _alignReplyCursorToSnapshot(snapshot);
+            state = snapshot.inflight?.assistant?.isNotEmpty == true
+                ? ChatPipelineState.streaming
+                : ChatPipelineState.executing;
+            _applyReplyChunksHeldDuringRecovery(snapshot.runtimeSessionId);
+          }
         } else if (isStreaming &&
             !_runTerminal &&
             _turnSawRuntimePayload &&
@@ -12607,7 +13134,10 @@ class ActiveChat with WidgetsBindingObserver {
     );
     final SessionMessagesPage page;
     try {
-      page = await _fetchStoredMessagesPage(context);
+      page = await _fetchStoredMessagesPage(
+        context,
+        extendRestPageToOverlap: extendRestPageToOverlap,
+      );
     } on _ProfileTranscriptReadExpired {
       // Disposal retires the load harmlessly, but a living owner whose Retry
       // revoked this read must still receive the authority denial.
@@ -12881,6 +13411,7 @@ class ActiveChat with WidgetsBindingObserver {
     String? runtimeSessionId,
     bool allowNativeHistory = true,
     Future<SessionMessagesPage>? prefetchedRestTail,
+    bool extendRestPageToOverlap = false,
   }) async {
     final page = await _requestStoredMessagesPage(
       storedSessionId: context.requestedStoredSessionId,
@@ -12890,6 +13421,7 @@ class ActiveChat with WidgetsBindingObserver {
       runtimeSessionId: runtimeSessionId,
       readContext: context,
       prefetchedRestTail: prefetchedRestTail,
+      extendRestPageToOverlap: extendRestPageToOverlap,
       allowNativeHistory:
           allowNativeHistory &&
           context.consumer != _SessionMessagesPageConsumer.loadEarlier,
@@ -12991,6 +13523,7 @@ class ActiveChat with WidgetsBindingObserver {
     _SessionMessagesPageReadContext? readContext,
     bool allowNativeHistory = true,
     Future<SessionMessagesPage>? prefetchedRestTail,
+    bool extendRestPageToOverlap = false,
   }) async {
     final injected = _storedMessageLoader;
     if (injected != null) {
@@ -13029,8 +13562,14 @@ class ActiveChat with WidgetsBindingObserver {
       }
       if (nativePage != null) {
         final requestedLimit = limit ?? _transcriptPageSize;
-        if (nativePage.rawMessageCount > requestedLimit ||
-            (_transcriptIsComplete && _messages.isNotEmpty)) {
+        // Hermes Desktop reads the durable transcript from REST (every row
+        // with its stored id, tool-calling assistants included) and uses the
+        // runtime only for the live projection. session.history is a display
+        // projection that leaves out tool-calling assistants without text and
+        // ships tool rows without ids: it stays the fallback when REST is
+        // unavailable. A first paint of a long chat does not wait for REST
+        // behind a healthy socket (co1215); the next read grafts REST.
+        if (_messages.isEmpty && nativePage.rawMessageCount > requestedLimit) {
           return nativePage;
         }
         try {
@@ -13053,15 +13592,13 @@ class ActiveChat with WidgetsBindingObserver {
                     canonicalPage.messages,
                   ));
           if (canonicalPageIsUsable) {
-            final canonicalLimit = canonicalPage.limit;
-            final canonicalHasEarlier =
-                canonicalPage.hasEarlier ??
-                (canonicalPage.paginationProvided &&
-                    canonicalLimit != null &&
-                    canonicalPage.returned >= canonicalLimit);
-            return _NativeSessionHistoryPage(
-              nativePage,
-              hasEarlier: canonicalHasEarlier,
+            if (!extendRestPageToOverlap) return canonicalPage;
+            return await _extendRestPageToOverlap(
+              canonicalPage,
+              storedSessionId,
+              profile: profile,
+              offset: offset,
+              readContext: readContext,
             );
           }
         } on Object {
@@ -13070,14 +13607,115 @@ class ActiveChat with WidgetsBindingObserver {
         return nativePage;
       }
     }
-    if (prefetchedRestTail != null) return prefetchedRestTail;
-    return _getStoredMessagesRestPage(
+    final restPage =
+        prefetchedRestTail ??
+        _getStoredMessagesRestPage(
+          storedSessionId,
+          profile: profile,
+          limit: limit ?? _transcriptPageSize,
+          offset: offset,
+          readContext: readContext,
+        );
+    if (!extendRestPageToOverlap) return restPage;
+    return _extendRestPageToOverlap(
+      await restPage,
       storedSessionId,
       profile: profile,
-      limit: limit ?? _transcriptPageSize,
       offset: offset,
       readContext: readContext,
     );
+  }
+
+  static const _refreshOverlapPageLimit = 4;
+
+  /// Load epoch whose resume refresh read found no stored row shared with
+  /// the view, even after [_extendRestPageToOverlap]. Hermes Desktop then
+  /// shows the page (transcript-backfill.ts `mergeOverlappingTail`): a
+  /// generation the server no longer serves is not kept from the cache.
+  int? _restPageWithoutOverlapEpoch;
+
+  /// Hermes Desktop `extendRefreshPageToOverlap` (transcript-backfill.ts,
+  /// 3b421578). A newest page that shares no stored row with the view (a long
+  /// tool turn, or a compaction whose archived rows the server still serves
+  /// with `include_compacted`) is extended with at most four older pages
+  /// until one shares a stored row. Stored ids only grow: once a page reaches
+  /// below the oldest stored id on screen no older page can overlap, and the
+  /// newest page is returned as it was.
+  Future<SessionMessagesPage> _extendRestPageToOverlap(
+    SessionMessagesPage page,
+    String storedSessionId, {
+    required String profile,
+    required int offset,
+    _SessionMessagesPageReadContext? readContext,
+  }) async {
+    if (offset != 0 || page.messages.isEmpty || _messages.isEmpty) return page;
+    final shown = <int>{
+      for (final identity in _transcriptIdentities(_messages)) ?identity.rowId,
+    };
+    if (shown.isEmpty) return page;
+    bool sharesShown(Iterable<Map<String, dynamic>> rows) => rows.any(
+      (row) => switch (canonicalTranscriptIdentity(row)?.rowId) {
+        final rowId? => shown.contains(rowId),
+        null => false,
+      },
+    );
+    if (sharesShown(page.messages)) return page;
+    SessionMessagesPage withoutOverlap() {
+      _restPageWithoutOverlapEpoch = _messageLoadEpoch;
+      return page;
+    }
+
+    final oldestShown = shown.reduce(math.min);
+    final pageLimit = page.limit ?? _transcriptPageSize;
+    var extended = page.messages;
+    var nextOffset = page.offset + page.messages.length;
+    var older = page;
+    for (var index = 0; index < _refreshOverlapPageLimit; index++) {
+      // A short page is the oldest one: nothing older to read.
+      if (older.hasEarlier == false || older.messages.length < pageLimit) {
+        return withoutOverlap();
+      }
+      try {
+        older = await _getStoredMessagesRestPage(
+          storedSessionId,
+          profile: profile,
+          limit: pageLimit,
+          offset: nextOffset,
+          readContext: readContext,
+        );
+      } on Object {
+        // A refresh failure keeps the newest page, as before.
+        return withoutOverlap();
+      }
+      if (older.messages.isEmpty || !older.messagesFullyParsed) {
+        return withoutOverlap();
+      }
+      extended = [...older.messages, ...extended];
+      nextOffset += older.messages.length;
+      if (sharesShown(older.messages)) {
+        return SessionMessagesPage.fromRaw(
+          rawMessages: extended,
+          pagination: {
+            'limit': nextOffset - page.offset,
+            'offset': page.offset,
+            'order': 'latest',
+            'returned': extended.length,
+          },
+          paginationProvided: page.paginationProvided,
+          resolvedTipId: page.resolvedTipId,
+          coverage: page.coverage,
+        );
+      }
+      if (older.messages.any(
+        (row) => switch (canonicalTranscriptIdentity(row)?.rowId) {
+          final rowId? => rowId < oldestShown,
+          null => false,
+        },
+      )) {
+        return withoutOverlap();
+      }
+    }
+    return withoutOverlap();
   }
 
   /// The named profile's transcript read through [_api] (the Dashboard,
@@ -14542,6 +15180,14 @@ class ActiveChat with WidgetsBindingObserver {
       if (rowId(receipt['user_row_id']) case final id?) users = [id];
     }
     final finalReply = rowId(receipt['final_assistant_row_id']);
+    if (users.isNotEmpty &&
+        users.toSet().length == users.length &&
+        users.every(shown.contains) &&
+        finalReply != null &&
+        shown.contains(finalReply)) {
+      _dropLiveCopyOfStoredTurn(users.length, finalReply);
+      return;
+    }
     if (users.any(shown.contains) ||
         (finalReply != null && shown.contains(finalReply)) ||
         users.toSet().length != users.length) {
@@ -14569,6 +15215,40 @@ class ActiveChat with WidgetsBindingObserver {
     if (finalReply != null && _messages[0]['role'] == 'assistant') {
       bind(0, finalReply);
     }
+  }
+
+  /// The receipt's rows (every prompt and the final reply) are already on
+  /// screen as stored rows, newest first, and the rows above them are this
+  /// turn's live copy: a resume answered «running» with an `inflight` whose
+  /// turn its own rows already hold finished. Hermes names the stored rows by
+  /// id, so the copy is the same turn and goes; kept, it would be fenced
+  /// behind its own final reply and no later read could ever cover that
+  /// fence. Desktop never paints that copy: the inflight prompt is not
+  /// projected when the latest stored user run holds it, nor the inflight
+  /// reply when the stored one covers it (use-session-actions/utils.ts
+  /// :1006-1014 and :1082-1095). Fails closed like the binding: only when the
+  /// newest stored row is the receipt's final reply and the rows above are
+  /// exactly that many prompts, none of them a queued or optimistic one.
+  void _dropLiveCopyOfStoredTurn(int userCount, int finalReplyRowId) {
+    final turnEnd = _messages.indexWhere(_hasDurableTranscriptIdentity);
+    if (turnEnd <= 0 ||
+        canonicalTranscriptRowId(_messages[turnEnd]) != finalReplyRowId) {
+      return;
+    }
+    var localUsers = 0;
+    for (var index = 0; index < turnEnd; index++) {
+      final message = _messages[index];
+      if (message['role'] == 'assistant') continue;
+      if (message['role'] != 'user' ||
+          message['_optimistic'] == true ||
+          message['_desktopAcceptedQueued'] == true ||
+          !(isRealUserTurn(message) || message['_steer'] == true)) {
+        return;
+      }
+      localUsers += 1;
+    }
+    if (localUsers != userCount) return;
+    _messages = _messages.sublist(turnEnd).toList(growable: true);
   }
 
   void _markCurrentTurnAwaitingTranscript() {
@@ -14739,7 +15419,115 @@ class ActiveChat with WidgetsBindingObserver {
     return fence;
   }
 
+  /// Grafts a refreshed durable page onto [previous]. Where this graft would
+  /// refuse the page and keep the old view (no shared anchor, a view row
+  /// without a durable id), Hermes Desktop never does: it merges as
+  /// [_mergeOverlappingTailLikeDesktop]. A terminal fence (this chat's own
+  /// turn still unproven, or covered by the page: the rest of the view is
+  /// then grafted by [_graftRefreshedTailCore] directly), an empty page or a
+  /// complete page keep today's rules; live local projections stay on top as
+  /// they do today.
   _RefreshedTranscriptGraft _graftRefreshedTail(
+    List<Map<String, dynamic>> refreshedNewestFirst,
+    List<Map<String, dynamic>> previous, {
+    required bool refreshedTranscriptComplete,
+    List<_TerminalProjectionFence> requiredTerminalFences = const [],
+    bool enforceTerminalFences = true,
+    bool preservePartialExactTailCoverage = false,
+  }) {
+    final withoutOverlap =
+        _restPageWithoutOverlapEpoch != null &&
+        _restPageWithoutOverlapEpoch == _messageLoadEpoch;
+    final fenced =
+        enforceTerminalFences &&
+        (requiredTerminalFences.isNotEmpty ||
+            _terminalReconciliationFences(previous).isNotEmpty);
+    if (withoutOverlap &&
+        !fenced &&
+        !refreshedTranscriptComplete &&
+        refreshedNewestFirst.any(_hasDurableTranscriptIdentity)) {
+      final viewIdentities = _transcriptIdentities(previous);
+      final shares = refreshedNewestFirst.any((message) {
+        final identity = _transcriptMessageIdentity(message);
+        return identity != null &&
+            viewIdentities.any(identity.sharesExactCoordinate);
+      });
+      if (!shares) {
+        // Live local projections (a pending turn, a local error, a
+        // cancelled reply) stay, as Desktop keeps its pending turn and local
+        // errors on top of the page.
+        final localProjections = <Map<String, dynamic>>[
+          for (var index = 0; index < previous.length; index++)
+            if (!_hasDurableTranscriptIdentity(previous[index]) &&
+                _isKnownLocalTranscriptProjection(previous, index))
+              previous[index],
+        ];
+        return (
+          messages: _mergeRetainedLocalWithDurable(
+            localProjections,
+            _carryDurableEditorialDisplayMetadata(
+              refreshedNewestFirst,
+              previous,
+            ),
+          ),
+          preservesExistingCoverage: false,
+          acceptedRefreshed: true,
+          retainsExistingRows: localProjections.isNotEmpty,
+          unconfirmedRetainedIdentities: const <TranscriptMessageIdentity>[],
+        );
+      }
+    }
+    final graft = _graftRefreshedTailCore(
+      refreshedNewestFirst,
+      previous,
+      refreshedTranscriptComplete: refreshedTranscriptComplete,
+      requiredTerminalFences: requiredTerminalFences,
+      enforceTerminalFences: enforceTerminalFences,
+      preservePartialExactTailCoverage: preservePartialExactTailCoverage,
+    );
+    if (graft.acceptedRefreshed ||
+        refreshedTranscriptComplete ||
+        !refreshedNewestFirst.any(_hasDurableTranscriptIdentity) ||
+        !previous.any(_hasDurableTranscriptIdentity) ||
+        fenced) {
+      return graft;
+    }
+    final localProjections = <Map<String, dynamic>>[
+      for (var index = 0; index < previous.length; index++)
+        if (!_hasDurableTranscriptIdentity(previous[index]) &&
+            _isKnownLocalTranscriptProjection(previous, index))
+          previous[index],
+    ];
+    final view = localProjections.isEmpty
+        ? previous
+        : previous
+              .where((message) => !localProjections.contains(message))
+              .toList(growable: false);
+    final merged = _mergeOverlappingTailLikeDesktop(
+      view,
+      _carryDurableEditorialDisplayMetadata(refreshedNewestFirst, previous),
+    );
+    if (merged == null) return graft;
+    final mergedIdentities = _transcriptIdentities(merged);
+    return (
+      messages: _mergeRetainedLocalWithDurable(localProjections, merged),
+      preservesExistingCoverage: false,
+      acceptedRefreshed: true,
+      retainsExistingRows: merged.length > refreshedNewestFirst.length,
+      unconfirmedRetainedIdentities: _transcriptIdentities(view)
+          .where(
+            (identity) =>
+                _identityCollectionContains(mergedIdentities, identity) &&
+                !_identityCollectionContains(
+                  _transcriptIdentities(refreshedNewestFirst),
+                  identity,
+                ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  _RefreshedTranscriptGraft _graftRefreshedTailCore(
     List<Map<String, dynamic>> refreshedNewestFirst,
     List<Map<String, dynamic>> previous, {
     required bool refreshedTranscriptComplete,
@@ -14928,7 +15716,9 @@ class ActiveChat with WidgetsBindingObserver {
       final withoutCoveredTerminal = previous
           .where((message) => message[_terminalProjectionIdKey] == null)
           .toList(growable: false);
-      final reconciled = _graftRefreshedTail(
+      // A covered fence keeps today's graft for the rest of the view: the
+      // Desktop fallback of [_graftRefreshedTail] does not apply here.
+      final reconciled = _graftRefreshedTailCore(
         refreshedNewestFirst,
         withoutCoveredTerminal,
         refreshedTranscriptComplete: refreshedTranscriptComplete,
@@ -18568,9 +19358,11 @@ class ActiveChat with WidgetsBindingObserver {
       if (snapshot.running) {
         _usingDesktopGateway = true;
         _runTerminal = false;
+        _alignReplyCursorToSnapshot(snapshot);
         state = snapshot.inflight?.assistant?.isNotEmpty == true
             ? ChatPipelineState.streaming
             : ChatPipelineState.executing;
+        _applyReplyChunksHeldDuringRecovery(snapshot.runtimeSessionId);
       }
       if (!receipt.destination.sameCoordinates(
         _desktopCompressionAuthorityState,
@@ -21128,6 +21920,10 @@ class ActiveChat with WidgetsBindingObserver {
     );
   }
 
+  /// The last prompt.submit was written to the socket and its answer never
+  /// arrived. Read (and reset) by the queue drain around its own send.
+  bool _promptSubmitReplyLost = false;
+
   Future<bool> _startDesktopTurn(
     HermesDesktopGateway gateway,
     String fullText,
@@ -21150,6 +21946,10 @@ class ActiveChat with WidgetsBindingObserver {
     LocalConversationOperation? transcriptOperation,
   }) async {
     var submissionAttempted = false;
+    // The text prompt.submit about to be awaited: its target and how many
+    // the transport had written for it (dispatch marker, see the catch).
+    String? dispatchTarget;
+    int? writtenBeforeDispatch;
     var idempotentSubmission = false;
     var promptRecoverySuperseded = false;
     String? attemptedRuntimeId;
@@ -21185,6 +21985,14 @@ class ActiveChat with WidgetsBindingObserver {
         _publishTransportState(ChatTransportState.connected);
       }
       var runtimeId = _desktopRuntimeSessionId;
+      // C1 (o9e.java:2041-2132 `n()`; ju6.java:4645): a runtime not confirmed
+      // by a snapshot on the current connection generation is resumed BEFORE
+      // prompt.submit, never retried after it (o9e.F l.470-740 rethrows).
+      if (runtimeId != null &&
+          _desktopRuntimeConfirmedLinkGeneration != _desktopLinkGeneration &&
+          _desktopStoredSessionId != null) {
+        runtimeId = null;
+      }
       if (runtimeId == null) {
         final draftSource = serverSessionId;
         final draftSessionEpoch = _desktopSessionEpoch;
@@ -21791,6 +22599,10 @@ class ActiveChat with WidgetsBindingObserver {
         }
 
         try {
+          if (gateway is TuiGatewayClient) {
+            dispatchTarget = runtimeId;
+            writtenBeforeDispatch = gateway.promptSubmitsWrittenFor(runtimeId);
+          }
           await submitPrompt(runtimeId);
         } on TuiGatewayRpcError catch (error) {
           // image.attach_bytes/file.attach mutan el runtime actual. Hasta que
@@ -21875,6 +22687,21 @@ class ActiveChat with WidgetsBindingObserver {
     } catch (error) {
       if (truncateBeforeUserOrdinal != null) {
         _activeRewrite?.rejection = error;
+      }
+      // Official mobile app (i30.java:1334-1347, zh2.java:140-145): a queued
+      // prompt goes back to the queue only when it failed BEFORE dispatch.
+      // Here: the prompt.submit was written to the socket and no answer came
+      // back (an answer, even a refusal, carries a JSON-RPC code). Desktop:
+      // «An identityless write cannot be deduplicated after a lost ACK»
+      // (use-prompt-actions/submit.ts:1151-1154).
+      final target = dispatchTarget;
+      final writtenBefore = writtenBeforeDispatch;
+      if (target != null &&
+          writtenBefore != null &&
+          gateway is TuiGatewayClient &&
+          gateway.promptSubmitsWrittenFor(target) > writtenBefore &&
+          !(error is TuiGatewayRpcError && error.code != null)) {
+        _promptSubmitReplyLost = true;
       }
       if (_turnEpoch != turnEpoch || _runTerminal || _disposed) return false;
       // A local pre-submit refusal is not a remote failure/ambiguous ACK and
@@ -22655,6 +23482,31 @@ class ActiveChat with WidgetsBindingObserver {
           _closeViewerRecovery(gateway);
           return;
         }
+        // A turn another surface started while this viewer was away: its
+        // `message.start` is in the reconnect replay, received before this
+        // adoption (and after the end of the turn this chat closed).
+        // A start written after the snapshot cut reaches this socket live,
+        // before the answer: the snapshot still says idle and no later frame
+        // repeats that start. Desktop keeps a turn that began while the
+        // resume was in flight (use-session-actions/index.ts:1574-1590;
+        // resume-verdicts.ts:54-56 resolveResumedBusy).
+        final firstHeldBoundary = _recoveryHeldReplyChunks
+            .where(
+              (event) =>
+                  event.type == 'message.start' ||
+                  event.type == 'message.complete' ||
+                  event.type == 'error',
+            )
+            .firstOrNull;
+        final startedAfterCut =
+            firstHeldBoundary != null &&
+            firstHeldBoundary.type == 'message.start' &&
+            !firstHeldBoundary.replayed;
+        final turnBegunAway =
+            _runTerminal &&
+            !isStreaming &&
+            _recoveryHeldRuntimeSessionId == runtimeId &&
+            ((snapshot.running && _recoveryHeldTurnStarted) || startedAfterCut);
         _desktopStoredSessionId = snapshot.storedSessionId;
         _desktopStoredSessionKnownMissing = false;
         _adoptDesktopRuntime(runtimeId, info: snapshot.info);
@@ -22673,6 +23525,38 @@ class ActiveChat with WidgetsBindingObserver {
           connectionRequestAtResumeStart: connectionRequestAtResumeStart,
         );
         _restorePendingApproval(snapshot);
+        if (turnBegunAway && _runTerminal && _desktopRuntimeSessionId == runtimeId) {
+          // What that start does when it arrives live on a chat at rest
+          // (the `message.start` branch of _onDesktopEvent), then the frames
+          // of the replay that follow it, in their order. Desktop applies
+          // the replayed frames of a session it kept bound the same way and
+          // the turn shows live (store/gateway.ts:457 pendingSessionReplay;
+          // gateway-event/message-stream.ts:175-212).
+          _foldStoredToolRowsOfFollowedTurn(snapshot);
+          _beginExternallyObservedDesktopTurn(snapshot);
+          _projectFollowedTurnPrompt(snapshot);
+          _clearDesktopCompactingIndicator();
+          _desktopTurnStartedAt ??= wallNow();
+          state = ChatPipelineState.waiting;
+          _applyReplyChunksHeldDuringRecovery(runtimeId);
+          _emit(ActiveChatEvent.waiting);
+        }
+        // A chat at rest that has shown no turn, resumed onto a running one:
+        // no frame of that turn reached it, the snapshot is the proof.
+        // Desktop marks the session busy and its turn live from
+        // `resumed.running` and paints the snapshot's rows and live
+        // projection (use-session-actions/index.ts:2296-2316); the load
+        // does that here, as when a running session is opened. A snapshot
+        // with no live projection has nothing to paint yet: the turn has
+        // just begun and its first frame opens it.
+        if (snapshot.running &&
+            snapshot.inflight != null &&
+            !turnBegunAway &&
+            !_runTerminal &&
+            !isStreaming &&
+            !_cancelling) {
+          unawaited(loadMessages(profile: _storedSessionProfile));
+        }
         _emit(ActiveChatEvent.sessionInfo);
         return;
       } catch (error) {
@@ -23533,9 +24417,14 @@ class ActiveChat with WidgetsBindingObserver {
       }
     }
     debugPrint('[active-chat] recovery settled without error site=$site');
-    _sealRecoveredLiveActivity(completed: false);
+    // The turn ended; the children it delegated may still be running in the
+    // background. Desktop's settle writes the session state only ("nothing is
+    // interrupted", store/session-states.ts:462-487) and leaves
+    // $subagentsBySession to subagent.list (use-subagent-snapshot.ts:35-47).
+    _sealRecoveredLiveActivity(completed: false, keepSubagents: true);
     _clearDesktopRecoveryNotice();
     if (!await _closeEndedTurnWithoutError(turnEpoch)) return;
+    _settledLiveCopyEpoch = _turnEpoch;
     // The recovery's own exit would publish this once the read below ends;
     // a settled turn on a healthy socket is not "reconnecting" meanwhile.
     final gateway = _desktopGateway;
@@ -23554,6 +24443,10 @@ class ActiveChat with WidgetsBindingObserver {
       // The local transcript still decides whether a reply arrived.
     }
     if (_disposed || _turnEpoch != settledEpoch || isStreaming) return;
+    if (_dropSettledLiveCopyTheStoredTurnCarries() &&
+        state != ChatPipelineState.completed) {
+      _emit(ActiveChatEvent.messagesHydrated);
+    }
     if (state == ChatPipelineState.completed) {
       state = ChatPipelineState.idle;
       _emit(ActiveChatEvent.messagesHydrated);
@@ -23566,6 +24459,109 @@ class ActiveChat with WidgetsBindingObserver {
     // normal end of a turn (_completeRunOnce): replyReady when the chat is
     // not on screen, through the same delivery and privacy rules.
     await _announceSettledReply();
+  }
+
+  /// The turn epoch settled on Hermes's word whose live projection may still
+  /// be on screen beside its stored rows
+  /// ([_dropSettledLiveCopyTheStoredTurnCarries]).
+  int? _settledLiveCopyEpoch;
+
+  /// The turn was settled on Hermes's word, without its end frames, and a
+  /// read brought its stored rows: what is left above them of its live
+  /// projection (the sealed interim reply, the prompt and reply a recovery
+  /// kept from before the cut) is the same turn again and goes, when the
+  /// stored turn carries it: the same prompt, once, and every sealed
+  /// paragraph of the live reply as whole lines of one of its stored
+  /// replies, in their text or, where the provider stores public commentary
+  /// there, in their reasoning. Anything else there (unsent or queued input,
+  /// a correction, an error, a side answer, text the stored turn does not
+  /// hold) keeps every row. The stored turn can land after the settle's own
+  /// read (measured on a Pixel: the read at `ended` still ended at the
+  /// previous turn), so every publication at rest checks again until the
+  /// stored turn shows or a new turn begins.
+  ///
+  /// Desktop settles the pending bubble as finished (`settleEndedLiveTurn`,
+  /// apps/desktop/src/store/session-states.ts:465-487) and its refresh
+  /// (`hydrateStoredSessionTranscript`, app/contrib/hooks/
+  /// use-background-sync.ts:448) keeps a local reply only when the stored
+  /// turn does not cover it: `durableFoldCoversLiveResponse` (sealed text
+  /// verbatim in the turn's stored rows, or as whole lines of their
+  /// reasoning: `foldCarriesText`, :558-568) drops it
+  /// (app/session/hooks/use-session-actions/utils.ts:581-617 and :895-900);
+  /// the prompt's local row goes when its committed twin is among the newly
+  /// stored rows (:650-667 and :780-790).
+  bool _dropSettledLiveCopyTheStoredTurnCarries() {
+    if (_settledLiveCopyEpoch == null) return false;
+    if (_settledLiveCopyEpoch != _turnEpoch) {
+      _settledLiveCopyEpoch = null;
+      return false;
+    }
+    if (isStreaming || !_runTerminal) return false;
+    final firstStored = _messages.indexWhere(_hasDurableTranscriptIdentity);
+    if (firstStored <= 0) return false;
+    final storedPromptIndex = _messages.indexWhere(
+      (message) =>
+          _hasDurableTranscriptIdentity(message) && isRealUserTurn(message),
+      firstStored,
+    );
+    if (storedPromptIndex < 0) return false;
+    final storedPrompt = _normalizedPromptText(
+      _messages[storedPromptIndex]['content'],
+    );
+    final storedReplies = <String>[
+      for (var index = storedPromptIndex - 1; index >= firstStored; index--)
+        if (_messages[index]['role'] == 'assistant')
+          for (final key in const ['content', 'reasoning'])
+            if (_messages[index][key] case final String text
+                when text.trim().isNotEmpty)
+              '\n${text.replaceAll('\r\n', '\n').trim()}\n',
+    ];
+    if (storedReplies.isEmpty) return false;
+    var localPrompts = 0;
+    var unconfirmedPrompt = false;
+    var carriedText = false;
+    for (var index = 0; index < firstStored; index++) {
+      final message = _messages[index];
+      if (message['_steer'] == true ||
+          message['_desktopAcceptedQueued'] == true ||
+          message['_cancelled'] == true ||
+          message['_cancelledUser'] == true ||
+          !(message['display_kind']?.toString().trim().isEmpty ?? true)) {
+        return false;
+      }
+      if (message['role'] == 'user') {
+        localPrompts += 1;
+        unconfirmedPrompt = message['_optimistic'] == true;
+        if (localPrompts > 1 ||
+            !isRealUserTurn(message) ||
+            _normalizedPromptText(message['content']) != storedPrompt) {
+          return false;
+        }
+        continue;
+      }
+      if (message['role'] != 'assistant' || message['_optimistic'] == true) {
+        return false;
+      }
+      final paragraphs = ((message['content'] as String?) ?? '')
+          .replaceAll('\r\n', '\n')
+          .split(RegExp(r'\n[ \t]*\n'))
+          .map((paragraph) => paragraph.trim())
+          .where((paragraph) => paragraph.isNotEmpty)
+          .toList(growable: false);
+      for (final paragraph in paragraphs) {
+        if (!storedReplies.any((reply) => reply.contains('\n$paragraph\n'))) {
+          return false;
+        }
+      }
+      carriedText = carriedText || paragraphs.isNotEmpty;
+    }
+    // A prompt still marked unconfirmed (a recovery re-projects it so) is
+    // this turn's only when the reply above it is: without carried text it
+    // may be a repeat that never left.
+    if (unconfirmedPrompt && !carriedText) return false;
+    _settledLiveCopyEpoch = null;
+    _messages = _messages.sublist(firstStored).toList(growable: true);
+    return true;
   }
 
   Future<void> _announceSettledReply() async {
@@ -24178,16 +25174,123 @@ class ActiveChat with WidgetsBindingObserver {
       isLiveAssistant,
       orElse: () => const <String, dynamic>{},
     );
-    final trace = previous[assistantActivityTraceKey];
-    if (trace is! List || trace.isEmpty) return nextNewestFirst;
     final index = nextNewestFirst.indexWhere(isLiveAssistant);
     if (index < 0) return nextNewestFirst;
     final live = nextNewestFirst[index];
+    final trace = previous[assistantActivityTraceKey];
     final existing = live[assistantActivityTraceKey];
-    if (existing is List && existing.isNotEmpty) return nextNewestFirst;
+    final carriesTrace =
+        trace is List &&
+        trace.isNotEmpty &&
+        !(existing is List && existing.isNotEmpty);
+    // The reply text this client already showed and the snapshot does not
+    // describe: interims delivered only as `message.interim` (not streamed)
+    // never reach `inflight.assistant`, so the snapshot's live row is empty
+    // while the previous one holds the sealed paragraphs. Desktop keeps its
+    // live stream row over the snapshot's activation row
+    // (use-session-actions/utils.ts:1395-1400).
+    final previousText = (previous['content'] as String?) ?? '';
+    final liveText = (live['content'] as String?) ?? '';
+    final carriesText =
+        previousText.trim().isNotEmpty && liveText.trim().isEmpty;
+    // The projection kept the same text: its per-segment marks go with it,
+    // or the next seal takes the whole reply for its own segment's partial
+    // and replaces it. Desktop seals each interim in its own bubble and a
+    // later seal never touches it (use-message-stream/index.ts:701-712).
+    final carriesMarks =
+        carriesText ||
+        (previousText.trim().isNotEmpty && liveText == previousText);
+    if (!carriesTrace && !carriesMarks) return nextNewestFirst;
     final carried = nextNewestFirst.toList(growable: true);
-    carried[index] = {...live, assistantActivityTraceKey: trace};
+    carried[index] = {
+      ...live,
+      if (carriesTrace) assistantActivityTraceKey: trace,
+      if (carriesText) 'content': previousText,
+      if (carriesMarks) ...{
+        for (final key in const [
+          '_desktopInterim',
+          '_desktopInterimPublic',
+          '_desktopInterimKey',
+          '_desktopInterimText',
+          '_desktopInterimHead',
+          '_desktopInterimSegmentPrefix',
+          '_desktopInterimWasPreserved',
+          '_desktopReplaceInterimOnDelta',
+          '_desktopPreserveInterimOnDelta',
+        ])
+          if (previous.containsKey(key)) key: previous[key],
+      },
+    };
     return carried;
+  }
+
+  /// Port of the stream-row step of `overlayConcurrentMessageChanges`
+  /// (apps/desktop/src/app/session/hooks/use-session-actions/utils.ts
+  /// :1395-1400): the live stream row — here `_messages[0]` while the turn
+  /// runs, an assistant row with no durable identity and no display kind, not
+  /// an interim notice and not cancelled (Desktop's `assistant-stream-*` row) —
+  /// replaces the snapshot's activation row (the projected inflight
+  /// `_pipeline` row). Returns null when either row is absent (nothing kept).
+  List<Map<String, dynamic>>? _withCurrentLiveReply(
+    List<Map<String, dynamic>> nextNewestFirst,
+  ) {
+    if (_messages.isEmpty) return null;
+    final current = _messages[0];
+    if (current['role'] != 'assistant' ||
+        !(current['display_kind']?.toString().trim().isEmpty ?? true) ||
+        current['_interim'] == true ||
+        current['_desktopInterim'] == true ||
+        _hasDurableTranscriptIdentity(current) ||
+        current['_cancelled'] == true) {
+      return null;
+    }
+    final index = nextNewestFirst.indexWhere(
+      (message) =>
+          message['role'] == 'assistant' &&
+          message['_pipeline'] == true &&
+          message['_desktopSnapshotKind'] == 'inflight' &&
+          (message['display_kind']?.toString().trim().isEmpty ?? true),
+    );
+    if (index < 0) return null;
+    final activation = nextNewestFirst[index];
+    final activationText = (activation['content'] ?? '').toString();
+    final currentText = (current['content'] ?? '').toString();
+    final replacement = Map<String, dynamic>.from(current);
+    // utils.ts:1515-1518: when the activation row has text the live row does
+    // not start with, the replacement keeps the activation's parts first and
+    // the live ones after (concatPartsByToolCall, lib/chat-messages/
+    // tool-parts.ts:1169-1198: a live tool call replaces the activation's
+    // call with the same id; the live parts not placed follow).
+    if (activationText.isNotEmpty && !currentText.startsWith(activationText)) {
+      replacement['content'] = '$activationText$currentText';
+      final earlier = activation[assistantActivityTraceKey];
+      final later = current[assistantActivityTraceKey];
+      if (earlier is List && later is List) {
+        final placed = <Object?>{};
+        final merged = <Object?>[
+          for (final step in earlier)
+            () {
+              final id = step is Map ? step['id'] : null;
+              final live = id == null
+                  ? null
+                  : later.firstWhere(
+                      (candidate) =>
+                          !placed.contains(candidate) &&
+                          candidate is Map &&
+                          candidate['id'] == id,
+                      orElse: () => null,
+                    );
+              if (live == null) return step;
+              placed.add(live);
+              return live;
+            }(),
+          for (final step in later)
+            if (!placed.contains(step)) step,
+        ];
+        replacement[assistantActivityTraceKey] = merged;
+      }
+    }
+    return nextNewestFirst.toList(growable: true)..[index] = replacement;
   }
 
   /// ms1215: once the first delta lands, the turn's live assistant row stops
@@ -24592,9 +25695,11 @@ class ActiveChat with WidgetsBindingObserver {
     }
     if (projection.running) {
       _usingDesktopGateway = true;
+      _alignReplyCursorToSnapshot(snapshot);
       state = snapshot.inflight?.assistant?.isNotEmpty == true
           ? ChatPipelineState.streaming
           : ChatPipelineState.executing;
+      _applyReplyChunksHeldDuringRecovery(snapshot.runtimeSessionId);
       _emit(ActiveChatEvent.toolProgress);
       return;
     }
@@ -24612,6 +25717,7 @@ class ActiveChat with WidgetsBindingObserver {
     required bool completed,
     bool uncertain = false,
     bool interruptedByUser = false,
+    bool keepSubagents = false,
   }) {
     for (final event in trace) {
       if (!uncertain && !event.isDone && !event.isFailed) {
@@ -24619,7 +25725,7 @@ class ActiveChat with WidgetsBindingObserver {
       }
     }
     final current = _subagentActivities;
-    if (current == null) return;
+    if (current == null || keepSubagents) return;
     final entries = <SubagentActivityKey, SubagentActivity>{};
     var changed = false;
     for (final entry in current.entries.entries) {
@@ -25288,7 +26394,10 @@ class ActiveChat with WidgetsBindingObserver {
 
   void _onDesktopEvent(TuiGatewayEvent event) {
     final runtimeId = _desktopRuntimeSessionId;
-    if (runtimeId == null) return;
+    if (runtimeId == null) {
+      _holdReplyChunkDuringRecovery(event);
+      return;
+    }
     if (event.type == 'sessions.changed') {
       // The transcript reconciliation trigger is independent of subagent/
       // process/control adaptive refresh: it must fire even while streaming
@@ -25368,6 +26477,13 @@ class ActiveChat with WidgetsBindingObserver {
         event.type != 'gateway.pong') {
       _observeRuntimeActivity();
     }
+    if (event.type == 'message.start') {
+      // A re-sent start of the turn this chat already has (reconnect replay,
+      // a superseded attempt) is not a new occurrence: Desktop returns
+      // before touching the session (message-stream.ts:146-153).
+      final turnId = _startTurnId(payload);
+      if (turnId != null && turnId == _desktopStreamTurnId) return;
+    }
     _feedTurnRegistryEvent(event.type, payload);
     if (_serverAwaitsInput &&
         event.type != 'gateway.ping' &&
@@ -25443,6 +26559,28 @@ class ActiveChat with WidgetsBindingObserver {
     }
 
     if (event.type == 'session.info') {
+      if (_sessionInfoReportsUnseenRunningTurn(event, payload)) {
+        // Desktop: «running=true from the backend is turn-live proof, same
+        // as message.start (e.g. resuming an already-running session that
+        // never replays its start event)» (use-message-stream/gateway-event/
+        // session-info.ts:369-394). The turn opens as a live start opens it;
+        // its clock is the gateway's turn_started_at, set just below.
+        _usingDesktopGateway = true;
+        _desktopTurnStartedAt = null;
+        _beginExternallyObservedDesktopTurn(
+          DesktopSessionSnapshot(
+            runtimeSessionId: runtimeId,
+            storedSessionId: _desktopStoredSessionId ?? serverSessionId,
+            created: false,
+            running: true,
+          ),
+        );
+        _clearDesktopCompactingIndicator();
+        state = ChatPipelineState.waiting;
+        _applyDesktopSessionInfo(payload);
+        _emit(ActiveChatEvent.waiting);
+        return;
+      }
       _applyDesktopSessionInfo(payload);
       return;
     }
@@ -25552,13 +26690,35 @@ class ActiveChat with WidgetsBindingObserver {
       }
       return;
     }
+    if (!_usingDesktopGateway &&
+        !_runTerminal &&
+        state == ChatPipelineState.idle &&
+        event.type == 'message.start' &&
+        !event.replayed) {
+      // A chat at rest that has run no turn here, attached to its runtime:
+      // a live start is a turn another surface began. Desktop opens a turn
+      // on every `message.start` unless the user stopped it (use-message-
+      // stream/gateway-event/message-stream.ts:143-212).
+      _usingDesktopGateway = true;
+      _desktopTurnStartedAt = null;
+      _beginExternallyObservedDesktopTurn(
+        DesktopSessionSnapshot(
+          runtimeSessionId: runtimeId,
+          storedSessionId: _desktopStoredSessionId ?? serverSessionId,
+          created: false,
+          running: true,
+        ),
+      );
+    }
     if (_usingDesktopGateway && _runTerminal && event.type == 'message.start') {
       if (!_isCausallyAfterDesktopTerminal(event) &&
-          !_isLiveSuccessorStartOnCurrentSocket(event)) {
-        // Current upstream has no turn_id. Only producer order on the exact
-        // transport that delivered the terminal can prove a successor start.
-        // Unsequenced, replay-stale, or post-rotation starts fail closed; an
-        // authoritative snapshot may still open the external turn.
+          !_isLiveSuccessorStartOnCurrentSocket(event) &&
+          !_isLiveStartOfAnotherTurn(event, payload)) {
+        // A start without a `turn_id` (older servers): only producer order
+        // on the exact transport that delivered the terminal can prove a
+        // successor start. Unsequenced, replay-stale, or post-rotation
+        // starts fail closed; an authoritative snapshot may still open the
+        // external turn.
         // event-turn: ask for that snapshot instead of waiting for one.
         _confirmUnorderedSuccessorStart(event);
         return;
@@ -25685,6 +26845,8 @@ class ActiveChat with WidgetsBindingObserver {
     }
     switch (event.type) {
       case 'message.start':
+        // message-stream.ts:222 `streamTurnId: turnId || null`.
+        _desktopStreamTurnId = _startTurnId(payload);
         _clearDesktopCompactingIndicator();
         // dp-D: keep the start this turn already has (the server's
         // turn_started_at from a resume/snapshot); only a turn with none
@@ -25718,11 +26880,19 @@ class ActiveChat with WidgetsBindingObserver {
           _emit(ActiveChatEvent.toolProgress);
         }
       case 'message.delta':
-        final deltaText = payload['text'];
+        final rawDelta = payload['text'];
         final narratable =
-            deltaText is String &&
+            rawDelta is String &&
             _isNarrableDesktopAssistantPayload(event.type, payload);
         if (!narratable) break;
+        // A chunk re-sent under a new sequence (replay, superseded attempt,
+        // second socket) is applied once, by its turn/segment/offset stamp
+        // (Hermes 0.23.1); an unstamped one (older server) as it comes.
+        final stamp = ReplyStamp.of(payload);
+        final deltaText = stamp == null
+            ? rawDelta
+            : _replySegments.admitDelta(stamp, rawDelta);
+        if (deltaText.isEmpty) break;
         _prepareDesktopPostInterimSegment();
         if (!_streamingConfirmed) {
           _streamingConfirmed = true;
@@ -25731,6 +26901,9 @@ class ActiveChat with WidgetsBindingObserver {
         _enqueueToken(deltaText, narratable: true);
       case 'message.interim':
         final rawText = payload['text'];
+        // A copy of a seal already applied (same turn and segment).
+        final sealStamp = ReplyStamp.of(payload);
+        if (sealStamp != null && !_replySegments.admitSeal(sealStamp)) break;
         if (rawText is String &&
             _isNarrableDesktopAssistantPayload(event.type, payload)) {
           final publicText = streamingPublicAssistantText(rawText);
@@ -25948,6 +27121,34 @@ class ActiveChat with WidgetsBindingObserver {
           event.transportGeneration,
           event.producerChannel,
         );
+  }
+
+  /// A start the server stamped with a `turn_id` (tui_gateway/
+  /// stream_segments.py:28-34) other than the one of the last turn this chat
+  /// started, produced live on the socket it holds now: a new turn by its
+  /// identity, whatever the sequences and replay epoch say. Desktop arms on
+  /// every start that does not name the turn it has, unless the user stopped
+  /// it (use-message-stream/gateway-event/message-stream.ts:143-222).
+  /// A replayed start, one of a past socket, one after Stop, or one while no
+  /// earlier turn id is known keeps the rules above.
+  bool _isLiveStartOfAnotherTurn(
+    TuiGatewayEvent event,
+    Map<String, dynamic> payload,
+  ) {
+    final gateway = _desktopGateway;
+    final turnId = _startTurnId(payload);
+    final lastTurnId = _desktopStreamTurnId;
+    if (turnId == null ||
+        lastTurnId == null ||
+        turnId == lastTurnId ||
+        event.replayed ||
+        gateway is! HermesDesktopLiveTransportGateway ||
+        state == ChatPipelineState.cancelled ||
+        _finalizedStopTurnEpoch == _turnEpoch) {
+      return false;
+    }
+    return (gateway as HermesDesktopLiveTransportGateway)
+        .isCurrentLiveTransport(event.transportGeneration, event.producerChannel);
   }
 
   bool _isCausallyAfterDesktopTerminal(TuiGatewayEvent event) {
@@ -26303,6 +27504,41 @@ class ActiveChat with WidgetsBindingObserver {
     } on FormatException {
       return;
     }
+  }
+
+  /// A live `session.info(running=true)` on a chat that shows no turn.
+  ///
+  /// Desktop arms the turn on that edge unless the user stopped it
+  /// (session-info.ts:364-394, `if (state.interrupted) return state`). Here
+  /// the frame must also be one this chat can place: produced live (not a
+  /// replay), and, once a turn has ended on this chat, ordered after that
+  /// terminal by the same rule a `message.start` passes.
+  bool _sessionInfoReportsUnseenRunningTurn(
+    TuiGatewayEvent event,
+    Map<String, dynamic> payload,
+  ) {
+    final rawInfo = payload['info'];
+    final info = rawInfo is Map ? rawInfo : payload;
+    if (info['running'] != true ||
+        event.replayed ||
+        isStreaming ||
+        _cancelling ||
+        state == ChatPipelineState.cancelled ||
+        _finalizedStopTurnEpoch == _turnEpoch ||
+        _stopTransition != null ||
+        _desktopInterruptDrain != null ||
+        _recoveringDesktopTurnEpoch != null ||
+        _recoveryLoopsActive != 0 ||
+        _completeRunsInFlight != 0) {
+      return false;
+    }
+    if (!_usingDesktopGateway && !_runTerminal) {
+      return state == ChatPipelineState.idle;
+    }
+    return _usingDesktopGateway &&
+        _runTerminal &&
+        (_isCausallyAfterDesktopTerminal(event) ||
+            _isLiveSuccessorStartOnCurrentSocket(event));
   }
 
   void _applyDesktopSessionInfo(Map<String, dynamic> payload) {
@@ -26943,6 +28179,10 @@ class ActiveChat with WidgetsBindingObserver {
           _subagentHistoryRepairAttempted.removeWhere((attempt) =>
             attempt.key == authoritative!.key ||
             attempt.key.stableId == authoritative.key.stableId);
+          // S1: fresh native evidence: no longer confirmed absent.
+          _subagentAbsentConfirmed.removeWhere(
+            (_, fact) => fact.subagentId == authoritative!.subagentId,
+          );
           _subagentPublicEligibleKeys.add(authoritative.key);
           _subagentPresentationState =
               _SubagentPresentationState.foregroundCurrent;
@@ -29099,7 +30339,9 @@ class ActiveChat with WidgetsBindingObserver {
     // Explicit resume is itself the user-owned authority to reacquire the exact
     // durable session for a parked text entry.
     if (_queueLease == QueueLease.resumeRequested) return true;
-    if (_desktopRuntimeSessionId != null) return true;
+    if (_desktopRuntimeSessionId != null) {
+      return _queueHeldForBusySessionEpoch != _turnEpoch;
+    }
     // A prepared head is already durably owned by this queue. Requiring an
     // unrelated active-list capability here made the ownership proof unusable
     // precisely on cold/idle gateways and left the FIFO permanently parked.
@@ -29316,6 +30558,8 @@ class ActiveChat with WidgetsBindingObserver {
     _preparedTurnDrainInFlight = true;
     _queueDrainInFlightId = next.id;
     final bool accepted;
+    ActiveTurnDelivery? sentDelivery;
+    _promptSubmitReplyLost = false;
     try {
       accepted = await send(
         mentionsFrozen: true,
@@ -29327,6 +30571,7 @@ class ActiveChat with WidgetsBindingObserver {
         queued: true,
         allowTransportFallbackOverride: next.allowTransportFallback,
       );
+      sentDelivery = _activeTurnDelivery;
     } finally {
       _preparedTurnDrainInFlight = false;
       _queueDrainInFlightId = null;
@@ -29338,6 +30583,21 @@ class ActiveChat with WidgetsBindingObserver {
       _messageQueue.removeFirst();
       _clearQueuedRetryState(next.id);
       _unparkQueueLeaseIfEmpty();
+      _emit(ActiveChatEvent.queueChanged);
+      return;
+    }
+    // APK(e): a submit that reached the transport and lost its reply is not
+    // resent automatically (o9e.F, o9e.java:470-740, rethrows; the app keeps
+    // it as a FailedSubmissionPayload, uo6.java:37, for the user). Console
+    // marks it uncertain, which the drain never retries.
+    // A text entry has no delivery object (measured: diag-apk-e2 prints
+    // `delivery=null`), so the dispatch marker of the transport decides.
+    if (_promptSubmitReplyLost ||
+        (sentDelivery != null &&
+            sentDelivery.transportStarted &&
+            !sentDelivery.acknowledged)) {
+      _promptSubmitReplyLost = false;
+      _uncertainQueuedTextIds.add(next.id);
       _emit(ActiveChatEvent.queueChanged);
       return;
     }
@@ -30740,6 +32000,62 @@ class ActiveChat with WidgetsBindingObserver {
     if (_pruneFinishedSubagentsAtTurnBoundary()) {
       _pendingSubagentInterrupts.clear();
     }
+  }
+
+  /// The stored tool rows of the turn being followed fold into its live row:
+  /// a read that landed before the runtime was bound again published them as
+  /// a settled reply. Desktop extends the row the resumed transcript already
+  /// holds instead of opening a second bubble beside it (use-session-actions/
+  /// resume-reconcile.ts:78-95 resumedStreamTarget; utils.ts:1097-1106). The
+  /// replay applied next rebuilds those steps on the live row.
+  void _foldStoredToolRowsOfFollowedTurn(DesktopSessionSnapshot snapshot) {
+    final prompt = snapshot.inflight?.user?.trim() ?? '';
+    if (prompt.isEmpty) return;
+    final promptIndex = _messages.indexWhere(isRealUserTurn);
+    if (promptIndex <= 0 ||
+        _normalizedPromptText(_messages[promptIndex]['content']) !=
+            _normalizedPromptText(prompt)) {
+      return;
+    }
+    bool isStoredToolRow(Map<String, dynamic> message) {
+      final calls = message['tool_calls'];
+      return message['role'] == 'assistant' &&
+          message['_pipeline'] != true &&
+          _hasDurableTranscriptIdentity(message) &&
+          '${message['content'] ?? ''}'.trim().isEmpty &&
+          calls is List &&
+          calls.isNotEmpty;
+    }
+
+    if (!_messages.take(promptIndex).every(isStoredToolRow)) return;
+    _messages.removeRange(0, promptIndex);
+  }
+
+  /// The prompt of a turn another surface runs, while no stored row holds it.
+  /// Desktop projects `inflight.user` on a resume unless the stored rows of
+  /// the open turn already carry that text; the rule and its sources are in
+  /// [DesktopSessionReconciler.storedRowsHoldInflightPrompt]. The stored rows
+  /// are the ones the resume answered with.
+  void _projectFollowedTurnPrompt(DesktopSessionSnapshot snapshot) {
+    final prompt = snapshot.inflight?.user?.trim() ?? '';
+    if (prompt.isEmpty ||
+        !snapshot.messagesProvided ||
+        _messages.isEmpty ||
+        _messages.first['_pipeline'] != true) {
+      return;
+    }
+    if (DesktopSessionReconciler.storedRowsHoldInflightPrompt(
+      snapshot.messages,
+      prompt,
+    )) {
+      return;
+    }
+    _messages.insert(1, {
+      'role': 'user',
+      'content': prompt,
+      '_desktopSnapshotKey': 'user-inflight-${snapshot.runtimeSessionId}',
+      '_desktopSnapshotKind': 'inflight',
+    });
   }
 
   /// Cierra la proyección visible del turno anterior y prepara el siguiente que
@@ -33974,6 +35290,8 @@ class ActiveChat with WidgetsBindingObserver {
           // Durable invalidation is not evidence that a remote turn is busy.
           observePassiveActivity: false,
           stillCurrentRead: stillCurrent,
+          // Hermes Desktop extends the newest page to the view on reactivation.
+          extendRestPageToOverlap: true,
         );
         if (!stillCurrent()) {
           // Typically the socket came back during the read and moved the

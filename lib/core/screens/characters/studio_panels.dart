@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -253,7 +254,7 @@ class _StudioShapePanelState extends State<StudioShapePanel> {
               child: StudioPill(
                 key: const ValueKey('character-seed-random'),
                 label: s.botFaceRandom,
-                icon: Icons.casino_outlined,
+                icon: HIcons.casino_outlined,
                 onTap: () {
                   setState(() => _invalid = false);
                   widget.onRandomSeed();
@@ -431,7 +432,7 @@ class _StudioEyesPanelState extends State<StudioEyesPanel> {
                   preview: StudioSwatch(
                     color: bestInk(body),
                     child: Icon(
-                      Icons.contrast_rounded,
+                      HIcons.contrast_rounded,
                       size: HermesSpace.x5,
                       color: body,
                     ),
@@ -638,7 +639,7 @@ class _StudioPiecesPanelState extends State<StudioPiecesPanel> {
                   StudioPill(
                     key: const ValueKey('studio-piece-delete'),
                     label: s.bstPieceDelete,
-                    icon: Icons.delete_outline_rounded,
+                    icon: HIcons.delete_outline_rounded,
                     onTap: () => _remove(index),
                   ),
                 ],
@@ -708,8 +709,8 @@ class _StudioPiecesPanelState extends State<StudioPiecesPanel> {
                         ),
                         Icon(
                           _positionOpen
-                              ? Icons.expand_less_rounded
-                              : Icons.expand_more_rounded,
+                              ? HIcons.expand_less_rounded
+                              : HIcons.expand_more_rounded,
                           color: colors.textSecondary,
                         ),
                       ],

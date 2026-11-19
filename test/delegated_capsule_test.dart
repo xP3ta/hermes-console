@@ -111,14 +111,20 @@ void main() {
           ]),
         ),
       );
+      // Painted: the count and, beside it, the clock. «Delegado a» and the
+      // k/N are what the capsule says to a screen reader.
+      expect(tester.widget<Text>(_capText).data, '2 subagentes');
       expect(
-        tester.widget<Text>(_capText).data,
-        'Delegado a 2 subagentes · 0:04 · 1/2',
+        find.descendant(of: _cap, matching: find.textContaining('0:04')),
+        findsOneWidget,
       );
+      final spoken = tester.widget<Semantics>(_cap).properties.label!;
+      expect(spoken, startsWith('Delegado a 2 subagentes'));
+      expect(spoken, endsWith('1/2'));
       expect(tester.getSize(_cap).height, 48);
       final visual = find.ancestor(
         of: _capText,
-        matching: find.byWidgetPredicate((w) => w is SizedBox && w.height == 36),
+        matching: find.byWidgetPredicate((w) => w is SizedBox && w.height == 32),
       );
       expect(visual, findsOneWidget);
       await tester.pumpWidget(const SizedBox());
@@ -351,7 +357,8 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('under the live row only while the turn is live', (
+    testWidgets('never under the live row: delegated children live in the '
+        'capsule only', (
       tester,
     ) async {
       Widget turn(bool active) => _host(
@@ -375,8 +382,9 @@ void main() {
         ),
       );
       await tester.pumpWidget(turn(true));
-      expect(find.byKey(const ValueKey('delegated-child-cards')), findsOneWidget);
-      expect(find.text('Subagente 1 · 0:04'), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-inline-activity')), findsOneWidget);
+      expect(find.byKey(const ValueKey('delegated-child-cards')), findsNothing);
+      expect(find.text('Subagente 1 · 0:04'), findsNothing);
       await tester.pumpWidget(turn(false));
       expect(find.byKey(const ValueKey('delegated-child-cards')), findsNothing);
       await tester.pumpWidget(const SizedBox());

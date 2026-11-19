@@ -11,6 +11,7 @@
 //
 // `showRunComposer` devuelve el prompt final a ejecutar, o null si se cancela.
 // Es reutilizable por cualquier pantalla de ejecuciones (RunsTab, Task Center).
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -100,21 +101,21 @@ Future<String?> showRunComposer(
 IconData _templateIcon(String key) {
   switch (key) {
     case 'summarize':
-      return Icons.summarize_outlined;
+      return HIcons.summarize_outlined;
     case 'file':
-      return Icons.note_add_outlined;
+      return HIcons.note_add_outlined;
     case 'search':
-      return Icons.search;
+      return HIcons.search;
     case 'terminal':
-      return Icons.terminal;
+      return HIcons.terminal;
     case 'code':
-      return Icons.code;
+      return HIcons.code;
     case 'dashboard':
-      return Icons.dashboard_outlined;
+      return HIcons.dashboard_outlined;
     case 'edit':
-      return Icons.edit_outlined;
+      return HIcons.edit_outlined;
     default:
-      return Icons.bolt;
+      return HIcons.bolt;
   }
 }
 
@@ -206,7 +207,7 @@ class _RunComposerState extends State<_RunComposer> {
           children: [
             Row(
               children: [
-                Icon(Icons.rocket_launch_outlined,
+                Icon(HIcons.rocket_launch_outlined,
                     size: 18, color: colors.accent),
                 const SizedBox(width: 8),
                 Text(
@@ -290,7 +291,7 @@ class _RunComposerState extends State<_RunComposer> {
                     style:
                         FilledButton.styleFrom(backgroundColor: colors.accent),
                     onPressed: () => _launch(_ctrl.text),
-                    icon: const Icon(Icons.rocket_launch,
+                    icon: const Icon(HIcons.rocket_launch,
                         size: 16, color: Colors.black),
                     label: Text(s.runComposerLaunch,
                         style: const TextStyle(color: Colors.black)),
@@ -383,7 +384,7 @@ class _TemplateChip extends StatelessWidget {
               const SizedBox(width: 6),
               GestureDetector(
                 onTap: onLaunch,
-                child: Icon(Icons.play_arrow_rounded,
+                child: Icon(HIcons.play_arrow_rounded,
                     size: 20, color: colors.accent),
               ),
             ],
@@ -415,7 +416,7 @@ class _AddTemplateChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.add, size: 15, color: colors.accent),
+            Icon(HIcons.add, size: 15, color: colors.accent),
             const SizedBox(width: 6),
             Text(
               label,
@@ -525,7 +526,7 @@ class _TemplateEditorState extends State<_TemplateEditor> {
               onPressed: () => Navigator.of(context).pop(
                 const RunTemplate(id: '', name: _kDeleteSentinel, prompt: ''),
               ),
-              icon: Icon(Icons.delete_outline, size: 18, color: colors.error),
+              icon: Icon(HIcons.delete_outline, size: 18, color: colors.error),
               label: Text(
                 s.runTplDelete,
                 style: TextStyle(color: colors.error),

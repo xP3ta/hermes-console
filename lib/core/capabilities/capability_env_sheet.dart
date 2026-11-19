@@ -4,6 +4,7 @@
 // suggestions or personalised keyboard learning, the typed text lives only in
 // these controllers (cleared on dispose) and the result is handed back to the
 // caller, which sends it through the server's secret path and clears it.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -103,7 +104,7 @@ class _CapabilityEnvSheetState extends State<CapabilityEnvSheet> {
             key: const ValueKey('cph-env-submit'),
             primary: true,
             label: s.cphEnvSubmit,
-            icon: Icons.download_rounded,
+            icon: HIcons.download_rounded,
             onPressed: _submit,
           ),
         ],

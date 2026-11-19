@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/agent_profile.dart';
@@ -96,7 +97,7 @@ class RoomAvatarTile extends StatelessWidget {
     final Widget content;
     if (count == 0) {
       content = Icon(
-        Icons.groups_2_outlined,
+        HIcons.groups_2_outlined,
         size: size * .5,
         color: colors.textSecondary,
       );

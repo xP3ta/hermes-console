@@ -1,6 +1,6 @@
 import 'dart:developer' as developer;
 
-/// F0 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §4): measure the chat's
+/// F0 of the fluidity plan: measure the chat's
 /// streaming path before changing it.
 ///
 /// Two outputs, both content-free (only counts of characters, never text):

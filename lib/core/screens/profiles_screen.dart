@@ -17,6 +17,7 @@
 //
 // Bots = tus bots (modo bot, estado vivo, chat). Esta pantalla es la
 // administración del servidor: crear, clonar, renombrar, borrar.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -371,12 +372,12 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
         actions: [
           IconButton(
             key: const ValueKey('profiles-new'),
-            icon: const Icon(Icons.add_rounded),
+            icon: const Icon(HIcons.add_rounded),
             tooltip: str.prfNewProfile,
             onPressed: widget.connection.readOnly ? null : _openBuilder,
           ),
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(HIcons.refresh),
             tooltip: str.prfReload,
             onPressed: _loading ? null : _load,
           ),
@@ -521,7 +522,7 @@ class _ProfileCard extends StatelessWidget {
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      Icons.check_circle,
+                      HIcons.check_circle,
                       size: 14,
                       color: colors.accentHover,
                     ),
@@ -542,7 +543,7 @@ class _ProfileCard extends StatelessWidget {
             builder: (anchor) => IconButton(
               key: ValueKey('profile-more-${profile.name}'),
               icon: Icon(
-                Icons.more_horiz_rounded,
+                HIcons.more_horiz_rounded,
                 size: 20,
                 color: colors.textSecondary,
               ),
@@ -564,40 +565,40 @@ class _ProfileCard extends StatelessWidget {
           HermesAction(
             key: const ValueKey('profile-edit-bot'),
             value: _ProfileAction.edit,
-            icon: Icons.tune,
+            icon: HIcons.tune,
             label: str.prfEditBotTooltip,
           ),
         if (!active)
           HermesAction(
             key: const ValueKey('profile-make-active'),
             value: _ProfileAction.makeActive,
-            icon: Icons.check_circle_outline,
+            icon: HIcons.check_circle_outline,
             label: str.pfuMakeActive,
           ),
         HermesAction(
           key: const ValueKey('profile-open-chat'),
           value: _ProfileAction.chat,
-          icon: Icons.chat_bubble_outline_rounded,
+          icon: HIcons.chat_bubble_outline_rounded,
           label: str.pfuOpenChat,
         ),
         HermesAction(
           key: const ValueKey('profile-rename'),
           value: _ProfileAction.rename,
-          icon: Icons.drive_file_rename_outline,
+          icon: HIcons.drive_file_rename_outline,
           label: str.prfRenameTooltip,
         ),
         if (onClone != null)
           HermesAction(
             key: const ValueKey('profile-clone'),
             value: _ProfileAction.clone,
-            icon: Icons.copy_all_outlined,
+            icon: HIcons.copy_all_outlined,
             label: str.pfuClone,
           ),
         if (onDelete != null)
           HermesAction(
             key: const ValueKey('profile-delete'),
             value: _ProfileAction.delete,
-            icon: Icons.delete_outline,
+            icon: HIcons.delete_outline,
             label: str.prfDeleteTooltip,
             destructive: true,
           ),
@@ -637,7 +638,7 @@ class _ErrorState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.cloud_off_outlined,
+              HIcons.cloud_off_outlined,
               size: 40,
               color: colors.textDisabled,
             ),
@@ -650,7 +651,7 @@ class _ErrorState extends StatelessWidget {
             const SizedBox(height: 16),
             HermesSecondaryButton(
               label: Strings.of(context).prfRetry,
-              icon: Icons.refresh,
+              icon: HIcons.refresh,
               onTap: onRetry,
             ),
           ],
@@ -730,7 +731,7 @@ class _NameEntryScreenState extends State<_NameEntryScreen> {
     return Scaffold(
       appBar: HermesAppBar(
         leading: IconButton(
-          icon: const Icon(Icons.close),
+          icon: const Icon(HIcons.close),
           tooltip: str.commonClose,
           onPressed: () {
             _releaseFocus();

@@ -119,6 +119,11 @@ const Set<String> _otherExt = {
   'mp4',
   'wav',
   'ogg',
+  'htm',
+  'mmd',
+  'mermaid',
+  'glb',
+  'gltf',
 };
 
 /// Extensions that make a bare name a file reference. Unknown ones (`foo.bar`,
@@ -331,6 +336,33 @@ ChatFileRef? chatFileRefFor(String raw, {bool plain = false}) {
     line: from == null || from < 1 ? null : from,
     endLine: from == null || from < 1 ? null : to,
   );
+}
+
+final RegExp _linkScheme = RegExp(r'^[A-Za-z][A-Za-z0-9+.\-]*:(?!\d)');
+
+/// The file a Markdown link points at (`[the note](docs/note.md)`,
+/// `[x](/home/demo/a.py:12)`, `[y](file:///home/demo/a.md)`), or null when
+/// its target is a web address, another scheme, an anchor or not a path.
+/// The same rules as a path written in code: see [chatFileRefFor].
+ChatFileRef? chatLinkFileRef(String? href) {
+  var text = href?.trim() ?? '';
+  if (text.isEmpty || text.startsWith('#') || text.startsWith('?')) {
+    return null;
+  }
+  if (text.length >= 7 && text.substring(0, 7).toLowerCase() == 'file://') {
+    text = text.substring(7);
+  } else if (_linkScheme.hasMatch(text)) {
+    // `a.dart:120` is a file and its line; `mailto:x`, `https://…` are not.
+    return null;
+  }
+  if (text.contains('%')) {
+    try {
+      text = Uri.decodeFull(text);
+    } on ArgumentError {
+      // Not percent-encoding: the text stays as written.
+    }
+  }
+  return chatFileRefFor(text);
 }
 
 /// Characters a path segment may hold in prose (no regex flags needed).

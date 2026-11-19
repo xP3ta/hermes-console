@@ -28,6 +28,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
 import 'support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _shotKey = ValueKey('rg1215-shot');
 
@@ -251,7 +252,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
       expect(headers, findsOneWidget);
-      await tester.tap(find.byIcon(Icons.expand_more).first);
+      await tester.tap(find.byIcon(HIcons.expand_more).first);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       await _save(tester, 'rg1215_turn_after_expanded_es_dark');

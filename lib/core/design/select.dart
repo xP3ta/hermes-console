@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -78,7 +79,7 @@ class HermesSelectField<T> extends StatelessWidget {
         size: 22,
         color: enabled ? colors.textSecondary : colors.textDisabled,
       ),
-      child: icon ?? const Icon(Icons.keyboard_arrow_down_rounded),
+      child: icon ?? const Icon(HIcons.keyboard_arrow_down_rounded),
     );
 
     Future<void> open() async {

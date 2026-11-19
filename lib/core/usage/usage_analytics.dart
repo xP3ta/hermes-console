@@ -8,7 +8,7 @@
 import '../services/connection_manager.dart';
 
 /// The periods the screen offers; the server accepts 1 to 365.
-const List<int> kUsagePeriods = [7, 30, 90];
+const List<int> kUsagePeriods = [1, 7, 30, 90];
 
 class UsageTotals {
   const UsageTotals({
@@ -18,8 +18,10 @@ class UsageTotals {
     this.apiCalls = 0,
     this.estimatedCost = 0,
     this.actualCost = 0,
+    this.cacheReadTokens = 0,
   });
 
+  final int cacheReadTokens;
   final int inputTokens;
   final int outputTokens;
   final int sessions;
@@ -54,7 +56,10 @@ class UsageModelRow {
 }
 
 class UsageDay {
-  const UsageDay({required this.day, required this.tokens});
+  const UsageDay({required this.day, required this.tokens, this.cost = 0});
+
+  /// The day's cost: the server's own when it has one, else its estimate.
+  final double cost;
 
   /// `YYYY-MM-DD`, as the server groups them.
   final String day;
@@ -117,6 +122,9 @@ UsageAnalytics parseUsageAnalytics(
         UsageDay(
           day: day,
           tokens: _int(row['input_tokens']) + _int(row['output_tokens']),
+          cost: _double(row['actual_cost']) > 0
+              ? _double(row['actual_cost'])
+              : _double(row['estimated_cost']),
         ),
       );
     }
@@ -131,6 +139,7 @@ UsageAnalytics parseUsageAnalytics(
       apiCalls: _int(t['total_api_calls']),
       estimatedCost: _double(t['total_estimated_cost']),
       actualCost: _double(t['total_actual_cost']),
+      cacheReadTokens: _int(t['total_cache_read']),
     ),
     models: models,
     days: days,

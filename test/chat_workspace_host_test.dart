@@ -14,6 +14,7 @@ import 'package:hermes_android/core/widgets/workspace/chat_workspace.dart';
 import 'package:hermes_android/core/widgets/workspace/chat_workspace_host.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _chatField = ValueKey('fake-chat-field');
 const _divider = ValueKey('chat-workspace-divider');
@@ -132,7 +133,7 @@ class _ToolbarTabState extends State<_ToolbarTab> {
             ChatWorkspaceMenuEntry(
               key: const ValueKey('tab-menu-entry'),
               label: 'Tab action',
-              icon: Icons.build_outlined,
+              icon: HIcons.build_outlined,
               onSelected: _menuEntry,
             ),
           ],
@@ -2047,7 +2048,7 @@ void main() {
           expect(
             find.descendant(
               of: find.byKey(views),
-              matching: find.byIcon(Icons.view_sidebar),
+              matching: find.byIcon(HIcons.view_sidebar),
             ),
             findsOneWidget,
           );

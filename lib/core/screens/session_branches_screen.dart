@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -83,8 +84,8 @@ class _SessionBranchesScreenState extends State<SessionBranchesScreen> {
                 HermesNavRow(
                   key: ValueKey('session-branch-${entry.session.id}'),
                   icon: entry.session.id == current
-                      ? Icons.radio_button_checked_rounded
-                      : Icons.subdirectory_arrow_right_rounded,
+                      ? HIcons.radio_button_checked_rounded
+                      : HIcons.subdirectory_arrow_right_rounded,
                   title: '${entry.prefix}${widget.titleOf(entry.session)}',
                   subtitle: entry.session.id == current
                       ? s.sesBranchesCurrent

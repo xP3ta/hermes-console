@@ -1,7 +1,10 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../services/bot_profile_client.dart';
+import '../services/bot_roster_store.dart';
+import '../models/connection.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/console_loader.dart';
@@ -17,10 +20,15 @@ import '../feedback/feedback_policy.dart';
 class BotProfileSettingsScreen extends StatefulWidget {
   final String profile;
   final BotProfileGateway gateway;
+
+  /// The connection of [profile]: with it the hero wears the face the
+  /// drawer and the lists draw (photo, shape, colour, saved character).
+  final SavedConnection? connection;
   const BotProfileSettingsScreen({
     super.key,
     required this.profile,
     required this.gateway,
+    this.connection,
   });
   @override
   State<BotProfileSettingsScreen> createState() =>
@@ -150,7 +158,7 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
           HermesPrimaryButton(
             key: const ValueKey('bot-settings-save'),
             label: s.botSave,
-            icon: _busy ? Icons.sync : Icons.check,
+            icon: _busy ? HIcons.sync : HIcons.check,
             onTap: _busy || !dirty ? null : _save,
           ),
         ],
@@ -224,12 +232,33 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
   /// The bot at the top, as in its profile: its own face (the same one the
   /// drawer and the switcher draw) large and centred, the name, and the
   /// model when the server snapshot carries it.
+  Widget _heroFace() {
+    final connection = widget.connection;
+    if (connection == null) {
+      return ProfileFace(profileName: widget.profile, size: 92);
+    }
+    final store = BotRosterRegistry.shared.store(connection.id);
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) => ProfileFace(
+        profileName: widget.profile,
+        profile: store.profile(widget.profile),
+        avatarCache: ProfileFace.cacheFor(
+          connection,
+          rosterTicket: store.ticket,
+        ),
+        connectionId: connection.id,
+        size: 92,
+      ),
+    );
+  }
+
   Widget _hero(Map<String, dynamic> snapshot) {
     final colors = Theme.of(context).hermes;
     final model = snapshot['model'];
     return Column(
       children: [
-        ProfileFace(profileName: widget.profile, size: 92),
+        _heroFace(),
         const SizedBox(height: HermesSpace.x3),
         Text(
           widget.profile,
@@ -300,7 +329,7 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
                                 'skills',
                                 'disabled_skills',
                                 s.botSkills,
-                                Icons.extension_outlined,
+                                HIcons.extension_outlined,
                                 disabled: true,
                               ),
                             if (snapshot['toolsets'] is List)
@@ -308,14 +337,14 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
                                 'toolsets',
                                 'enabled_toolsets',
                                 s.botTools,
-                                Icons.build_outlined,
+                                HIcons.build_outlined,
                               ),
                             if (snapshot['mcp_servers'] is List)
                               _toggles(
                                 'mcp_servers',
                                 'enabled_mcp_servers',
                                 s.botMcp,
-                                Icons.power_outlined,
+                                HIcons.power_outlined,
                               ),
                           ],
                         ),

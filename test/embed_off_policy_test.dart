@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/chat_markdown_body.dart';
+import 'package:hermes_android/core/widgets/chat/embeds/document_previews.dart';
 import 'package:hermes_android/core/widgets/chat/embeds/embed_card.dart';
 import 'package:hermes_android/core/widgets/chat/embeds/embed_consent_store.dart';
 import 'package:hermes_android/core/widgets/chat/embeds/embed_detector.dart';
@@ -112,7 +113,9 @@ void main() {
     expect(utf8.decode(base64Decode(data.group(1)!)), contains('<rect'));
   });
 
-  testWidgets('Mermaid stays a code block', (tester) async {
+  testWidgets('Mermaid is drawn on the device, never as a third-party embed', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _app(
         const ChatMarkdownBody(
@@ -121,7 +124,32 @@ void main() {
         ),
       ),
     );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byType(EmbedCard), findsNothing);
+    expect(find.byType(MermaidFencePreview), findsOneWidget);
+    // Whatever page it loads is built here: no URL, no file, no bridge.
+    for (final web in platform.controllers) {
+      expect(web.loadedRequests, isEmpty);
+      expect(web.loadedFiles, isEmpty);
+      expect(web.javaScriptChannels, isEmpty);
+      for (final html in web.loadedHtml) {
+        expect(html, contains("default-src 'none'"));
+      }
+    }
+  });
+
+  testWidgets('with embeds off Mermaid stays a code block', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        const ChatMarkdownBody(
+          data: '```mermaid\ngraph TD; A-->B;\n```',
+          embeds: false,
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
+    expect(find.byType(MermaidFencePreview), findsNothing);
     expect(find.byType(EmbedCard), findsNothing);
     expect(platform.controllers, isEmpty);
   });

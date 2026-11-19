@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
@@ -197,7 +198,7 @@ class ProjectFolderRow extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                     Icon(
-                      Icons.chevron_right_rounded,
+                      HIcons.chevron_right_rounded,
                       color: colors.textDisabled,
                       size: 22,
                     ),

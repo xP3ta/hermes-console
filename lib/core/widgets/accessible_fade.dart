@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 
-/// The cross-fade of F5's [AnimatedSwitcher]s (REPORT-AUDITORIA-FLUIDEZ §3)
+/// The cross-fade of F5's [AnimatedSwitcher]s
 /// with TalkBack and touch on the right side of it.
 ///
 /// The default transition is a [FadeTransition] that starts at opacity 0,
