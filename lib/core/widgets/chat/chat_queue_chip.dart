@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -100,7 +101,7 @@ class ChatQueueChip extends StatelessWidget {
                       height: 48,
                     ),
                     icon: Icon(
-                      Icons.close_rounded,
+                      HIcons.close_rounded,
                       size: 15,
                       color: colors.textSecondary,
                     ),

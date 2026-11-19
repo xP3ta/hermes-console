@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -390,7 +391,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
           IconButton(
             tooltip: copy.refresh,
             onPressed: () => _loadCurrentSection(force: true),
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(HIcons.refresh_rounded),
           ),
         ],
       ),
@@ -407,7 +408,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
                   0,
                 ),
                 child: _InlineNotice(
-                  icon: Icons.lock_outline_rounded,
+                  icon: HIcons.lock_outline_rounded,
                   text: copy.readOnly,
                 ),
               ),
@@ -487,7 +488,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
       if (_mcpGateway == null)
         HermesEmptyState(
           compact: true,
-          icon: Icons.link_off_rounded,
+          icon: HIcons.link_off_rounded,
           title: copy.manualMcpUnavailable,
           body: copy.unsupported,
         )
@@ -496,7 +497,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
           children: [
             HermesListRow(
               key: const ValueKey('admin-add-mcp'),
-              icon: Icons.add_circle_outline_rounded,
+              icon: HIcons.add_circle_outline_rounded,
               title: copy.addMcp,
               subtitle: copy.addMcpBody,
               enabled: !widget.readOnly && !_addingMcp,
@@ -506,12 +507,12 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
                       dimension: 22,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.chevron_right_rounded),
+                  : const Icon(HIcons.chevron_right_rounded),
             ),
           ],
         ),
       const SizedBox(height: 12),
-      _InlineNotice(icon: Icons.shield_outlined, text: copy.noMcpPut),
+      _InlineNotice(icon: HIcons.shield_outlined, text: copy.noMcpPut),
     ],
   );
 
@@ -530,7 +531,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
           _IntroText(text: copy.webhooksIntro),
           HermesEmptyState(
             compact: true,
-            icon: Icons.webhook_outlined,
+            icon: HIcons.webhook_outlined,
             title: copy.webhooksUnavailable,
             body: copy.unsupported,
           ),
@@ -543,11 +544,11 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
     final failure = _webhooksFailure;
     if (failure != null && _webhooks == null) {
       return HermesEmptyState(
-        icon: Icons.webhook_outlined,
+        icon: HIcons.webhook_outlined,
         title: copy.webhookLoadFailed,
         body: _failureText(failure, copy),
         primaryLabel: copy.retry,
-        primaryIcon: Icons.refresh_rounded,
+        primaryIcon: HIcons.refresh_rounded,
         onPrimary: () => _loadWebhooks(force: true),
       );
     }
@@ -571,18 +572,18 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
           if (failure != null) ...[
             const SizedBox(height: 8),
             _InlineNotice(
-              icon: Icons.warning_amber_rounded,
+              icon: HIcons.warning_amber_rounded,
               text: _failureText(failure, copy),
             ),
           ],
           if (!snapshot.enabled) ...[
             HermesEmptyState(
               compact: true,
-              icon: Icons.power_settings_new_rounded,
+              icon: HIcons.power_settings_new_rounded,
               title: copy.webhooksDisabled,
               body: copy.webhooksDisabledBody,
               primaryLabel: copy.enableWebhooks,
-              primaryIcon: Icons.power_settings_new_rounded,
+              primaryIcon: HIcons.power_settings_new_rounded,
               onPrimary: widget.readOnly || _enablingWebhooks
                   ? null
                   : _enableWebhooks,
@@ -591,7 +592,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
             if (snapshot.baseUri case final uri?) ...[
               const SizedBox(height: 8),
               _InlineNotice(
-                icon: Icons.link_rounded,
+                icon: HIcons.link_rounded,
                 text: uri.toString(),
                 monospace: true,
               ),
@@ -600,7 +601,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
               children: [
                 HermesListRow(
                   key: const ValueKey('admin-add-webhook'),
-                  icon: Icons.add_circle_outline_rounded,
+                  icon: HIcons.add_circle_outline_rounded,
                   title: copy.addWebhook,
                   subtitle: copy.addWebhookBody,
                   enabled: !widget.readOnly && !_creatingWebhook,
@@ -612,14 +613,14 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
                           dimension: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.chevron_right_rounded),
+                      : const Icon(HIcons.chevron_right_rounded),
                 ),
               ],
             ),
             if (snapshot.routes.isEmpty)
               HermesEmptyState(
                 compact: true,
-                icon: Icons.webhook_outlined,
+                icon: HIcons.webhook_outlined,
                 title: copy.noWebhooks,
                 body: copy.addWebhookBody,
               )
@@ -660,7 +661,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
           _IntroText(text: copy.a2aIntro),
           HermesEmptyState(
             compact: true,
-            icon: Icons.hub_outlined,
+            icon: HIcons.hub_outlined,
             title: copy.a2aUnavailable,
             body: copy.unsupported,
           ),
@@ -673,11 +674,11 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
     final failure = _a2aFailure;
     if (failure != null && _a2a == null) {
       return HermesEmptyState(
-        icon: Icons.hub_outlined,
+        icon: HIcons.hub_outlined,
         title: copy.a2aUnavailable,
         body: _failureText(failure, copy),
         primaryLabel: copy.retry,
-        primaryIcon: Icons.refresh_rounded,
+        primaryIcon: HIcons.refresh_rounded,
         onPrimary: () => _loadA2a(force: true),
       );
     }
@@ -698,7 +699,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
           if (capability == null)
             HermesEmptyState(
               compact: true,
-              icon: Icons.hub_outlined,
+              icon: HIcons.hub_outlined,
               title: copy.a2aNotPublished,
               body: copy.a2aIntro,
             )
@@ -719,7 +720,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
                     copy.a2aState(capability.state),
                   ].join(', '),
                   child: HermesListRow(
-                    icon: Icons.device_hub_rounded,
+                    icon: HIcons.device_hub_rounded,
                     title: copy.a2aTitle,
                     subtitle: [
                       capability.enabled ? copy.active : copy.inactive,
@@ -731,8 +732,8 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
                     ].join(' · '),
                     trailing: Icon(
                       capability.gatewayRunning
-                          ? Icons.check_circle_outline_rounded
-                          : Icons.info_outline_rounded,
+                          ? HIcons.check_circle_outline_rounded
+                          : HIcons.info_outline_rounded,
                     ),
                   ),
                 ),
@@ -763,7 +764,7 @@ class _WebhookRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => HermesListRow(
-    icon: Icons.webhook_outlined,
+    icon: HIcons.webhook_outlined,
     title: route.name,
     subtitle: copy.webhookSubtitle(route.deliver, route.events),
     trailing: busy

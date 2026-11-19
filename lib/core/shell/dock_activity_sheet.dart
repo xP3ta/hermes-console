@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -124,7 +125,7 @@ class DockActivitySheet extends StatelessWidget {
                 ListTile(
                   key: const ValueKey('dock-activity-calm'),
                   leading: Icon(
-                    Icons.check_circle_outline_rounded,
+                    HIcons.check_circle_outline_rounded,
                     color: colors.success,
                   ),
                   title: Text(strings.hwGlanceCalm),
@@ -179,16 +180,16 @@ class DockActivitySheet extends StatelessWidget {
   static IconData _iconOf(HomeGlanceKind kind) => switch (kind) {
     HomeGlanceKind.runningChat ||
     HomeGlanceKind.failedChat ||
-    HomeGlanceKind.finished => Icons.chat_bubble_outline_rounded,
+    HomeGlanceKind.finished => HIcons.chat_bubble_outline_rounded,
     HomeGlanceKind.runningBot ||
-    HomeGlanceKind.botWaiting => Icons.smart_toy_outlined,
+    HomeGlanceKind.botWaiting => HIcons.smart_toy_outlined,
     HomeGlanceKind.runningRoom ||
     HomeGlanceKind.failedRoom ||
     HomeGlanceKind.roomNews ||
-    HomeGlanceKind.roomReplies => Icons.groups_2_outlined,
-    HomeGlanceKind.approval => Icons.verified_user_outlined,
-    HomeGlanceKind.question => Icons.help_outline_rounded,
-    HomeGlanceKind.failedAutomation => Icons.error_outline_rounded,
-    HomeGlanceKind.pausedQueue => Icons.pause_circle_outline_rounded,
+    HomeGlanceKind.roomReplies => HIcons.groups_2_outlined,
+    HomeGlanceKind.approval => HIcons.verified_user_outlined,
+    HomeGlanceKind.question => HIcons.help_outline_rounded,
+    HomeGlanceKind.failedAutomation => HIcons.error_outline_rounded,
+    HomeGlanceKind.pausedQueue => HIcons.pause_circle_outline_rounded,
   };
 }

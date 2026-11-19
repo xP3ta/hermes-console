@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 /// The thinking symbol, a brain (QA 9709, the owner: «un cerebro», not the head
-/// with a question mark of `Icons.psychology_alt_rounded`). Material has no
+/// with a question mark of `HIcons.psychology_alt_rounded`). Material has no
 /// brain and the project carries no symbol font, so it is drawn: two
 /// hemispheres with three folds each, on Material's 24 grid and about the
 /// line of its outlined icons, so it stays crisp from 14 dp up. Hermes

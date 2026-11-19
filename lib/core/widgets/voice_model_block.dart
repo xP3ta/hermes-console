@@ -3,6 +3,7 @@
 // change. It is the profile's auxiliary `voice_chat` model, the one the
 // server sends every voice turn to; until now it lived only in Models ›
 // Models by function › «Voice conversation».
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -394,7 +395,7 @@ class _VoiceModelBlockState extends State<VoiceModelBlock> {
                 borderRadius: BorderRadius.circular(HermesRadius.control),
               ),
               child: Icon(
-                Icons.auto_awesome_rounded,
+                HIcons.auto_awesome_rounded,
                 size: HermesIcon.lg,
                 color: colors.accent,
               ),
@@ -432,7 +433,7 @@ class _VoiceModelBlockState extends State<VoiceModelBlock> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        Icons.lock_outline_rounded,
+                        HIcons.lock_outline_rounded,
                         size: HermesIcon.sm,
                         color: colors.textSecondary,
                       ),

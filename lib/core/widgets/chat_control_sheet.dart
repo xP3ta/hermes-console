@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../design/floating.dart' show HermesFloatingSurface;
@@ -13,6 +14,12 @@ class ChatControlLabels {
   /// conversation.
   final String content;
   final String? prompts;
+
+  /// «Uso» (context window) and «Permisos», each with its current value.
+  final String? usage;
+  final String? usageValue;
+  final String? permissions;
+  final String? permissionsValue;
   final String? showPinnedPrompt;
   final String? branch;
   final String details;
@@ -63,6 +70,10 @@ class ChatControlLabels {
     this.recovery,
     this.extensions,
     this.prompts,
+    this.usage,
+    this.usageValue,
+    this.permissions,
+    this.permissionsValue,
     this.showPinnedPrompt,
     this.branch,
     this.findInChat,
@@ -81,11 +92,11 @@ class ChatControlLabels {
 enum ChatWorkspaceKind { terminal, files, git, browser, agents }
 
 IconData chatWorkspaceIcon(ChatWorkspaceKind kind) => switch (kind) {
-  ChatWorkspaceKind.terminal => Icons.terminal_rounded,
-  ChatWorkspaceKind.files => Icons.folder_open_outlined,
-  ChatWorkspaceKind.git => Icons.call_split_rounded,
-  ChatWorkspaceKind.browser => Icons.language_rounded,
-  ChatWorkspaceKind.agents => Icons.smart_toy_outlined,
+  ChatWorkspaceKind.terminal => HIcons.terminal_rounded,
+  ChatWorkspaceKind.files => HIcons.folder_open_outlined,
+  ChatWorkspaceKind.git => HIcons.call_split_rounded,
+  ChatWorkspaceKind.browser => HIcons.language_rounded,
+  ChatWorkspaceKind.agents => HIcons.smart_toy_outlined,
 };
 
 /// One workspace pill (Terminal · Git · Navegador). Only an [available]
@@ -149,6 +160,8 @@ class ChatControlSheet extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onContent;
   final VoidCallback? onPrompts;
+  final VoidCallback? onUsage;
+  final VoidCallback? onPermissions;
 
   /// Shows the pinned prompt again; null while it is not hidden here.
   final VoidCallback? onShowPinnedPrompt;
@@ -180,6 +193,8 @@ class ChatControlSheet extends StatelessWidget {
     this.onDesktop,
     this.onDelete,
     this.onPrompts,
+    this.onUsage,
+    this.onPermissions,
     this.onShowPinnedPrompt,
     this.onSubagents,
     this.onShowHiddenSubagents,
@@ -203,83 +218,99 @@ class ChatControlSheet extends StatelessWidget {
     if (labels.voiceSettings != null && onVoiceSettings != null)
       _RowData(
         id: 'voice-settings',
-        icon: Icons.settings_voice_rounded,
+        icon: HIcons.settings_voice_rounded,
         label: labels.voiceSettings!,
         onTap: onVoiceSettings,
       ),
+    if (labels.usage != null && onUsage != null)
+      _RowData(
+        id: 'usage',
+        icon: HIcons.data_usage_rounded,
+        label: labels.usage!,
+        trailing: labels.usageValue,
+        onTap: onUsage,
+      ),
+    if (labels.permissions != null && onPermissions != null)
+      _RowData(
+        id: 'permissions',
+        icon: HIcons.shield_outlined,
+        label: labels.permissions!,
+        trailing: labels.permissionsValue,
+        onTap: onPermissions,
+      ),
     _RowData(
       id: 'refresh',
-      icon: Icons.refresh_rounded,
+      icon: HIcons.refresh_rounded,
       label: labels.refresh,
       onTap: onRefresh,
     ),
     // One entry, as Desktop's Artifacts view: images, files and links.
     _RowData(
       id: 'content',
-      icon: Icons.view_in_ar_outlined,
+      icon: HIcons.view_in_ar_outlined,
       label: labels.content,
       onTap: onContent,
     ),
     if (labels.prompts != null && onPrompts != null)
       _RowData(
         id: 'prompts',
-        icon: Icons.chat_bubble_outline_rounded,
+        icon: HIcons.chat_bubble_outline_rounded,
         label: labels.prompts!,
         onTap: onPrompts,
       ),
     if (labels.showPinnedPrompt != null && onShowPinnedPrompt != null)
       _RowData(
         id: 'show-pinned-prompt',
-        icon: Icons.vertical_align_top_rounded,
+        icon: HIcons.vertical_align_top_rounded,
         label: labels.showPinnedPrompt!,
         onTap: onShowPinnedPrompt,
       ),
     if (labels.subagents != null && onSubagents != null)
       _RowData(
         id: 'subagents',
-        icon: Icons.smart_toy_outlined,
+        icon: HIcons.smart_toy_outlined,
         label: labels.subagents!,
         onTap: onSubagents,
       ),
     if (labels.showHiddenSubagents != null && onShowHiddenSubagents != null)
       _RowData(
         id: 'show-hidden-subagents',
-        icon: Icons.visibility_outlined,
+        icon: HIcons.visibility_outlined,
         label: labels.showHiddenSubagents!,
         onTap: onShowHiddenSubagents,
       ),
     if (labels.branch != null && onBranch != null)
       _RowData(
         id: 'branch',
-        icon: Icons.call_split_rounded,
+        icon: HIcons.call_split_rounded,
         label: labels.branch!,
         onTap: onBranch,
       ),
     if (showDetails && onDetails != null)
       _RowData(
         id: 'details',
-        icon: Icons.info_outline,
+        icon: HIcons.info_outline,
         label: labels.details,
         onTap: onDetails,
       ),
     if (showCron && onCron != null)
       _RowData(
         id: 'cron',
-        icon: Icons.schedule_outlined,
+        icon: HIcons.schedule_outlined,
         label: labels.cron,
         onTap: onCron,
       ),
     if (labels.recovery != null && onRecovery != null)
       _RowData(
         id: 'recovery',
-        icon: Icons.restore_page_outlined,
+        icon: HIcons.restore_page_outlined,
         label: labels.recovery!,
         onTap: onRecovery,
       ),
     if (labels.extensions != null && onExtensions != null)
       _RowData(
         id: 'extensions',
-        icon: Icons.extension_outlined,
+        icon: HIcons.extension_outlined,
         label: labels.extensions!,
         onTap: onExtensions,
       ),
@@ -354,13 +385,13 @@ class ChatControlSheet extends StatelessWidget {
                       second: newChat != null
                           ? (
                               key: const ValueKey('chat-control-new-chat'),
-                              icon: Icons.add_rounded,
+                              icon: HIcons.add_rounded,
                               label: labels.newChat!,
                               onTap: newChat,
                             )
                           : (
                               key: const ValueKey('chat-control-desktop'),
-                              icon: Icons.desktop_windows_outlined,
+                              icon: HIcons.desktop_windows_outlined,
                               label: labels.desktop!,
                               onTap: desktop!,
                             ),
@@ -424,7 +455,7 @@ class ChatControlSheet extends StatelessWidget {
                 if (!quick && find != null)
                   _SheetRow(
                     key: const ValueKey('chat-control-find'),
-                    icon: Icons.search_rounded,
+                    icon: HIcons.search_rounded,
                     label: labels.findInChat!,
                     onTap: find,
                   ),
@@ -433,6 +464,7 @@ class ChatControlSheet extends StatelessWidget {
                     key: ValueKey('chat-control-${item.id}'),
                     icon: item.icon,
                     label: item.label,
+                    trailing: item.trailing,
                     onTap: item.onTap,
                   ),
               ],
@@ -441,7 +473,7 @@ class ChatControlSheet extends StatelessWidget {
               divider(),
               _SheetRow(
                 key: const ValueKey('chat-control-delete'),
-                icon: Icons.delete_outline,
+                icon: HIcons.delete_outline,
                 label: labels.delete,
                 color: colors.error,
                 onTap: readOnly ? null : onDelete,
@@ -498,7 +530,7 @@ class _QuickPill extends StatelessWidget {
         children: [
           action(
             const ValueKey('chat-control-find'),
-            Icons.search_rounded,
+            HIcons.search_rounded,
             findLabel,
             onFind,
           ),
@@ -524,8 +556,10 @@ class _RowData {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.trailing,
   });
 
+  final String? trailing;
   final String id;
   final IconData icon;
   final String label;

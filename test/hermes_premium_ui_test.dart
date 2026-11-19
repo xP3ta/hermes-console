@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/tokens.dart' show HermesGel;
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Finder _semanticsWithLabel(String label) => find.byWidgetPredicate(
   (widget) => widget is Semantics && widget.properties.label == label,
@@ -92,7 +93,7 @@ void main() {
               semanticLabel: 'Solicitud de permiso',
               title: 'Permiso requerido',
               summary: 'Hermes quiere ejecutar una acción.',
-              leading: const Icon(Icons.shield_outlined),
+              leading: const Icon(HIcons.shield_outlined),
               status: const Text('Riesgo alto'),
               detail: const Text('Comando completo'),
               expanded: expanded,
@@ -169,7 +170,7 @@ void main() {
             semanticLabel: 'Actividad de subagente',
             title: 'Revisando archivos',
             summary: 'El subagente mantiene el estado real.',
-            leading: const Icon(Icons.account_tree_outlined),
+            leading: const Icon(HIcons.account_tree_outlined),
             status: const Text('En curso'),
             detail: const Text('Dos pasos completados'),
             expanded: true,
@@ -243,7 +244,7 @@ void main() {
     await tester.pumpWidget(
       _host(
         HermesTactileAction(
-          icon: Icons.arrow_upward_rounded,
+          icon: HIcons.arrow_upward_rounded,
           semanticLabel: 'Enviar',
           onPressed: () => taps += 1,
         ),
@@ -276,7 +277,7 @@ void main() {
     await tester.pumpWidget(
       _host(
         HermesTactileAction(
-          icon: Icons.arrow_upward_rounded,
+          icon: HIcons.arrow_upward_rounded,
           semanticLabel: 'Enviar',
           enabled: false,
           onPressed: () => taps += 1,

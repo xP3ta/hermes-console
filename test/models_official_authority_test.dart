@@ -15,6 +15,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final connection = SavedConnection(
   id: 'official-owner',
@@ -305,7 +306,7 @@ void main() {
       await settle(t);
       expect(infos, before);
       expect(find.textContaining('Could not apply'), findsNothing);
-      expect(find.byIcon(Icons.refresh).first, findsOneWidget);
+      expect(find.byIcon(HIcons.refresh).first, findsOneWidget);
       expect(b.calls, isEmpty);
       await t.pumpWidget(const SizedBox());
     });

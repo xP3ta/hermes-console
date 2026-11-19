@@ -19,6 +19,7 @@ import 'package:hermes_android/core/widgets/mascot/mascot_sprite.dart';
 import 'package:hermes_android/core/widgets/mascot/mascot_state.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _theme = AppTheme.hermesRedDark;
 const _screen = Size(390, 844);
@@ -839,7 +840,7 @@ void main() {
                 child: IconButton.filled(
                   key: const ValueKey('plus'),
                   onPressed: () {},
-                  icon: const Icon(Icons.add),
+                  icon: const Icon(HIcons.add),
                 ),
               ),
           ],
@@ -894,7 +895,7 @@ void main() {
                 top: _home.dy,
                 child: IconButton(
                   onPressed: () {},
-                  icon: const Icon(Icons.add),
+                  icon: const Icon(HIcons.add),
                 ),
               ),
             ],

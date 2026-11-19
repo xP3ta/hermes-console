@@ -17,6 +17,7 @@ import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _statusBar = 38.0;
 const _frame = Duration(milliseconds: 16);
@@ -84,13 +85,13 @@ class _Chat extends StatelessWidget {
           child: FloatingChatHeader(
             leading: FloatingHeaderButton(
               key: const ValueKey('menu'),
-              icon: Icons.menu_rounded,
+              icon: HIcons.menu_rounded,
               tooltip: 'Menú',
               onPressed: () {},
             ),
             trailing: FloatingHeaderButton(
               key: const ValueKey('new'),
-              icon: Icons.add_rounded,
+              icon: HIcons.add_rounded,
               tooltip: 'Nuevo chat',
               onPressed: () {},
             ),
@@ -364,7 +365,7 @@ void main() {
       expect(mark.style!.color, colors.accentText);
       expect(
         tester.widget<Icon>(_key('island-chevron')).icon,
-        Icons.keyboard_arrow_down_rounded,
+        HIcons.keyboard_arrow_down_rounded,
       );
       // Name, count, chevron, in that order, on one line; no dot.
       expect(_anyDot(_island), findsNothing);
@@ -447,7 +448,7 @@ void main() {
       expect(_text(tester, _key('island-mark')), '4 en marcha');
       expect(
         tester.widget<Icon>(_key('island-chevron')).icon,
-        Icons.keyboard_arrow_up_rounded,
+        HIcons.keyboard_arrow_up_rounded,
       );
       await tester.tap(_name);
       expect(closed, 1);

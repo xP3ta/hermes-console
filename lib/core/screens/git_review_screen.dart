@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -327,12 +328,12 @@ String gitStatusLabel(String status, Strings strings) => switch (status) {
 
 (IconData, Color) gitStatusGlyph(String status, HermesThemeColors colors) =>
     switch (status) {
-      'A' || 'C' => (Icons.add_box_outlined, colors.success),
-      'D' => (Icons.indeterminate_check_box_outlined, colors.error),
-      'R' => (Icons.drive_file_rename_outline, colors.accentText),
-      'U' => (Icons.warning_amber_rounded, colors.error),
-      '?' => (Icons.add_box_outlined, colors.textTertiary),
-      _ => (Icons.edit_outlined, colors.warning),
+      'A' || 'C' => (HIcons.add_box_outlined, colors.success),
+      'D' => (HIcons.indeterminate_check_box_outlined, colors.error),
+      'R' => (HIcons.drive_file_rename_outline, colors.accentText),
+      'U' => (HIcons.warning_amber_rounded, colors.error),
+      '?' => (HIcons.add_box_outlined, colors.textTertiary),
+      _ => (HIcons.edit_outlined, colors.warning),
     };
 
 /// One line: back, the branch pill, Desktop's coding-row counts (↑ahead
@@ -373,7 +374,7 @@ class _GitHeader extends StatelessWidget {
               key: const ValueKey('git-back'),
               tooltip: MaterialLocalizations.of(context).backButtonTooltip,
               onPressed: () => Navigator.of(context).maybePop(),
-              icon: Icon(Icons.arrow_back_rounded, color: colors.textPrimary),
+              icon: Icon(HIcons.arrow_back_rounded, color: colors.textPrimary),
             )
           else
             const SizedBox(width: HermesSpace.x3),
@@ -450,7 +451,7 @@ class _GitHeader extends StatelessWidget {
             key: const ValueKey('git-refresh'),
             tooltip: strings.gitRefresh,
             onPressed: onRefresh,
-            icon: Icon(Icons.refresh_rounded, color: colors.textSecondary),
+            icon: Icon(HIcons.refresh_rounded, color: colors.textSecondary),
           ),
         ],
       ),
@@ -490,7 +491,7 @@ class GitBranchPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.call_split_rounded, size: 16, color: colors.accentText),
+          Icon(HIcons.call_split_rounded, size: 16, color: colors.accentText),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
@@ -507,7 +508,7 @@ class GitBranchPill extends StatelessWidget {
           ),
           if (onTap != null) ...[
             const SizedBox(width: HermesSpace.x1),
-            Icon(Icons.expand_more_rounded, size: 16, color: ink),
+            Icon(HIcons.expand_more_rounded, size: 16, color: ink),
           ],
         ],
       ),
@@ -656,7 +657,7 @@ class GitFileRow extends StatelessWidget {
                 const SizedBox(width: HermesSpace.x1),
                 trailing ??
                     Icon(
-                      Icons.chevron_right_rounded,
+                      HIcons.chevron_right_rounded,
                       size: HermesIcon.md,
                       color: colors.textTertiary,
                     ),
@@ -910,7 +911,7 @@ class GitConflictLine extends StatelessWidget {
     return Row(
       key: const ValueKey('git-conflicts'),
       children: [
-        Icon(Icons.warning_amber_rounded, size: 18, color: colors.warning),
+        Icon(HIcons.warning_amber_rounded, size: 18, color: colors.warning),
         const SizedBox(width: HermesSpace.x2),
         Expanded(
           child: Text(
@@ -1021,7 +1022,7 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
                     ).backButtonTooltip,
                     onPressed: () => Navigator.of(context).maybePop(),
                     icon: Icon(
-                      Icons.arrow_back_rounded,
+                      HIcons.arrow_back_rounded,
                       color: colors.textPrimary,
                     ),
                   ),
@@ -1044,7 +1045,7 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
                       tooltip: stageLabel,
                       onPressed: _staging ? null : _toggleStaged,
                       icon: Icon(
-                        _file.staged ? Icons.remove_rounded : Icons.add_rounded,
+                        _file.staged ? HIcons.remove_rounded : HIcons.add_rounded,
                         color: colors.textSecondary,
                       ),
                     ),
@@ -1060,7 +1061,7 @@ class _GitDiffScreenState extends State<GitDiffScreen> {
                           key: const ValueKey('git-diff-discard'),
                           value: _GitDiffAction.discard,
                           label: strings.ghtDiscardFile,
-                          icon: Icons.undo_rounded,
+                          icon: HIcons.undo_rounded,
                           destructive: true,
                         ),
                       ],
@@ -1343,8 +1344,8 @@ class _GitDiffLineRow extends StatelessWidget {
               children: [
                 Icon(
                   folded
-                      ? Icons.chevron_right_rounded
-                      : Icons.expand_more_rounded,
+                      ? HIcons.chevron_right_rounded
+                      : HIcons.expand_more_rounded,
                   size: HermesIcon.sm,
                   color: colors.textSecondary,
                 ),

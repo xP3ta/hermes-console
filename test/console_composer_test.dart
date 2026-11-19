@@ -919,6 +919,45 @@ void main() {
       expect(hintLines(tester), isNull);
     });
 
+    // Text size sweep (run r2sweep_chat): with Android at 200 % and Hermes at
+    // 120 % on a 360 dp phone the hint took ~4.5 lines, a third of the
+    // screen, and the composer covered the last message.
+    for (final scale in [2.64, 3.3]) {
+      testWidgets('[RED] large text ($scale×) on a 360 dp phone keeps the '
+          'hint on one line', (tester) async {
+        addTearDown(tester.view.reset);
+        tester.view.physicalSize = const Size(360, 704);
+        tester.view.devicePixelRatio = 1;
+        await tester.pumpWidget(
+          _host(
+            Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(scale)),
+                child: ConsoleComposer(
+                  controller: controller,
+                  focusNode: focusNode,
+                  onSend: (_, _) {},
+                  onAttach: (_) {},
+                  dictation: dictation(),
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(hintLines(tester), 1);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('[CONTROL] the same phone at an ordinary size keeps the '
+        'whole hint', (tester) async {
+      addTearDown(tester.view.reset);
+      await rowHeight(tester, window: 360, pane: 360);
+      expect(hintLines(tester), isNull);
+    });
+
     // Ola 3 (AUDITORIA-PULIDO §2.3): beside the workspace the hint is the
     // short one of mock 134, not a cut «Pregunta a Herme…»; a phone and a
     // wide pane keep the whole one.

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
@@ -306,7 +307,7 @@ class _ChatContentThumbnailState extends State<ChatContentThumbnail> {
     final strings = Strings.of(context);
     Widget failed([ArtifactFetchProblem? problem]) => _ThumbNote(
       key: const ValueKey('sa1215-thumb-error'),
-      icon: Icons.broken_image_outlined,
+      icon: HIcons.broken_image_outlined,
       text: artifactFetchReason(strings, problem ?? _problem),
     );
     Widget loading() => Center(
@@ -319,13 +320,13 @@ class _ChatContentThumbnailState extends State<ChatContentThumbnail> {
       // Flutter does not draw SVG: the tile says so, also to TalkBack.
       _ThumbState.svg => _ThumbNote(
         key: const ValueKey('sa1215-thumb-svg'),
-        icon: Icons.image_outlined,
+        icon: HIcons.image_outlined,
         text: strings.artThumbSvg,
       ),
       _ThumbState.none => Center(
         key: const ValueKey('sa1215-thumb-none'),
         child: Icon(
-          Icons.image_outlined,
+          HIcons.image_outlined,
           size: 32,
           color: colors.textSecondary,
         ),

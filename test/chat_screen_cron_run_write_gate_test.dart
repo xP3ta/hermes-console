@@ -291,7 +291,10 @@ void main() {
     server.row = _row(schedulerOwned: false);
     server.otherRequests.clear();
     await tester.enterText(find.byType(TextField), 'reply into the run');
+    // Focus stacks the controls under the text: build that frame, then let
+    // the animation finish.
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -318,7 +321,10 @@ void main() {
 
     server.row = null;
     await tester.enterText(find.byType(TextField), 'reply into the run');
+    // Focus stacks the controls under the text: build that frame, then let
+    // the animation finish.
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -344,7 +350,10 @@ void main() {
     final readsBeforeSend = server.rowReads;
 
     await tester.enterText(find.byType(TextField), 'reply into the run');
+    // Focus stacks the controls under the text: build that frame, then let
+    // the animation finish.
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('send')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));

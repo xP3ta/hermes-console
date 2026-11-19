@@ -5,6 +5,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/chat_markdown_body.dart';
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _host(Widget child) => MaterialApp(
   localizationsDelegates: Strings.localizationsDelegates,
@@ -69,7 +70,7 @@ void main() {
           return null;
         },
       );
-      await tester.tap(find.byIcon(Icons.content_copy));
+      await tester.tap(find.byIcon(HIcons.content_copy));
       await tester.pump();
       expect(copied, code);
       await tester.pump(const Duration(seconds: 1));

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -92,6 +93,22 @@ SOFTWARE.
           'Montserrat',
           'JetBrains Mono',
         ], fontLicense);
+        final iconLicense = await rootBundle.loadString(
+          'assets/fonts/MaterialSymbols-LICENSE.txt',
+        );
+        yield LicenseEntryWithLineBreaks(const [
+          'Material Symbols',
+        ], iconLicense);
+        yield LicenseEntryWithLineBreaks(
+          const ['Mermaid'],
+          await rootBundle.loadString('assets/viewers/mermaid-LICENSE.txt'),
+        );
+        yield LicenseEntryWithLineBreaks(
+          const ['model-viewer'],
+          await rootBundle.loadString(
+            'assets/viewers/model-viewer-LICENSE.txt',
+          ),
+        );
       });
       _appLicensesRegistered = true;
     }
@@ -133,7 +150,7 @@ SOFTWARE.
                 cacheHeight: 168,
                 filterQuality: FilterQuality.medium,
                 errorBuilder: (_, _, _) =>
-                    Icon(Icons.auto_awesome, size: 40, color: colors.accent),
+                    Icon(HIcons.auto_awesome, size: 40, color: colors.accent),
               ),
               const SizedBox(width: HermesSpace.x4),
               Expanded(
@@ -168,7 +185,7 @@ SOFTWARE.
         HermesListGroup(
           children: [
             HermesListRow(
-              icon: Icons.description_outlined,
+              icon: HIcons.description_outlined,
               title: s.aboutLicensesTitle,
               subtitle: s.aboutThirdParty,
               onTap: () => showLicensePage(
@@ -178,13 +195,13 @@ SOFTWARE.
               ),
             ),
             HermesListRow(
-              icon: Icons.fork_right_outlined,
+              icon: HIcons.fork_right_outlined,
               title: s.aboutBaseProject,
               subtitle: s.aboutAttributions,
               subtitleMaxLines: 3,
             ),
             HermesListRow(
-              icon: Icons.visibility_off_outlined,
+              icon: HIcons.visibility_off_outlined,
               iconColor: colors.success,
               title: s.aboutPrivacyTitle,
               subtitle: s.aboutPrivacyBody,
@@ -198,22 +215,22 @@ SOFTWARE.
         HermesListGroup(
           children: [
             HermesListRow(
-              icon: Icons.language_outlined,
+              icon: HIcons.language_outlined,
               title: s.aboutWebsiteTitle,
               subtitle: s.aboutWebsiteSub,
               trailing: Icon(
-                Icons.open_in_new,
+                HIcons.open_in_new,
                 size: 18,
                 color: colors.textDisabled,
               ),
               onTap: () => _openLink(_websiteUrl),
             ),
             HermesListRow(
-              icon: Icons.policy_outlined,
+              icon: HIcons.policy_outlined,
               title: s.aboutPrivacyPolicyTitle,
               subtitle: s.aboutPrivacyPolicySub,
               trailing: Icon(
-                Icons.open_in_new,
+                HIcons.open_in_new,
                 size: 18,
                 color: colors.textDisabled,
               ),

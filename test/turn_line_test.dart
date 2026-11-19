@@ -12,6 +12,7 @@ import 'package:hermes_android/core/widgets/chat/tool_steps_summary.dart';
 import 'package:hermes_android/core/widgets/chat/turn_step_cards.dart';
 import 'package:hermes_android/core/widgets/chat/live_motion.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _host(
   List<TurnStepCardEntry> entries, {
@@ -96,7 +97,7 @@ TurnStepCardEntry _outcome() => const TurnStepCardEntry(
   id: 'outcome',
   kind: TurnStepCardKind.outcome,
   title: 'Detenido',
-  icon: Icons.stop_circle_outlined,
+  icon: HIcons.stop_circle_outlined,
   semanticsLabel: 'Detenido',
 );
 

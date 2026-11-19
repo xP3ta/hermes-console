@@ -5,6 +5,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 import 'package:hermes_android/core/widgets/room_team_row.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   late MissionProfileAvatarCache avatarCache;
@@ -174,7 +175,7 @@ void main() {
       findsNothing,
     );
     expect(
-      find.descendant(of: avatar, matching: find.byIcon(Icons.circle_outlined)),
+      find.descendant(of: avatar, matching: find.byIcon(HIcons.circle_outlined)),
       findsOneWidget,
     );
   });

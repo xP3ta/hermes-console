@@ -110,10 +110,16 @@ String artifactContentSecurityPolicy({required bool scriptsEnabled}) => [
   "base-uri 'none'",
 ].join('; ');
 
+// Writable and enumerable on purpose: a guest script that declares its own
+// top-level `function open(…)` (a dialog helper, say) must still load. On a
+// non-writable, non-configurable global the engine refuses the declaration
+// («Identifier 'open' has already been declared») and the whole script, and
+// with it a page drawn by script, never runs. The native `window.open` is
+// gone either way: the page can only put its own function there.
 const String _windowOpenLock =
     '<script>(function(){try{Object.defineProperty(window,"open",'
-    '{value:function(){return null;},writable:false,configurable:false});'
-    '}catch(e){}})();</script>';
+    '{value:function(){return null;},writable:true,enumerable:true,'
+    'configurable:false});}catch(e){}})();</script>';
 
 final RegExp _leadingDoctype = RegExp(
   r'^\s*<!doctype[^>]*>',

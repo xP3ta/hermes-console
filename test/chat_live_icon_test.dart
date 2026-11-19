@@ -13,6 +13,7 @@ import 'package:hermes_android/core/widgets/chat/chat_queue_chip.dart';
 import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // The live chat's ten icons (Generative Icons, MIT): frame strips with a
 // pure frame function, a theme tint, a settled pose, a still pose for
@@ -235,7 +236,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+      expect(find.byIcon(HIcons.check_rounded), findsOneWidget);
       expect(tester.hasRunningAnimations, isFalse);
     });
 
@@ -420,10 +421,18 @@ void main() {
           reduced: true,
         ),
       );
+      // Settled, the outcome is a quiet «·» lead: no ring, no check.
       expect(
         find.descendant(
           of: find.byType(TurnInlineActivity),
           matching: find.byKey(const ValueKey('live-ring-check')),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(TurnInlineActivity),
+          matching: find.text('·'),
         ),
         findsOneWidget,
       );
@@ -458,6 +467,41 @@ void main() {
         await tester.pumpWidget(const SizedBox());
       });
     }
+
+    // The test font is as wide as it is tall, which stands for a wide font or
+    // a long translation: the clock and the count may shrink, the label
+    // ellipsizes, and the row never overflows nor loses its chevron.
+    testWidgets('the live row keeps clock, count and chevron inside the card '
+        'with a wide font', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          SizedBox(
+            width: 354.7,
+            child: TurnInlineActivity(
+              label: 'Ejecutando date',
+              live: true,
+              steps: 12,
+              open: false,
+              startedAt: _start,
+              clock: () => _start.add(const Duration(seconds: 75)),
+              onTap: () {},
+            ),
+          ),
+          reduced: true,
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      final card = tester.getRect(find.byKey(const ValueKey('live-turn-card')));
+      for (final key in ['chat-inline-activity-clock', 'chat-inline-activity-count']) {
+        final rect = tester.getRect(find.byKey(ValueKey(key)));
+        expect(rect.right, lessThanOrEqualTo(card.right), reason: key);
+      }
+      final label = tester.getRect(
+        find.byKey(const ValueKey('chat-inline-activity-text')),
+      );
+      expect(label.width, greaterThan(0));
+      await tester.pumpWidget(const SizedBox());
+    });
 
     testWidgets('the queue chip shows the queued icon', (tester) async {
       await tester.pumpWidget(

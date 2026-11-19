@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -167,7 +168,7 @@ class RoomAvatarStack extends StatelessWidget {
         child: owners.isEmpty
             ? Center(
                 child: Icon(
-                  Icons.groups_2_outlined,
+                  HIcons.groups_2_outlined,
                   key: const ValueKey('room-avatar-neutral-group'),
                   size: 30,
                   color: colors.textSecondary,
@@ -223,7 +224,7 @@ class RoomAvatarStack extends StatelessWidget {
                       start: 28,
                       bottom: 2,
                       child: Icon(
-                        Icons.group_add_outlined,
+                        HIcons.group_add_outlined,
                         size: 18,
                         color: colors.textSecondary,
                       ),
@@ -341,7 +342,7 @@ class _SourceQualifiedNeutralAvatar extends StatelessWidget {
         ),
         child: const SizedBox.square(
           dimension: 30,
-          child: Icon(Icons.circle_outlined, size: 13, color: Colors.white70),
+          child: Icon(HIcons.circle_outlined, size: 13, color: Colors.white70),
         ),
       ),
     );

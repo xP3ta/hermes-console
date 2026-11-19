@@ -166,6 +166,22 @@ String? _safeGatewaySessionId(String? raw) {
 /// config.yaml, SOUL.md, .env, skills y cron. El perfil `default` vive en
 /// `~/.hermes` directamente y no se puede borrar.
 class AgentProfile {
+  /// Console's own namespace in a profile's `ui_meta`.
+  static const consoleNamespace = 'hermes-console';
+
+  static Map<String, dynamic>? _consoleCharacter(Object? uiMeta) {
+    if (uiMeta is! Map) return null;
+    final own = uiMeta[consoleNamespace];
+    if (own is! Map) return null;
+    final character = own['character'];
+    if (character is! Map) return null;
+    try {
+      return Map<String, dynamic>.from(character);
+    } on Object {
+      return null;
+    }
+  }
+
   final String name;
   final String path;
   final bool isDefault;
@@ -195,6 +211,17 @@ class AgentProfile {
   final bool hasAlias;
   final RoomMirror roomMirror;
 
+  /// The Studio character Console keeps in its own `ui_meta` namespace
+  /// (`ui_meta['hermes-console'].character`), as read from the server; null
+  /// when the profile has none.
+  final Map<String, dynamic>? consoleCharacter;
+
+  /// Whether this row came with the gateway's `ui_meta` fields at all
+  /// (`ui_meta_revisions` is always present on `profiles.list`,
+  /// tui_gateway/methods_profiles.py:257). Only then does a missing
+  /// [consoleCharacter] mean "the server has none".
+  final bool consoleMetaKnown;
+
   const AgentProfile({
     required this.name,
     this.path = '',
@@ -202,6 +229,8 @@ class AgentProfile {
     this.model = '',
     this.provider = '',
     this.hasEnv = false,
+    this.consoleCharacter,
+    this.consoleMetaKnown = false,
     this.skillCount = 0,
     this.gatewayRunning = false,
     this.description = '',
@@ -455,6 +484,8 @@ class AgentProfile {
       distributionVersion: str(json['distribution_version']),
       distributionSource: str(json['distribution_source']),
       hasAlias: json['has_alias'] == true,
+      consoleCharacter: _consoleCharacter(json['ui_meta']),
+      consoleMetaKnown: json['ui_meta_revisions'] is Map,
       roomMirror: json['name'] == 'default' && json['ui_meta'] is Map
           ? RoomMirror.parse((json['ui_meta'] as Map)['hermes-bots-groups'])
           : RoomMirror.empty,

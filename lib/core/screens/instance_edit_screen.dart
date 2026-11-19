@@ -3,6 +3,7 @@
 //
 // Sustituye al antiguo diálogo de alta/edición. El tipo de instancia
 // (vps/homelab/…) queda como detalle secundario: lo que manda es URL + auth.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -1138,7 +1139,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
       suffix: paste
           ? IconButton(
               tooltip: Strings.of(context).sPaste,
-              icon: const Icon(Icons.content_paste),
+              icon: const Icon(HIcons.content_paste),
               onPressed: () => _pasteField(controller, onChanged),
             )
           : null,
@@ -1424,7 +1425,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
               child: Semantics(
                 label: s.krhPrivateHttpInfo,
                 child: Icon(
-                  Icons.info_outline_rounded,
+                  HIcons.info_outline_rounded,
                   size: 16,
                   color: colors.textSecondary,
                 ),
@@ -1439,7 +1440,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.lock_open_outlined, size: 16, color: colors.warning),
+              Icon(HIcons.lock_open_outlined, size: 16, color: colors.warning),
               const SizedBox(width: design.HermesSpace.x2),
               Expanded(
                 child: Text(
@@ -1503,7 +1504,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
                   : widget.simpleConnect && _probing
                   ? s.ieChecking
                   : s.commonSave,
-              icon: Icons.save_outlined,
+              icon: HIcons.save_outlined,
               onTap: _saving || _probing ? null : _save,
             ),
           ),
@@ -1515,7 +1516,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             liveRegion: true,
             child: HermesInfoBanner(
               _error!,
-              icon: Icons.error_outline,
+              icon: HIcons.error_outline,
               tone: colors.error,
             ),
           ),
@@ -1529,7 +1530,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
               child: HermesSecondaryButton(
                 key: const ValueKey('instance-sign-in-again'),
                 label: s.ieSignInAgain,
-                icon: Icons.login,
+                icon: HIcons.login,
                 onTap: _saving || _probing ? null : _signInThenSave,
               ),
             ),
@@ -1538,7 +1539,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
           HermesInfoBanner(
             pairingLinkSummary(s, _appliedLink!),
             key: const ValueKey('pairing-link-summary'),
-            icon: Icons.link,
+            icon: HIcons.link,
           ),
         if (_showWays) ...[
           _question(s.nacWayPickTitle),
@@ -1563,7 +1564,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             design.HermesListRow(
               title: s.sTestConnection,
               key: const ValueKey('instance-test'),
-              icon: Icons.wifi_tethering,
+              icon: HIcons.wifi_tethering,
               trailing: _diagIndicator(),
               onTap: _probing ? null : _runProbe,
             ),
@@ -1583,7 +1584,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             design.HermesListRow(
               title: s.sDetails,
               key: const ValueKey('instance-details'),
-              icon: Icons.info_outline,
+              icon: HIcons.info_outline,
               onTap: _openDiagnostics,
             ),
           ],
@@ -1632,7 +1633,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
             design.HermesListRow(
               title: s.o2SignIn,
               key: const ValueKey('instance-dashboard-sign-in'),
-              icon: Icons.login,
+              icon: HIcons.login,
               subtitle: user.isNotEmpty
                   ? s.sDashboardUser(user)
                   : _hasStoredDashboardAccess
@@ -1644,7 +1645,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
                 widget.initial!.dashboardAuthMode == AuthMode.basicAuth)
               design.HermesListRow(
                 title: s.sPasswordTitle,
-                icon: Icons.password_outlined,
+                icon: HIcons.password_outlined,
                 key: const ValueKey('instance-change-password'),
                 onTap: _readOnly || widget.initial!.readOnly
                     ? null
@@ -1667,22 +1668,22 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
           children: [
             design.HermesListRow(
               title: s.sScanNewCode,
-              icon: Icons.qr_code_scanner,
+              icon: HIcons.qr_code_scanner,
               key: const ValueKey('instance-scan'),
               onTap: _scanQr,
             ),
             design.HermesListRow(
               title: s.qrPasteLink,
-              icon: Icons.content_paste,
+              icon: HIcons.content_paste,
               key: const ValueKey('instance-paste-code'),
               onTap: _pastePairing,
             ),
             design.HermesListRow(
               title: s.sAdvanced,
-              icon: Icons.tune,
+              icon: HIcons.tune,
               key: const ValueKey('instance-advanced'),
               trailing: Icon(
-                _advancedExpanded ? Icons.expand_less : Icons.expand_more,
+                _advancedExpanded ? HIcons.expand_less : HIcons.expand_more,
               ),
               onTap: () =>
                   setState(() => _advancedExpanded = !_advancedExpanded),
@@ -1773,7 +1774,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
                 ),
               design.HermesListRow(
                 title: s.sBrowserSignIn,
-                icon: Icons.open_in_browser,
+                icon: HIcons.open_in_browser,
                 key: const ValueKey('instance-oauth'),
                 onTap: _setupDashboardLogin,
               ),
@@ -1821,7 +1822,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
           ),
           design.HermesListRow(
             title: s.o2SetupByHand,
-            icon: Icons.terminal,
+            icon: HIcons.terminal,
             key: const ValueKey('instance-by-hand-help'),
             onTap: () => Navigator.of(context).push<void>(
               MaterialPageRoute(builder: (_) => const ManualSetupPage()),
@@ -1829,7 +1830,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
           ),
           design.HermesListRow(
             title: s.ieDiagCopyBtn,
-            icon: Icons.copy_outlined,
+            icon: HIcons.copy_outlined,
             key: const ValueKey('instance-copy-diagnostic'),
             onTap: _lastReport == null
                 ? null
@@ -1849,7 +1850,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
                 design.HermesListRow(
                   title: s.sRemoveTitle,
                   destructive: true,
-                  icon: Icons.delete_outline,
+                  icon: HIcons.delete_outline,
                   key: const ValueKey('instance-delete'),
                   onTap: _saving ? null : _delete,
                 ),
@@ -2021,8 +2022,8 @@ class _InstanceDiagnosticsScreenState
                       ? s.ieConnectionCheckAgain
                       : s.ieConnectionCheckNow),
             icon: _running
-                ? Icons.sync_rounded
-                : Icons.health_and_safety_outlined,
+                ? HIcons.sync_rounded
+                : HIcons.health_and_safety_outlined,
             onTap: _running ? null : () => _run(_DiagnosticScope.all),
           ),
           HermesSectionHeader(s.ieConnectionServices),
@@ -2030,7 +2031,7 @@ class _InstanceDiagnosticsScreenState
             children: [
               _DiagnosticServiceRow(
                 title: s.ieSecDashboard,
-                icon: Icons.admin_panel_settings_outlined,
+                icon: HIcons.admin_panel_settings_outlined,
                 results: _snapshot.dashboard,
               ),
             ],
@@ -2039,7 +2040,7 @@ class _InstanceDiagnosticsScreenState
             const SizedBox(height: 12),
             HermesInfoBanner(
               _snapshot.error!,
-              icon: Icons.error_outline,
+              icon: HIcons.error_outline,
               tone: colors.error,
             ),
           ],
@@ -2050,7 +2051,7 @@ class _InstanceDiagnosticsScreenState
                 padding: const EdgeInsets.only(bottom: 7),
                 child: HermesInfoBanner(
                   suggestion,
-                  icon: Icons.lightbulb_outline,
+                  icon: HIcons.lightbulb_outline,
                   tone: colors.warning,
                 ),
               ),
@@ -2300,7 +2301,7 @@ class _TechnicalDiagnosticsDisclosure extends StatelessWidget {
               child: HermesSecondaryButton(
                 key: const ValueKey('diagnostics-run-dashboard'),
                 label: 'Dashboard',
-                icon: Icons.admin_panel_settings_outlined,
+                icon: HIcons.admin_panel_settings_outlined,
                 onTap: running ? null : () => onRun(_DiagnosticScope.dashboard),
               ),
             ),
@@ -2322,7 +2323,7 @@ class _TechnicalDiagnosticsDisclosure extends StatelessWidget {
           const SizedBox(height: 10),
           Row(
             children: [
-              Icon(Icons.history, size: 12, color: colors.textDisabled),
+              Icon(HIcons.history, size: 12, color: colors.textDisabled),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -2336,7 +2337,7 @@ class _TechnicalDiagnosticsDisclosure extends StatelessWidget {
               ),
               HermesSecondaryButton(
                 label: s.ieDiagCopyBtn,
-                icon: Icons.copy_outlined,
+                icon: HIcons.copy_outlined,
                 onTap: () {
                   Clipboard.setData(
                     ClipboardData(

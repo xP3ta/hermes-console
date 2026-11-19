@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -18,7 +19,6 @@ import '../services/connection_manager.dart';
 import '../services/active_profile_scope.dart';
 import '../widgets/profile_scope.dart';
 
-import '../services/font_size_service.dart';
 import '../services/local_transcript_store.dart';
 import '../settings/settings_deep_link.dart';
 import '../settings/settings_list_detail.dart';
@@ -526,7 +526,7 @@ List<Widget> settingsSectionRows(
             listenable: MessageReactionPrefs.shared,
             builder: (context, _) => HermesToggleRow(
               key: const ValueKey('settings-reactions'),
-              icon: Icons.add_reaction_outlined,
+              icon: HIcons.add_reaction_outlined,
               title: Strings.of(context).reactSettingsTitle,
               subtitle: Strings.of(context).reactSettingsSubtitle,
               value: MessageReactionPrefs.shared.enabled,
@@ -537,7 +537,7 @@ List<Widget> settingsSectionRows(
             listenable: PinnedPromptPrefs.shared,
             builder: (context, _) => HermesToggleRow(
               key: const ValueKey('settings-pinned-prompt'),
-              icon: Icons.vertical_align_top_rounded,
+              icon: HIcons.vertical_align_top_rounded,
               title: Strings.of(context).cs1215PinnedPromptSetting,
               subtitle: Strings.of(context).cs1215PinnedPromptSettingSubtitle,
               value: PinnedPromptPrefs.shared.enabled,
@@ -549,7 +549,7 @@ List<Widget> settingsSectionRows(
             listenable: ReasoningDisclosurePrefs.shared,
             builder: (context, _) => HermesToggleRow(
               key: const ValueKey('settings-reasoning-collapsed'),
-              icon: Icons.unfold_less_rounded,
+              icon: HIcons.unfold_less_rounded,
               title: Strings.of(context).fluidReasoningCollapsedTitle,
               subtitle: Strings.of(context).fluidReasoningCollapsedDesc,
               value: ReasoningDisclosurePrefs.shared.collapsedByDefault,
@@ -585,7 +585,7 @@ List<Widget> settingsSectionRows(
         children: [
           HermesNavRow(
             key: const ValueKey('settings-security-info'),
-            icon: Icons.shield_outlined,
+            icon: HIcons.shield_outlined,
             title: Strings.of(context).setSecurity,
             subtitle: Strings.of(context).setSecuritySub,
             onTap: () => Navigator.push(
@@ -596,7 +596,7 @@ List<Widget> settingsSectionRows(
             ),
           ),
           HermesNavRow(
-            icon: Icons.verified_user_outlined,
+            icon: HIcons.verified_user_outlined,
             title: Strings.of(context).setPermissions,
             subtitle: Strings.of(context).setPermissionsSub,
             onTap: () => Navigator.push(
@@ -610,7 +610,7 @@ List<Widget> settingsSectionRows(
           // vault of the profile these Settings show.
           HermesNavRow(
             key: const ValueKey('settings-vault'),
-            icon: Icons.key_outlined,
+            icon: HIcons.key_outlined,
             title: Strings.of(context).vltSettingsTitle,
             subtitle: Strings.of(context).vltSettingsSubtitle,
             onTap: () => Navigator.push(
@@ -655,7 +655,7 @@ List<Widget> settingsSectionRows(
             if (!conn.readOnly)
               HermesNavRow(
                 key: const ValueKey('settings-backup'),
-                icon: Icons.settings_backup_restore_rounded,
+                icon: HIcons.settings_backup_restore_rounded,
                 title: Strings.of(context).backupTitle,
                 subtitle: Strings.of(context).backupSubtitle,
                 onTap: () => Navigator.push(
@@ -685,7 +685,7 @@ List<Widget> settingsSectionRows(
                 null)
               HermesNavRow(
                 key: const ValueKey('settings-cache'),
-                icon: Icons.storage_rounded,
+                icon: HIcons.storage_rounded,
                 title: Strings.of(context).cacheTitle,
                 subtitle: Strings.of(context).cacheSubtitle,
                 onTap: () {
@@ -1016,7 +1016,7 @@ class _ThemesEntryState extends State<_ThemesEntry> {
               ),
             ),
             const SizedBox(width: 8),
-            Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
+            Icon(HIcons.chevron_right, size: 18, color: colors.textTertiary),
           ],
         ),
       ),
@@ -1109,7 +1109,7 @@ class _FontStyleEntryState extends State<_FontStyleEntry> {
         key: ValueKey('settings-font-$current'),
         value: AppFonts.byId(current).id,
         title: Strings.of(context).setFontStyle,
-        icon: const Icon(Icons.keyboard_arrow_down_rounded),
+        icon: const Icon(HIcons.keyboard_arrow_down_rounded),
         style: TextStyle(
           color: colors.textPrimary,
           fontSize: HermesType.textSize,
@@ -1136,92 +1136,6 @@ class _FontStyleEntryState extends State<_FontStyleEntry> {
   }
 }
 
-/// Selector de tamaño de texto global. Mismo patrón/estilo que [_FontStyleEntry]:
-/// aplica al instante (reactivo vía `HermesAppState.fontSize` → `MediaQuery
-/// .textScaler`) y persiste en SharedPreferences. Afecta a TODA la app a la vez,
-/// no pantalla por pantalla.
-class _TextSizeEntry extends StatefulWidget {
-  @override
-  State<_TextSizeEntry> createState() => _TextSizeEntryState();
-}
-
-class _TextSizeEntryState extends State<_TextSizeEntry> {
-  FontSizeService? _svc() =>
-      context.findAncestorStateOfType<HermesAppState>()?.fontSize;
-
-  Future<void> _select(double scale) async {
-    await _svc()?.setScale(scale);
-    if (mounted) setState(() {});
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final current = _svc()?.scale ?? 1.0;
-    final strings = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    return _PrefField(
-      title: strings.setTextSize,
-      caption: strings.setAppliesInstantly,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            strings.setTextSizePreview,
-            style: TextStyle(
-              color: colors.textPrimary,
-              fontSize: HermesType.textSize * current,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Slider(
-            key: const ValueKey('text-size-slider'),
-            min: FontSizeService.minScale,
-            max: FontSizeService.maxScale,
-            divisions: FontSizeService.divisions,
-            value: FontSizeService.normalize(current),
-            label: '${(current * 100).round()} %',
-            onChanged: _select,
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x1),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  strings.setTextSizeSmaller,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: HermesType.captionSize,
-                  ),
-                ),
-                Text(
-                  strings.setTextSizeStandard,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: HermesType.captionSize,
-                  ),
-                ),
-                Text(
-                  strings.setTextSizeLarger,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: HermesType.captionSize,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Selector de idioma de la app. Mismo patrón/estilo que [_FontStyleEntry]:
-/// aplica al instante (reactivo vía `HermesAppState.localeId`) y persiste. Por
-/// defecto sigue el idioma del sistema. La migración de textos a i18n es
-/// incremental, así que de momento solo cambian los ya traducidos.
 class _LanguageEntry extends StatefulWidget {
   @override
   State<_LanguageEntry> createState() => _LanguageEntryState();
@@ -1273,7 +1187,7 @@ class _VoiceTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return HermesNavRow(
-      icon: Icons.record_voice_over_outlined,
+      icon: HIcons.record_voice_over_outlined,
       title: Strings.of(context).setVoiceTitle,
       subtitle: Strings.of(context).setVoice,
       onTap: () => Navigator.push(
@@ -1385,7 +1299,7 @@ class _CharactersTile extends StatelessWidget {
     final strings = Strings.of(context);
     return HermesNavRow(
       key: const ValueKey('settings-characters'),
-      icon: Icons.face_outlined,
+      icon: HIcons.face_outlined,
       title: strings.charactersTitle,
       subtitle: strings.charactersSettingsSubtitle,
       onTap: () => Navigator.push(
@@ -1460,7 +1374,7 @@ class _GuidedTourTile extends StatelessWidget {
     final strings = Strings.of(context);
     return HermesNavRow(
       key: const ValueKey('settings-guided-tour'),
-      icon: Icons.tour_outlined,
+      icon: HIcons.tour_outlined,
       title: strings.gt1215SettingsTitle,
       subtitle: strings.gt1215SettingsSubtitle,
       onTap: () => Navigator.push(
@@ -1483,7 +1397,7 @@ class _DockTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return HermesNavRow(
       key: const ValueKey('settings-dock'),
-      icon: Icons.dashboard_customize_outlined,
+      icon: HIcons.dashboard_customize_outlined,
       title: Strings.of(context).dockSettingsTitle,
       subtitle: Strings.of(context).dockSettingsSubtitle,
       onTap: () => Navigator.push(
@@ -1498,7 +1412,7 @@ class _NotificationsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return HermesNavRow(
-      icon: Icons.notifications_active_outlined,
+      icon: HIcons.notifications_active_outlined,
       title: Strings.of(context).setNotifications,
       subtitle: Strings.of(context).setNotificationsSub,
       onTap: () => Navigator.push(
@@ -1546,7 +1460,7 @@ class _HeaderTitleField extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                Icons.drive_file_rename_outline_rounded,
+                HIcons.drive_file_rename_outline_rounded,
                 size: 20,
                 color: colors.textSecondary,
               ),
@@ -1579,7 +1493,7 @@ class _HeaderTitleField extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(Icons.edit_outlined, size: 16, color: colors.textDisabled),
+              Icon(HIcons.edit_outlined, size: 16, color: colors.textDisabled),
             ],
           ),
         ),
@@ -1624,7 +1538,7 @@ class _ConnectionCard extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(Icons.dns_outlined, size: 22, color: colors.textPrimary),
+              Icon(HIcons.dns_outlined, size: 22, color: colors.textPrimary),
               const SizedBox(width: 15),
               Expanded(
                 child: Column(
@@ -1680,7 +1594,7 @@ class _ConnectionCard extends StatelessWidget {
         HermesGroup(
           children: [
             HermesNavRow(
-              icon: Icons.lan_outlined,
+              icon: HIcons.lan_outlined,
               title: strings.setManageInstances,
               value: '${connManager.getConnections().length}',
               onTap: () => Navigator.push(
@@ -1801,7 +1715,7 @@ class _ActiveModelTileState extends State<_ActiveModelTile>
   @override
   Widget build(BuildContext context) {
     return HermesNavRow(
-      icon: Icons.smart_toy_outlined,
+      icon: HIcons.smart_toy_outlined,
       title: Strings.of(context).setActiveModelLabel,
       subtitle: _modelLoadFailed
           ? Strings.of(context).mdlLoadError
@@ -2519,7 +2433,7 @@ class HistoryCleanupActionList extends StatelessWidget {
       children: [
         _HistoryCleanupActionRow(
           actionKey: const ValueKey('history-cleanup-normal'),
-          icon: Icons.forum_outlined,
+          icon: HIcons.forum_outlined,
           title: s.setClearConvos,
           // La acción ahora PREGUNTA qué vaciar: el subtítulo anuncia la
           // elección en vez de prometer que Cron se conserva siempre.
@@ -2643,7 +2557,7 @@ class _HistoryCleanupActionRow extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       else
-                        Icon(Icons.chevron_right, size: 19, color: foreground),
+                        Icon(HIcons.chevron_right, size: 19, color: foreground),
                     ],
                   ),
                 ),
@@ -2687,7 +2601,7 @@ class _HistoryCleanupActionRow extends StatelessWidget {
                                 IconButton(
                                   key: const ValueKey('history-cleanup-cancel'),
                                   icon: Icon(
-                                    Icons.close,
+                                    HIcons.close,
                                     size: 16,
                                     color: colors.textSecondary,
                                   ),
@@ -2759,7 +2673,7 @@ class _OrphanDataTileState extends State<_OrphanDataTile> {
       children: [
         _HistoryCleanupActionRow(
           actionKey: const ValueKey('orphan-data-clean'),
-          icon: Icons.cleaning_services_outlined,
+          icon: HIcons.cleaning_services_outlined,
           title: Strings.of(context).secOrphanTitle,
           subtitle: Strings.of(context).secOrphanSubtitle,
           busy: _cleaning,
@@ -2950,10 +2864,10 @@ class HermesUpdateProgressPanel extends StatelessWidget {
                 children: [
                   Icon(
                     progress.step == HermesUpdateStep.done
-                        ? Icons.check_circle_outline
+                        ? HIcons.check_circle_outline
                         : progress.step == HermesUpdateStep.unverified
-                        ? Icons.help_outline_rounded
-                        : Icons.system_update_alt,
+                        ? HIcons.help_outline_rounded
+                        : HIcons.system_update_alt,
                     size: 18,
                     color: tone,
                   ),
@@ -3757,7 +3671,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.cloud_off_outlined, size: 21, color: colors.error),
+              Icon(HIcons.cloud_off_outlined, size: 21, color: colors.error),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -3783,7 +3697,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                 ),
               ),
               IconButton(
-                icon: Icon(Icons.refresh, color: colors.textSecondary),
+                icon: Icon(HIcons.refresh, color: colors.textSecondary),
                 tooltip: Strings.of(context).commonRetry,
                 onPressed: () => _refresh(forceUpdate: true),
               ),
@@ -3873,7 +3787,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                 else
                   IconButton(
                     icon: Icon(
-                      Icons.refresh,
+                      HIcons.refresh,
                       size: 18,
                       color: colors.textSecondary,
                     ),
@@ -3928,7 +3842,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                 child: OutlinedButton.icon(
                   onPressed: _busy ? null : _migrateConfig,
                   icon: Icon(
-                    Icons.sync_rounded,
+                    HIcons.sync_rounded,
                     size: 16,
                     color: colors.accentText,
                   ),
@@ -4003,7 +3917,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
           ),
           if (!neutral) ...[
             Icon(
-              good ? Icons.check_circle : Icons.error_outline,
+              good ? HIcons.check_circle : HIcons.error_outline,
               size: 14,
               color: good ? colors.success : colors.warning,
             ),
@@ -4074,7 +3988,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
           ),
           child: Row(
             children: [
-              Icon(Icons.system_update_alt, size: 20, color: colors.accent),
+              Icon(HIcons.system_update_alt, size: 20, color: colors.accent),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -4138,7 +4052,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     return HermesPanel(
       child: _HistoryCleanupActionRow(
         actionKey: const ValueKey('maintenance-restart-gateway'),
-        icon: Icons.restart_alt,
+        icon: HIcons.restart_alt,
         title: Strings.of(context).setRestartGateway,
         subtitle: Strings.of(context).setReconnectsPlatforms,
         busy: false,
@@ -4182,7 +4096,7 @@ class _AboutCardState extends State<_AboutCard> {
     return HermesPanel(
       child: _HistoryCleanupActionRow(
         actionKey: const ValueKey('about-hermes-console'),
-        icon: Icons.info_outline,
+        icon: HIcons.info_outline,
         title: 'Console',
         subtitle: Strings.of(
           context,

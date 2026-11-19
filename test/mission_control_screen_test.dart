@@ -34,6 +34,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/fake_bot_chat_title_lookup.dart';
 import 'support/profile_model_fakes.dart' show FakeModelGateway;
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _connection = SavedConnection(
   id: 'mission-widget',
@@ -1106,14 +1107,14 @@ void main() {
     expect(
       find.descendant(
         of: chooserBot,
-        matching: find.byIcon(Icons.account_circle_outlined),
+        matching: find.byIcon(HIcons.account_circle_outlined),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: chooserBot,
-        matching: find.byIcon(Icons.smart_toy_outlined),
+        matching: find.byIcon(HIcons.smart_toy_outlined),
       ),
       findsNothing,
     );
@@ -2979,14 +2980,14 @@ void main() {
     expect(
       find.descendant(
         of: orbitBot,
-        matching: find.byIcon(Icons.account_circle_outlined),
+        matching: find.byIcon(HIcons.account_circle_outlined),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: orbitBot,
-        matching: find.byIcon(Icons.smart_toy_outlined),
+        matching: find.byIcon(HIcons.smart_toy_outlined),
       ),
       findsNothing,
     );

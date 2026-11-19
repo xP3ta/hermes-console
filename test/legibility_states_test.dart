@@ -17,6 +17,7 @@ import 'package:hermes_android/core/widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl;
 import 'package:hermes_android/core/widgets/hermes_ui.dart'
     show HermesGroup, HermesNavRow;
+import 'package:hermes_android/core/design/hicons.dart';
 
 Future<void> _pump(
   WidgetTester tester,
@@ -42,14 +43,14 @@ void main() {
       const Row(
         children: [
           DockItemTile(
-            icon: Icons.settings_outlined,
-            selectedIcon: Icons.settings,
+            icon: HIcons.settings_outlined,
+            selectedIcon: HIcons.settings,
             label: 'Ajustes',
             innerRadius: 16,
             selected: true,
           ),
           DockItemTile(
-            icon: Icons.home_outlined,
+            icon: HIcons.home_outlined,
             selectedIcon: Icons.home,
             label: 'Inicio',
             innerRadius: 16,
@@ -58,7 +59,7 @@ void main() {
       ),
     );
     final colors = AppTheme.fromId('console').hermes;
-    final active = tester.widget<Icon>(find.byIcon(Icons.settings));
+    final active = tester.widget<Icon>(find.byIcon(HIcons.settings));
     expect(active.color, colors.accentText);
     expect(active.color, isNot(colors.success));
     // Terracotta: a warm hue, far from the green of «ok».
@@ -66,8 +67,8 @@ void main() {
     expect(hue < 40 || hue > 340, isTrue, reason: 'hue $hue');
     // Without colour: the active item wears its filled glyph, the idle one
     // the outlined one.
-    expect(find.byIcon(Icons.settings), findsOneWidget);
-    expect(find.byIcon(Icons.home_outlined), findsOneWidget);
+    expect(find.byIcon(HIcons.settings), findsOneWidget);
+    expect(find.byIcon(HIcons.home_outlined), findsOneWidget);
   });
 
   testWidgets('the chosen segment is a bordered pill with a heavier label', (
@@ -154,7 +155,7 @@ void main() {
       HermesGroup(
         children: [
           HermesNavRow(
-            icon: Icons.lan_outlined,
+            icon: HIcons.lan_outlined,
             title: 'Gestionar instancias',
             value: '0',
             onTap: () {},
@@ -163,7 +164,7 @@ void main() {
       ),
     );
     final value = tester.getRect(find.text('0'));
-    final chevron = tester.getRect(find.byIcon(Icons.chevron_right));
+    final chevron = tester.getRect(find.byIcon(HIcons.chevron_right));
     expect(chevron.left - value.right, lessThanOrEqualTo(8 + 0.5));
     // The title has the room it needs: one line.
     final title = tester.getSize(find.text('Gestionar instancias'));

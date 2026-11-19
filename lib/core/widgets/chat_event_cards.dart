@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import '../utils/approval_display.dart';
 
 import 'dart:async';
@@ -33,7 +34,6 @@ import 'chat/chat_markdown_body.dart' show kChatCodeFontFamily;
 import 'chat/tool_output_cards.dart';
 import 'chat/turn_activity_pill.dart';
 import 'chat/tool_steps_summary.dart';
-import 'chat/delegated_child_cards.dart';
 import 'chat/live_turn_window.dart';
 import 'chat/turn_step_cards.dart';
 import 'chat_turn_activity.dart';
@@ -385,12 +385,12 @@ class _CommandPreviewCardState extends State<CommandPreviewCard> {
         children: [
           Row(
             children: [
-              Icon(Icons.terminal, size: 13, color: riskColor),
+              Icon(HIcons.terminal, size: 13, color: riskColor),
               const SizedBox(width: 6),
               HermesPill(color: riskColor, label: risk.label, showDot: false),
               const Spacer(),
               _IconAction(
-                icon: _copied ? Icons.check : Icons.content_copy,
+                icon: _copied ? HIcons.check : HIcons.content_copy,
                 color: _copied ? colors.accent : colors.textSecondary,
                 tooltip: s.cevCopyTooltip,
                 onTap: _copy,
@@ -479,8 +479,8 @@ class _ToolEventCardState extends State<ToolEventCard> {
                 children: [
                   Icon(
                     isCall
-                        ? Icons.arrow_outward_rounded
-                        : Icons.build_circle_outlined,
+                        ? HIcons.arrow_outward_rounded
+                        : HIcons.build_circle_outlined,
                     size: 15,
                     color: stateColor,
                   ),
@@ -511,7 +511,7 @@ class _ToolEventCardState extends State<ToolEventCard> {
                     turns: _expanded ? 0.5 : 0,
                     duration: const Duration(milliseconds: 160),
                     child: Icon(
-                      Icons.expand_more,
+                      HIcons.expand_more,
                       size: 16,
                       color: colors.textDisabled,
                     ),
@@ -680,7 +680,7 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
               padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 2),
               child: Row(
                 children: [
-                  Icon(Icons.bolt_rounded, size: 14, color: accent),
+                  Icon(HIcons.bolt_rounded, size: 14, color: accent),
                   const SizedBox(width: 7),
                   Flexible(
                     // ct1215: the same words as a turn's folded line, so an
@@ -717,7 +717,7 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
                   if (hasApproval) ...[
                     const SizedBox(width: 7),
                     Icon(
-                      Icons.lock_outline_rounded,
+                      HIcons.lock_outline_rounded,
                       size: 12,
                       color: colors.warning,
                     ),
@@ -727,7 +727,7 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
                     turns: _expanded ? 0.5 : 0,
                     duration: const Duration(milliseconds: 160),
                     child: Icon(
-                      Icons.expand_more,
+                      HIcons.expand_more,
                       size: 15,
                       color: colors.textDisabled,
                     ),
@@ -832,10 +832,10 @@ class _ToolStepState extends State<_ToolStep> {
               children: [
                 Icon(
                   isApproval
-                      ? Icons.verified_user_outlined
+                      ? HIcons.verified_user_outlined
                       : (info.status == 'llamada'
-                            ? Icons.arrow_outward_rounded
-                            : Icons.check_circle_outline),
+                            ? HIcons.arrow_outward_rounded
+                            : HIcons.check_circle_outline),
                   size: 13,
                   color: color,
                 ),
@@ -859,7 +859,7 @@ class _ToolStepState extends State<_ToolStep> {
                     turns: _open ? 0.5 : 0,
                     duration: const Duration(milliseconds: 150),
                     child: Icon(
-                      Icons.expand_more,
+                      HIcons.expand_more,
                       size: 14,
                       color: colors.textDisabled,
                     ),
@@ -938,7 +938,7 @@ class _ApprovalCommandBoxState extends State<ApprovalCommandBox> {
           // su zona táctil de 48 dp y el glifo pequeño (AUDITORIA T8).
           Row(
             children: [
-              Icon(Icons.terminal, size: 12, color: colors.textSecondary),
+              Icon(HIcons.terminal, size: 12, color: colors.textSecondary),
               const Spacer(),
               IconButton(
                 key: const ValueKey('approval-copy-command'),
@@ -951,7 +951,7 @@ class _ApprovalCommandBoxState extends State<ApprovalCommandBox> {
                   height: componentMinimumTapTarget,
                 ),
                 color: _copied ? colors.accent : colors.textSecondary,
-                icon: Icon(_copied ? Icons.check : Icons.content_copy),
+                icon: Icon(_copied ? HIcons.check : HIcons.content_copy),
               ),
             ],
           ),
@@ -1047,7 +1047,7 @@ class ChatApprovalCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Icon(
-                      Icons.shield_outlined,
+                      HIcons.shield_outlined,
                       size: 20,
                       color: colors.textSecondary,
                     ),
@@ -1123,7 +1123,7 @@ class ChatApprovalCard extends StatelessWidget {
                             child: ApprovalChoiceButton(
                               key: const ValueKey('approval-allow'),
                               label: s.cevAllow,
-                              icon: Icons.check_rounded,
+                              icon: HIcons.check_rounded,
                               // v25: «Permitir» is the primary action.
                               color: colors.accent,
                               onColor: colors.onAccent,
@@ -1140,7 +1140,7 @@ class ChatApprovalCard extends StatelessWidget {
                           child: ApprovalChoiceButton(
                             key: const ValueKey('approval-deny'),
                             label: s.cevDeny,
-                            icon: Icons.close_rounded,
+                            icon: HIcons.close_rounded,
                             // v25: «Denegar» neutral, not red.
                             color: colors.textPrimary,
                             busy: busy,
@@ -1169,7 +1169,7 @@ class ChatApprovalCard extends StatelessWidget {
                           message: s.apx1215ScopeSessionHint,
                           child: _ScopeChip(
                             label: s.cevThisSession,
-                            icon: Icons.repeat_rounded,
+                            icon: HIcons.repeat_rounded,
                             busy: busy,
                             semanticHint: s.cevRemember,
                             onTap: () => onChoice('session'),
@@ -1181,7 +1181,7 @@ class ChatApprovalCard extends StatelessWidget {
                           child: _ScopeChip(
                             key: const ValueKey('approval-always'),
                             label: s.cevAlways,
-                            icon: Icons.all_inclusive_rounded,
+                            icon: HIcons.all_inclusive_rounded,
                             busy: busy,
                             semanticHint: s.cevRemember,
                             onTap: () => unawaited(
@@ -1342,7 +1342,7 @@ class _ApprovalRequestCardState extends State<ApprovalRequestCard> {
           children: [
             Row(
               children: [
-                Icon(Icons.verified_user_outlined, size: 16, color: accent),
+                Icon(HIcons.verified_user_outlined, size: 16, color: accent),
                 const SizedBox(width: 7),
                 Text(
                   title,
@@ -1402,7 +1402,7 @@ class _ApprovalRequestCardState extends State<ApprovalRequestCard> {
       return TextButton.icon(
         onPressed: () => widget.onOpenInRuns!(info.runId!),
         style: TextButton.styleFrom(foregroundColor: accent),
-        icon: const Icon(Icons.open_in_new, size: 14),
+        icon: const Icon(HIcons.open_in_new, size: 14),
         label: Text(s.cevOpenInRuns, style: const TextStyle(fontSize: 12)),
       );
     }
@@ -2248,22 +2248,22 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     if (!widget.active) {
       return switch (_outcome) {
         TraceOutcome.stopped => (
-          icon: Icons.stop_circle,
+          icon: HIcons.stop_circle,
           color: colors.textSecondary,
           animate: false,
         ),
         TraceOutcome.recovered => (
-          icon: Icons.warning_amber_rounded,
+          icon: HIcons.warning_amber_rounded,
           color: colors.warning,
           animate: false,
         ),
         TraceOutcome.failed => (
-          icon: Icons.error_outline,
+          icon: HIcons.error_outline,
           color: colors.error,
           animate: false,
         ),
         TraceOutcome.working || TraceOutcome.completed => (
-          icon: Icons.check_circle,
+          icon: HIcons.check_circle,
           color: colors.success,
           animate: false,
         ),
@@ -2271,7 +2271,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     }
     if (widget.waitingForUser) {
       return (
-        icon: Icons.help_outline_rounded,
+        icon: HIcons.help_outline_rounded,
         color: colors.textSecondary,
         animate: false,
       );
@@ -2279,7 +2279,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     final mood = widget.activeMood ?? CompanionMood.thinking;
     if (mood == CompanionMood.offline) {
       return (
-        icon: Icons.cloud_off_rounded,
+        icon: HIcons.cloud_off_rounded,
         color: colors.warning,
         animate: false,
       );
@@ -2287,17 +2287,17 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     if (widget.events.isEmpty) {
       return switch (mood) {
         CompanionMood.connecting || CompanionMood.waiting => (
-          icon: Icons.cloud_queue_rounded,
+          icon: HIcons.cloud_queue_rounded,
           color: colors.accent,
           animate: false,
         ),
         CompanionMood.error => (
-          icon: Icons.error_outline,
+          icon: HIcons.error_outline,
           color: colors.error,
           animate: false,
         ),
         CompanionMood.success => (
-          icon: Icons.check_circle,
+          icon: HIcons.check_circle,
           color: colors.success,
           animate: false,
         ),
@@ -2315,12 +2315,12 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         animate: true,
       ),
       ChatTraceEventKind.tool => (
-        icon: Icons.terminal_rounded,
+        icon: HIcons.terminal_rounded,
         color: colors.textSecondary,
         animate: false,
       ),
       ChatTraceEventKind.skill => (
-        icon: Icons.auto_awesome_rounded,
+        icon: HIcons.auto_awesome_rounded,
         color: colors.textSecondary,
         animate: false,
       ),
@@ -2542,7 +2542,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
             TurnFoldLine(
               key: const ValueKey('turn-run-header'),
               maxLines: 1,
-              leading: Icons.format_list_bulleted_rounded,
+              leading: HIcons.format_list_bulleted_rounded,
               lead: s.tk140ToolsCount(folded.length),
               label: foldedTime.inSeconds == 0
                   ? ''
@@ -2750,7 +2750,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
               kind: TurnStepCardKind.outcome,
               title: title,
               detail: step.detail,
-              icon: Icons.stop_circle_outlined,
+              icon: HIcons.stop_circle_outlined,
               // A cut-short call is never «completado»: the bar words it as
               // failed, and the outcome after it says «detenido».
               failed: true,
@@ -2803,9 +2803,9 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     final outcomeIcon = widget.active
         ? null
         : switch (_outcome) {
-            TraceOutcome.stopped => Icons.stop_circle_outlined,
-            TraceOutcome.failed => Icons.error_outline_rounded,
-            TraceOutcome.recovered => Icons.warning_amber_rounded,
+            TraceOutcome.stopped => HIcons.stop_circle_outlined,
+            TraceOutcome.failed => HIcons.error_outline_rounded,
+            TraceOutcome.recovered => HIcons.warning_amber_rounded,
             TraceOutcome.working || TraceOutcome.completed => null,
           };
     if (outcomeIcon != null) {
@@ -2921,7 +2921,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
             TurnFoldLine(
               key: const ValueKey('thinking-trace-tasks'),
               label: turnTasksFoldLabel(s, ownedTasks.asHistory),
-              leading: Icons.checklist_rounded,
+              leading: HIcons.checklist_rounded,
               expanded: _tasksExpanded,
               onTap: () => setState(() => _tasksExpanded = !_tasksExpanded),
             ),
@@ -2960,12 +2960,8 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Design B: a card per delegated child under the live row.
-            if (widget.active && status.subagents.isNotEmpty)
-              DelegatedChildCards(
-                subagents: status.subagents,
-                clock: scope.clock,
-              ),
+            // The delegated children and the task list live in the capsule
+            // above the composer; the turn keeps only its own steps.
             // The approved live look: while the turn runs and the list is
             // closed, the last actions, the thought and the plan are there
             // without a tap; opening the card shows the whole list instead.
@@ -2976,7 +2972,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                   for (final entry in tools)
                     if (!isAgentTaskToolLabel(entry.toolName ?? '')) entry,
                 ],
-                tasks: status.tasks,
+                tasks: null,
               ),
             TurnInlineDisclosure(open: _inlineOpen, child: details),
             ...running,
@@ -3063,7 +3059,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
           TurnFoldLine(
             key: const ValueKey('thinking-trace-tasks'),
             label: turnTasksFoldLabel(s, history),
-            leading: Icons.checklist_rounded,
+            leading: HIcons.checklist_rounded,
             expanded: _tasksExpanded,
             onTap: () {
               HermesHaptics.selection();
@@ -3209,7 +3205,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
               shape: const StadiumBorder(),
               overlayColor: colors.textSecondary.withValues(alpha: 0.12),
             ),
-            icon: const Icon(Icons.content_copy, size: 12),
+            icon: const Icon(HIcons.content_copy, size: 12),
             label: Text(s.chatCopyTrace),
           ),
         ),
@@ -3251,7 +3247,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         key: const ValueKey('thinking-trace-summary'),
         lead: fold.lead,
         label: fold.label,
-        leading: fold.lead == null ? null : Icons.done_rounded,
+        leading: fold.lead == null ? null : HIcons.done_rounded,
         expanded: _expanded,
         onTap: hasSteps
             ? () {
@@ -3283,7 +3279,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
             TurnFoldLine(
               key: const ValueKey('thinking-trace-tasks'),
               label: turnTasksFoldLabel(s, tasks),
-              leading: Icons.checklist_rounded,
+              leading: HIcons.checklist_rounded,
               expanded: _tasksExpanded,
               onTap: () {
                 HermesHaptics.selection();
@@ -3383,7 +3379,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                   shape: const StadiumBorder(),
                   overlayColor: colors.textSecondary.withValues(alpha: 0.12),
                 ),
-                icon: const Icon(Icons.content_copy, size: 12),
+                icon: const Icon(HIcons.content_copy, size: 12),
                 label: Text(s.chatCopyTrace),
               ),
             ),
@@ -3517,7 +3513,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                               ? Duration.zero
                               : const Duration(milliseconds: 160),
                           child: Icon(
-                            Icons.expand_more,
+                            HIcons.expand_more,
                             size: 18,
                             color: colors.textSecondary,
                           ),

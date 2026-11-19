@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -151,8 +152,8 @@ class _ForeignSessionImportScreenState
                 for (final row in rows)
                   HermesNavRow(
                     icon: row.source == ForeignSource.codex
-                        ? Icons.terminal_rounded
-                        : Icons.chat_bubble_outline_rounded,
+                        ? HIcons.terminal_rounded
+                        : HIcons.chat_bubble_outline_rounded,
                     title: _titleOf(s, row),
                     subtitle: [
                       '${row.label} · ${s.fsImportTurns(row.turnCount)}',

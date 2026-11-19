@@ -7,6 +7,7 @@ import 'package:hermes_android/core/widgets/generated_video_card.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/fake_video_player_platform.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Videos in a chat must play on first view AND every time the row comes
 /// back: after leaving and re-entering the chat, after the lazy transcript
@@ -60,7 +61,7 @@ void main() {
 
     expect(platform.live, [1]);
     expect(find.byKey(const ValueKey('fake-video-1')), findsOneWidget);
-    expect(find.byIcon(Icons.play_arrow_rounded), findsWidgets);
+    expect(find.byIcon(HIcons.play_arrow_rounded), findsWidgets);
     expect(find.text('0:05'), findsOneWidget);
     expect(platform.calls.where((c) => c.startsWith('play:')), isEmpty);
   });
@@ -70,7 +71,7 @@ void main() {
     final slot = ValueNotifier<Object?>('row');
     await tester.pumpWidget(host(slot));
     await settle(tester);
-    await tester.tap(find.byIcon(Icons.play_arrow_rounded).last);
+    await tester.tap(find.byIcon(HIcons.play_arrow_rounded).last);
     await settle(tester);
     expect(platform.calls, contains('play:1'));
 
@@ -81,7 +82,7 @@ void main() {
     slot.value = 'row-again'; // re-enter
     await settle(tester);
     expect(platform.live, [2]);
-    await tester.tap(find.byIcon(Icons.play_arrow_rounded).last);
+    await tester.tap(find.byIcon(HIcons.play_arrow_rounded).last);
     await settle(tester);
     expect(platform.calls, contains('play:2'));
   });
@@ -90,7 +91,7 @@ void main() {
     final slot = ValueNotifier<Object?>('row');
     await tester.pumpWidget(host(slot));
     await settle(tester);
-    await tester.tap(find.byIcon(Icons.play_arrow_rounded).last);
+    await tester.tap(find.byIcon(HIcons.play_arrow_rounded).last);
     await settle(tester);
     await platform.seekTo(1, const Duration(seconds: 3));
     // The controller polls the position every 500 ms while playing.
@@ -128,7 +129,7 @@ void main() {
     await tester.pumpWidget(host(slot));
     await settle(tester);
 
-    await tester.tap(find.byIcon(Icons.fullscreen_rounded));
+    await tester.tap(find.byIcon(HIcons.fullscreen_rounded));
     await settle(tester);
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -151,12 +152,12 @@ void main() {
     // Toggle playback from the viewer's own bar: pause if it is already
     // playing, then play.
     if (find
-        .descendant(of: viewer, matching: find.byIcon(Icons.pause_rounded))
+        .descendant(of: viewer, matching: find.byIcon(HIcons.pause_rounded))
         .evaluate()
         .isNotEmpty) {
-      await tapInViewer(Icons.pause_rounded);
+      await tapInViewer(HIcons.pause_rounded);
     }
-    await tapInViewer(Icons.play_arrow_rounded);
+    await tapInViewer(HIcons.play_arrow_rounded);
 
     final played = platform.calls
         .where((c) => c.startsWith('play:'))
@@ -166,7 +167,7 @@ void main() {
     expect(played.every((id) => !platform.disposed.contains(id)), isTrue);
 
     // Closing the viewer releases its player.
-    await tester.tap(find.byIcon(Icons.close));
+    await tester.tap(find.byIcon(HIcons.close));
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }

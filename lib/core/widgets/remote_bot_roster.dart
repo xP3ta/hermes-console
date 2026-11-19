@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/bot_roster_store.dart';
@@ -215,7 +216,7 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
             overflow: TextOverflow.ellipsis,
           ),
           trailing: _unavailable(connection.id)
-              ? const Icon(Icons.cloud_off_outlined, size: 18)
+              ? const Icon(HIcons.cloud_off_outlined, size: 18)
               : null,
         ),
         for (final profile in _ordered(connection.id))
@@ -249,7 +250,7 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
                 onTap: () => widget.onOpen(connection, profile),
                 onLongPress: () => widget.onDetails(connection, profile),
                 trailing: IconButton(
-                  icon: const Icon(Icons.more_horiz),
+                  icon: const Icon(HIcons.more_horiz),
                   tooltip: MaterialLocalizations.of(context).showMenuTooltip,
                   onPressed: () => widget.onDetails(connection, profile),
                 ),

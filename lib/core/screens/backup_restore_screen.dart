@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -486,7 +487,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
         children: [
           HermesNavRow(
             key: const ValueKey('backup-restore-pick'),
-            icon: Icons.settings_backup_restore_rounded,
+            icon: HIcons.settings_backup_restore_rounded,
             title: s.backupRestorePick,
             onTap: () {
               if (!_flow.busy) unawaited(_pickAndInspect());

@@ -89,7 +89,8 @@ Future<void> _pump(
   String profile = '',
   double scale = 1,
 }) async {
-  tester.view.physicalSize = const Size(390, 1000);
+  // Tall enough for the whole list: its lower panels are built lazily.
+  tester.view.physicalSize = const Size(390, 2400);
   tester.view.devicePixelRatio = 1;
   tester.platformDispatcher.textScaleFactorTestValue = scale;
   addTearDown(() {
@@ -195,15 +196,36 @@ void main() {
       final s = await Strings.delegate.load(const Locale('es'));
 
       expect(client.endpoints, ['analytics/usage?days=30']);
-      expect(find.text(s.kluUsageTokens), findsOneWidget);
-      expect(find.text('6k'), findsOneWidget);
+      // The tokens tab is the first one: its hero panel carries the period's
+      // figure and the sessions; the tab itself wears the same word.
+      final hero = find.byKey(const ValueKey('usage-totals'));
+      expect(
+        find.descendant(of: hero, matching: find.text(s.kluUsageTokens)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: hero, matching: find.text('6k')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: hero,
+          matching: find.text(s.kluUsageSessionsCount(7)),
+        ),
+        findsOneWidget,
+      );
       expect(find.text('4k'), findsWidgets);
       expect(find.text('7'), findsOneWidget);
       expect(find.text(s.kluUsageCostEstimated), findsOneWidget);
       expect(find.text('\$0.12'), findsOneWidget);
       expect(find.byKey(const ValueKey('usage-daily')), findsOneWidget);
-      expect(find.text('alpha-1'), findsOneWidget);
-      expect(find.text(s.kluUsageSessionsCount(4)), findsOneWidget);
+      // A model of an unknown company shows under its company and by model.
+      expect(find.byKey(const ValueKey('usage-providers')), findsOneWidget);
+      expect(find.text('alpha-1'), findsWidgets);
+      expect(
+        find.textContaining(s.kluUsageSessionsCount(4)),
+        findsWidgets,
+      );
     });
 
     testWidgets('a secondary profile is asked for', (tester) async {
@@ -212,37 +234,55 @@ void main() {
       expect(client.endpoints.single, 'analytics/usage?days=30&profile=work');
     });
 
-    testWidgets('the period buttons read 7, 30 and 90 days', (tester) async {
+    testWidgets('the period buttons read 24 h, 7, 30 and 90 days', (
+      tester,
+    ) async {
       final client = _FakeUsage();
       await _pump(tester, client);
-      await tester.tap(find.byKey(const ValueKey('usage-period-7')));
+      expect(kUsagePeriods, [1, 7, 30, 90]);
+      final periods = find.byKey(const ValueKey('usage-periods'));
+      for (final label in ['24 h', '7 d', '30 d', '90 d']) {
+        expect(
+          find.descendant(of: periods, matching: find.text(label)),
+          findsOneWidget,
+          reason: label,
+        );
+      }
+      await tester.tap(find.byKey(const ValueKey('usage-segment-7')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('usage-period-90')));
+      await tester.tap(find.byKey(const ValueKey('usage-segment-90')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('usage-segment-1')));
       await tester.pumpAndSettle();
       expect(client.endpoints, [
         'analytics/usage?days=30',
         'analytics/usage?days=7',
         'analytics/usage?days=90',
+        'analytics/usage?days=1',
       ]);
       // Choosing the period already shown reads nothing.
-      await tester.tap(find.byKey(const ValueKey('usage-period-90')));
+      await tester.tap(find.byKey(const ValueKey('usage-segment-1')));
       await tester.pumpAndSettle();
-      expect(client.endpoints, hasLength(3));
+      expect(client.endpoints, hasLength(4));
     });
 
     testWidgets(
-      'the period buttons are 48 dp targets and say which is chosen',
+      'the period segments are comfortable targets and say which is chosen',
       (tester) async {
         final handle = tester.ensureSemantics();
         await _pump(tester, _FakeUsage());
         for (final days in kUsagePeriods) {
           final size = tester.getSize(
-            find.byKey(ValueKey('usage-period-$days')),
+            find.byKey(ValueKey('usage-segment-$days')),
           );
-          expect(size.height, greaterThanOrEqualTo(48));
+          // The capsule is compact by design: a segment is at least two
+          // lines of padding and one of text high, and the whole capsule
+          // spans the page.
+          expect(size.height, greaterThanOrEqualTo(32));
+          expect(size.width, greaterThanOrEqualTo(48));
         }
         final chosen = tester.getSemantics(
-          find.byKey(const ValueKey('usage-period-30')),
+          find.byKey(const ValueKey('usage-segment-30')),
         );
         expect(chosen, isSemantics(isSelected: true));
         handle.dispose();
@@ -253,15 +293,25 @@ void main() {
       final client = _FakeUsage()..answer = (_) => _answer(estimated: 0);
       await _pump(tester, client);
       final s = await Strings.delegate.load(const Locale('es'));
+      // No cost tile in the totals: «Coste» is only the tab's own word.
       expect(find.text(s.kluUsageCostEstimated), findsNothing);
-      expect(find.text(s.kluUsageCost), findsNothing);
+      expect(find.text(s.kluUsageCost), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('usage-tabs')),
+          matching: find.text(s.kluUsageCost),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('the real cost is not called an estimate', (tester) async {
       final client = _FakeUsage()..answer = (_) => _answer(actual: 2.5);
       await _pump(tester, client);
       final s = await Strings.delegate.load(const Locale('es'));
-      expect(find.text(s.kluUsageCost), findsOneWidget);
+      // The tab and the cost tile of the totals.
+      expect(find.text(s.kluUsageCost), findsNWidgets(2));
+      expect(find.text(s.kluUsageCostEstimated), findsNothing);
       expect(find.text('\$2.50'), findsOneWidget);
     });
 

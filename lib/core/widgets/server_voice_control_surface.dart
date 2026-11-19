@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -465,7 +466,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
             IconButton(
               tooltip: s.voiceServerClose,
               onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close_rounded),
+              icon: const Icon(HIcons.close_rounded),
             ),
           ],
         ),
@@ -490,7 +491,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
           colors: colors,
           title: s.voiceServerRecognitionTitle,
           subtitle: s.voiceServerRecognitionSub,
-          icon: Icons.mic_none_rounded,
+          icon: HIcons.mic_none_rounded,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -506,7 +507,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
           colors: colors,
           title: s.voiceServerTtsProvidersTitle,
           subtitle: s.voiceServerTtsProvidersSub,
-          icon: Icons.volume_up_outlined,
+          icon: HIcons.volume_up_outlined,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -638,7 +639,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                       label: _providerLabel(provider, Strings.of(context)),
                       allowProviderChoice: false,
                     ),
-              icon: const Icon(Icons.tune_rounded, size: 18),
+              icon: const Icon(HIcons.tune_rounded, size: 18),
               label: Text(s.voiceServerParametersAction),
             );
             if (constraints.maxWidth < 420) {
@@ -722,7 +723,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                       label: _providerLabel(provider, Strings.of(context)),
                     )
                   : null,
-              icon: const Icon(Icons.tune_rounded, size: 18),
+              icon: const Icon(HIcons.tune_rounded, size: 18),
               label: Text(s.voiceServerParametersAction),
             );
             if (constraints.maxWidth < 420 || largeText) {
@@ -785,7 +786,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
       shape: const Border(),
       collapsedShape: const Border(),
       leading: Icon(
-        Icons.swap_horiz_rounded,
+        HIcons.swap_horiz_rounded,
         size: 18,
         color: colors.textSecondary,
       ),
@@ -928,8 +929,8 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                   ),
                   Icon(
                     expanded
-                        ? Icons.keyboard_arrow_up_rounded
-                        : Icons.keyboard_arrow_down_rounded,
+                        ? HIcons.keyboard_arrow_up_rounded
+                        : HIcons.keyboard_arrow_down_rounded,
                     color: colors.textSecondary,
                   ),
                 ],
@@ -957,7 +958,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                               height: 16,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.check_circle_outline_rounded),
+                          : const Icon(HIcons.check_circle_outline_rounded),
                       label: Text(
                         _busyProvider == id
                             ? s.voiceServerProviderSwitching
@@ -979,7 +980,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                               height: 16,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.download_for_offline_outlined),
+                          : const Icon(HIcons.download_for_offline_outlined),
                       label: Text(
                         setupBusy
                             ? s.voiceServerSetupRunning
@@ -1017,7 +1018,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                         provider: providerKey,
                         label: name,
                       ),
-                      icon: const Icon(Icons.tune_rounded),
+                      icon: const Icon(HIcons.tune_rounded),
                       label: Text(s.voiceServerParametersAction),
                     ),
                   ],
@@ -1090,7 +1091,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.save_outlined),
+                    : const Icon(HIcons.save_outlined),
               ),
             ),
             onSubmitted: (_) => _saveCredential(toolset, env),
@@ -1362,7 +1363,7 @@ class _ServerVoiceParametersEditorState
             IconButton(
               tooltip: s.voiceServerClose,
               onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.close_rounded),
+              icon: const Icon(HIcons.close_rounded),
             ),
           ],
         ),
@@ -1391,7 +1392,7 @@ class _ServerVoiceParametersEditorState
               shape: const Border(),
               collapsedShape: const Border(),
               leading: Icon(
-                Icons.tune_rounded,
+                HIcons.tune_rounded,
                 color: colors.textSecondary,
                 size: 20,
               ),
@@ -1435,7 +1436,7 @@ class _ServerVoiceParametersEditorState
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.save_outlined),
+              : const Icon(HIcons.save_outlined),
           label: Text(s.voiceServerParametersSave),
         ),
       ],

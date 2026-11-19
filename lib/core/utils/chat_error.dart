@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 /// Categorías de error del chat, usadas para mostrar título, pista e icono
@@ -39,17 +40,17 @@ bool isChatErrorCode(String raw) {
 
 extension ChatErrorKindMeta on ChatErrorKind {
   IconData get icon => switch (this) {
-    ChatErrorKind.connection => Icons.wifi_off_rounded,
-    ChatErrorKind.model => Icons.cloud_off_rounded,
-    ChatErrorKind.tool => Icons.build_circle_outlined,
-    ChatErrorKind.local => Icons.phonelink_erase_outlined,
-    ChatErrorKind.localColdStart => Icons.hourglass_empty_rounded,
-    ChatErrorKind.firstTokenTimeout => Icons.hourglass_empty_rounded,
-    ChatErrorKind.searchToolUnavailable => Icons.search_off_rounded,
-    ChatErrorKind.sessionTooLarge => Icons.history_toggle_off_rounded,
-    ChatErrorKind.profileDashboardAccess => Icons.lock_outline_rounded,
-    ChatErrorKind.dashboardSignInRequired => Icons.lock_outline_rounded,
-    ChatErrorKind.unknown => Icons.error_outline_rounded,
+    ChatErrorKind.connection => HIcons.wifi_off_rounded,
+    ChatErrorKind.model => HIcons.cloud_off_rounded,
+    ChatErrorKind.tool => HIcons.build_circle_outlined,
+    ChatErrorKind.local => HIcons.phonelink_erase_outlined,
+    ChatErrorKind.localColdStart => HIcons.hourglass_empty_rounded,
+    ChatErrorKind.firstTokenTimeout => HIcons.hourglass_empty_rounded,
+    ChatErrorKind.searchToolUnavailable => HIcons.search_off_rounded,
+    ChatErrorKind.sessionTooLarge => HIcons.history_toggle_off_rounded,
+    ChatErrorKind.profileDashboardAccess => HIcons.lock_outline_rounded,
+    ChatErrorKind.dashboardSignInRequired => HIcons.lock_outline_rounded,
+    ChatErrorKind.unknown => HIcons.error_outline_rounded,
   };
 }
 

@@ -25,6 +25,7 @@ import 'package:hermes_android/core/widgets/running_work.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/design_shots.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _size = Size(390, 844);
 const _statusBar = 38.0;
@@ -198,12 +199,12 @@ class _Chat extends StatelessWidget {
             right: 0,
             child: FloatingChatHeader(
               leading: FloatingHeaderButton(
-                icon: Icons.menu_rounded,
+                icon: HIcons.menu_rounded,
                 tooltip: 'Menú',
                 onPressed: () {},
               ),
               trailing: FloatingHeaderButton(
-                icon: Icons.add_rounded,
+                icon: HIcons.add_rounded,
                 tooltip: 'Nuevo chat',
                 onPressed: () {},
               ),
@@ -261,7 +262,7 @@ class _Chat extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: Row(
                 children: [
-                  Icon(Icons.add_rounded, color: colors.textSecondary),
+                  Icon(HIcons.add_rounded, color: colors.textSecondary),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
@@ -269,7 +270,7 @@ class _Chat extends StatelessWidget {
                       style: TextStyle(color: colors.textSecondary),
                     ),
                   ),
-                  Icon(Icons.mic_none_rounded, color: colors.textSecondary),
+                  Icon(HIcons.mic_none_rounded, color: colors.textSecondary),
                 ],
               ),
             ),
@@ -382,7 +383,7 @@ void main() {
       events: [
         IslandEvent(
           id: 'working',
-          icon: Icons.bolt_rounded,
+          icon: HIcons.bolt_rounded,
           line: 'Trabajando',
           detail: 'Terminal',
           sticky: true,
@@ -408,7 +409,7 @@ void main() {
     HermesNotice.of(context).show(
       title: 'Fable terminó',
       message: 'Diseño de píldora de estados',
-      icon: Icons.check_circle_outline,
+      icon: HIcons.check_circle_outline,
       tint: AppTheme.hermesRedDark.hermes.success,
       priority: HermesNoticePriority.high,
       duration: const Duration(days: 1),
@@ -424,7 +425,7 @@ void main() {
     HermesNotice.of(context).show(
       title: 'Forja pide permiso',
       message: 'git push',
-      icon: Icons.verified_user_outlined,
+      icon: HIcons.verified_user_outlined,
       tint: AppTheme.hermesRedDark.hermes.warning,
       priority: HermesNoticePriority.high,
       sticky: true,
@@ -452,7 +453,7 @@ void main() {
         IslandEvent(
           id: 'connection',
           tone: IslandTone.error,
-          icon: Icons.cloud_off_outlined,
+          icon: HIcons.cloud_off_outlined,
           sticky: true,
           line: 'Sin conexión',
         ),
@@ -469,7 +470,7 @@ void main() {
           id: 'connection',
           revision: 1,
           tone: IslandTone.warning,
-          icon: Icons.cloud_off_outlined,
+          icon: HIcons.cloud_off_outlined,
           busy: true,
           sticky: true,
           line: 'Reconectando…',
@@ -486,7 +487,7 @@ void main() {
         IslandEvent(
           id: 'recovered-turn',
           tone: IslandTone.warning,
-          icon: Icons.help_outline_rounded,
+          icon: HIcons.help_outline_rounded,
           sticky: true,
           line: 'Sin confirmar',
           more:
@@ -542,7 +543,7 @@ void main() {
     HermesNotice.of(context).show(
       title: 'Fable terminó',
       message: 'Diseño de píldora de estados',
-      icon: Icons.check_circle_outline,
+      icon: HIcons.check_circle_outline,
       tint: AppTheme.hermesRedDark.hermes.success,
       priority: HermesNoticePriority.high,
       duration: const Duration(days: 1),

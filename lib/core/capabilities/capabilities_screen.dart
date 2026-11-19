@@ -5,6 +5,7 @@
 // The hubs (Skill Hub, Plugin Hub, MCP catalog) open as a stacked page whose
 // back button returns to the same tab. The ⋯ menu of the header carries what
 // is about the whole server: Tools and Webhooks / server status.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -995,28 +996,28 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
           key: const ValueKey('exu-add-skill-hub'),
           value: _AddAction.skillHub,
           label: s.exuMenuSkillHub,
-          icon: Icons.storefront_outlined,
+          icon: HIcons.storefront_outlined,
         ),
         if (writable && _repo.supports(CapabilityFeature.skillCreate) != false)
           HermesAction(
             key: const ValueKey('spp-menu-new-skill'),
             value: _AddAction.newSkill,
             label: s.sppMenuNewSkill,
-            icon: Icons.add_rounded,
+            icon: HIcons.add_rounded,
           ),
         if (_canLearn)
           HermesAction(
             key: const ValueKey('las-menu-learn-skill'),
             value: _AddAction.learnSkill,
             label: s.lasMenuLearn,
-            icon: Icons.auto_awesome_rounded,
+            icon: HIcons.auto_awesome_rounded,
           ),
         if (writable && (_snapshot?.skillsUpdatable ?? false))
           HermesAction(
             key: const ValueKey('cph-menu-update-skills'),
             value: _AddAction.updateSkills,
             label: s.cphMenuUpdateSkills,
-            icon: Icons.system_update_alt_rounded,
+            icon: HIcons.system_update_alt_rounded,
           ),
       ],
       ExtensionsTab.plugins => [
@@ -1025,14 +1026,14 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
             key: const ValueKey('exu-add-plugin-hub'),
             value: _AddAction.pluginHub,
             label: s.exuMenuPluginHub,
-            icon: Icons.storefront_outlined,
+            icon: HIcons.storefront_outlined,
           ),
         if (writable && widget.sourceInstaller != null)
           HermesAction(
             key: const ValueKey('exu-add-plugin-source'),
             value: _AddAction.installFromSource,
             label: s.exuMenuInstallSource,
-            icon: Icons.download_rounded,
+            icon: HIcons.download_rounded,
           ),
       ],
       ExtensionsTab.mcp => [
@@ -1040,14 +1041,14 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
           key: const ValueKey('exu-add-mcp-catalog'),
           value: _AddAction.mcpCatalog,
           label: s.exuMenuMcpCatalog,
-          icon: Icons.storefront_outlined,
+          icon: HIcons.storefront_outlined,
         ),
         if (writable && _repo.supports(CapabilityFeature.mcpServers) != false)
           HermesAction(
             key: const ValueKey('spp-menu-add-mcp'),
             value: _AddAction.addMcp,
             label: s.sppMenuAddMcp,
-            icon: Icons.hub_outlined,
+            icon: HIcons.hub_outlined,
           ),
       ],
     };
@@ -1094,14 +1095,14 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
             key: const ValueKey('exu-more-tools'),
             value: _MoreAction.tools,
             label: s.exuToolGroupsTitle,
-            icon: Icons.handyman_outlined,
+            icon: HIcons.handyman_outlined,
           ),
         if (widget.serverBuilder != null)
           HermesAction(
             key: const ValueKey('exu-more-server'),
             value: _MoreAction.server,
             label: s.exuMoreServer,
-            icon: Icons.admin_panel_settings_outlined,
+            icon: HIcons.admin_panel_settings_outlined,
           ),
       ],
     );
@@ -1659,7 +1660,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         intro,
         HermesEmptyStateView(
           key: const ValueKey('pgh-no-catalog'),
-          icon: Icons.storefront_outlined,
+          icon: HIcons.storefront_outlined,
           title: s.pghNoCatalogTitle,
           body: s.pghNoCatalogBody,
         ),
@@ -1694,7 +1695,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
       if (matching.isEmpty)
         HermesEmptyStateView(
           key: const ValueKey('cph-empty-catalog'),
-          icon: Icons.search_off_rounded,
+          icon: HIcons.search_off_rounded,
           title: s.cphEmptyCatalog,
           body: s.cphEmptyCatalogBody,
         ),
@@ -1764,7 +1765,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
       else if (items.isEmpty && hub.isEmpty)
         HermesEmptyStateView(
           key: const ValueKey('cph-empty-catalog'),
-          icon: Icons.search_off_rounded,
+          icon: HIcons.search_off_rounded,
           title: s.cphEmptyCatalog,
           body: s.cphEmptyCatalogBody,
         ),
@@ -1831,7 +1832,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
               )
             : HermesEmptyStateView(
                 key: const ValueKey('cph-empty-installed'),
-                icon: Icons.inventory_2_outlined,
+                icon: HIcons.inventory_2_outlined,
                 title: s.cphEmptyInstalled,
                 body: s.cphEmptyInstalledBody,
               ),
@@ -1903,7 +1904,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         out.add(
           HermesEmptyStateView(
             key: const ValueKey('cph-empty-installed'),
-            icon: Icons.search_off_rounded,
+            icon: HIcons.search_off_rounded,
             title: s.cphEmptyCatalog,
             body: s.cphEmptyCatalogBody,
           ),
@@ -1982,7 +1983,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
             for (final connector in accounts)
               premium.HermesListRow(
                 key: ValueKey('cph-account-${connector.slug}'),
-                icon: Icons.account_circle_outlined,
+                icon: HIcons.account_circle_outlined,
                 title: connector.name,
                 onTap: snapshot.connectorPolicyReadable
                     ? () => _openConnector(connector)
@@ -2085,7 +2086,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
               decoration: InputDecoration(
                 isDense: true,
                 hintText: _searchHint(s),
-                prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                prefixIcon: const Icon(HIcons.search_rounded, size: 20),
                 filled: true,
                 fillColor: Theme.of(
                   context,
@@ -2110,7 +2111,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
               icon: Badge(
                 isLabelVisible: filtersActive,
                 smallSize: 7,
-                child: const Icon(Icons.tune_rounded),
+                child: const Icon(HIcons.tune_rounded),
               ),
               onPressed: _openFilter,
             ),
@@ -2125,7 +2126,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
                   minWidth: HermesSpace.tap,
                   minHeight: HermesSpace.tap,
                 ),
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(HIcons.add_rounded),
                 onPressed: _busy ? null : _openAdd,
               ),
             ),
@@ -2136,7 +2137,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         const SizedBox(height: HermesSpace.x3),
         HermesInlineNotice(
           key: const ValueKey('cph-readonly'),
-          icon: Icons.lock_outline_rounded,
+          icon: HIcons.lock_outline_rounded,
           message: s.cphReadOnly,
         ),
       ],
@@ -2159,7 +2160,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         HermesInlineNotice(
           key: const ValueKey('cph-partial'),
           tone: HermesStatusTone.warn,
-          icon: Icons.warning_amber_rounded,
+          icon: HIcons.warning_amber_rounded,
           message: s.cphPartial,
           actionLabel: s.commonRetry,
           onAction: _load,
@@ -2181,7 +2182,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
       body = [
         HermesEmptyStateView(
           key: const ValueKey('cph-error'),
-          icon: Icons.cloud_off_rounded,
+          icon: HIcons.cloud_off_rounded,
           title: s.cphErrorTitle,
           body: _errorBody(s, _error ?? const Object()),
         ),
@@ -2215,7 +2216,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
           IconButton(
             key: _moreKey,
             tooltip: s.cphMore,
-            icon: const Icon(Icons.more_vert_rounded),
+            icon: const Icon(HIcons.more_vert_rounded),
             onPressed: _openMore,
           ),
       ],

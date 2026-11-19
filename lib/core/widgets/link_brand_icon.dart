@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -44,7 +45,7 @@ class LinkBrandIcon extends StatelessWidget {
     final slug = resolveLinkBrandSlug(shortHostLabel(url));
     final data = slug == null ? null : linkBrandGlyphPaths[slug];
     if (slug == null || data == null) {
-      return Icon(Icons.link_rounded, size: size, color: color);
+      return Icon(HIcons.link_rounded, size: size, color: color);
     }
     final path = _glyphCache.putIfAbsent(slug, () => parseSvgPathData(data));
     return SizedBox.square(

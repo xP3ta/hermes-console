@@ -7882,6 +7882,8 @@
   "embedSettingsClear": "Olvidar servicios permitidos",
   "embedSettingsCleared": "Los servicios permitidos vuelven a preguntar.",
   "embedSvgLabel": "Imagen SVG",
+  "vwDiagramLabel": "Diagrama",
+  "vwModelLabel": "Modelo 3D",
   "reactAdd": "Reaccionar",
   "reactFailed": "No se pudo guardar la reacción",
   "reactSettingsTitle": "Reacciones",
@@ -13820,6 +13822,8 @@
     }
   },
   "kluUsageTokens": "Tokens",
+  "kluUsageLimits": "Límites",
+  "kluUsageSeeAll": "Ver todo el uso",
   "kluUsageInput": "Entrada",
   "kluUsageOutput": "Salida",
   "kluUsageSessions": "Sesiones",
@@ -15749,6 +15753,8 @@
   "subagentHistoricalUnavailable": "El chat guardado ya no conserva el detalle de estos subagentes.",
   "lflHapticsTitle": "Respuesta háptica",
   "lflHapticsSubtitle": "Una vibración suave al pulsar, enviar y terminar un turno. Si el sistema tiene desactivada la respuesta táctil, tampoco vibra",
+  "lflDrawerSwipeTitle": "Abrir el menú deslizando",
+  "lflDrawerSwipeSubtitle": "Desliza desde el borde izquierdo para abrir el menú. Desactivado, el menú se abre con su botón y el borde queda para el gesto Atrás de Android y el desplazamiento horizontal",
   "notifBgTitle": "Escuchar en segundo plano",
   "notifBgSub": "Recibe avisos con la app cerrada · usa una notificación persistente",
   "notifBgActive": "Activo hasta que la desactives · escuchando eventos del agente",
@@ -15756,5 +15762,37 @@
   "notifBgRestartNotice": "Quitar Hermes de recientes no detiene la escucha. Forzar detención sí la interrumpe hasta que vuelvas a abrir la app.",
   "au1215BgNeededForAutomation": "Los avisos de cron y Kanban solo llegan con esto activado.",
   "notifFixedCardTitle": "Notificación fija",
-  "notifFixedCardSub": "Minimiza «Conectado a Hermes» en Android"
+  "notifFixedCardSub": "Minimiza «Conectado a Hermes» en Android",
+  "roomsUnreadableTitle": "{count, plural, =1{No se pudo cargar 1 sala} other{No se pudieron cargar {count} salas}}",
+  "@roomsUnreadableTitle": {"placeholders": {"count": {"type": "int"}}},
+  "roomsUnreadableBody": "Esta versión de Console no puede leer sus datos o el servidor devolvió un error. Siguen en tu servidor y Hermes Desktop puede abrirlas.",
+  "roomsUnreadableNamed": "Sin cargar: {names}",
+  "@roomsUnreadableNamed": {"placeholders": {"names": {"type": "String"}}},
+  "roomAttachmentOnDesktop": "Ábrelo en Hermes Desktop",
+  "lflTextSizeReset": "Restablecer",
+  "lflTextSizePercent": "{percent} %",
+  "@lflTextSizePercent": {"placeholders": {"percent": {"type": "int"}}},
+  "lflTextSizeSystemNote": "Se combina con el tamaño de texto de Android (Accesibilidad).",
+  "roomsStaleTitle": "{count, plural, =1{No se pudo actualizar 1 sala} other{No se pudieron actualizar {count} salas}}",
+  "@roomsStaleTitle": {"placeholders": {"count": {"type": "int"}}},
+  "roomsStaleBody": "Se muestra la última versión que cargó Console. Reintenta para actualizar.",
+  "roomsLoadFailedTitle": "No se pudieron cargar las salas",
+  "roomAttachmentsUnreadable": "Los archivos de este mensaje no se pueden mostrar en Console",
+  "pb1215UnlistedChatsTitle": "{count, plural, =1{1 chat no aparece aquí} other{{count} chats no aparecen aquí}}",
+  "@pb1215UnlistedChatsTitle": {"placeholders": {"count": {"type": "int"}}},
+  "pb1215UnlistedChatsBody": "Hermes los cuenta en esta carpeta, pero no son chats normales de este perfil: ejecuciones automáticas (en Conversaciones › Automatización), sesiones de subagentes o vacías.",
+  "subagentUiStatusNotActive": "{count, plural, one{No activo} other{No activos}}",
+  "@subagentUiStatusNotActive": {
+    "description": "Subagents a confirmed roster of this connection no longer lists: not active, outcome unknown. Never means completed.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subagentUiResultUnavailable": "Resultado final no disponible",
+  "@subagentUiResultUnavailable": {
+    "description": "The final result of those subagents is not available. Never means completed."
+  },
+  "kluUsagePeriodDay": "24 h"
 }

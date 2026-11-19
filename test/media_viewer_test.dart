@@ -21,6 +21,7 @@ import 'package:hermes_android/core/widgets/media_viewer/media_viewer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/fake_video_player_platform.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _png = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk'
@@ -400,7 +401,7 @@ void main() {
     expect(find.byKey(const ValueKey('media-viewer-share')), findsOneWidget);
     expect(find.byKey(const ValueKey('media-viewer-save')), findsOneWidget);
     // No close button: Desktop's lightbox has none either.
-    expect(find.byIcon(Icons.close), findsNothing);
+    expect(find.byIcon(HIcons.close), findsNothing);
     final meta = tester.widget<Text>(
       find.byKey(const ValueKey('media-viewer-meta')),
     );

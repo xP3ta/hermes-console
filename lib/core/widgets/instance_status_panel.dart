@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -325,7 +326,7 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
                   )
                 else
                   IconButton(
-                    icon: const Icon(Icons.refresh, size: 18),
+                    icon: const Icon(HIcons.refresh, size: 18),
                     tooltip: s.statusRefresh,
                     constraints: const BoxConstraints(
                       minWidth: 48,
@@ -352,10 +353,10 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
 
   Widget _rowTile(_RawRow row, HermesThemeColors colors, Strings s) {
     final mapped = switch (row.health) {
-      _Health.ok => (Icons.circle, colors.success),
-      _Health.warn => (Icons.circle, colors.warning),
-      _Health.bad => (Icons.circle, colors.error),
-      _Health.unknown => (Icons.circle_outlined, colors.textSecondary),
+      _Health.ok => (HIcons.circle, colors.success),
+      _Health.warn => (HIcons.circle, colors.warning),
+      _Health.bad => (HIcons.circle, colors.error),
+      _Health.unknown => (HIcons.circle_outlined, colors.textSecondary),
     };
 
     return Padding(

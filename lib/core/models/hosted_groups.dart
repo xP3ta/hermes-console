@@ -114,6 +114,12 @@ final class GroupsCapabilities {
 }
 
 final class GroupsCapabilityCache {
+  /// [unsupported] tells a loader error that proves the server has no
+  /// `groups.*` at all (JSON-RPC «method not found»). It is passed to the
+  /// caller instead of being read as «no evidence», and never cached.
+  GroupsCapabilityCache({this._unsupported});
+
+  final bool Function(Object error)? _unsupported;
   String? _connectionId;
   int? _generation;
   GroupsCapabilities? _value;
@@ -151,7 +157,13 @@ final class GroupsCapabilityCache {
         connectionId: connectionId,
         generation: generation,
       );
-    } catch (_) {
+    } catch (error) {
+      if (_unsupported?.call(error) ?? false) {
+        if (_connectionId == connectionId && _generation == generation) {
+          _flight = null;
+        }
+        rethrow;
+      }
       parsed = null;
     }
     if (_connectionId == connectionId && _generation == generation) {
@@ -267,6 +279,24 @@ final class HostedGroupCreateMember {
   };
 }
 
+/// Upstream `_REMOTE_MEMBER_FIELDS` (v0.23.1 hosted_room_discussion.py):
+/// member-level fields that would name another gateway or route.
+const Set<String> _remoteMemberFields = {
+  'connectionId',
+  'connectionKind',
+  'connectionLabel',
+  'connection_id',
+  'connection_kind',
+  'connection_label',
+  'remoteSource',
+  'route',
+  'sourceMissing',
+  'sourceReachable',
+  'sourceScoped',
+  'targetProfile',
+  'target_profile',
+};
+
 final class HostedGroupMember {
   final String memberId;
   final String handle;
@@ -285,15 +315,23 @@ final class HostedGroupMember {
     required String authorityGatewayId,
   }) {
     final raw = _map(value, 'member');
-    _requireOnlyFields(raw, const {
-      'member_id',
-      'profile',
-      'handle',
-      'display_name',
-      'target',
-    }, 'member');
+    // An open row (stable 0.23.1 contracts/groups_bot_relay.py RoomMember:
+    // «legacy rooms may carry pre-normalisation rows, so the set stays
+    // open»): fields Console does not use are ignored, never kept or shown;
+    // the ones it uses (below) are validated as before. Fields that would
+    // place the member on another gateway stay rejected, exactly as upstream
+    // `_validate_member` does (`_REMOTE_MEMBER_FIELDS`, v0.23.1
+    // hosted_room_discussion.py): only `target` decides where a member is.
+    if (raw.keys.any(_remoteMemberFields.contains)) {
+      throw const FormatException('member carries cross-gateway fields');
+    }
     final profile = _boundedString(raw['profile'], 'member profile', 128);
-    final target = _map(raw['target'], 'member target');
+    // Upstream `_validate_member_target(None)` (hosted_room_discussion.py):
+    // a row stored before `target` existed is a local member of its own
+    // profile. Any present target, `{}` included, is still validated.
+    final target = raw['target'] == null
+        ? <String, dynamic>{'kind': 'local', 'profile': profile}
+        : _map(raw['target'], 'member target');
     final kind = _boundedString(target['kind'], 'member target kind', 16);
     late final String connectionId;
     if (kind == 'local') {
@@ -413,15 +451,64 @@ final class HostedGroupRoom {
   Map<String, dynamic> toJsonForTest() => Map.of(_testJson);
 }
 
+/// Why a listed room could not be shown.
+enum HostedGroupUnreadableReason {
+  /// The server sent data this Console does not accept (a malformed row,
+  /// state or log).
+  invalidData,
+
+  /// The server answered this room's read with an error of its own.
+  serverError,
+}
+
+/// A room the server listed but Console could not read. Only the room id
+/// (when the row had a valid one) and, for a row that did parse, its name are
+/// kept: nothing else from a rejected row is ever shown.
+final class HostedGroupUnreadableRoom {
+  final String? roomId;
+  final String? name;
+  final HostedGroupUnreadableReason reason;
+
+  const HostedGroupUnreadableRoom({
+    required this.roomId,
+    required this.reason,
+    this.name,
+  });
+
+  /// The room id of a rejected list row, when it is a valid identifier.
+  static String? idOfRow(Object? row) {
+    if (row is! Map) return null;
+    try {
+      return _string(row['room_id'], 'room id');
+    } on FormatException {
+      return null;
+    }
+  }
+}
+
 /// One typed page from the official `groups.list` offset protocol.
 ///
 /// Completeness is deliberately not claimed here: only the loader that follows
 /// every authenticated `next_offset` on one socket lease can publish a list.
+///
+/// A row that fails validation is kept apart in [unreadable] instead of
+/// failing the page, so one room this Console cannot read never hides the
+/// others. The page envelope itself stays strict.
 final class HostedGroupListPage {
   final List<HostedGroupRoom> rooms;
+  final List<HostedGroupUnreadableRoom> unreadable;
   final int? nextOffset;
 
-  const HostedGroupListPage._({required this.rooms, required this.nextOffset});
+  /// Rows the server sent on this page, readable or not (the offset
+  /// protocol counts rows, not what Console could parse).
+  final int rowCount;
+
+  const HostedGroupListPage._({
+    required this.rooms,
+    required this.unreadable,
+    required this.nextOffset,
+    required this.rowCount,
+  });
 
   factory HostedGroupListPage.fromJson(Object? value) {
     final raw = _map(value, 'room list page');
@@ -432,11 +519,39 @@ final class HostedGroupListPage {
         (next != null && (next is! int || next < 0))) {
       throw const FormatException('invalid room list page');
     }
+    final rooms = <HostedGroupRoom>[];
+    final unreadable = <HostedGroupUnreadableRoom>[];
+    for (final row in rows) {
+      try {
+        rooms.add(HostedGroupRoom.fromJson(row));
+      } on FormatException {
+        unreadable.add(
+          HostedGroupUnreadableRoom(
+            roomId: HostedGroupUnreadableRoom.idOfRow(row),
+            reason: HostedGroupUnreadableReason.invalidData,
+          ),
+        );
+      }
+    }
     return HostedGroupListPage._(
-      rooms: List.unmodifiable(rows.map(HostedGroupRoom.fromJson)),
+      rooms: List.unmodifiable(rooms),
+      unreadable: List.unmodifiable(unreadable),
       nextOffset: next as int?,
+      rowCount: rows.length,
     );
   }
+}
+
+/// Every room of a complete `groups.list` read: the ones Console can show and
+/// the ones it could not read.
+final class HostedGroupListing {
+  final List<HostedGroupRoom> rooms;
+  final List<HostedGroupUnreadableRoom> unreadable;
+
+  const HostedGroupListing({
+    required this.rooms,
+    this.unreadable = const [],
+  });
 }
 
 final class HostedGroupWorkspaceReadback {
@@ -596,8 +711,11 @@ final class _HostedGroupDeferredTurn {
         memberIndex < 0 ||
         memberIndex > 5 ||
         roundIndex is! int ||
-        roundIndex < 0 ||
-        roundIndex > 2) {
+        // Upstream accepts any non-negative round: a room continued on
+        // Desktop publishes rounds past the scheduling budget, and lowering
+        // the budget must not invalidate them (hosted_room_discussion.py
+        // `_validate_turn_coordinates`, main 491f984).
+        roundIndex < 0) {
       throw const FormatException('invalid turn.deferred coordinates');
     }
     return _HostedGroupDeferredTurn._(
@@ -739,6 +857,124 @@ final class HostedGroupActivityDetails {
   }
 }
 
+/// One file of a room message: an entry of the `attachments` manifest
+/// (`gateway/hosted_room_attachments.py::validate_manifest` upstream).
+/// Metadata only; Console shows it but does not download room files.
+/// Bidi controls (embeddings, overrides, isolates and marks). A name that
+/// carries them could paint as something else (`invoice<RLO>fdp.exe` reads
+/// `invoiceexe.pdf`); upstream accepts them in a file name, so Console keeps
+/// the name as sent and drops them only where it paints it.
+final RegExp _bidiControls = RegExp('[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]');
+
+/// [text] without bidi controls, for painting a server-supplied name.
+String withoutBidiControls(String text) => text.replaceAll(_bidiControls, '');
+
+final class HostedGroupAttachment {
+  static const int maxPerMessage = 8;
+  static const int maxBytes = 15000000;
+  static const int maxMessageBytes = 25000000;
+  static const int _maxNameChars = 255;
+  static const int _maxMimeChars = 127;
+  static const Set<String> kinds = {'image', 'pdf', 'file'};
+  static const Set<String> _fields = {
+    'attachment_id',
+    'kind',
+    'name',
+    'size',
+    'mime',
+  };
+  static final RegExp _id = RegExp(r'^att_[0-9a-f]{32}$');
+  static final RegExp _mime = RegExp(
+    r'^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$',
+  );
+
+  final String attachmentId;
+
+  /// `image`, `pdf` or `file`.
+  final String kind;
+  final String name;
+  final int size;
+  final String mime;
+
+  const HostedGroupAttachment._({
+    required this.attachmentId,
+    required this.kind,
+    required this.name,
+    required this.size,
+    required this.mime,
+  });
+
+  factory HostedGroupAttachment.fromJson(Object? value) {
+    final raw = _map(value, 'attachment');
+    _requireExactFields(raw, _fields, 'attachment');
+    final id = raw['attachment_id'];
+    if (id is! String || !_id.hasMatch(id)) {
+      throw const FormatException('invalid attachment id');
+    }
+    final size = raw['size'];
+    if (size is! int || size < 1 || size > maxBytes) {
+      throw const FormatException('invalid attachment size');
+    }
+    final kind = raw['kind'];
+    if (kind is! String || !kinds.contains(kind)) {
+      throw const FormatException('invalid attachment kind');
+    }
+    final rawMime = raw['mime'];
+    if (rawMime is! String) throw const FormatException('invalid attachment mime');
+    final mime = rawMime.trim().toLowerCase();
+    if (mime.isEmpty || mime.length > _maxMimeChars || !_mime.hasMatch(mime)) {
+      throw const FormatException('invalid attachment mime');
+    }
+    if ((kind == 'image' && !mime.startsWith('image/')) ||
+        (kind == 'pdf' && mime != 'application/pdf')) {
+      throw const FormatException('attachment kind and mime disagree');
+    }
+    final rawName = raw['name'];
+    if (rawName is! String) throw const FormatException('invalid attachment name');
+    final name = rawName.trim();
+    if (name.isEmpty ||
+        name.runes.length > _maxNameChars ||
+        name == '.' ||
+        name == '..' ||
+        name.contains('/') ||
+        name.contains(r'\') ||
+        name.contains('\x00') ||
+        name.contains('\n') ||
+        name.contains('\r')) {
+      throw const FormatException('invalid attachment name');
+    }
+    return HostedGroupAttachment._(
+      attachmentId: id,
+      kind: kind,
+      name: name,
+      size: size,
+      mime: mime,
+    );
+  }
+
+  /// [name] as it may be painted: no bidi controls (see
+  /// [withoutBidiControls]); the file kind when nothing else is left.
+  String get displayName {
+    final shown = withoutBidiControls(name).trim();
+    return shown.isEmpty ? kind : shown;
+  }
+
+  /// A whole message manifest: a list of at most [maxPerMessage] entries
+  /// with unique ids and at most [maxMessageBytes] in total.
+  static List<HostedGroupAttachment> manifest(Object? value) {
+    if (value is! List || value.length > maxPerMessage) {
+      throw const FormatException('invalid attachment manifest');
+    }
+    final entries = [for (final entry in value) HostedGroupAttachment.fromJson(entry)];
+    final ids = {for (final entry in entries) entry.attachmentId};
+    final total = entries.fold<int>(0, (sum, entry) => sum + entry.size);
+    if (ids.length != entries.length || total > maxMessageBytes) {
+      throw const FormatException('invalid attachment manifest');
+    }
+    return List.unmodifiable(entries);
+  }
+}
+
 final class HostedGroupEvent {
   final String roomId;
   final int sequence;
@@ -746,11 +982,24 @@ final class HostedGroupEvent {
   final String kind;
   final HostedGroupActor actor;
   final int authorityEpoch;
+
+  /// The message text of `message.user`/`message.member`, null for other
+  /// kinds. Empty (never null) for an owner message that carries only
+  /// [attachments].
   final String? publicText;
   final String? threadId;
   final num createdAt;
   final bool idempotent;
   final HostedGroupActivityDetails activity;
+
+  /// Files of a `message.user` (validated manifest) or `message.member`
+  /// (shown only when its manifest is valid).
+  final List<HostedGroupAttachment> attachments;
+
+  /// A `message.member` came with an `attachments` manifest Console does not
+  /// accept: its files are not in [attachments], and the room says so
+  /// instead of hiding them silently.
+  final bool attachmentsRejected;
   final String _canonicalPayload;
   final _HostedGroupDeferredTurn? _deferredTurn;
   final String? _terminalTaskId;
@@ -767,6 +1016,8 @@ final class HostedGroupEvent {
     required this.createdAt,
     required this.idempotent,
     required this.activity,
+    required this.attachments,
+    this.attachmentsRejected = false,
     required this._canonicalPayload,
     required this._deferredTurn,
     required this._terminalTaskId,
@@ -789,18 +1040,45 @@ final class HostedGroupEvent {
     final payload = _map(raw['payload'], 'event payload');
     String? text;
     String? thread;
+    var attachments = const <HostedGroupAttachment>[];
+    var attachmentsRejected = false;
     _HostedGroupDeferredTurn? deferredTurn;
     String? terminalTaskId;
     if (kind == 'message.user') {
-      _requireExactFields(payload, const {
-        'text',
-        'thread_id',
-      }, 'message.user payload');
-      text = _messageText(payload['text'], 'message text');
+      // Upstream `validate_user_payload`: {text, thread_id} plus the
+      // optional `attachments` manifest, nothing else (closed schema).
+      if (payload.containsKey('attachments')) {
+        _requireExactFields(payload, const {
+          'text',
+          'thread_id',
+          'attachments',
+        }, 'message.user payload');
+        attachments = HostedGroupAttachment.manifest(payload['attachments']);
+      } else {
+        _requireExactFields(payload, const {
+          'text',
+          'thread_id',
+        }, 'message.user payload');
+      }
+      // Blank text only when the message carries files.
+      text = attachments.isEmpty
+          ? _messageText(payload['text'], 'message text')
+          : _attachmentCaption(payload['text']);
       thread = _boundedString(payload['thread_id'], 'thread id', 128);
     } else if (kind == 'message.member') {
       text = _messageText(payload['text'], 'message text');
       thread = _boundedString(payload['thread_id'], 'thread id', 128);
+      // Display-only: a member manifest Console cannot read hides the files,
+      // never the message (this kind's other fields were never closed).
+      final manifest = payload['attachments'];
+      if (manifest != null) {
+        try {
+          attachments = HostedGroupAttachment.manifest(manifest);
+        } on FormatException {
+          attachments = const [];
+          attachmentsRejected = true;
+        }
+      }
     } else if (kind == 'turn.deferred') {
       deferredTurn = _HostedGroupDeferredTurn.fromJson(payload);
       terminalTaskId = deferredTurn.taskId;
@@ -828,6 +1106,8 @@ final class HostedGroupEvent {
       createdAt: createdAt,
       idempotent: idempotent,
       activity: HostedGroupActivityDetails.fromJson(payload),
+      attachments: attachments,
+      attachmentsRejected: attachmentsRejected,
       canonicalPayload: jsonEncode(_canonicalJson(payload, 'event payload')),
       deferredTurn: deferredTurn,
       terminalTaskId: terminalTaskId,
@@ -1105,11 +1385,22 @@ final class HostedGroupsSnapshot {
   /// `groups.state.driver_status` per room id, when the gateway reported it.
   final Map<String, RoomDriverStatus> driverStatuses;
 
+  /// Rooms the server listed that Console could not read. They are not in
+  /// [rooms]/[logs]; the rest of the snapshot is complete without them.
+  final List<HostedGroupUnreadableRoom> unreadableRooms;
+
+  /// Rooms of [rooms] shown from their last good read because the latest
+  /// one failed with a server error of their own (a transient «database is
+  /// locked»): kept on screen, announced as not updated, re-read next time.
+  final Set<String> staleRoomIds;
+
   const HostedGroupsSnapshot({
     this.capabilities,
     this.rooms = const [],
     this.logs = const [],
     this.driverStatuses = const {},
+    this.unreadableRooms = const [],
+    this.staleRoomIds = const {},
   });
 
   RoomDriverStatus? driverStatusFor(String roomId) => driverStatuses[roomId];
@@ -1195,6 +1486,15 @@ String _messageText(Object? value, String label) {
     throw FormatException('invalid $label');
   }
   return value;
+}
+
+/// The text of an owner message that carries files: it may be blank
+/// (upstream stores it stripped), and is bounded like any message text.
+String _attachmentCaption(Object? value) {
+  if (value is! String || utf8.encode(value).length > 65536) {
+    throw const FormatException('invalid message text');
+  }
+  return value.trim().isEmpty ? '' : value;
 }
 
 String? _optionalCanonicalString(

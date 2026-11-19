@@ -208,15 +208,28 @@ void main() {
           ),
         ),
       );
-      // The live look (9 nov): a settled line ends in the green ring with
-      // its check inside; a failed one keeps the outline error sign.
+      // A settled line is quiet: a small «·» lead and tertiary ink, 32 dp
+      // high, no ring and no check; a failed one keeps the outline error sign.
       if (failed) {
         final icon = tester.widget<ChatLiveIcon>(find.byType(ChatLiveIcon));
         expect(icon.glyph, ChatLiveGlyph.error);
         expect(icon.color, _colors.error);
       } else {
         expect(find.byType(ChatLiveIcon), findsNothing);
-        expect(find.byKey(const ValueKey('live-ring-check')), findsOneWidget);
+        expect(find.byKey(const ValueKey('live-ring-check')), findsNothing);
+        final lead = tester.widget<Text>(
+          find.descendant(
+            of: find.byType(TurnInlineActivity),
+            matching: find.text('·'),
+          ),
+        );
+        expect(lead.style?.color, _colors.textTertiary);
+        final line = tester.widget<Text>(
+          find.byKey(const ValueKey('chat-inline-activity-text')),
+        );
+        expect(line.style?.color, _colors.textTertiary);
+        expect(line.style?.fontSize, 13);
+        expect(tester.getSize(find.byType(TurnInlineActivity)).height, 32);
       }
     }
   });

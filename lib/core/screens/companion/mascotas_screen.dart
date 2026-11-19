@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -373,7 +374,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
             child: HermesSwitchTile(
               controlKey: const ValueKey('pet-app-presence'),
               secondary: Icon(
-                Icons.pets_outlined,
+                HIcons.pets_outlined,
                 size: 20,
                 color: colors.accent,
               ),
@@ -405,7 +406,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
                       key: const ValueKey('pet-back-to-dock'),
                       onPressed: () => _mascotPrefs.placeOnDock(),
                       icon: const Icon(
-                        Icons.vertical_align_bottom_rounded,
+                        HIcons.vertical_align_bottom_rounded,
                         size: 18,
                       ),
                       label: Text(Strings.of(context).mascotMenuDock),
@@ -495,7 +496,7 @@ class _MascotasBodyState extends State<_MascotasBody> {
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
                   onPressed: _openPlayground,
-                  icon: const Icon(Icons.open_in_full, size: 18),
+                  icon: const Icon(HIcons.open_in_full, size: 18),
                   label: Text(Strings.of(context).petFullscreen),
                 ),
               ),
@@ -1017,7 +1018,7 @@ class _AnimationTester extends StatelessWidget {
               TextButton.icon(
                 onPressed: playing ? onStop : null,
                 icon: Icon(
-                  Icons.stop_rounded,
+                  HIcons.stop_rounded,
                   size: 18,
                   color: colors.textSecondary,
                 ),
@@ -1204,14 +1205,14 @@ class _MascotaTile extends StatelessWidget {
               // Borrar: solo presente para importadas (onDelete != null).
               if (onDelete != null)
                 IconButton(
-                  icon: Icon(Icons.delete_outline, color: colors.textSecondary),
+                  icon: Icon(HIcons.delete_outline, color: colors.textSecondary),
                   tooltip: Strings.of(context).petDeleteTitle,
                   onPressed: onDelete,
                 ),
               selected
-                  ? Icon(Icons.check_circle, color: colors.accent)
+                  ? Icon(HIcons.check_circle, color: colors.accent)
                   : Icon(
-                      Icons.radio_button_unchecked,
+                      HIcons.radio_button_unchecked,
                       color: colors.textDisabled,
                     ),
             ],
@@ -1247,7 +1248,7 @@ class _PetdexLink extends StatelessWidget {
       child: ListTile(
         onTap: onTap,
         leading: Icon(
-          Icons.open_in_new,
+          HIcons.open_in_new,
           color: verified ? colors.accent : colors.textDisabled,
         ),
         title: Text(
@@ -1285,7 +1286,7 @@ class _PetdexGalleryButton extends StatelessWidget {
       ),
       child: ListTile(
         onTap: onTap,
-        leading: Icon(Icons.travel_explore, color: colors.accent),
+        leading: Icon(HIcons.travel_explore, color: colors.accent),
         title: Text(
           Strings.of(context).petExplorePetdex,
           style: TextStyle(color: colors.textPrimary),
@@ -1294,7 +1295,7 @@ class _PetdexGalleryButton extends StatelessWidget {
           Strings.of(context).petExploreSub,
           style: TextStyle(color: colors.textSecondary, fontSize: 12),
         ),
-        trailing: Icon(Icons.chevron_right, color: colors.textSecondary),
+        trailing: Icon(HIcons.chevron_right, color: colors.textSecondary),
       ),
     );
   }
@@ -1319,7 +1320,7 @@ class _ImportButton extends StatelessWidget {
       ),
       child: ListTile(
         onTap: onTap,
-        leading: Icon(Icons.file_upload_outlined, color: colors.accent),
+        leading: Icon(HIcons.file_upload_outlined, color: colors.accent),
         title: Text(
           Strings.of(context).petImportTitle,
           style: TextStyle(color: colors.textPrimary),

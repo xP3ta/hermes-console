@@ -23,6 +23,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const modelsConnectionId = 'models-fixture';
 
@@ -528,7 +529,7 @@ Future<void> openUnconfigured(WidgetTester tester) => openBlock(
 
 /// "Models by function": the auxiliary tasks.
 Future<void> openAux(WidgetTester tester) =>
-    openBlock(tester, 'models-aux', find.byIcon(Icons.route_outlined));
+    openBlock(tester, 'models-aux', find.byIcon(HIcons.route_outlined));
 
 /// The group of one connected provider, with its models.
 Future<void> openProvider(WidgetTester tester, String slug) => openBlock(

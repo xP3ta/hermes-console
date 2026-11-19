@@ -18,6 +18,7 @@ import 'package:hermes_android/core/widgets/status_pill_sheet.dart';
 import 'package:hermes_android/core/widgets/subscription_limit_block.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/l10n/app_localizations_es.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _anthropic = ModelProvider(
   slug: 'anthropic',
@@ -212,8 +213,6 @@ void main() {
       top(find.byKey(const ValueKey('msv-tile-think'))),
       top(find.text('FAVORITOS')),
       top(find.byKey(const ValueKey('msv-fav-anthropic-claude-sonnet-5'))),
-      top(find.byKey(const ValueKey('msv-fav-hint'))),
-      top(find.text('Se aplica desde el próximo turno.')),
       top(find.byKey(const ValueKey('model-picker-profile'))),
     ];
     for (var i = 1; i < order.length; i++) {
@@ -228,12 +227,15 @@ void main() {
     // The model list belongs to page two.
     expect(find.byKey(const ValueKey('model-picker-list')), findsNothing);
     expect(pillOf('anthropic'), findsNothing);
+    // The redesign dropped the explanatory lines under the favourites.
+    expect(find.byKey(const ValueKey('msv-fav-hint')), findsNothing);
+    expect(find.text('Se aplica desde el próximo turno.'), findsNothing);
     expect(
       find.text(
         'Marca un modelo con la estrella en «Todos los modelos» '
         'para tenerlo aquí.',
       ),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.text('Perfil · Hermes'), findsOneWidget);
   });
@@ -491,7 +493,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.byIcon(Icons.check_rounded), findsNothing);
+    expect(find.byIcon(HIcons.check_rounded), findsNothing);
     // 46 dp tall pills, the star and the round selector at their end.
     expect(tester.getSize(active).height, 46);
     expect(
@@ -811,19 +813,24 @@ void main() {
   group('tiles', () {
     final fast = find.byKey(const ValueKey('session-fast-switch'));
     final think = find.byKey(const ValueKey('msv-tile-think'));
-    Finder stateOf(Finder tile, String text) =>
-        find.descendant(of: tile, matching: find.text(text));
+    // The chips carry no state subtitle any more: their state is the accent
+    // fill and the semantics label («Title. State»).
+    String labelOf(WidgetTester tester, Finder tile) =>
+        tester.getSemantics(tile).label;
 
     testWidgets('fast mode is a tile that toggles', (tester) async {
+      final handle = tester.ensureSemantics();
       await pump(tester);
-      expect(stateOf(fast, 'Normal'), findsOneWidget);
+      expect(labelOf(tester, fast), 'Rápido. Normal');
       await tester.tap(fast);
       expect(fasts, [DesktopFastMode.fast]);
       await pump(tester, fast: DesktopFastMode.fast);
-      expect(stateOf(fast, 'Activo'), findsOneWidget);
+      expect(labelOf(tester, fast), 'Rápido. Activo');
       await tester.tap(fast);
       expect(fasts.last, DesktopFastMode.normal);
-      expect(find.text('Se aplica desde el próximo turno.'), findsOneWidget);
+      // The «applies next turn» line is gone from the sheet.
+      expect(find.text('Se aplica desde el próximo turno.'), findsNothing);
+      handle.dispose();
     });
 
     testWidgets('only Razonar and Rápido: no Permisos tile (the chat status '
@@ -836,7 +843,7 @@ void main() {
       expect(find.text('Rápido'), findsOneWidget);
       expect(find.text('Permisos'), findsNothing);
       expect(find.byKey(const ValueKey('msv-tile-permissions')), findsNothing);
-      expect(find.byIcon(Icons.shield_outlined), findsNothing);
+      expect(find.byIcon(HIcons.shield_outlined), findsNothing);
     });
 
     testWidgets('selection buttons show icons and checked state, no switches', (
@@ -849,14 +856,15 @@ void main() {
       expect(find.byType(SwitchListTile), findsNothing);
       expect(find.byType(AnimatedAlign), findsNothing);
       for (final (tile, icon, checked) in [
-        (think, Icons.auto_awesome_rounded, true),
-        (fast, Icons.speed_rounded, false),
+        (think, HIcons.auto_awesome_rounded, true),
+        (fast, HIcons.speed_rounded, false),
       ]) {
         expect(
           find.descendant(of: tile, matching: find.byIcon(icon)),
           findsOne,
         );
-        expect(tester.getSize(tile).height, greaterThanOrEqualTo(48));
+        // Small chips: 36 dp high.
+        expect(tester.getSize(tile).height, greaterThanOrEqualTo(36));
         expect(tester.getSize(tile).width, greaterThanOrEqualTo(48));
         final node = tester.getSemantics(tile);
         expect(node.flagsCollection.isButton, isTrue);
@@ -865,13 +873,18 @@ void main() {
           checked ? Tristate.isTrue : Tristate.isFalse,
         );
       }
+      // On: toggled in semantics and the accent outline; no check circle.
       await pump(tester, fast: DesktopFastMode.fast);
       expect(
         find.descendant(
           of: fast,
-          matching: find.byIcon(Icons.check_circle_rounded),
+          matching: find.byIcon(HIcons.check_circle_rounded),
         ),
-        findsOne,
+        findsNothing,
+      );
+      expect(
+        tester.getSemantics(fast).flagsCollection.isToggled,
+        Tristate.isTrue,
       );
       handle.dispose();
     });
@@ -919,13 +932,14 @@ void main() {
         fastSupported: false,
         textScale: 2,
       );
-      expect(find.text('No disponible en este modelo'), findsNWidgets(2));
+      // The reason is spoken (semantics), not printed under the chip.
+      expect(find.text('No disponible en este modelo'), findsNothing);
       for (final tile in [think, fast]) {
         final node = tester.getSemantics(tile);
         expect(node.flagsCollection.isEnabled, Tristate.isFalse);
         expect(node.flagsCollection.isButton, isTrue);
         expect(node.label, contains('No disponible en este modelo'));
-        expect(tester.getSize(tile).height, greaterThanOrEqualTo(48));
+        expect(tester.getSize(tile).height, greaterThanOrEqualTo(36));
         expect(tester.getSize(tile).width, greaterThanOrEqualTo(48));
         await tester.ensureVisible(tile);
         await tester.tap(tile);
@@ -965,14 +979,15 @@ void main() {
 
     testWidgets('Razonar sets the explicit «off» level and brings the last '
         'level back', (tester) async {
+      final handle = tester.ensureSemantics();
       await pump(tester, effort: DesktopReasoningEffort.high);
-      expect(stateOf(think, 'Sí'), findsOneWidget);
+      expect(labelOf(tester, think), 'Razonar. Sí');
       await tester.tap(think);
       expect(efforts, [DesktopReasoningEffort.none]);
 
       // Off: the tile says No and the pill is dim and does not answer.
       await pump(tester, effort: DesktopReasoningEffort.none);
-      expect(stateOf(think, 'No'), findsOneWidget);
+      expect(labelOf(tester, think), 'Razonar. No');
       expect(find.byKey(const ValueKey('msv-reasoning-dim')), findsOneWidget);
       await tester.tapAt(stepAt(tester, 5));
       expect(efforts, hasLength(1));
@@ -988,12 +1003,14 @@ void main() {
 
       await pump(tester, effort: DesktopReasoningEffort.high);
       expect(find.byKey(const ValueKey('msv-reasoning-dim')), findsNothing);
+      handle.dispose();
     });
 
     testWidgets('Razonar with no level before it goes to medium; the model '
         'default counts as reasoning', (tester) async {
+      final handle = tester.ensureSemantics();
       await pump(tester, effort: null);
-      expect(stateOf(think, 'Sí'), findsOneWidget);
+      expect(labelOf(tester, think), 'Razonar. Sí');
       await tester.tap(think);
       expect(efforts, [DesktopReasoningEffort.none]);
 
@@ -1002,6 +1019,7 @@ void main() {
       await pump(tester, effort: DesktopReasoningEffort.none);
       await tester.tap(think);
       expect(efforts, [DesktopReasoningEffort.medium]);
+      handle.dispose();
     });
 
     testWidgets('Razonar: a model that does not reason dims it and the pill', (
@@ -1009,7 +1027,10 @@ void main() {
     ) async {
       final handle = tester.ensureSemantics();
       await pump(tester, reasoningSupported: false);
-      expect(stateOf(think, 'No disponible en este modelo'), findsOneWidget);
+      expect(
+        labelOf(tester, think),
+        contains('No disponible en este modelo'),
+      );
       await tester.tap(think);
       expect(efforts, isEmpty);
       final dim = tester.widget<Opacity>(
@@ -1131,7 +1152,8 @@ void main() {
       expect(fav('anthropic', 'claude-sonnet-5'), findsOneWidget);
       expect(find.text('FRECUENTES'), findsOneWidget);
       expect(fav('openai', 'gpt-6-mini'), findsOneWidget);
-      expect(find.byKey(const ValueKey('msv-fav-hint')), findsOneWidget);
+      // The hint line is gone with the redesign.
+      expect(find.byKey(const ValueKey('msv-fav-hint')), findsNothing);
       // Unstarred: its star adds it.
       await tester.tap(star('anthropic', 'claude-sonnet-5'));
       expect(stars, [('anthropic', 'claude-sonnet-5')]);
@@ -1206,14 +1228,14 @@ void main() {
       expect(
         find.descendant(
           of: star('anthropic', 'claude-opus-5'),
-          matching: find.byIcon(Icons.star_rounded),
+          matching: find.byIcon(HIcons.star_rounded),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
           of: star('anthropic', 'claude-haiku-5'),
-          matching: find.byIcon(Icons.star_outline_rounded),
+          matching: find.byIcon(HIcons.star_outline_rounded),
         ),
         findsOneWidget,
       );
@@ -1750,7 +1772,7 @@ void main() {
     expect(fasts, isEmpty);
   });
 
-  testWidgets('limits block only with real data', (tester) async {
+  testWidgets('plan limits no longer show in the model sheet', (tester) async {
     await pump(tester);
     expect(
       find.byKey(const ValueKey('subscription-limit-block')),
@@ -1764,8 +1786,12 @@ void main() {
         windows: [SubscriptionLimitWindow(label: 'Semana', usedPercent: 38)],
       ),
     );
-    expect(find.byKey(const ValueKey('subscription-limit-block')), findsOne);
-    expect(find.text('Claude Max 5x'), findsOneWidget);
+    // Plan limits live in the Usage screen now, not in the model sheet.
+    expect(
+      find.byKey(const ValueKey('subscription-limit-block')),
+      findsNothing,
+    );
+    expect(find.text('Claude Max 5x'), findsNothing);
   });
 
   for (final width in [320.0, 360.0]) {

@@ -21,6 +21,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/desktop_chat_socket.dart' show HostCounter;
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _regKey = 'runs_conn-1';
 
@@ -170,14 +171,14 @@ void main() {
       expect(_label(s.runsStatusExpired), findsNWidgets(2));
       expect(_label(s.runsStatusRunning), findsNothing);
       expect(_label(s.runsStatusWaiting), findsNothing);
-      expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+      expect(find.byIcon(HIcons.stop_circle_outlined), findsNothing);
 
       await tester.tap(find.text('Prompt wait'));
       await tester.pumpAndSettle();
       expect(find.byType(RunDetailScreen), findsOneWidget);
       expect(find.byType(HermesDecisionBlock), findsNothing);
       expect(find.text('Denegar'), findsNothing);
-      expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+      expect(find.byIcon(HIcons.stop_circle_outlined), findsNothing);
 
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString(_regKey), raw);

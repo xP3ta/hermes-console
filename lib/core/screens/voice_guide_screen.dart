@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -32,13 +33,13 @@ class VoiceGuideScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _GuideStep(
-            icon: Icons.mic_none_outlined,
+            icon: HIcons.mic_none_outlined,
             title: strings.voiceGuideDictationTitle,
             body: strings.voiceGuideDictationBody,
           ),
           const SizedBox(height: 12),
           _GuideStep(
-            icon: Icons.volume_up_outlined,
+            icon: HIcons.volume_up_outlined,
             title: strings.voiceGuideReadingTitle,
             body: strings.voiceGuideReadingBody,
           ),
@@ -46,7 +47,7 @@ class VoiceGuideScreen extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.lock_outline, size: 17, color: colors.textSecondary),
+              Icon(HIcons.lock_outline, size: 17, color: colors.textSecondary),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(

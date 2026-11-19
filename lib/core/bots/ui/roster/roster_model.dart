@@ -254,7 +254,7 @@ final class RoomRosterEntry extends RosterEntry {
           ],
           previewFromUser: last?.kind == 'message.user',
           previewAuthor: author,
-          preview: rosterPreviewText(last?.publicText ?? ''),
+          preview: _roomPreview(last),
           at: last == null ? null : _eventTime(last.createdAt),
           attentionCount: attention.room(room.roomId)?.count ?? 0,
           working: driver?.working ?? false,
@@ -280,6 +280,14 @@ final class RoomRosterEntry extends RosterEntry {
 /// marks are stripped with the same helper notifications and session
 /// previews use, so a row never shows `**`, `##` or backticks.
 String rosterPreviewText(String markdown) => plainPreview(markdown);
+
+/// A room card's last line: the message text, or the names of the files of
+/// a message that carries only files.
+String _roomPreview(HostedGroupEvent? last) {
+  final text = rosterPreviewText(last?.publicText ?? '');
+  if (text.isNotEmpty || last == null) return text;
+  return [for (final file in last.attachments) file.displayName].join(', ');
+}
 
 final RegExp _foldA = RegExp(r'[áàäâãå]');
 final RegExp _foldE = RegExp(r'[éèëê]');

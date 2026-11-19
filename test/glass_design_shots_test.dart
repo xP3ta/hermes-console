@@ -28,6 +28,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/design_shots.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _dir = String.fromEnvironment('GLASS_SHOTS');
 const _size = Size(412, 915);
@@ -120,7 +121,7 @@ void main() {
           actions: [
             IconButton(
               tooltip: 'Buscar',
-              icon: const Icon(Icons.search_rounded),
+              icon: const Icon(HIcons.search_rounded),
               onPressed: () {},
             ),
           ],
@@ -137,7 +138,7 @@ void main() {
                 children: [
                   for (final row in rows)
                     HermesListRow(
-                      icon: Icons.tune_rounded,
+                      icon: HIcons.tune_rounded,
                       title: row,
                       onTap: () {},
                     ),
@@ -189,12 +190,12 @@ void main() {
             actions: [
               IconButton(
                 tooltip: 'Nueva',
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(HIcons.add_rounded),
                 onPressed: () {},
               ),
               IconButton(
                 tooltip: 'Más',
-                icon: const Icon(Icons.more_vert),
+                icon: const Icon(HIcons.more_vert),
                 onPressed: () {},
               ),
             ],
@@ -309,7 +310,7 @@ void main() {
             actions: [
               IconButton(
                 tooltip: 'Nueva',
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(HIcons.add_rounded),
                 onPressed: () {},
               ),
             ],
@@ -362,17 +363,17 @@ void main() {
             actions: [
               IconButton(
                 tooltip: 'Nueva tarea',
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(HIcons.add_rounded),
                 onPressed: () {},
               ),
               IconButton(
                 tooltip: 'Ayuda',
-                icon: const Icon(Icons.help_outline_rounded),
+                icon: const Icon(HIcons.help_outline_rounded),
                 onPressed: () {},
               ),
               IconButton(
                 tooltip: 'Actualizar',
-                icon: const Icon(Icons.refresh_rounded),
+                icon: const Icon(HIcons.refresh_rounded),
                 onPressed: () {},
               ),
             ],
@@ -395,7 +396,7 @@ void main() {
                 ),
                 const SizedBox(width: 6),
                 HermesFloatingIconButton(
-                  icon: Icons.filter_alt_rounded,
+                  icon: HIcons.filter_alt_rounded,
                   tooltip: 'Filtrar',
                   color: colors.accent,
                   onPressed: () {},
@@ -485,7 +486,7 @@ void main() {
               IconButton(
                 key: more,
                 tooltip: 'Más',
-                icon: const Icon(Icons.more_vert),
+                icon: const Icon(HIcons.more_vert),
                 onPressed: () {},
               ),
             ],
@@ -512,17 +513,17 @@ void main() {
         context: page,
         anchorKey: more,
         actions: const [
-          HermesAction(value: 0, label: 'Actualizar', icon: Icons.refresh),
+          HermesAction(value: 0, label: 'Actualizar', icon: HIcons.refresh),
           HermesAction(value: 1, label: 'Ordenar', icon: Icons.swap_vert),
           HermesAction(
             value: 2,
             label: 'Importar sesión',
-            icon: Icons.download_outlined,
+            icon: HIcons.download_outlined,
           ),
           HermesAction(
             value: 3,
             label: 'Borrar',
-            icon: Icons.delete_outline,
+            icon: HIcons.delete_outline,
             destructive: true,
           ),
         ],

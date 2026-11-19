@@ -3,6 +3,7 @@
 // options one per row (a tap sends only that number's key), or, when the
 // screen shows no options, Enter and Esc as buttons. It shows the agent's own
 // lines; it never words an approval for it.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -246,7 +247,7 @@ class _OptionRow extends StatelessWidget {
                   const SizedBox(width: HermesSpace.x2),
                   if (failed) ...[
                     Icon(
-                      Icons.error_outline_rounded,
+                      HIcons.error_outline_rounded,
                       size: HermesIcon.sm,
                       color: colors.error,
                     ),

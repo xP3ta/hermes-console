@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -308,7 +309,7 @@ class _ProfileHubScreenState extends State<ProfileHubScreen> {
     return HermesToolDestination(
       id: 'skills',
       group: '',
-      icon: Icons.extension_outlined,
+      icon: HIcons.extension_outlined,
       label: strings.botProfileSkills,
       value: profile != null && profile.skillCount > 0
           ? '${profile.skillCount}'
@@ -453,7 +454,7 @@ class _ProfileHubScreenState extends State<ProfileHubScreen> {
           destination: HermesToolDestination(
             id: 'model',
             group: '',
-            icon: Icons.memory_outlined,
+            icon: HIcons.memory_outlined,
             label: strings.botProfileModelSection,
             value: value.isEmpty ? null : value,
             builder: (_) => const SizedBox.shrink(),
@@ -541,7 +542,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     integrations(
       row(
         id: 'connections',
-        icon: Icons.hub_outlined,
+        icon: HIcons.hub_outlined,
         label: strings.cphSegConnectors,
         builder: (_) => capabilitiesScreen(ExtensionsTab.mcp),
       ),
@@ -549,7 +550,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     integrations(
       row(
         id: 'plugins',
-        icon: Icons.extension_outlined,
+        icon: HIcons.extension_outlined,
         label: strings.cphKindPlugins,
         value: plugins == null ? null : '$plugins',
         builder: (_) => capabilitiesScreen(ExtensionsTab.plugins),
@@ -558,7 +559,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     integrations(
       row(
         id: 'mcp',
-        icon: Icons.power_outlined,
+        icon: HIcons.power_outlined,
         label: strings.navMcp,
         value: mcp == null ? null : '$mcp',
         builder: (_) => capabilitiesScreen(ExtensionsTab.mcp),
@@ -569,7 +570,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     work(
       row(
         id: 'projects',
-        icon: Icons.folder_copy_outlined,
+        icon: HIcons.folder_copy_outlined,
         label: strings.drawerProjects,
         subtitle: isActive ? null : strings.navFollowsActiveHint,
         beforeOpen: makeActive,
@@ -587,7 +588,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     work(
       row(
         id: 'routines',
-        icon: Icons.schedule_outlined,
+        icon: HIcons.schedule_outlined,
         label: strings.botProfileRoutines,
         capability: capabilities.cronRead,
         builder: (_) => CronScreen(
@@ -600,7 +601,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     work(
       row(
         id: 'artifacts',
-        icon: Icons.view_in_ar_outlined,
+        icon: HIcons.view_in_ar_outlined,
         label: strings.chaArtifactsAction,
         capability: capabilities.sessionsRead,
         builder: (_) => ArtifactsScreen(connection: conn, profile: profile),
@@ -609,7 +610,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     work(
       row(
         id: 'kanban',
-        icon: Icons.view_kanban_outlined,
+        icon: HIcons.view_kanban_outlined,
         label: strings.drawerKanban,
         builder: (_) => TasksScreen(connection: conn, initialAssignee: profile),
       ),
@@ -619,7 +620,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
       work(
         row(
           id: 'agents',
-          icon: Icons.terminal_outlined,
+          icon: HIcons.terminal_outlined,
           label: strings.navAgents,
           builder: (context) => buildAgentsDestination(
             context,
@@ -631,7 +632,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     agent(
       row(
         id: 'soul',
-        icon: Icons.auto_awesome_outlined,
+        icon: HIcons.auto_awesome_outlined,
         label: strings.botProfileSoul,
         builder: (_) => SoulScreen(connection: conn, profileOverride: profile),
       ),
@@ -639,7 +640,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     agent(
       row(
         id: 'memory',
-        icon: Icons.psychology_outlined,
+        icon: HIcons.psychology_outlined,
         label: strings.botProfileMemory,
         capability: capabilities.memoryRead,
         builder: (_) =>
@@ -649,7 +650,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     agent(
       row(
         id: 'usage',
-        icon: Icons.bar_chart_outlined,
+        icon: HIcons.bar_chart_outlined,
         label: strings.kluUsageTitle,
         builder: (_) =>
             UsageAnalyticsScreen(connection: conn, profile: profile),
@@ -658,7 +659,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     advanced(
       row(
         id: 'voice',
-        icon: Icons.graphic_eq_rounded,
+        icon: HIcons.graphic_eq_rounded,
         label: strings.voiceTitle,
         builder: (_) => VoiceSettingsScreen(connection: conn, profile: profile),
       ),
@@ -666,7 +667,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     advanced(
       row(
         id: 'keys',
-        icon: Icons.key_outlined,
+        icon: HIcons.key_outlined,
         label: strings.kluKeysTitle,
         builder: (_) => EnvKeysScreen(connection: conn, profile: profile),
       ),
@@ -674,7 +675,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     advanced(
       row(
         id: 'vault',
-        icon: Icons.lock_outline_rounded,
+        icon: HIcons.lock_outline_rounded,
         label: strings.vltSettingsTitle,
         builder: (_) => VaultScreen(connection: conn, profile: owner),
       ),
@@ -682,7 +683,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     advanced(
       row(
         id: 'logs',
-        icon: Icons.receipt_long_outlined,
+        icon: HIcons.receipt_long_outlined,
         label: strings.drawerActivity,
         capability: capabilities.logsRead,
         builder: (_) =>
@@ -692,7 +693,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     advanced(
       row(
         id: 'task-center',
-        icon: Icons.rocket_launch_outlined,
+        icon: HIcons.rocket_launch_outlined,
         label: strings.drawerTaskCenter,
         builder: (_) => TaskCenterScreen(connection: conn, profile: profile),
       ),
@@ -700,7 +701,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     advanced(
       row(
         id: 'bot-screen',
-        icon: Icons.desktop_windows_outlined,
+        icon: HIcons.desktop_windows_outlined,
         label: strings.screenTitle,
         builder: (_) => OwnedResourceHost<TuiGatewayClient>(
           create: () => TuiGatewayClient(conn),
@@ -718,7 +719,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
     advanced(
       row(
         id: 'characters',
-        icon: Icons.face_outlined,
+        icon: HIcons.face_outlined,
         label: strings.charactersTitle,
         builder: (_) => CharacterStudioScreen(
           profileName: profile,
@@ -731,7 +732,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
       advanced(
         row(
           id: 'backup',
-          icon: Icons.settings_backup_restore_rounded,
+          icon: HIcons.settings_backup_restore_rounded,
           label: strings.backupTitle,
           builder: (context) => BackupRestoreScreen(
             connection: conn,
@@ -749,11 +750,12 @@ List<ProfileHubEntry> buildProfileHubEntries({
       advanced(
         row(
           id: 'advanced-settings',
-          icon: Icons.tune_rounded,
+          icon: HIcons.tune_rounded,
           label: strings.botAdvanced,
           builder: (_) => BotProfileSettingsScreen(
             profile: profile,
             gateway: profileGateway,
+            connection: conn,
           ),
         ),
       ),
@@ -762,7 +764,7 @@ List<ProfileHubEntry> buildProfileHubEntries({
         HermesToolDestination(
           id: 'bot-card',
           group: '',
-          icon: Icons.badge_outlined,
+          icon: HIcons.badge_outlined,
           label: strings.navBotCard,
           subtitle: strings.navBotCardSub,
           // The card needs the Bots screen: it opens from there, not by
@@ -839,7 +841,7 @@ class _ProfileHubHeader extends StatelessWidget {
             ),
             if (canEdit) ...[
               const SizedBox(width: 6),
-              Icon(Icons.edit_outlined, size: 16, color: colors.textSecondary),
+              Icon(HIcons.edit_outlined, size: 16, color: colors.textSecondary),
             ],
           ],
         ),
@@ -902,20 +904,20 @@ class _ProfileHubHeader extends StatelessWidget {
             else
               _HubPill(
                 key: const ValueKey('profile-hub-make-active'),
-                icon: Icons.check_circle_outline_rounded,
+                icon: HIcons.check_circle_outline_rounded,
                 label: strings.psfMakeActive,
                 onTap: onMakeActive,
               ),
             if (onChat != null)
               _HubPill(
                 key: const ValueKey('profile-hub-chat'),
-                icon: Icons.chat_bubble_outline_rounded,
+                icon: HIcons.chat_bubble_outline_rounded,
                 label: strings.botProfileChat,
                 onTap: onChat!,
               ),
             _HubPill(
               key: const ValueKey('profile-hub-switch'),
-              icon: Icons.swap_horiz_rounded,
+              icon: HIcons.swap_horiz_rounded,
               label: strings.navSwitchProfile,
               onTap: onSwitch,
             ),
@@ -1039,7 +1041,7 @@ class _AdvancedToggle extends StatelessWidget {
                   ),
                 ),
                 Icon(
-                  open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                  open ? HIcons.expand_less_rounded : HIcons.expand_more_rounded,
                   color: colors.textSecondary,
                 ),
               ],

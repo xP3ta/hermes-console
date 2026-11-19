@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -134,8 +135,8 @@ class _RoomSummaryPillState extends State<RoomSummaryPill> {
                             if (!widget.compact)
                               Icon(
                                 expanded
-                                    ? Icons.expand_less
-                                    : Icons.expand_more,
+                                    ? HIcons.expand_less
+                                    : HIcons.expand_more,
                                 size: 16,
                                 color: colors.textSecondary,
                               ),
@@ -238,7 +239,7 @@ class _RoomSummaryPillState extends State<RoomSummaryPill> {
               children: [
                 if (checks) ...[
                   Icon(
-                    Icons.check_rounded,
+                    HIcons.check_rounded,
                     size: 13,
                     color: colors.textSecondary,
                   ),

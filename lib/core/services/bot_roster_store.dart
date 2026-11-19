@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../characters/character_sync.dart';
 import '../models/agent_profile.dart';
 import '../models/connection.dart';
 import 'bot_roster_cache.dart';
@@ -97,6 +98,10 @@ final class BotRosterRegistry extends ChangeNotifier {
   BotRosterStore store(String connectionId) =>
       _stores.putIfAbsent(connectionId, () => BotRosterStore._(connectionId));
 
+  /// The connection registered for [connectionId], when it was hydrated.
+  SavedConnection? connectionOf(String connectionId) =>
+      _connections[connectionId];
+
   /// Existing store, without creating one.
   BotRosterStore? peek(String connectionId) => _stores[connectionId];
 
@@ -189,6 +194,7 @@ final class BotRosterRegistry extends ChangeNotifier {
     }
     _lastRead[connectionId] = stamp;
     if (sessions) _sessionsAt[connectionId] = stamp;
+    CharacterSync.shared.onRoster(connectionId, profiles);
     var observedAt = _startedAt[stamp] ?? _now();
     _startedAt.removeWhere((ticket, _) => ticket <= stamp);
     // Mutations confirmed before the read started are already in it.

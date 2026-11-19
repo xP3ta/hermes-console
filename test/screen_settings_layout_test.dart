@@ -8,6 +8,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // Settings presentation: the featured instance card on top (brand + active
 // instance) and the grouped rows with a right-aligned value.
@@ -77,7 +78,7 @@ void main() {
       reason: 'value shown on the right',
     );
     expect(
-      find.descendant(of: manage, matching: find.byIcon(Icons.chevron_right)),
+      find.descendant(of: manage, matching: find.byIcon(HIcons.chevron_right)),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);

@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/theme_contrast.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _app(Widget child, {ThemeData? theme, double textScale = 1}) =>
     MaterialApp(
@@ -46,7 +47,7 @@ void main() {
         _app(
           HermesGlassActionButton(
             key: _key,
-            icon: Icons.refresh_rounded,
+            icon: HIcons.refresh_rounded,
             label: 'Reintentar',
             onPressed: () {},
           ),
@@ -80,7 +81,7 @@ void main() {
       _app(
         HermesGlassActionButton(
           key: _key,
-          icon: Icons.crop_square_rounded,
+          icon: HIcons.crop_square_rounded,
           label: 'Detener',
           destructive: true,
           onPressed: () {},
@@ -151,7 +152,7 @@ void main() {
         _app(
           HermesGlassActionButton(
             key: _key,
-            icon: Icons.forum_outlined,
+            icon: HIcons.forum_outlined,
             label: 'Abrir conversación',
             onPressed: () => taps++,
           ),

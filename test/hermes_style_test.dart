@@ -17,6 +17,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/theme_profile_fixtures.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Future<void> _pump(
   WidgetTester tester,
@@ -375,7 +376,7 @@ void main() {
                 title: Text(title),
                 titleInPill: pill,
                 actions: [
-                  IconButton(onPressed: () {}, icon: const Icon(Icons.add)),
+                  IconButton(onPressed: () {}, icon: const Icon(HIcons.add)),
                 ],
               ),
               locale: Locale(code),

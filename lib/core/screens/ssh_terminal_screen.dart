@@ -4,6 +4,7 @@
 // 1.4.0 (F1): terminal agrandable, fila de teclas auxiliares y reconexión
 // automática acotada tras una caída de red. El terminal es un shell normal:
 // sin banner ni panel de agentes (los agentes viven en su propia sección).
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -164,14 +165,14 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
           ChatWorkspaceMenuEntry(
             key: const ValueKey('ssh-pane-menu-files'),
             label: strings.sshFilesSftp,
-            icon: Icons.folder_open_outlined,
+            icon: HIcons.folder_open_outlined,
             onSelected: _openSftp,
           ),
           if (ready)
             ChatWorkspaceMenuEntry(
               key: const ValueKey('ssh-pane-menu-sessions'),
               label: strings.hdpSessionsTitle,
-              icon: Icons.view_list_outlined,
+              icon: HIcons.view_list_outlined,
               onSelected: _openSessions,
             ),
           ...widget.paneMenu,
@@ -179,7 +180,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
             ChatWorkspaceMenuEntry(
               key: const ValueKey('ssh-pane-menu-close'),
               label: strings.sshCloseSession,
-              icon: Icons.power_settings_new,
+              icon: HIcons.power_settings_new,
               onSelected: _closeSession,
             ),
         ],
@@ -446,18 +447,18 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
                     IconButton(
                       key: const ValueKey('ssh-sessions-button'),
                       tooltip: Strings.of(context).hdpSessionsTitle,
-                      icon: const Icon(Icons.view_list_outlined),
+                      icon: const Icon(HIcons.view_list_outlined),
                       onPressed: _openSessions,
                     ),
                   IconButton(
                     tooltip: Strings.of(context).sshFilesSftp,
-                    icon: const Icon(Icons.folder_open_outlined),
+                    icon: const Icon(HIcons.folder_open_outlined),
                     onPressed: _openSftp,
                   ),
                   if (_session != null)
                     IconButton(
                       tooltip: Strings.of(context).sshCloseSession,
-                      icon: const Icon(Icons.power_settings_new),
+                      icon: const Icon(HIcons.power_settings_new),
                       onPressed: _closeSession,
                     ),
                 ],
@@ -510,7 +511,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 44, color: colors.error),
+              Icon(HIcons.error_outline, size: 44, color: colors.error),
               const SizedBox(height: 16),
               Text(
                 session.failure == null
@@ -522,7 +523,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
               const SizedBox(height: 22),
               FilledButton.icon(
                 onPressed: _connect,
-                icon: const Icon(Icons.refresh, size: 16),
+                icon: const Icon(HIcons.refresh, size: 16),
                 label: Text(Strings.of(context).sshRetry),
               ),
             ],
@@ -677,7 +678,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
         children: [
           Row(
             children: [
-              Icon(Icons.dns_outlined, size: HermesIcon.sm, color: ink),
+              Icon(HIcons.dns_outlined, size: HermesIcon.sm, color: ink),
               const SizedBox(width: HermesSpace.x2),
               Expanded(
                 child: Text.rich(
@@ -699,7 +700,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
               const SizedBox(width: HermesSpace.x1),
               ExcludeSemantics(
                 child: Icon(
-                  Icons.shield_outlined,
+                  HIcons.shield_outlined,
                   size: HermesIcon.sm,
                   color: ink,
                 ),
@@ -721,7 +722,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
                 child: Row(
                   children: [
                     Icon(
-                      Icons.folder_outlined,
+                      HIcons.folder_outlined,
                       size: HermesIcon.sm,
                       color: ink,
                     ),
@@ -820,7 +821,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
               FilledButton.icon(
                 key: const ValueKey('ssh-reconnect-button'),
                 onPressed: _connect,
-                icon: const Icon(Icons.refresh, size: 15),
+                icon: const Icon(HIcons.refresh, size: 15),
                 label: Text(strings.sshReconnect),
                 style: FilledButton.styleFrom(
                   visualDensity: VisualDensity.compact,

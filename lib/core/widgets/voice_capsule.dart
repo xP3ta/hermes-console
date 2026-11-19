@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -298,7 +299,7 @@ class _VoiceCapsuleState extends State<VoiceCapsule>
                     children: [
                       _CapsuleButton(
                         actionKey: 'voice-capsule-settings',
-                        icon: Icons.tune_rounded,
+                        icon: HIcons.tune_rounded,
                         label: w.capsuleLabels.settings,
                         onPressed: w.onSettings,
                         foreground: colors.textPrimary,
@@ -307,7 +308,7 @@ class _VoiceCapsuleState extends State<VoiceCapsule>
                       // what swiping it up does too.
                       _CapsuleButton(
                         actionKey: 'voice-capsule-minimize',
-                        icon: Icons.keyboard_arrow_up_rounded,
+                        icon: HIcons.keyboard_arrow_up_rounded,
                         label: w.capsuleLabels.minimize,
                         onPressed: w.onMinimize,
                         foreground: colors.textPrimary,
@@ -319,8 +320,8 @@ class _VoiceCapsuleState extends State<VoiceCapsule>
                             ? 'voice-strip-resume'
                             : 'voice-strip-pause',
                         icon: paused
-                            ? Icons.play_arrow_rounded
-                            : Icons.pause_rounded,
+                            ? HIcons.play_arrow_rounded
+                            : HIcons.pause_rounded,
                         label: paused ? w.labels.resume : w.labels.pause,
                         onPressed: mic,
                         foreground: paused
@@ -332,7 +333,7 @@ class _VoiceCapsuleState extends State<VoiceCapsule>
                       ),
                       _CapsuleButton(
                         actionKey: 'voice-strip-close',
-                        icon: Icons.close_rounded,
+                        icon: HIcons.close_rounded,
                         label: w.labels.close,
                         onPressed: w.onClose,
                         foreground: colors.error,
@@ -508,7 +509,7 @@ class _TopRow extends StatelessWidget {
                           ),
                         ),
                         Icon(
-                          Icons.expand_more_rounded,
+                          HIcons.expand_more_rounded,
                           size: HermesIcon.md,
                           color: colors.textSecondary,
                         ),
@@ -679,7 +680,7 @@ class VoiceCapsulePill extends StatelessWidget {
                     ),
                   ),
                   Icon(
-                    Icons.keyboard_arrow_down_rounded,
+                    HIcons.keyboard_arrow_down_rounded,
                     key: const ValueKey('voice-capsule-pill-expand'),
                     size: HermesIcon.lg,
                     color: colors.textSecondary,

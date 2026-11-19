@@ -255,7 +255,7 @@ class HermesBottomScrim extends StatelessWidget {
   /// The page colour; the scaffold's by default.
   final Color? color;
 
-  /// OPUS-CRISTAL: outlines the scrim leaves alone, published by a toned
+  /// Foot glass: outlines the scrim leaves alone, published by a toned
   /// glass strip that frosts (HermesGlassStrip.scrimHoles): its still
   /// pieces, a few dp inside them. The gaps keep the scrim. Null or empty:
   /// the scrim of before, pixel for pixel.

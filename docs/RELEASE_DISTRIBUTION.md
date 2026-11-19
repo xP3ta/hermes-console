@@ -103,8 +103,16 @@ bash tool/release/double_build.sh \
 ```
 
 The script verifies required commands, preserves Android/JDK discovery through
-its clean environment, and gives each replica an isolated `HOME`, `PUB_CACHE`
-and `GRADLE_USER_HOME`. It builds into a mode-0700 temporary sibling of the
+its clean environment, and builds the two replicas one after the other at ONE
+canonical absolute path (`$WORK/build`: the source clone, `HOME`, `PUB_CACHE`
+and `GRADLE_USER_HOME`), `$WORK` is a fresh temporary directory per run: the
+path is shared by the two replicas of that run, it is not a fixed published
+path. It is recreated empty from a fresh clone for each replica and
+verified absent before replica B starts. Absolute build paths end up inside the
+native libraries and the Dart snapshot, so equal output is only claimed for two
+builds at that same path. A comparison that runs and fails keeps its report
+(names, sizes, hashes, difference class; no signed bytes) beside the requested
+output as `<output>.failed-rebuild-comparison.json`. It builds into a mode-0700 temporary sibling of the
 requested output and atomically renames that sibling only after both builds and
 the comparison pass. Before promotion, the same build step writes the canonical
 `double-build-manifest.json`: exact source/input identities, build command,

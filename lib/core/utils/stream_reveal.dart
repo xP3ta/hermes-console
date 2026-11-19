@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart' show StringCharacters;
 
-/// F3 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §2.3.2-3): one step of
+/// F3 of the fluidity plan: one step of
 /// the live reply's reveal.
 ///
 /// The pace is the one the chat has had since 1.2: at least

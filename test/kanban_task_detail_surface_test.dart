@@ -4,6 +4,7 @@ import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/kanban_task_detail_surface.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   Future<void> pumpSurface(
@@ -325,7 +326,7 @@ void main() {
     expect(find.byKey(const ValueKey('kanban-run-terminate-3')), findsNothing);
     expect(find.byKey(const ValueKey('kanban-task-archive')), findsNothing);
     expect(find.byKey(const ValueKey('kanban-model-override')), findsOneWidget);
-    expect(find.byIcon(Icons.monitor_heart_outlined), findsOneWidget);
+    expect(find.byIcon(HIcons.monitor_heart_outlined), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

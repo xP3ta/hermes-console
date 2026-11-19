@@ -7,6 +7,7 @@
 // descarga (página de HF), y refleja el estado real cruzando con `/v1/models`
 // de OlliteRT (lista pasada por el padre). La SELECCIÓN del modelo activo de
 // Hermes sí la hacemos: «Usar» devuelve el id al padre, que apunta la config.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -147,9 +148,9 @@ class LitertStoreScreen extends StatelessWidget {
             spacing: 12,
             runSpacing: 4,
             children: [
-              _meta(colors, Icons.sd_storage_outlined, '${m.sizeGb} GB'),
-              _meta(colors, Icons.memory, 'RAM ${m.minRamGb} GB'),
-              _meta(colors, Icons.short_text, '${m.contextLabel} ctx'),
+              _meta(colors, HIcons.sd_storage_outlined, '${m.sizeGb} GB'),
+              _meta(colors, HIcons.memory, 'RAM ${m.minRamGb} GB'),
+              _meta(colors, HIcons.short_text, '${m.contextLabel} ctx'),
               _fitChip(colors, fit, s),
             ],
           ),
@@ -165,7 +166,7 @@ class LitertStoreScreen extends StatelessWidget {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  icon: const Icon(Icons.download_outlined, size: 16),
+                  icon: const Icon(HIcons.download_outlined, size: 16),
                   label: Text(s.litertStoreDownload),
                   onPressed: () => _openDownload(context, m),
                 ),
@@ -173,7 +174,7 @@ class LitertStoreScreen extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton.icon(
-                  icon: Icon(inUse ? Icons.check : Icons.play_arrow, size: 16),
+                  icon: Icon(inUse ? HIcons.check : HIcons.play_arrow, size: 16),
                   label: Text(inUse ? s.litertStoreInUse : s.litertStoreUse),
                   onPressed: (!isServed || inUse)
                       ? null

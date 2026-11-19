@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -61,7 +62,7 @@ class GeneratedImageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final content = _content(context);
-    // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A1): the placeholder keeps the
+    // F5: the placeholder keeps the
     // image's box, and what changes (the box once the real size is known,
     // the placeholder giving way to the picture) eases instead of jumping
     // ~200 dp in one frame. Instant with reduced motion.
@@ -120,7 +121,7 @@ class GeneratedImageCard extends StatelessWidget {
         context,
         colors,
         leading: Icon(
-          Icons.broken_image_outlined,
+          HIcons.broken_image_outlined,
           size: 17,
           color: colors.warning,
         ),
@@ -142,7 +143,7 @@ class GeneratedImageCard extends StatelessWidget {
         context,
         colors,
         leading: Icon(
-          Icons.hide_image_outlined,
+          HIcons.hide_image_outlined,
           size: 17,
           color: colors.textSecondary,
         ),
@@ -152,7 +153,7 @@ class GeneratedImageCard extends StatelessWidget {
         context,
         colors,
         leading: Icon(
-          Icons.image_outlined,
+          HIcons.image_outlined,
           size: 17,
           color: colors.textSecondary,
         ),
@@ -223,7 +224,7 @@ class GeneratedImageCard extends StatelessWidget {
                       ctx,
                       Theme.of(ctx).hermes,
                       leading: Icon(
-                        Icons.broken_image_outlined,
+                        HIcons.broken_image_outlined,
                         size: 17,
                         color: Theme.of(ctx).hermes.warning,
                       ),
@@ -245,7 +246,7 @@ class GeneratedImageCard extends StatelessWidget {
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
-                            Icons.open_in_full_rounded,
+                            HIcons.open_in_full_rounded,
                             size: 14,
                             color: Colors.white,
                           ),

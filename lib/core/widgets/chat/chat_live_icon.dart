@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 
@@ -14,16 +15,16 @@ import '../../theme/motion.dart';
 /// white on transparent, tinted with the theme at paint time. No player
 /// dependency: the strip is cut with `drawImageRect`.
 enum ChatLiveGlyph {
-  reasoning('reasoning', Icons.account_tree_outlined, 19),
-  terminalAgent('terminal-agent', Icons.account_tree_outlined, 28),
-  toolCall('tool-call', Icons.account_tree_outlined, 16),
-  delegateTask('delegate-task', Icons.account_tree_outlined, 26),
-  parallelTools('parallel-tools', Icons.account_tree_outlined, 24),
-  responseStream('response-stream', Icons.account_tree_outlined, 18),
-  check('check', Icons.check_rounded, 12),
-  error('error', Icons.error_outline_rounded, 16),
-  queued('queued', Icons.playlist_add_rounded, 21),
-  agentTeam('agent-team', Icons.account_tree_outlined, 12);
+  reasoning('reasoning', HIcons.account_tree_outlined, 19),
+  terminalAgent('terminal-agent', HIcons.account_tree_outlined, 28),
+  toolCall('tool-call', HIcons.account_tree_outlined, 16),
+  delegateTask('delegate-task', HIcons.account_tree_outlined, 26),
+  parallelTools('parallel-tools', HIcons.account_tree_outlined, 24),
+  responseStream('response-stream', HIcons.account_tree_outlined, 18),
+  check('check', HIcons.check_rounded, 12),
+  error('error', HIcons.error_outline_rounded, 16),
+  queued('queued', HIcons.playlist_add_rounded, 21),
+  agentTeam('agent-team', HIcons.account_tree_outlined, 12);
 
   const ChatLiveGlyph(this.id, this.fallback, this.frames);
 

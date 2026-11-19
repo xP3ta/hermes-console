@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -1264,7 +1265,7 @@ class _ThinkingLineRow extends StatelessWidget {
             turns: expanded ? 0.5 : 0,
             duration: reduceMotion ? Duration.zero : HermesMotion.fast,
             child: Icon(
-              Icons.expand_more,
+              HIcons.expand_more,
               size: HermesIcon.sm,
               color: base.color,
             ),
@@ -1346,38 +1347,38 @@ class _ThinkingElapsedState extends State<_ThinkingElapsed> {
 
 /// Icon of a tool row, by what the tool does.
 IconData turnToolIcon(ActivityStep step) {
-  if (step.kind == ActivityStepKind.skill) return Icons.auto_awesome_rounded;
+  if (step.kind == ActivityStepKind.skill) return HIcons.auto_awesome_rounded;
   final name = canonicalToolName(step.label);
-  if (isSkillActivityTool(name)) return Icons.auto_awesome_rounded;
-  if (isMemoryTool(name)) return Icons.psychology_outlined;
-  if (toolAppActionLabel(name) != null) return Icons.extension_outlined;
+  if (isSkillActivityTool(name)) return HIcons.auto_awesome_rounded;
+  if (isMemoryTool(name)) return HIcons.psychology_outlined;
+  if (toolAppActionLabel(name) != null) return HIcons.extension_outlined;
   return switch (name) {
     'terminal' ||
     'execute_code' ||
     'process_manage' ||
-    'process' => Icons.terminal_rounded,
-    'read_file' => Icons.description_outlined,
-    'edit_file' || 'patch' || 'write_file' => Icons.edit_outlined,
-    'list_files' => Icons.folder_open_outlined,
+    'process' => HIcons.terminal_rounded,
+    'read_file' => HIcons.description_outlined,
+    'edit_file' || 'patch' || 'write_file' => HIcons.edit_outlined,
+    'list_files' => HIcons.folder_open_outlined,
     'search_files' ||
     'web_search' ||
     'session_search_recall' ||
     'session_search' ||
-    'x_search' => Icons.search_rounded,
-    'clarify' || 'setup_choose' => Icons.help_outline_rounded,
-    'cronjob' || 'cronjob_manage' => Icons.schedule_rounded,
-    'image_generate' || 'browser_take_screenshot' => Icons.image_outlined,
-    'vision_analyze' => Icons.visibility_outlined,
-    'start_chat' => Icons.chat_bubble_outline_rounded,
+    'x_search' => HIcons.search_rounded,
+    'clarify' || 'setup_choose' => HIcons.help_outline_rounded,
+    'cronjob' || 'cronjob_manage' => HIcons.schedule_rounded,
+    'image_generate' || 'browser_take_screenshot' => HIcons.image_outlined,
+    'vision_analyze' => HIcons.visibility_outlined,
+    'start_chat' => HIcons.chat_bubble_outline_rounded,
     // A subagent is the app's agent everywhere (the island's card too).
-    'delegate_task' => Icons.smart_toy_outlined,
-    'todo' || 'todo_list' => Icons.checklist_rounded,
+    'delegate_task' => HIcons.smart_toy_outlined,
+    'todo' || 'todo_list' => HIcons.checklist_rounded,
     _ =>
       name.startsWith('browser_') || name.startsWith('web_')
-          ? Icons.public_rounded
+          ? HIcons.public_rounded
           : name.startsWith('kanban_')
-          ? Icons.checklist_rounded
-          : Icons.build_outlined,
+          ? HIcons.checklist_rounded
+          : HIcons.build_outlined,
   };
 }
 
@@ -1655,11 +1656,11 @@ class _ToolGlyphState extends State<_ToolGlyph>
       ),
       _ToolState.done => (
         null,
-        Icon(Icons.done_rounded, size: 13, color: colors.success),
+        Icon(HIcons.done_rounded, size: 13, color: colors.success),
       ),
       _ToolState.failed => (
         null,
-        Icon(Icons.error_outline_rounded, size: 13, color: colors.error),
+        Icon(HIcons.error_outline_rounded, size: 13, color: colors.error),
       ),
     };
     return SizedBox.square(
@@ -1701,7 +1702,7 @@ class _TurnTaskRow extends StatelessWidget {
     final notDone = history && item.isOpen;
     final Widget icon = switch (item.status) {
       AgentTaskStatus.completed => Icon(
-        Icons.check_rounded,
+        HIcons.check_rounded,
         size: 16,
         color: history ? colors.success.withValues(alpha: 0.8) : colors.success,
       ),
@@ -1714,17 +1715,17 @@ class _TurnTaskRow extends StatelessWidget {
         ),
       ),
       AgentTaskStatus.inProgress when !history => Icon(
-        Icons.play_circle_outline_rounded,
+        HIcons.play_circle_outline_rounded,
         size: 16,
         color: colors.accent,
       ),
       AgentTaskStatus.cancelled => Icon(
-        Icons.block_rounded,
+        HIcons.block_rounded,
         size: 15,
         color: colors.textSecondary,
       ),
       _ => Icon(
-        Icons.radio_button_unchecked_rounded,
+        HIcons.radio_button_unchecked_rounded,
         size: 15,
         color: colors.textSecondary,
       ),
@@ -1870,7 +1871,7 @@ class _TurnTasksLiveState extends State<TurnTasksLive> {
                       end: HermesSpace.x2,
                     ),
                     child: Icon(
-                      Icons.checklist_rounded,
+                      HIcons.checklist_rounded,
                       size: HermesIcon.sm,
                       color: colors.textSecondary,
                     ),
@@ -1927,7 +1928,7 @@ class _TurnTasksLiveState extends State<TurnTasksLive> {
                 key: const ValueKey('turn-tasks-done-toggle'),
                 label: s.liveTasksEarlierDone(earlier.length),
                 expanded: _showDone,
-                leading: Icons.check_rounded,
+                leading: HIcons.check_rounded,
                 leadingColor: colors.success,
                 onTap: () => setState(() => _showDone = !_showDone),
               ),
@@ -2166,7 +2167,7 @@ class TurnFoldLine extends StatelessWidget {
                   ? Duration.zero
                   : const Duration(milliseconds: 150),
               child: Icon(
-                Icons.expand_more,
+                HIcons.expand_more,
                 size: 16,
                 color: colors.textSecondary,
               ),

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -396,7 +397,7 @@ class _ScreenPeekScreenState extends State<ScreenPeekScreen>
       ),
       _PeekPhase.suppressed => _Message(
         colors: colors,
-        icon: Icons.back_hand_outlined,
+        icon: HIcons.back_hand_outlined,
         message: _frameBytes == null ? strings.screenSuppressed : null,
         child: _frameBytes == null
             ? null
@@ -414,18 +415,18 @@ class _ScreenPeekScreenState extends State<ScreenPeekScreen>
       ),
       _PeekPhase.unsupported => _Message(
         colors: colors,
-        icon: Icons.desktop_access_disabled_outlined,
+        icon: HIcons.desktop_access_disabled_outlined,
         message: strings.screenUnsupported,
       ),
       _PeekPhase.unavailable => _Message(
         colors: colors,
-        icon: Icons.system_update_alt_outlined,
+        icon: HIcons.system_update_alt_outlined,
         message: strings.screenUnavailable,
       ),
       _PeekPhase.loading => const ConsoleLoader.large(),
       _PeekPhase.failed => _Message(
         colors: colors,
-        icon: Icons.error_outline,
+        icon: HIcons.error_outline,
         message: strings.screenFailed,
       ),
     };
@@ -547,7 +548,7 @@ class _Stopped extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.desktop_windows_outlined, size: 48, color: colors.accent),
+        Icon(HIcons.desktop_windows_outlined, size: 48, color: colors.accent),
         const SizedBox(height: 16),
         Text(
           strings.screenStopped,

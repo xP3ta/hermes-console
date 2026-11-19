@@ -11,6 +11,7 @@ import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import '../support/inter_font.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Owner report (Pixel 9 Pro, ~412 dp wide): an image staged in the chat
 /// input "does not adapt to the input, it overflows". These tests render the
@@ -239,7 +240,7 @@ void main() {
           reason: 'thumb $thumb pokes out of the rounded input $surface',
         );
       }
-      final remove = _buttonVisual(tester, card, Icons.close);
+      final remove = _buttonVisual(tester, card, HIcons.close);
       if (remove.right <= viewport.right) {
         expect(
           _contains(visibleArea, remove),
@@ -247,7 +248,7 @@ void main() {
           reason: 'remove button $remove is clipped by $visibleArea',
         );
         expect(_insideRounded(surface, remove), isTrue, reason: '$remove');
-        final hit = _buttonHitTarget(tester, card, Icons.close);
+        final hit = _buttonHitTarget(tester, card, HIcons.close);
         expect(hit.width, greaterThanOrEqualTo(48));
         expect(hit.height, greaterThanOrEqualTo(48));
         expect(
@@ -287,7 +288,7 @@ void main() {
     await expectFitsInside(tester, drafts, capture: 'three_mixed_412');
     // The retry button of the failed upload is fully visible too.
     final failed = find.byKey(const ValueKey('attachment-card-s1'));
-    final retry = _buttonVisual(tester, failed, Icons.refresh_rounded);
+    final retry = _buttonVisual(tester, failed, HIcons.refresh_rounded);
     final viewport = tester.getRect(
       find.descendant(
         of: find.byKey(_stripKey),
@@ -382,10 +383,10 @@ void main() {
     );
     final first = find.byKey(const ValueKey('attachment-card-p1'));
     final failed = find.byKey(const ValueKey('attachment-card-s1'));
-    await tester.tapAt(_buttonVisual(tester, first, Icons.close).center);
-    await tester.tapAt(_buttonVisual(tester, failed, Icons.close).center);
+    await tester.tapAt(_buttonVisual(tester, first, HIcons.close).center);
+    await tester.tapAt(_buttonVisual(tester, failed, HIcons.close).center);
     await tester.tapAt(
-      _buttonVisual(tester, failed, Icons.refresh_rounded).center,
+      _buttonVisual(tester, failed, HIcons.refresh_rounded).center,
     );
     await tester.pump();
     expect(removed, ['p1', 's1']);

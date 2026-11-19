@@ -4,6 +4,7 @@
 /// size control).
 library;
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -64,7 +65,7 @@ class _SheetTitle extends StatelessWidget {
                 child: SizedBox.square(
                   dimension: 32,
                   child: Icon(
-                    Icons.close_rounded,
+                    HIcons.close_rounded,
                     size: 18,
                     color: p.textMuted,
                   ),
@@ -752,7 +753,7 @@ class _OptionRow extends StatelessWidget {
                 AnimatedOpacity(
                   opacity: selected ? 1 : 0,
                   duration: SoftMotion.of(context, SoftMotion.quick),
-                  child: Icon(Icons.check_rounded, size: 20, color: p.primary),
+                  child: Icon(HIcons.check_rounded, size: 20, color: p.primary),
                 ),
               ],
             ),
@@ -1209,7 +1210,7 @@ class _HiddenState extends State<_Hidden> {
                           tooltip: s.hwRemoveA11y(homeWidgetName(s, item.kind)),
                           onPressed: () => _after(() => widget.onRemove(item)),
                           icon: Icon(
-                            Icons.close_rounded,
+                            HIcons.close_rounded,
                             size: 18,
                             color: p.textMuted,
                           ),

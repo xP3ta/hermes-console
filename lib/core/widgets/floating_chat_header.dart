@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter/services.dart';
@@ -674,7 +675,7 @@ class FloatingHeaderButton extends StatelessWidget {
                 bottom: HermesSpace.x2,
                 child: IgnorePointer(
                   child: Icon(
-                    Icons.expand_more_rounded,
+                    HIcons.expand_more_rounded,
                     key: const ValueKey('floating-header-button-more'),
                     size: HermesSpace.x3,
                     color: on ? colors.accentText : chrome.mutedInk,

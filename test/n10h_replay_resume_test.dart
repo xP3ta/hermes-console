@@ -152,10 +152,19 @@ void main() {
     expect(r.marks()['runtime-1'], 5);
   });
 
+  // PARITY-SUBST (hunk 4): the 'truncated' control was «nothing replayed or
+  // live» (quarantine). Desktop never paints a truncated window, jumps the
+  // cursor to the server head and still dispatches the live frames newer than
+  // it (apps/shared/src/json-rpc-gateway.ts:620-631, 709-719, 724-742).
+  test('a truncated replay paints nothing of the window and the live stream '
+      'past the head goes on', () async {
+    final r = await _run(replay: [_row(5, 'd5')], truncated: true, latest: 5);
+    expect(r.seqs, [1, 2, 3, 4, 6], reason: 'window 5 skipped, live 6 kept');
+    expect(r.marks()['runtime-1'], 6);
+  });
+
   group('anything not proven contiguous keeps the quarantine', () {
     final controls = <String, Future<dynamic> Function()>{
-      'truncated': () =>
-          _run(replay: [_row(5, 'd5')], truncated: true, latest: 5),
       'other epoch': () =>
           _run(replay: [_row(5, 'd5')], epoch: 'epoch-b', latest: 5),
       'gap 5,7': () => _run(replay: [_row(5, 'd5'), _row(7, 'd7')]),

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -275,15 +276,15 @@ class _CategoryRow extends StatelessWidget {
   });
 
   static IconData _icon(SettingsSection section) => switch (section) {
-    SettingsSection.connection => Icons.dns_outlined,
-    SettingsSection.appearance => Icons.palette_outlined,
-    SettingsSection.chat => Icons.chat_bubble_outline_rounded,
-    SettingsSection.voice => Icons.mic_none_rounded,
-    SettingsSection.notifications => Icons.notifications_none_rounded,
-    SettingsSection.security => Icons.shield_outlined,
-    SettingsSection.system => Icons.settings_suggest_outlined,
-    SettingsSection.data => Icons.storage_rounded,
-    SettingsSection.about => Icons.info_outline_rounded,
+    SettingsSection.connection => HIcons.dns_outlined,
+    SettingsSection.appearance => HIcons.palette_outlined,
+    SettingsSection.chat => HIcons.chat_bubble_outline_rounded,
+    SettingsSection.voice => HIcons.mic_none_rounded,
+    SettingsSection.notifications => HIcons.notifications_none_rounded,
+    SettingsSection.security => HIcons.shield_outlined,
+    SettingsSection.system => HIcons.settings_suggest_outlined,
+    SettingsSection.data => HIcons.storage_rounded,
+    SettingsSection.about => HIcons.info_outline_rounded,
   };
 
   @override

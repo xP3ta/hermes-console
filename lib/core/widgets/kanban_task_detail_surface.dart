@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import '../services/notifications/notification_strings.dart'
     show resolveNotificationLang;
 
@@ -173,7 +174,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       if (detail.runs.isNotEmpty && widget.onShowLog != null)
         HermesListRow(
           key: const ValueKey('kanban-task-log'),
-          icon: Icons.terminal_rounded,
+          icon: HIcons.terminal_rounded,
           title: s.kanbanUiWorkerLog,
           subtitle: s.kanbanUiWorkerLogHint,
           onTap: _busyAction == null
@@ -185,7 +186,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       if (detail.diagnostics.isNotEmpty)
         ..._collapsible(
           key: 'kanban-detail-diagnostics',
-          icon: Icons.health_and_safety_outlined,
+          icon: HIcons.health_and_safety_outlined,
           title: copy.diagnostics,
           count: detail.diagnostics.length,
           content: [
@@ -250,14 +251,14 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
             const SizedBox(height: HermesSpace.x3),
             HermesInlineNotice(
               key: const ValueKey('kanban-detail-block-reason'),
-              icon: Icons.warning_amber_rounded,
+              icon: HIcons.warning_amber_rounded,
               tone: HermesStatusTone.error,
               message: task.blockReason!,
             ),
           ] else if (detail.diagnostics.isNotEmpty) ...[
             const SizedBox(height: HermesSpace.x3),
             HermesInlineNotice(
-              icon: Icons.info_outline_rounded,
+              icon: HIcons.info_outline_rounded,
               tone: HermesStatusTone.warn,
               message:
                   '${detail.diagnostics.first.title}: '
@@ -268,7 +269,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
             const SizedBox(height: HermesSpace.x3),
             HermesInlineNotice(
               key: const ValueKey('kanban-detail-read-only'),
-              icon: Icons.lock_outline_rounded,
+              icon: HIcons.lock_outline_rounded,
               message: copy.readOnly,
             ),
           ],
@@ -282,7 +283,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                     child: HermesActionButton(
                       key: const ValueKey('kanban-task-edit'),
                       primary: true,
-                      icon: Icons.edit_outlined,
+                      icon: HIcons.edit_outlined,
                       label: s.kanbanEdit,
                       onPressed: widget.onEdit,
                     ),
@@ -293,7 +294,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                   Expanded(
                     child: HermesActionButton(
                       key: const ValueKey('kanban-task-move'),
-                      icon: Icons.swap_horiz_rounded,
+                      icon: HIcons.swap_horiz_rounded,
                       label: s.kanbanMove,
                       onPressed: widget.onMove,
                     ),
@@ -383,7 +384,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
             ),
             const SizedBox(width: 4),
             Icon(
-              open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              open ? HIcons.expand_less_rounded : HIcons.expand_more_rounded,
               size: 20,
               color: Theme.of(context).hermes.textSecondary,
             ),
@@ -420,7 +421,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     final links = detail.links;
     return _collapsible(
       key: 'kanban-detail-links',
-      icon: Icons.account_tree_outlined,
+      icon: HIcons.account_tree_outlined,
       title: copy.dependencies,
       count:
           links.parents.length +
@@ -470,7 +471,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     final s = Strings.of(context);
     return _collapsible(
       key: 'kanban-detail-children',
-      icon: Icons.checklist_rounded,
+      icon: HIcons.checklist_rounded,
       title: copy.childResults,
       count: children.length,
       content: [
@@ -504,7 +505,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     final canWrite = !widget.readOnly && widget.onAddComment != null;
     return _collapsible(
       key: 'kanban-detail-comments',
-      icon: Icons.forum_outlined,
+      icon: HIcons.forum_outlined,
       title: copy.comments,
       count: comments.length,
       content: [
@@ -562,7 +563,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                         dimension: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.send_rounded),
+                    : const Icon(HIcons.send_rounded),
               ),
             ),
             onSubmitted: (_) => _submitComment(),
@@ -581,7 +582,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
     return [
       ..._collapsible(
         key: 'kanban-detail-attachments',
-        icon: Icons.attach_file_rounded,
+        icon: HIcons.attach_file_rounded,
         title: copy.attachments,
         count: attachments.length,
         content: [
@@ -612,7 +613,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                               'download-${attachment.id}',
                               () => widget.onDownloadAttachment!(attachment),
                             ),
-                      icon: const Icon(Icons.download_rounded, size: 19),
+                      icon: const Icon(HIcons.download_rounded, size: 19),
                     ),
                     if (canWrite && widget.onDeleteAttachment != null)
                       IconButton(
@@ -624,7 +625,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                               )
                             : null,
                         icon: Icon(
-                          Icons.delete_outline_rounded,
+                          HIcons.delete_outline_rounded,
                           size: 19,
                           color: colors.error,
                         ),
@@ -637,7 +638,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       if (canWrite && widget.onUploadAttachment != null)
         HermesListRow(
           key: const ValueKey('kanban-attachment-upload'),
-          icon: Icons.upload_file_rounded,
+          icon: HIcons.upload_file_rounded,
           title: copy.uploadAttachment,
           showChevron: false,
           onTap: _busyAction == null
@@ -654,7 +655,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
   ) {
     return _collapsible(
       key: 'kanban-detail-runs',
-      icon: Icons.play_circle_outline_rounded,
+      icon: HIcons.play_circle_outline_rounded,
       title: copy.runs,
       count: runs.length,
       content: [
@@ -674,7 +675,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                           'inspect-${run.id}',
                           () => widget.onInspectRun!(run),
                         ),
-                  icon: const Icon(Icons.monitor_heart_outlined, size: 19),
+                  icon: const Icon(HIcons.monitor_heart_outlined, size: 19),
                 ),
                 if (!widget.readOnly &&
                     run.endedAt == null &&
@@ -689,7 +690,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                           )
                         : null,
                     icon: Icon(
-                      Icons.stop_circle_outlined,
+                      HIcons.stop_circle_outlined,
                       size: 20,
                       color: colors.error,
                     ),
@@ -708,7 +709,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
   ) {
     return _collapsible(
       key: 'kanban-detail-events',
-      icon: Icons.history_rounded,
+      icon: HIcons.history_rounded,
       title: copy.activity,
       count: events.length,
       content: [
@@ -722,7 +723,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Icon(
-                    Icons.circle,
+                    HIcons.circle,
                     size: 6,
                     color: colors.textSecondary,
                   ),
@@ -780,7 +781,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       if (widget.onConfigureModel != null)
         HermesListRow(
           key: const ValueKey('kanban-model-override'),
-          icon: Icons.memory_rounded,
+          icon: HIcons.memory_rounded,
           title: copy.model,
           value: task.reasoningEffort?.isNotEmpty == true
               ? '$currentModel · ${task.reasoningEffort}'
@@ -791,7 +792,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       if (widget.onToggleNotifyWhenDone != null)
         HermesToggleRow(
           switchKey: const ValueKey('kanban-task-notify-done'),
-          icon: Icons.notifications_active_outlined,
+          icon: HIcons.notifications_active_outlined,
           title: copy.notifyWhenDone,
           value: widget.notifyWhenDone && !widget.notificationsMuted,
           onChanged: widget.notificationsMuted
@@ -801,7 +802,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       if (widget.onToggleNotificationsMuted != null)
         HermesToggleRow(
           switchKey: const ValueKey('kanban-task-mute-notifications'),
-          icon: Icons.notifications_off_outlined,
+          icon: HIcons.notifications_off_outlined,
           title: copy.muteNotifications,
           subtitle: copy.muteNotificationsSub,
           value: widget.notificationsMuted,
@@ -811,14 +812,14 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
         if (widget.onReassign != null)
           HermesListRow(
             key: const ValueKey('kanban-task-reassign'),
-            icon: Icons.person_search_outlined,
+            icon: HIcons.person_search_outlined,
             title: copy.reassign,
             onTap: canAct ? () => _run('reassign', widget.onReassign!) : null,
           ),
         if (task.status == 'running' && widget.onReclaim != null)
           HermesListRow(
             key: const ValueKey('kanban-task-reclaim'),
-            icon: Icons.restart_alt_rounded,
+            icon: HIcons.restart_alt_rounded,
             title: copy.reclaim,
             showChevron: false,
             onTap: canAct ? () => _run('reclaim', widget.onReclaim!) : null,
@@ -826,7 +827,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
         if (task.status == 'triage' && widget.onSpecify != null)
           HermesListRow(
             key: const ValueKey('kanban-task-specify'),
-            icon: Icons.auto_fix_high_outlined,
+            icon: HIcons.auto_fix_high_outlined,
             title: copy.specify,
             showChevron: false,
             onTap: canAct ? () => _run('specify', widget.onSpecify!) : null,
@@ -834,7 +835,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
         if (task.status == 'triage' && widget.onDecompose != null)
           HermesListRow(
             key: const ValueKey('kanban-task-decompose'),
-            icon: Icons.account_tree_outlined,
+            icon: HIcons.account_tree_outlined,
             title: copy.decompose,
             showChevron: false,
             onTap: canAct ? () => _run('decompose', widget.onDecompose!) : null,
@@ -849,7 +850,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       if (task.status != 'archived' && widget.onArchive != null)
         HermesListRow(
           key: const ValueKey('kanban-task-archive'),
-          icon: Icons.archive_outlined,
+          icon: HIcons.archive_outlined,
           title: s.kanbanArchive,
           showChevron: false,
           onTap: widget.onArchive,
@@ -857,7 +858,7 @@ class _KanbanTaskDetailSurfaceState extends State<KanbanTaskDetailSurface> {
       if (widget.onDelete != null)
         HermesListRow(
           key: const ValueKey('kanban-task-delete-permanent'),
-          icon: Icons.delete_forever_outlined,
+          icon: HIcons.delete_forever_outlined,
           title: s.kanbanDeletePermanent,
           destructive: true,
           showChevron: false,

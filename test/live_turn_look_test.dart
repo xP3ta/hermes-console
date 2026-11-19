@@ -8,6 +8,7 @@ import 'package:hermes_android/core/widgets/chat/turn_step_cards.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // The live turn's look approved on 9 nov 2026 (mock turno3.html, with
 // the reinforced connector): the «Trabajando» card, a window of at most four
@@ -173,8 +174,8 @@ void main() {
       // three done rows with a ring-check, the one in hand with a spinner
       expect(find.byKey(const ValueKey('live-ring-check')), findsNWidgets(3));
       expect(find.byKey(const ValueKey('live-ring-spinner')), findsWidgets);
-      expect(find.byIcon(Icons.check_circle), findsNothing);
-      expect(find.byIcon(Icons.check_circle_rounded), findsNothing);
+      expect(find.byIcon(HIcons.check_circle), findsNothing);
+      expect(find.byIcon(HIcons.check_circle_rounded), findsNothing);
     });
 
     testWidgets('each row has the glyph of its kind of tool', (tester) async {
@@ -421,7 +422,7 @@ void main() {
     });
   });
 
-  testWidgets('a settled turn keeps its one line, with ring and check', (
+  testWidgets('a settled turn keeps its one quiet line, without ring or check', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -445,6 +446,18 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 1));
     expect(find.byKey(const ValueKey('live-turn-window')), findsNothing);
-    expect(find.byKey(const ValueKey('live-ring-check')), findsOneWidget);
+    expect(find.byKey(const ValueKey('live-ring-check')), findsNothing);
+    final line = find.byKey(const ValueKey('chat-inline-activity'));
+    expect(line, findsOneWidget);
+    expect(
+      find.descendant(of: line, matching: find.text('·')),
+      findsOneWidget,
+      reason: 'the small lead of the quiet line',
+    );
+    expect(tester.getSize(line).height, 32);
+    final text = tester.widget<Text>(
+      find.byKey(const ValueKey('chat-inline-activity-text')),
+    );
+    expect(text.style?.fontSize, 13);
   });
 }

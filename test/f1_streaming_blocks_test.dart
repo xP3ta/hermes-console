@@ -1,4 +1,4 @@
-// F1 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §2.3.6-8, §2.4): the
+// F1 of the fluidity plan: the
 // closed prefix of a live answer is a list of blocks projected once each,
 // and the code still being written is drawn plain, whole, and highlighted
 // once its fence closes. Work counted, not milliseconds.

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -771,7 +772,7 @@ class IslandEventTileState extends State<IslandEventTile> {
                     Padding(
                       padding: const EdgeInsetsDirectional.only(start: 2),
                       child: Icon(
-                        Icons.expand_more_rounded,
+                        HIcons.expand_more_rounded,
                         key: const ValueKey('island-event-opens'),
                         size: 18,
                         color: colors.textSecondary,
@@ -864,11 +865,11 @@ bool _fitsOneLine(
 }
 
 IconData _toneIcon(IslandTone tone) => switch (tone) {
-  IslandTone.info => Icons.info_outline_rounded,
-  IslandTone.success => Icons.check_rounded,
-  IslandTone.warning => Icons.warning_amber_rounded,
-  IslandTone.error => Icons.error_outline_rounded,
-  IslandTone.needsYou => Icons.help_outline_rounded,
+  IslandTone.info => HIcons.info_outline_rounded,
+  IslandTone.success => HIcons.check_rounded,
+  IslandTone.warning => HIcons.warning_amber_rounded,
+  IslandTone.error => HIcons.error_outline_rounded,
+  IslandTone.needsYou => HIcons.help_outline_rounded,
 };
 
 class _EventDisc extends StatelessWidget {
@@ -1021,7 +1022,7 @@ class _EventDismiss extends StatelessWidget {
         child: SizedBox.square(
           dimension: extent,
           child: Icon(
-            Icons.close_rounded,
+            HIcons.close_rounded,
             size: 18,
             color: colors.textSecondary,
           ),
@@ -1923,8 +1924,8 @@ class _IslandRest extends StatelessWidget {
               const SizedBox(width: 3),
               Icon(
                 open
-                    ? Icons.keyboard_arrow_up_rounded
-                    : Icons.keyboard_arrow_down_rounded,
+                    ? HIcons.keyboard_arrow_up_rounded
+                    : HIcons.keyboard_arrow_down_rounded,
                 key: const ValueKey('island-chevron'),
                 size: 18,
                 color: chrome.mutedInk,

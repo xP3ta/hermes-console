@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -345,6 +346,11 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
       if (kind == ArtifactViewerKind.image) {
         final bytes = await gateway.readProjectFileBytes(entry.path);
         show = () => _pushViewer(entry.name, 'image/*', bytes, bytes.length);
+      } else if (kind == ArtifactViewerKind.pdf ||
+          kind == ArtifactViewerKind.model3d) {
+        // Shown whole by their own viewers; the kind comes from the name.
+        final bytes = await gateway.readProjectFileBytes(entry.path);
+        show = () => _pushViewer(entry.name, '', bytes, bytes.length);
       } else {
         final preview = await gateway.readProjectFileText(entry.path);
         if (preview.binary) {
@@ -620,21 +626,21 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
           HermesAction(
             key: const ValueKey('pw1215-add-folder'),
             value: _WriteKind.folder,
-            icon: Icons.create_new_folder_outlined,
+            icon: HIcons.create_new_folder_outlined,
             label: strings.pw1215NewFolder,
           ),
         if (controller.canWrite(ProjectFileWriteAction.writeText))
           HermesAction(
             key: const ValueKey('pw1215-add-file'),
             value: _WriteKind.file,
-            icon: Icons.note_add_outlined,
+            icon: HIcons.note_add_outlined,
             label: strings.pw1215NewFile,
           ),
         if (controller.canWrite(ProjectFileWriteAction.upload))
           HermesAction(
             key: const ValueKey('pw1215-add-upload'),
             value: _WriteKind.upload,
-            icon: Icons.upload_file_outlined,
+            icon: HIcons.upload_file_outlined,
             label: strings.pw1215Upload,
           ),
       ],
@@ -662,14 +668,14 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
         HermesAction(
           key: const ValueKey('pw1215-entry-copy-path'),
           value: 'copy',
-          icon: Icons.copy_rounded,
+          icon: HIcons.copy_rounded,
           label: strings.pj1215MenuCopyPath,
         ),
         if (widget.controller.canWrite(ProjectFileWriteAction.delete))
           HermesAction(
             key: const ValueKey('pw1215-entry-delete'),
             value: 'delete',
-            icon: Icons.delete_outline_rounded,
+            icon: HIcons.delete_outline_rounded,
             label: strings.commonDelete,
             destructive: true,
           ),
@@ -790,7 +796,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
                       Navigator.of(sheetContext).pop();
                     }
                   },
-                  icon: const Icon(Icons.copy_rounded, size: 18),
+                  icon: const Icon(HIcons.copy_rounded, size: 18),
                   label: Text(strings.pj1215MenuCopyPath),
                 ),
               ],
@@ -812,7 +818,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
     if (controller.unsupported) {
       return _FilesNotice(
         key: const ValueKey('pf1215-fs-unsupported'),
-        icon: Icons.folder_off_outlined,
+        icon: HIcons.folder_off_outlined,
         message: strings.pf1215FilesUnsupported,
       );
     }
@@ -826,12 +832,12 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
       children.add(
         _FilesNotice(
           key: const ValueKey('pf1215-fs-error'),
-          icon: Icons.cloud_off_outlined,
+          icon: HIcons.cloud_off_outlined,
           message: widget.failureText(failure),
           action: OutlinedButton.icon(
             key: const ValueKey('pf1215-fs-retry'),
             onPressed: controller.refresh,
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(HIcons.refresh_rounded),
             label: Text(strings.commonRetry),
           ),
         ),
@@ -847,7 +853,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
       children.add(
         _FilesNotice(
           key: const ValueKey('pf1215-fs-error'),
-          icon: Icons.folder_off_outlined,
+          icon: HIcons.folder_off_outlined,
           message: switch (listing.error) {
             'EACCES' => strings.pf1215FolderNoPermission,
             'ENOENT' => strings.pf1215FolderMissing,
@@ -859,7 +865,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
       children.add(
         _FilesNotice(
           key: const ValueKey('pf1215-fs-empty'),
-          icon: Icons.folder_open_outlined,
+          icon: HIcons.folder_open_outlined,
           message: strings.pf1215FolderEmpty,
         ),
       );
@@ -873,7 +879,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
                 key: ValueKey('pf1215-fs-entry-${entry.path}'),
                 leading: Icon(
                   entry.isDirectory
-                      ? Icons.folder_rounded
+                      ? HIcons.folder_rounded
                       : projectFileIcon(entry.name),
                   size: 20,
                   color: entry.isDirectory
@@ -947,7 +953,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
                       : () => unawaited(_openAddMenu()),
                   icon: KeyedSubtree(
                     key: _addAnchor,
-                    child: const Icon(Icons.add_rounded),
+                    child: const Icon(HIcons.add_rounded),
                   ),
                 ),
         ],
@@ -985,7 +991,7 @@ class _Breadcrumbs extends StatelessWidget {
                 for (var i = 0; i < crumbs.length; i++) ...[
                   if (i > 0)
                     Icon(
-                      Icons.chevron_right_rounded,
+                      HIcons.chevron_right_rounded,
                       size: 16,
                       color: colors.textDisabled,
                     ),
@@ -1091,7 +1097,7 @@ class _EntryMenuButtonState extends State<_EntryMenuButton> {
     icon: KeyedSubtree(
       key: _anchor,
       child: Icon(
-        Icons.more_vert_rounded,
+        HIcons.more_vert_rounded,
         size: 20,
         color: Theme.of(context).hermes.textSecondary,
       ),
@@ -1293,7 +1299,7 @@ class _ServerFolderPickerState extends State<_ServerFolderPicker> {
                 onPressed: usable
                     ? () => Navigator.of(context).pop(controller.path)
                     : null,
-                icon: const Icon(Icons.check_rounded),
+                icon: const Icon(HIcons.check_rounded),
                 label: Text(strings.pc1215PickFolderUse),
               );
             },

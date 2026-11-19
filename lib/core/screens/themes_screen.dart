@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -333,7 +334,7 @@ class _ThemesScreenState extends State<ThemesScreen> {
           for (final profile in profiles)
             ListTile(
               leading: Icon(
-                Icons.palette_outlined,
+                HIcons.palette_outlined,
                 color: ThemeProfileAdapter.colorsFromProfile(profile).accent,
               ),
               title: Text(profile.name),
@@ -405,13 +406,13 @@ class _ThemesScreenState extends State<ThemesScreen> {
             key: const Key('themes_create'),
             tooltip: Strings.of(context).themesCreate,
             onPressed: _busy ? null : () => _createTheme(snapshot),
-            icon: const Icon(Icons.add_rounded),
+            icon: const Icon(HIcons.add_rounded),
           ),
           IconButton(
             key: const Key('themes_import'),
             tooltip: Strings.of(context).themesImport,
             onPressed: _busy ? null : _importTheme,
-            icon: const Icon(Icons.file_download_outlined),
+            icon: const Icon(HIcons.file_download_outlined),
           ),
         ],
       ),
@@ -429,7 +430,7 @@ class _ThemesScreenState extends State<ThemesScreen> {
           if (snapshot.customProfiles.isEmpty)
             HermesInfoBanner(
               Strings.of(context).themesEmptyCustom,
-              icon: Icons.palette_outlined,
+              icon: HIcons.palette_outlined,
             )
           else
             _customGrid(snapshot.customProfiles, snapshot.activeProfileId),
@@ -517,7 +518,7 @@ class _Intro extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.check_rounded, size: 16, color: colors.accent),
+              Icon(HIcons.check_rounded, size: 16, color: colors.accent),
               const SizedBox(width: 7),
               Expanded(
                 child: Text.rich(
@@ -606,7 +607,7 @@ class _ThemeFamilyRow extends StatelessWidget {
         if (light != null)
           _ThemeModeButton(
             key: ValueKey('$section-theme-$family-light'),
-            icon: Icons.light_mode_outlined,
+            icon: HIcons.light_mode_outlined,
             label: Strings.of(context).themesLightChoice,
             showLabel: showLabels,
             selected: !auto && activeId == light.id,
@@ -616,7 +617,7 @@ class _ThemeFamilyRow extends StatelessWidget {
         if (dark != null)
           _ThemeModeButton(
             key: ValueKey('$section-theme-$family-dark'),
-            icon: Icons.dark_mode_outlined,
+            icon: HIcons.dark_mode_outlined,
             label: Strings.of(context).themesDarkChoice,
             showLabel: showLabels,
             selected: !auto && activeId == dark.id,
@@ -626,7 +627,7 @@ class _ThemeFamilyRow extends StatelessWidget {
           const SizedBox(width: 4),
           _ThemeModeButton(
             key: ValueKey('$section-theme-$family-auto'),
-            icon: Icons.brightness_auto_outlined,
+            icon: HIcons.brightness_auto_outlined,
             label: Strings.of(context).themesAutoChoice,
             showLabel: showLabels,
             selected: auto,
@@ -898,7 +899,7 @@ class _CustomThemeCard extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Icon(
-                    Icons.check_rounded,
+                    HIcons.check_rounded,
                     size: 19,
                     color: appColors.accent,
                   ),

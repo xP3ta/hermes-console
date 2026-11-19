@@ -18,6 +18,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/dock.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _wrap(Widget child) => MaterialApp(
   locale: const Locale('en'),
@@ -153,12 +154,12 @@ void main() {
             DockCreateOrbit(
               controlKey: ValueKey('bot-mode-create-bot'),
               label: 'Bot',
-              icon: Icons.smart_toy_outlined,
+              icon: HIcons.smart_toy_outlined,
             ),
             DockCreateOrbit(
               controlKey: ValueKey('bot-mode-create-room'),
               label: 'Room',
-              icon: Icons.groups_2_outlined,
+              icon: HIcons.groups_2_outlined,
             ),
           ],
         ),

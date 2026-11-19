@@ -6606,7 +6606,9 @@ void main() {
         ),
         isFalse,
       );
-      expect(chat.messages.any((message) => message['id'] == 121), isFalse);
+      // Hermes Desktop parity (transcript-backfill.ts mergeOverlappingTail):
+      // a view row without a stored id never vetoes the durable page.
+      expect(chat.messages.any((message) => message['id'] == 121), isTrue);
       expect(chat.messages.any((message) => message['id'] == 120), isTrue);
     },
   );
@@ -6637,7 +6639,8 @@ void main() {
         ),
         isFalse,
       );
-      expect(chat.messages.any((message) => message['id'] == 121), isFalse);
+      // Hermes Desktop parity: the page enters (see the test above).
+      expect(chat.messages.any((message) => message['id'] == 121), isTrue);
       expect(chat.messages.any((message) => message['id'] == 120), isTrue);
     },
   );

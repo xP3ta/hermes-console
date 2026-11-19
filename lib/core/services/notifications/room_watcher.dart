@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../bots/data/bot_mode_repository.dart';
 import '../../bots/ui/room/room_prefs.dart';
 import '../../models/hosted_groups.dart';
+import '../tui_gateway_client.dart' show roomLocalReadFailure;
 import '../../models/room_member_status.dart' show roomMessageNeedsYou;
 
 /// What the watcher decided for one room tick.
@@ -745,6 +746,64 @@ class RoomWatcher {
     return results.cast<R>();
   }
 
+  /// One room's reads of a pass: `groups.state`, and the log past the stored
+  /// cursor when the server says there is something new.
+  Future<
+    ({
+      RoomWatchState? previous,
+      ({HostedGroupRoom room, RoomDriverStatus? driverStatus}) state,
+      List<HostedGroupEvent> events,
+      int latest,
+    })
+  >
+  _readWatched(
+    BotModeGateway gateway,
+    Map<String, Object?> all,
+    HostedGroupRoom listed,
+    GroupsCapabilities caps,
+  ) async {
+    final previousRaw = all[roomKey(connId, listed)];
+    final previous = previousRaw == null
+        ? null
+        : RoomWatchState.fromJson(previousRaw);
+    // Quiet rooms cost one `groups.state`; the log is read only when
+    // the server says there is something past our cursor.
+    final state = await gateway.groupState(
+      listed.roomId,
+      generation: caps.generation,
+    );
+    final room = state.room;
+    var events = <HostedGroupEvent>[];
+    var latest = room.latestSeq;
+    if (previous != null && room.latestSeq > previous.cursor) {
+      var since = previous.cursor;
+      for (var page = 0; page < maxPagesPerTick; page++) {
+        final log = await gateway.groupLog(
+          room.roomId,
+          sinceSeq: since,
+          limit: pageLimit,
+          generation: caps.generation,
+        );
+        events.addAll(log.events);
+        final stalled = log.cursor <= since;
+        since = log.cursor;
+        // Complete read: adopt the head. Partial: the next tick resumes
+        // from the cursor we actually reached.
+        latest = log.hasMore && !stalled ? log.cursor : log.latestSeq;
+        if (!log.hasMore || stalled) break;
+      }
+    } else if (previous != null && room.latestSeq < previous.cursor) {
+      // Authority rotated or the log rewound: rebaseline silently.
+      events = [];
+    }
+    return (
+      previous: previous,
+      state: state,
+      events: events,
+      latest: latest,
+    );
+  }
+
   /// One incremental pass. Returns false when skipped by backoff or failed.
   Future<bool> tick(BotModeGateway gateway) async {
     if (!allowsAttempt) return false;
@@ -752,67 +811,66 @@ class RoomWatcher {
     final roomPrefs = SharedPreferencesRoomPrefs(prefs);
     var working = false;
     try {
-      final caps = await gateway.groupCapabilities();
+      final GroupsCapabilities caps;
+      try {
+        caps = await gateway.groupCapabilities();
+      } catch (error) {
+        if (!isGroupsUnsupported(error)) rethrow;
+        // A server without rooms: wait the long delay, not the failure
+        // backoff (diagnostic H2f).
+        _failures = 0;
+        _retryAt = _now().add(maxDelay);
+        return false;
+      }
       if (!caps.methods.contains(GroupMethod.state) ||
           !caps.methods.contains(GroupMethod.log)) {
         _failures = 0;
         _retryAt = _now().add(maxDelay);
         return false;
       }
-      final rooms = (await gateway.listGroups(
+      // A row Console cannot read is kept apart, not a failed pass: the
+      // other rooms are still watched (review §7.3).
+      final listing = await botModeListing(
+        gateway,
         generation: caps.generation,
-      )).where((r) => !r.disbanded).take(maxRooms).toList();
+      );
+      final rooms = listing.rooms
+          .where((r) => !r.disbanded)
+          .take(maxRooms)
+          .toList();
       final seen = <String>{};
+      // Rooms this pass could not read keep their stored state (cursor,
+      // pending approvals): dropping it would silently re-baseline them and
+      // lose the notices of whatever happened meanwhile.
+      final unreadableIds = {
+        for (final row in listing.unreadable) ?row.roomId,
+      };
+      for (final key in all.keys) {
+        if (key.startsWith('$connId|') &&
+            unreadableIds.any((id) => key.endsWith(':$id'))) {
+          seen.add(key);
+        }
+      }
       final views = <RoomWatchView>[];
       // Network reads per room are independent: run them a few rooms at a
       // time. Decisions, claims and notifications stay serial and in order.
       final reads = await _boundedMap(rooms, readConcurrency, (listed) async {
-        final previousRaw = all[roomKey(connId, listed)];
-        final previous = previousRaw == null
-            ? null
-            : RoomWatchState.fromJson(previousRaw);
-        // Quiet rooms cost one `groups.state`; the log is read only when
-        // the server says there is something past our cursor.
-        final state = await gateway.groupState(
-          listed.roomId,
-          generation: caps.generation,
-        );
-        final room = state.room;
-        var events = <HostedGroupEvent>[];
-        var latest = room.latestSeq;
-        if (previous != null && room.latestSeq > previous.cursor) {
-          var since = previous.cursor;
-          for (var page = 0; page < maxPagesPerTick; page++) {
-            final log = await gateway.groupLog(
-              room.roomId,
-              sinceSeq: since,
-              limit: pageLimit,
-              generation: caps.generation,
-            );
-            events.addAll(log.events);
-            final stalled = log.cursor <= since;
-            since = log.cursor;
-            // Complete read: adopt the head. Partial: the next tick resumes
-            // from the cursor we actually reached.
-            latest = log.hasMore && !stalled ? log.cursor : log.latestSeq;
-            if (!log.hasMore || stalled) break;
-          }
-        } else if (previous != null && room.latestSeq < previous.cursor) {
-          // Authority rotated or the log rewound: rebaseline silently.
-          events = [];
+        try {
+          return await _readWatched(gateway, all, listed, caps);
+        } catch (error) {
+          // This room's own failure (its server error, data Console
+          // rejects) skips it for this pass; the connection's fails it all.
+          if (roomLocalReadFailure(error) == null) rethrow;
+          return null;
         }
-        return (
-          previous: previous,
-          state: state,
-          events: events,
-          latest: latest,
-        );
       });
       for (var index = 0; index < rooms.length; index++) {
         final listed = rooms[index];
         final key = roomKey(connId, listed);
         seen.add(key);
-        final (:previous, :state, :events, :latest) = reads[index];
+        final read = reads[index];
+        if (read == null) continue;
+        final (:previous, :state, :events, :latest) = read;
         final room = state.room;
         final level = await roomPrefs.notificationLevel(prefsRoomKey(room));
         final decision = decideRoomNotices(

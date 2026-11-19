@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/app_localizations.dart';
@@ -123,25 +124,25 @@ Future<RoomMenuAction?> showRoomOverflowMenu(
           children: [
             row(
               RoomMenuAction.members,
-              Icons.group_outlined,
+              HIcons.group_outlined,
               s.roomMenuMembers,
               subtitle: s.roomMenuMembersSubtitle(memberCount),
             ),
             row(
               RoomMenuAction.threads,
-              Icons.forum_outlined,
+              HIcons.forum_outlined,
               s.roomMenuThreads,
               trailing: '$threadCount',
             ),
             row(
               RoomMenuAction.files,
-              Icons.attach_file_rounded,
+              HIcons.attach_file_rounded,
               s.roomMenuFiles,
               trailing: '$fileCount',
             ),
             row(
               RoomMenuAction.activity,
-              Icons.receipt_long_outlined,
+              HIcons.receipt_long_outlined,
               s.roomMenuActivity,
               subtitle: s.roomMenuActivitySubtitle,
             ),
@@ -149,27 +150,27 @@ Future<RoomMenuAction?> showRoomOverflowMenu(
             // notifications: the level is always offered.
             row(
               RoomMenuAction.notifications,
-              Icons.notifications_none_rounded,
+              HIcons.notifications_none_rounded,
               s.roomMenuNotifications,
               trailing: level(notifications),
             ),
             if (!readOnly) ...[
               row(
                 RoomMenuAction.settings,
-                Icons.tune_rounded,
+                HIcons.tune_rounded,
                 s.roomMenuSettings,
                 subtitle: s.roomMenuSettingsSubtitle,
               ),
               if (canStop)
                 row(
                   RoomMenuAction.stop,
-                  Icons.stop_circle_outlined,
+                  HIcons.stop_circle_outlined,
                   s.roomMenuStop,
                 ),
               if (canDisband)
                 row(
                   RoomMenuAction.disband,
-                  Icons.block_rounded,
+                  HIcons.block_rounded,
                   s.roomMenuDisband,
                   destructive: true,
                 ),
@@ -219,27 +220,27 @@ Future<void> showRoomActivitySheet(
                   final name = roomSpeakerName(member, null, profile);
                   final (icon, color, text) = switch (item.kind) {
                     RoomActivityKind.passed => (
-                      Icons.redo_rounded,
+                      HIcons.redo_rounded,
                       colors.textSecondary,
                       s.roomActivityPassedLine(name),
                     ),
                     RoomActivityKind.failed => (
-                      Icons.error_outline_rounded,
+                      HIcons.error_outline_rounded,
                       colors.error,
                       s.roomActivityFailedLine(name),
                     ),
                     RoomActivityKind.cancelled => (
-                      Icons.cancel_outlined,
+                      HIcons.cancel_outlined,
                       colors.textSecondary,
                       s.roomActivityCancelledLine(name),
                     ),
                     RoomActivityKind.deferred => (
-                      Icons.schedule_rounded,
+                      HIcons.schedule_rounded,
                       colors.warning,
                       s.roomActivityDeferredLine(name),
                     ),
                     RoomActivityKind.stopRequested => (
-                      Icons.stop_circle_outlined,
+                      HIcons.stop_circle_outlined,
                       colors.textSecondary,
                       s.roomActivityStopLine,
                     ),
@@ -381,7 +382,7 @@ Future<String?> showRoomThreadsSheet(
                 for (final thread in threads)
                   HermesListRow(
                     key: ValueKey('room-thread-${thread.threadId}'),
-                    icon: Icons.forum_outlined,
+                    icon: HIcons.forum_outlined,
                     title: parseRoomMessageText(
                       thread.root.publicText ?? '',
                     ).text.replaceAll('\n', ' '),
@@ -465,7 +466,7 @@ Future<RoomNotificationLevel?> showRoomNotificationsSheet(
             selected: level == current,
             trailing: level == current
                 ? Icon(
-                    Icons.check_rounded,
+                    HIcons.check_rounded,
                     color: Theme.of(sheet).hermes.accent,
                   )
                 : null,
@@ -522,7 +523,7 @@ Future<String?> showRoomSettingsSheet(
                 decoration: InputDecoration(labelText: s.roomSettingsName),
               ),
               HermesListRow(
-                icon: Icons.image_outlined,
+                icon: HIcons.image_outlined,
                 title: s.roomSettingsPicture,
                 subtitle: s.roomSettingsPictureReadOnly,
                 padding: EdgeInsets.zero,
@@ -530,7 +531,7 @@ Future<String?> showRoomSettingsSheet(
               if (onCompress != null && localMembers.isNotEmpty)
                 HermesListRow(
                   key: const ValueKey('room-settings-compress'),
-                  icon: Icons.compress_rounded,
+                  icon: HIcons.compress_rounded,
                   title: s.roomCompressHistory,
                   subtitle: compressing
                       ? s.roomCompressing

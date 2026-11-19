@@ -257,6 +257,29 @@ El texto completo y los avisos de copyright están en
 `assets/fonts/OFL.txt`; también aparecen dentro de la app en **Ajustes → Acerca
 de → Licencias open source**.
 
+## Visores de diagramas y de modelos 3D
+
+Los diagramas Mermaid y los modelos 3D (`.glb`, `.gltf`) se dibujan en el
+dispositivo con dos librerías empaquetadas sin modificar en `assets/viewers/`;
+no se descarga nada en runtime y la página que las usa no puede hacer ninguna
+petición de red.
+
+- **Mermaid 11.17.2** (`mermaid.min.js`), licencia MIT, texto en
+  `assets/viewers/mermaid-LICENSE.txt`. Incluye sus dependencias (d3,
+  dagre-d3-es, cytoscape, katex, DOMPurify y otras, bajo MIT, ISC, BSD o
+  Apache-2.0/MPL-2.0).
+- **model-viewer 4.4.0** de Google (`model-viewer-umd.min.js`), licencia
+  Apache 2.0, texto en `assets/viewers/model-viewer-LICENSE.txt`. Incluye
+  three.js (MIT), lit (BSD-3-Clause), fflate (MIT) y gainmap-js (MIT).
+
+## Iconos
+
+Los iconos de la app son un subconjunto de Material Symbols Rounded, de Google
+(Apache License 2.0), empaquetado localmente en
+`assets/fonts/HermesSymbols.ttf` y `assets/fonts/HermesSymbolsFilled.ttf`. El
+texto de la licencia está en `assets/fonts/MaterialSymbols-LICENSE.txt` y
+dentro de la app en **Ajustes → Acerca de → Licencias open source**.
+
 Dependencias de desarrollo (no se distribuyen en el APK): flutter_test,
 flutter_lints, build_runner, json_serializable, sqflite_common_ffi,
 webview_flutter_platform_interface, url_launcher_platform_interface,

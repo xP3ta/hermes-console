@@ -1770,7 +1770,11 @@ void main() {
     expect(second.messagesNewestFirst, first.messagesNewestFirst);
   });
 
-  test('retains inflight without a durable turn identity', () {
+  // Desktop adds no `user-inflight` row when the latest stored user run
+  // already holds the running prompt's text (use-session-actions/utils.ts:
+  // 1007-1014): the producer stores the prompt when it accepts it
+  // (tui_gateway/methods_prompt.py:646), so that row is this turn's.
+  test('the newest stored prompt with the same text is the running prompt', () {
     final result = reconciler.project(
       snapshot({
         'session_id': 'runtime-dedup',
@@ -1787,7 +1791,7 @@ void main() {
       result.messagesNewestFirst
           .where((message) => message['role'] == 'user')
           .map((message) => message['content']),
-      ['mismo turno', 'mismo turno'],
+      ['mismo turno'],
     );
     expect(
       result.messagesNewestFirst.where(
@@ -1795,7 +1799,7 @@ void main() {
             message['role'] == 'user' &&
             message['_desktopSnapshotKind'] == 'inflight',
       ),
-      isNotEmpty,
+      isEmpty,
     );
   });
 
@@ -1837,7 +1841,9 @@ void main() {
     },
   );
 
-  test('preserva un reenvío idéntico sin identidad de turno inflight', () {
+  // Same rule (utils.ts:1007-1014): the newest stored user row holds the
+  // running prompt's text, so it is painted once, with the live reply.
+  test('un reenvío idéntico que la fila más nueva ya guarda se pinta una vez', () {
     final result = reconciler.project(
       snapshot({
         'session_id': 'runtime-repeated-cancelled-prompt',
@@ -1861,12 +1867,11 @@ void main() {
     final chronological = result.messagesNewestFirst.reversed.toList();
     expect(chronological.map((message) => message['content']), [
       'mismo prompt',
-      'mismo prompt',
       'respuesta viva de B',
     ]);
     expect(
       chronological.where((message) => message['role'] == 'user'),
-      hasLength(2),
+      hasLength(1),
     );
   });
 

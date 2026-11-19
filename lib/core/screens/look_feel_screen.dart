@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,8 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../characters/bot_motion.dart';
 import '../feedback/haptics.dart';
+import '../services/drawer_swipe_prefs.dart';
+import '../services/font_size_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/hermes_tokens.dart';
 import '../theme/look_feel.dart';
@@ -14,6 +17,7 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_theme_reveal.dart';
 import '../widgets/hermes_ui.dart';
+import '../widgets/text_size_control.dart';
 import '../widgets/theme_color_picker.dart';
 import 'themes_screen.dart';
 
@@ -30,6 +34,7 @@ class LookFeelScreen extends StatefulWidget {
     this.prefsForTesting,
     this.fontIdForTesting,
     this.onFontForTesting,
+    this.fontSizeForTesting,
   });
 
   /// Tests drive the screen without a running [HermesApp].
@@ -39,6 +44,8 @@ class LookFeelScreen extends StatefulWidget {
   final ValueNotifier<String>? fontIdForTesting;
   @visibleForTesting
   final Future<void> Function(String id)? onFontForTesting;
+  @visibleForTesting
+  final FontSizeService? fontSizeForTesting;
 
   @override
   State<LookFeelScreen> createState() => _LookFeelScreenState();
@@ -71,6 +78,8 @@ class _LookFeelScreenState extends State<LookFeelScreen> {
 
   ValueNotifier<String> get _fontId =>
       widget.fontIdForTesting ?? _root?.fontId ?? _fallbackFont;
+
+  FontSizeService? get _fontSize => widget.fontSizeForTesting ?? _root?.fontSize;
 
   @override
   void dispose() {
@@ -129,6 +138,7 @@ class _LookFeelScreenState extends State<LookFeelScreen> {
         ?root?.themeProfiles,
         BotMotionPrefs.shared,
         HapticPrefs.shared,
+        DrawerSwipePrefs.shared,
         _fontId,
       ]),
       builder: (context, _) =>
@@ -274,6 +284,14 @@ class _LookFeelScreenState extends State<LookFeelScreen> {
                 ),
             ],
           ),
+          // The app's one text size control.
+          if (_fontSize case final fontSize?) ...[
+            const SizedBox(height: HermesSpace.x4),
+            TextSizeControl(
+              key: const ValueKey('lfl-text-size'),
+              service: fontSize,
+            ),
+          ],
           const SizedBox(height: HermesSpace.x4),
           HermesGroup(
             children: [
@@ -314,9 +332,25 @@ class _LookFeelScreenState extends State<LookFeelScreen> {
           const SizedBox(height: HermesSpace.x4),
           HermesGroup(
             children: [
+              Material(
+                type: MaterialType.transparency,
+                child: HermesSwitchTile(
+                  controlKey: const ValueKey('lfl-drawer-swipe'),
+                  title: strings.lflDrawerSwipeTitle,
+                  subtitle: strings.lflDrawerSwipeSubtitle,
+                  value: DrawerSwipePrefs.shared.enabled,
+                  onChanged: (value) =>
+                      unawaited(DrawerSwipePrefs.shared.setEnabled(value)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: HermesSpace.x4),
+          HermesGroup(
+            children: [
               HermesNavRow(
                 key: const ValueKey('lfl-more-themes'),
-                icon: Icons.palette_outlined,
+                icon: HIcons.palette_outlined,
                 title: strings.lflMoreThemes,
                 subtitle: strings.lflMoreThemesBody(AppTheme.presets.length),
                 onTap: _openMoreThemes,
@@ -488,10 +522,10 @@ class _AccentDot extends StatelessWidget {
               width: 20,
               height: 20,
               decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-              child: Icon(Icons.check_rounded, size: HermesIcon.md, color: ink),
+              child: Icon(HIcons.check_rounded, size: HermesIcon.md, color: ink),
             )
           : selected
-          ? Icon(Icons.check_rounded, size: HermesIcon.lg, color: ink)
+          ? Icon(HIcons.check_rounded, size: HermesIcon.lg, color: ink)
           : null,
     );
     return Semantics(
@@ -684,7 +718,7 @@ class _GroundCard extends StatelessWidget {
                       ),
                       if (selected)
                         Icon(
-                          Icons.check_rounded,
+                          HIcons.check_rounded,
                           size: HermesIcon.md,
                           color: colors.accentText,
                         ),
@@ -773,7 +807,7 @@ class _FontRow extends StatelessWidget {
                 if (selected) ...[
                   const SizedBox(width: HermesSpace.x3),
                   Icon(
-                    Icons.check_rounded,
+                    HIcons.check_rounded,
                     size: HermesIcon.lg,
                     color: colors.accentText,
                   ),

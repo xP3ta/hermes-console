@@ -316,6 +316,9 @@ Future<_Fixture> _mountBusy(
 
 Future<void> _type(WidgetTester tester, String text) async {
   await tester.enterText(find.byType(TextField).first, text);
+  // Focus stacks the controls under the text: build that frame, then let the
+  // animation finish.
+  await tester.pump();
   await tester.pump(const Duration(milliseconds: 250));
 }
 

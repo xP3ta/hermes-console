@@ -566,16 +566,23 @@ void main() {
   // default but the main one, the rail's face too.
   const names = ['default', 'console-builder', 'pi', 'studio-qa'];
 
-  /// Each badge stays inside its own chip (never over the next one) and
-  /// above the chip's name; nothing overflowed.
+  /// Each badge sits on its face's top corner and leans out of it by 10 dp:
+  /// 4 of them are the chip's own padding, the rest hangs over the padding of
+  /// the next chip; it stays above the chip's name and nothing overflowed.
   void expectBadgesClear(WidgetTester tester) {
+    const lean = 10.0;
+    const padding = 4.0;
     for (final name in names) {
       if (stripBadge(name).evaluate().isEmpty) continue;
       final badge = tester.getRect(stripBadge(name));
       final chip = tester.getRect(stripChip(name));
       final label = tester.getRect(stripName(name));
       expect(badge.left, greaterThanOrEqualTo(chip.left - 0.01), reason: name);
-      expect(badge.right, lessThanOrEqualTo(chip.right + 0.01), reason: name);
+      expect(
+        badge.right,
+        lessThanOrEqualTo(chip.right + (lean - padding) + 0.01),
+        reason: name,
+      );
       expect(badge.bottom, lessThanOrEqualTo(label.top + 0.01), reason: name);
     }
     expect(tester.takeException(), isNull);

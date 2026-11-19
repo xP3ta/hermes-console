@@ -1,5 +1,6 @@
 // Navegador SFTP sobre la conexión SSH: listar/navegar, descargar, subir y
 // borrar. Respeta el modo solo-lectura de la instancia. App Lock al entrar.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -137,14 +138,14 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
             ChatWorkspaceMenuEntry(
               key: const ValueKey('sftp-pane-menu-upload'),
               label: strings.sftpUpload,
-              icon: Icons.upload_file,
+              icon: HIcons.upload_file,
               onSelected: () => unawaited(_upload()),
             ),
           if (!_loading)
             ChatWorkspaceMenuEntry(
               key: const ValueKey('sftp-pane-menu-reload'),
               label: strings.commonReload,
-              icon: Icons.refresh,
+              icon: HIcons.refresh,
               onSelected: () => unawaited(_list()),
             ),
         ],
@@ -670,12 +671,12 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
                   IconButton(
                     key: const ValueKey('sftp-upload'),
                     tooltip: Strings.of(context).sftpUpload,
-                    icon: const Icon(Icons.upload_file),
+                    icon: const Icon(HIcons.upload_file),
                     onPressed: _busy ? null : _upload,
                   ),
                 IconButton(
                   tooltip: Strings.of(context).commonReload,
-                  icon: const Icon(Icons.refresh),
+                  icon: const Icon(HIcons.refresh),
                   onPressed: _loading ? null : _list,
                 ),
               ],
@@ -793,7 +794,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
                 child: Row(
                   children: [
                     Icon(
-                      Icons.folder_outlined,
+                      HIcons.folder_outlined,
                       size: HermesIcon.sm,
                       color: chrome.mutedInk,
                     ),
@@ -811,7 +812,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
                       Padding(
                         padding: const EdgeInsets.only(left: HermesSpace.x2),
                         child: Icon(
-                          Icons.lock_outline,
+                          HIcons.lock_outline,
                           size: HermesIcon.sm,
                           color: colors.warning,
                         ),
@@ -830,7 +831,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  Icons.arrow_upward,
+                  HIcons.arrow_upward,
                   size: HermesIcon.sm,
                   color: atRoot ? colors.textDisabled : chrome.ink,
                 ),
@@ -880,7 +881,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_upward, size: 18),
+            icon: const Icon(HIcons.arrow_upward, size: 18),
             tooltip: Strings.of(context).sftpUpLevel,
             onPressed: _path == '/' ? null : _goUp,
             visualDensity: VisualDensity.compact,
@@ -899,7 +900,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
           if (_readOnly)
             Padding(
               padding: const EdgeInsets.only(left: 6),
-              child: Icon(Icons.lock_outline, size: 15, color: colors.warning),
+              child: Icon(HIcons.lock_outline, size: 15, color: colors.warning),
             ),
         ],
       ),
@@ -921,11 +922,11 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
           padding: EdgeInsets.only(top: top),
           child: HermesEmptyState(
             key: const ValueKey('sftp-unreadable'),
-            icon: Icons.folder_off_outlined,
+            icon: HIcons.folder_off_outlined,
             title: Strings.of(context).sftpUnreadableTitle,
             body: _error!,
             primaryLabel: Strings.of(context).sftpTryAgain,
-            primaryIcon: Icons.refresh,
+            primaryIcon: HIcons.refresh,
             onPrimary: _retry,
           ),
         ),
@@ -938,7 +939,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 40, color: colors.error),
+              Icon(HIcons.error_outline, size: 40, color: colors.error),
               const SizedBox(height: 14),
               Text(
                 _error!,
@@ -949,7 +950,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
               FilledButton.icon(
                 key: const ValueKey('sftp-retry'),
                 onPressed: _retry,
-                icon: const Icon(Icons.refresh, size: 16),
+                icon: const Icon(HIcons.refresh, size: 16),
                 label: Text(Strings.of(context).commonRetry),
               ),
             ],
@@ -964,7 +965,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
           padding: EdgeInsets.only(top: top),
           child: HermesEmptyState(
             key: const ValueKey('sftp-empty'),
-            icon: Icons.folder_open_outlined,
+            icon: HIcons.folder_open_outlined,
             title: Strings.of(context).sftpEmptyTitle,
             body: Strings.of(context).sftpEmptyBody,
             compact: true,
@@ -999,7 +1000,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
             ),
             dense: true,
             leading: Icon(
-              isDir ? Icons.folder_outlined : Icons.insert_drive_file_outlined,
+              isDir ? HIcons.folder_outlined : HIcons.insert_drive_file_outlined,
               color: isDir ? colors.secondary : colors.textSecondary,
               size: 20,
             ),
@@ -1034,7 +1035,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
   Widget _fileMenu(HermesThemeColors colors, SftpName e) =>
       HermesMenuButton<String>(
         icon: Icon(
-          Icons.more_vert,
+          HIcons.more_vert,
           size: HermesIcon.md,
           color: colors.textSecondary,
         ),
@@ -1099,8 +1100,8 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
                       ),
                       child: Icon(
                         isDir
-                            ? Icons.folder_outlined
-                            : Icons.insert_drive_file_outlined,
+                            ? HIcons.folder_outlined
+                            : HIcons.insert_drive_file_outlined,
                         size: HermesIcon.sm,
                         color: isDir ? colors.secondary : colors.textSecondary,
                       ),

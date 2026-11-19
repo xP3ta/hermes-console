@@ -16,6 +16,7 @@ import 'package:hermes_android/core/widgets/voice_capsule.dart';
 import 'package:hermes_android/core/widgets/voice_wave.dart';
 import 'package:hermes_android/core/widgets/voice_strip.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _labels = VoiceStripLabels(
   finishListening: 'Terminar de hablar',
@@ -133,7 +134,7 @@ void main() {
       expect(
         find.descendant(
           of: _key('voice-capsule-minimize'),
-          matching: find.byIcon(Icons.keyboard_arrow_up_rounded),
+          matching: find.byIcon(HIcons.keyboard_arrow_up_rounded),
         ),
         findsOneWidget,
       );

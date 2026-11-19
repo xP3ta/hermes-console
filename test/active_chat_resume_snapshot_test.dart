@@ -4809,6 +4809,100 @@ void main() {
   );
 
   test(
+    'session.info running opens the turn of a chat at rest that saw no start',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-info-open',
+          'session_key': 'stored-chat',
+        });
+      final chat = _chat('info-open', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(chat.isStreaming, isFalse);
+
+      gateway.emit('session.info', const {
+        'running': true,
+        'turn_started_at': 1700000100,
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(chat.isStreaming, isTrue);
+      expect(chat.state, ChatPipelineState.waiting);
+      expect(
+        chat.desktopTurnStartedAt,
+        DateTime.fromMillisecondsSinceEpoch(1700000100 * 1000, isUtc: true),
+      );
+
+      gateway.emit('message.delta', const {'text': 'reply seen live'});
+      gateway.emit('message.complete', const {'text': 'reply seen live'});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(chat.isStreaming, isFalse);
+      expect(chat.assistantContent, 'reply seen live');
+    },
+  );
+
+  test(
+    'session.info running ordered after the terminal opens the next turn',
+    () async {
+      final producer = Object();
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-info-next',
+          'session_key': 'stored-chat',
+          'running': true,
+          'inflight': {'assistant': '', 'streaming': true},
+        });
+      final chat = _chat('info-next', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      gateway.emit(
+        'message.complete',
+        const {'text': 'previous reply'},
+        40,
+        7,
+        producer,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(chat.state, ChatPipelineState.completed);
+
+      gateway.emit('session.info', const {'running': true}, 41, 7, producer);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(chat.state, ChatPipelineState.waiting);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.desktopTurnStartedAt, isNotNull);
+    },
+  );
+
+  test(
+    'session.info running that no order places after the terminal keeps it',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-info-stale',
+          'session_key': 'stored-chat',
+          'running': true,
+          'inflight': {'assistant': '', 'streaming': true},
+        });
+      final chat = _chat('info-stale', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      gateway.emit('message.complete', const {'text': 'settled reply'});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      gateway.emit('session.info', const {'running': true});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.isStreaming, isFalse);
+      expect(chat.assistantContent, 'settled reply');
+    },
+  );
+
+  test(
     'desglose de contexto usa el runtime adoptado sin crear sesión',
     () async {
       final gateway = _SnapshotGateway()

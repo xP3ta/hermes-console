@@ -5,6 +5,7 @@
 /// accessibility.
 library;
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -858,7 +859,7 @@ class HomeBoardViewState extends State<HomeBoardView>
               top: 0,
               child: _Handle(
                 key: ValueKey('home-remove-${item.id}'),
-                icon: Icons.close_rounded,
+                icon: HIcons.close_rounded,
                 label: s.hwRemoveA11y(name),
                 onTap: () => _remove(item),
               ),
@@ -869,7 +870,7 @@ class HomeBoardViewState extends State<HomeBoardView>
               top: 0,
               child: _Handle(
                 key: ValueKey('home-resize-${item.id}'),
-                icon: Icons.open_in_full_rounded,
+                icon: HIcons.open_in_full_rounded,
                 label: s.hwResizeA11y(name),
                 hot: selected,
                 onTap: () => _setSizing(selected ? null : item.id),
@@ -1212,7 +1213,7 @@ class _Hole extends StatelessWidget {
               ),
               child: SizedBox.square(
                 dimension: 36,
-                child: Icon(Icons.add_rounded, size: 20, color: p.textMuted),
+                child: Icon(HIcons.add_rounded, size: 20, color: p.textMuted),
               ),
             ),
           ),
@@ -1327,7 +1328,7 @@ class _EditBar extends StatelessWidget {
             key: const ValueKey('home-edit-add'),
             tooltip: full ? s.hwBoardFull : s.hwAddWidget,
             onPressed: full ? null : onAdd,
-            icon: const Icon(Icons.add_rounded),
+            icon: const Icon(HIcons.add_rounded),
           ),
           actions: [
             // The one accent of the bar: a gel capsule like the board's

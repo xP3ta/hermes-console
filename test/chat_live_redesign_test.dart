@@ -14,6 +14,7 @@ import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _start = DateTime(2026, 11, 6);
 final _now = _start.add(const Duration(seconds: 18));
@@ -27,6 +28,7 @@ final _scope = SubagentActivityScope(
 SubagentActivity _agent(
   String id, {
   SubagentActivityPhase phase = SubagentActivityPhase.running,
+  DateTime? completedAt,
 }) => SubagentActivity(
   key: SubagentActivityKey(
     scope: _scope,
@@ -39,6 +41,7 @@ SubagentActivity _agent(
   details: SubagentActivityDetails(
     goalPreview: 'Revisar $id',
     startedAt: _start,
+    completedAt: completedAt,
     progress: const SubagentTaskProgress(taskIndex: 1, taskCount: 4),
   ),
 );
@@ -217,15 +220,15 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 400));
         expect(row, findsOneWidget);
-        // Design B: delegated children add their own cards under the row, and
-        // nothing else moves the reply.
-        final cards = find.byKey(const ValueKey('delegated-child-cards'));
-        final cardsHeight = cards.evaluate().isEmpty
-            ? 0.0
-            : tester.getSize(cards).height;
-        final anchor =
-            tester.getTopLeft(find.byKey(const ValueKey('reply-anchor'))) -
-            Offset(0, cardsHeight);
+        // The delegated children live in the capsule: no cards under the
+        // row, and nothing moves the reply.
+        expect(
+          find.byKey(const ValueKey('delegated-child-cards')),
+          findsNothing,
+        );
+        final anchor = tester.getTopLeft(
+          find.byKey(const ValueKey('reply-anchor')),
+        );
         resting ??= anchor;
         expect(anchor, resting);
         expect(find.text(phase), findsOneWidget);
@@ -266,8 +269,19 @@ void main() {
       final capsule = find.byKey(const ValueKey('delegates-capsule'));
       expect(capsule, findsOneWidget);
       expect(tester.getSize(capsule).height, 48);
-      expect(find.textContaining('2 subagentes'), findsOneWidget);
-      expect(find.textContaining('1 proceso'), findsOneWidget);
+      expect(
+        find.descendant(of: capsule, matching: find.text('2 subagentes')),
+        findsOneWidget,
+      );
+      // The process is its icon and its count; the words are spoken.
+      expect(
+        find.descendant(of: capsule, matching: find.text('1')),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<Semantics>(capsule).properties.label,
+        contains('1 proceso'),
+      );
       expect(find.text('QUEUE MUST STAY BELOW'), findsNothing);
       expect(
         find.text('Parar'),
@@ -307,8 +321,12 @@ void main() {
         reason: 'sheet is anchored above the capsule',
       );
       expect(find.text('QUEUE MUST STAY BELOW'), findsNothing);
+      // The row says its state (the thin progress bar left the sheet).
       expect(
-        find.byKey(const ValueKey('delegate-row-progress-a')),
+        find.descendant(
+          of: find.byKey(const ValueKey('subagent-row-a')),
+          matching: find.textContaining('Trabajando', findRichText: true),
+        ),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const ValueKey('delegates-stop')));
@@ -359,7 +377,7 @@ void main() {
       expect(button, findsOneWidget);
       expect(tester.getSize(button), const Size(48, 48));
       expect(find.textContaining('Prueba de interfaz'), findsNothing);
-      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(find.byIcon(HIcons.arrow_upward_rounded), findsOneWidget);
       await tester.tap(button);
       await tester.pump(const Duration(milliseconds: 300));
       expect(taps, 1);
@@ -386,13 +404,14 @@ void main() {
           ),
         ),
       );
-      // The children's cards leave the live flow with the turn.
-      final cardsHeight = tester
-          .getSize(find.byKey(const ValueKey('delegated-child-cards')))
-          .height;
-      final before =
-          tester.getTopLeft(find.byKey(const ValueKey('reply-anchor'))) -
-          Offset(0, cardsHeight);
+      // The children are in the capsule, never cards in the turn's flow.
+      expect(
+        find.byKey(const ValueKey('delegated-child-cards')),
+        findsNothing,
+      );
+      final before = tester.getTopLeft(
+        find.byKey(const ValueKey('reply-anchor')),
+      );
       await tester.pumpWidget(
         _host(
           _turn(
@@ -428,7 +447,15 @@ void main() {
       await tester.pumpWidget(
         _host(
           _delegates(
-            agents: [_agent('a', phase: SubagentActivityPhase.completed)],
+            // The end shows a clock only when the server gives the completion
+            // time of every counted child.
+            agents: [
+              _agent(
+                'a',
+                phase: SubagentActivityPhase.completed,
+                completedAt: _now,
+              ),
+            ],
           ),
         ),
       );

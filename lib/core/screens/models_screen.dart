@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -1777,7 +1778,7 @@ class _ModelsScreenState extends State<ModelsScreen>
             )
           else
             IconButton(
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(HIcons.refresh),
               onPressed: _loading
                   ? null
                   : () => _bootstrap(serverRefresh: true),
@@ -2032,10 +2033,10 @@ class _ModelsScreenState extends State<ModelsScreen>
                 horizontal: 14,
                 vertical: HermesSpace.x2,
               ),
-              icon: Icons.visibility_outlined,
+              icon: HIcons.visibility_outlined,
               title: s.mdlEditModels,
               trailing: Icon(
-                Icons.chevron_right,
+                HIcons.chevron_right,
                 size: 18,
                 color: colors.textDisabled,
               ),
@@ -2128,7 +2129,7 @@ class _ModelsScreenState extends State<ModelsScreen>
       padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
       child: Row(
         children: [
-          Icon(Icons.cloud_off_rounded, size: 18, color: colors.warning),
+          Icon(HIcons.cloud_off_rounded, size: 18, color: colors.warning),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -2161,7 +2162,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     child: premium.HermesListRow(
       key: const ValueKey('lm-setup-offer'),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      icon: Icons.memory_rounded,
+      icon: HIcons.memory_rounded,
       iconColor: colors.accentHover,
       title: s.lmSetupOfferTitle,
       subtitle: s.lmSetupOfferText(fit.displayName, fit.sizeLabel),
@@ -2196,13 +2197,13 @@ class _ModelsScreenState extends State<ModelsScreen>
       child: premium.HermesListRow(
         key: const ValueKey('lm1215-entry'),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        icon: Icons.developer_board_rounded,
+        icon: HIcons.developer_board_rounded,
         iconColor: unavailable ? null : colors.accentHover,
         title: s.lm1215EntryTitle,
         subtitle: subtitle,
         enabled: probe != null && !unavailable,
         trailing: Icon(
-          Icons.chevron_right,
+          HIcons.chevron_right,
           size: 18,
           color: colors.textDisabled,
         ),
@@ -2233,7 +2234,7 @@ class _ModelsScreenState extends State<ModelsScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
-                Icons.do_not_disturb_on_outlined,
+                HIcons.do_not_disturb_on_outlined,
                 size: 20,
                 color: colors.textDisabled,
               ),
@@ -2385,7 +2386,7 @@ class _ModelsScreenState extends State<ModelsScreen>
             Row(
               children: [
                 Icon(
-                  Icons.chat_bubble_outline_rounded,
+                  HIcons.chat_bubble_outline_rounded,
                   size: 13,
                   color: colors.textDisabled,
                 ),
@@ -2510,7 +2511,7 @@ class _ModelsScreenState extends State<ModelsScreen>
               stale.length,
               _providerName(stale.first['provider'].toString()),
             ),
-            icon: Icons.warning_amber_rounded,
+            icon: HIcons.warning_amber_rounded,
             tone: HermesStatusTone.warn,
           ),
         ),
@@ -2524,7 +2525,7 @@ class _ModelsScreenState extends State<ModelsScreen>
             tilePadding: const EdgeInsets.symmetric(horizontal: 14),
             leading: SizedBox.square(
               dimension: 30,
-              child: Icon(Icons.tune, size: 21, color: colors.accent),
+              child: Icon(HIcons.tune, size: 21, color: colors.accent),
             ),
             title: Text(
               s.mdlAuxSection,
@@ -2554,7 +2555,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                   key: const ValueKey('models-aux-reset'),
                   dense: true,
                   leading: Icon(
-                    Icons.auto_mode,
+                    HIcons.auto_mode,
                     size: 18,
                     color: colors.accent,
                   ),
@@ -2608,7 +2609,7 @@ class _ModelsScreenState extends State<ModelsScreen>
               horizontal: 14,
               vertical: HermesSpace.x2,
             ),
-            icon: Icons.route_outlined,
+            icon: HIcons.route_outlined,
             title: label,
             // The stored route as it is, like Desktop's route line.
             subtitle: isAuto
@@ -2619,7 +2620,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                 ? provider
                 : '$model · $provider',
             trailing: Icon(
-              Icons.chevron_right,
+              HIcons.chevron_right,
               size: 18,
               color: colors.textDisabled,
             ),
@@ -2750,7 +2751,7 @@ class _ModelsScreenState extends State<ModelsScreen>
           if (provider.isCurrent) ...[
             const SizedBox(width: 8),
             Icon(
-              Icons.check_circle_outline_rounded,
+              HIcons.check_circle_outline_rounded,
               size: 18,
               color: colors.accentHover,
               semanticLabel: s.mdlActiveBadge,
@@ -2766,7 +2767,7 @@ class _ModelsScreenState extends State<ModelsScreen>
             contentPadding: const EdgeInsets.symmetric(
               horizontal: HermesSpace.x5,
             ),
-            leading: Icon(Icons.tune, size: 18, color: colors.accent),
+            leading: Icon(HIcons.tune, size: 18, color: colors.accent),
             title: Text(
               s.moaConfigureRecipe,
               style: TextStyle(
@@ -2775,7 +2776,7 @@ class _ModelsScreenState extends State<ModelsScreen>
               ),
             ),
             trailing: Icon(
-              Icons.chevron_right,
+              HIcons.chevron_right,
               size: 18,
               color: colors.textDisabled,
             ),
@@ -2794,7 +2795,7 @@ class _ModelsScreenState extends State<ModelsScreen>
           _tileAction(
             colors,
             key: ValueKey('models-provider-reconnect-${provider.slug}'),
-            icon: Icons.refresh,
+            icon: HIcons.refresh,
             label: s.mdlReconnect,
             onTap: busy ? null : () => _signIn(account.name, account.id),
           ),
@@ -2802,7 +2803,7 @@ class _ModelsScreenState extends State<ModelsScreen>
           _tileAction(
             colors,
             key: ValueKey('models-provider-key-${provider.slug}'),
-            icon: Icons.key_outlined,
+            icon: HIcons.key_outlined,
             label: s.mdlUpdateKey,
             onTap: busy ? null : () => _enterProviderKey(keyGroup),
           ),
@@ -2810,7 +2811,7 @@ class _ModelsScreenState extends State<ModelsScreen>
           _tileAction(
             colors,
             key: ValueKey('models-provider-remove-${provider.slug}'),
-            icon: Icons.link_off,
+            icon: HIcons.link_off,
             label: s.mdlRemoveProvider,
             destructive: true,
             onTap: busy ? null : () => _removeProvider(provider),
@@ -2849,7 +2850,7 @@ class _ModelsScreenState extends State<ModelsScreen>
       subtitle: unavailable ? Strings.of(context).chaModelUnavailable : null,
       selected: isActive,
       trailing: Icon(
-        isActive ? Icons.check_circle : Icons.radio_button_unchecked,
+        isActive ? HIcons.check_circle : HIcons.radio_button_unchecked,
         color: isActive ? colors.accent : colors.textDisabled,
         size: 18,
       ),
@@ -2873,7 +2874,7 @@ class _ModelsScreenState extends State<ModelsScreen>
         tilePadding: const EdgeInsets.symmetric(horizontal: 14),
         leading: SizedBox.square(
           dimension: 30,
-          child: Icon(Icons.lock_outline, size: 21, color: colors.textDisabled),
+          child: Icon(HIcons.lock_outline, size: 21, color: colors.textDisabled),
         ),
         title: Text(
           s.mdlUnconfiguredProviders,
@@ -2900,7 +2901,7 @@ class _ModelsScreenState extends State<ModelsScreen>
             ModelsTonalGroup(
               margin: const EdgeInsets.only(bottom: HermesSpace.x2),
               child: premium.HermesListRow(
-                icon: Icons.lock_outline,
+                icon: HIcons.lock_outline,
                 iconColor: colors.textDisabled,
                 title: row.name,
                 trailing: row.restore != null
@@ -2912,7 +2913,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                                 row.restore!,
                                 onDevice: row.onDevice,
                               ),
-                        icon: const Icon(Icons.add, size: 15),
+                        icon: const Icon(HIcons.add, size: 15),
                         label: Text(
                           s.mdlAddBackBtn,
                           style: const TextStyle(fontSize: 12),
@@ -2926,7 +2927,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                         onPressed: busy
                             ? null
                             : () => _signIn(row.name, row.account!.id),
-                        icon: const Icon(Icons.login, size: 15),
+                        icon: const Icon(HIcons.login, size: 15),
                         label: Text(
                           s.mdlLoginBtn,
                           style: const TextStyle(fontSize: 12),
@@ -2937,7 +2938,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                         onPressed: busy
                             ? null
                             : () => _enterProviderKey(row.key!),
-                        icon: const Icon(Icons.key_outlined, size: 15),
+                        icon: const Icon(HIcons.key_outlined, size: 15),
                         label: Text(
                           s.mdlConfigureBtn,
                           style: const TextStyle(fontSize: 12),

@@ -6,6 +6,7 @@
 // delete, plus "Add endpoint". Adding or editing opens
 // [ExternalProviderScreen], which is only the form.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -412,7 +413,7 @@ class CustomEndpointsSectionState extends State<CustomEndpointsSection> {
                 );
                 return IconButton(
                   tooltip: MaterialLocalizations.of(context).showMenuTooltip,
-                  icon: Icon(Icons.more_vert, key: anchor),
+                  icon: Icon(HIcons.more_vert, key: anchor),
                   onPressed: _busy
                       ? null
                       : () => _openMenu(endpoint, anchor, lease),
@@ -441,7 +442,7 @@ class CustomEndpointsSectionState extends State<CustomEndpointsSection> {
               for (final endpoint in _endpoints) _endpointRow(endpoint),
             HermesListRow(
               key: const ValueKey('custom-endpoint-add'),
-              icon: Icons.add_link_rounded,
+              icon: HIcons.add_link_rounded,
               title: s.mdlAddEndpoint,
               subtitle: s.mdlAddEndpointSubtitle,
               enabled:

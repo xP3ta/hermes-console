@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -145,7 +146,7 @@ List<Widget Function()> buildArtifactSections({
           : TextButton.icon(
               key: const ValueKey('sa1215-thumb-retry'),
               onPressed: retry,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
+              icon: const Icon(HIcons.refresh_rounded, size: 18),
               label: Text(strings.artThumbRetry),
             ),
     );
@@ -217,18 +218,18 @@ String _fileTypeLabel(Strings strings, ChatContentFileType type) =>
     };
 
 IconData _fileTypeIcon(ChatContentFileType type) => switch (type) {
-  ChatContentFileType.pdf => Icons.picture_as_pdf_outlined,
-  ChatContentFileType.document => Icons.description_outlined,
-  ChatContentFileType.spreadsheet => Icons.table_chart_outlined,
-  ChatContentFileType.presentation => Icons.slideshow_outlined,
-  ChatContentFileType.archive => Icons.folder_zip_outlined,
-  ChatContentFileType.app => Icons.android_rounded,
-  ChatContentFileType.audio => Icons.audiotrack_outlined,
-  ChatContentFileType.video => Icons.movie_outlined,
-  ChatContentFileType.text => Icons.article_outlined,
-  ChatContentFileType.data => Icons.data_object_rounded,
-  ChatContentFileType.code => Icons.code_rounded,
-  ChatContentFileType.other => Icons.insert_drive_file_outlined,
+  ChatContentFileType.pdf => HIcons.picture_as_pdf_outlined,
+  ChatContentFileType.document => HIcons.description_outlined,
+  ChatContentFileType.spreadsheet => HIcons.table_chart_outlined,
+  ChatContentFileType.presentation => HIcons.slideshow_outlined,
+  ChatContentFileType.archive => HIcons.folder_zip_outlined,
+  ChatContentFileType.app => HIcons.android_rounded,
+  ChatContentFileType.audio => HIcons.audiotrack_outlined,
+  ChatContentFileType.video => HIcons.movie_outlined,
+  ChatContentFileType.text => HIcons.article_outlined,
+  ChatContentFileType.data => HIcons.data_object_rounded,
+  ChatContentFileType.code => HIcons.code_rounded,
+  ChatContentFileType.other => HIcons.insert_drive_file_outlined,
 };
 
 /// Desktop's kind tag: the extension of a file (`PDF`, `APK`), else its
@@ -437,7 +438,7 @@ class _ImageCard extends StatelessWidget {
                       Row(
                         children: [
                           Icon(
-                            Icons.image_outlined,
+                            HIcons.image_outlined,
                             size: 14,
                             color: colors.textSecondary,
                           ),
@@ -508,7 +509,7 @@ class _ImageCard extends StatelessWidget {
               child: TextButton.icon(
                 key: ValueKey('sa1215-chat-$itemKey'),
                 onPressed: from.onOpenChat,
-                icon: const Icon(Icons.forum_outlined, size: 16),
+                icon: const Icon(HIcons.forum_outlined, size: 16),
                 label: Text(
                   strings.artChat,
                   semanticsLabel: strings.artOpenChat(from.title),
@@ -611,8 +612,8 @@ class _ContentRow extends StatelessWidget {
                         ),
                         trailing: Icon(
                           isLink
-                              ? Icons.open_in_new_rounded
-                              : Icons.chevron_right_rounded,
+                              ? HIcons.open_in_new_rounded
+                              : HIcons.chevron_right_rounded,
                           size: 18,
                           color: colors.textSecondary,
                         ),
@@ -627,7 +628,7 @@ class _ContentRow extends StatelessWidget {
                     tooltip: strings.artOpenChat(from.title),
                     onPressed: from.onOpenChat,
                     icon: Icon(
-                      Icons.forum_outlined,
+                      HIcons.forum_outlined,
                       size: 18,
                       color: colors.textSecondary,
                     ),
@@ -637,7 +638,7 @@ class _ContentRow extends StatelessWidget {
                   tooltip: isLink ? strings.artCopyUrl : strings.artCopyPath,
                   onPressed: onCopy,
                   icon: Icon(
-                    Icons.copy_rounded,
+                    HIcons.copy_rounded,
                     size: 18,
                     color: colors.textSecondary,
                   ),

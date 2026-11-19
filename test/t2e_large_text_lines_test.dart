@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/text_scale.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _at(double scale, Widget child) => MaterialApp(
   theme: AppTheme.fromId('console'),
@@ -41,7 +42,7 @@ void main() {
       _at(
         2,
         HermesNavRow(
-          icon: Icons.info_outline,
+          icon: HIcons.info_outline,
           title: 'Title',
           subtitle: subtitle,
           onTap: () {},

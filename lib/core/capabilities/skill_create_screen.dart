@@ -1,6 +1,7 @@
 // New skill: name, optional category, a short description and the
 // instructions. The phone writes the SKILL.md header itself so the user never
 // has to type frontmatter; the server validates again and decides.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -150,7 +151,7 @@ class _SkillCreateScreenState extends State<SkillCreateScreen> {
       onSubmit: _submit,
       children: [
         HermesInlineNotice(
-          icon: Icons.info_outline_rounded,
+          icon: HIcons.info_outline_rounded,
           message: s.sppNewSkillIntro,
         ),
         const SizedBox(height: HermesSpace.x4),

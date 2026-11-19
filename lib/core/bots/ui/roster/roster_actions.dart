@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/app_localizations.dart';
@@ -106,7 +107,7 @@ class RosterBotActionsSheet extends StatelessWidget {
           ),
           item(
             RosterBotAction.chat,
-            Icons.chat_bubble_outline_rounded,
+            HIcons.chat_bubble_outline_rounded,
             s.botProfileChat,
             accent: true,
           ),
@@ -114,14 +115,14 @@ class RosterBotActionsSheet extends StatelessWidget {
             item(
               RosterBotAction.togglePin,
               profile.botPinned
-                  ? Icons.push_pin_outlined
-                  : Icons.push_pin_rounded,
+                  ? HIcons.push_pin_outlined
+                  : HIcons.push_pin_rounded,
               profile.botPinned ? s.rosterUnpin : s.rosterPin,
             ),
           if (canMutate && canSection)
             item(
               RosterBotAction.section,
-              Icons.folder_outlined,
+              HIcons.folder_outlined,
               s.rosterMoveToSection,
             ),
           // The main bot never leaves its own home (the layout always shows
@@ -130,21 +131,21 @@ class RosterBotActionsSheet extends StatelessWidget {
             item(
               RosterBotAction.toggleHidden,
               profile.botHidden
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
+                  ? HIcons.visibility_outlined
+                  : HIcons.visibility_off_outlined,
               profile.botHidden ? s.rosterUnhide : s.rosterHide,
             ),
           if (screen != null)
             item(
               RosterBotAction.screen,
-              Icons.desktop_windows_outlined,
+              HIcons.desktop_windows_outlined,
               s.bsaScreen,
               enabled: screen != BotScreenState.none,
               subtitle: screen == BotScreenState.none ? s.bsaNoDesktop : null,
             ),
           item(
             RosterBotAction.profile,
-            Icons.account_circle_outlined,
+            HIcons.account_circle_outlined,
             s.rosterOpenProfile,
           ),
         ],

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -112,7 +113,7 @@ class BotFaceOptions extends StatelessWidget {
                         Random.secure().nextInt(1 << 30).toRadixString(36),
                       ),
                     ),
-              icon: const Icon(Icons.shuffle),
+              icon: const Icon(HIcons.shuffle),
               label: Text(s.botFaceRandom),
             ),
             if (classic == null)
@@ -126,8 +127,8 @@ class BotFaceOptions extends StatelessWidget {
                       ),
                 icon: Icon(
                   blob.followsProfileName
-                      ? Icons.lock_open
-                      : Icons.lock_outline,
+                      ? HIcons.lock_open
+                      : HIcons.lock_outline,
                 ),
                 label: Text(
                   blob.followsProfileName ? s.botFaceLock : s.botFaceUnlock,

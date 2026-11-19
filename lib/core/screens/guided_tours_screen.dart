@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -91,21 +92,21 @@ class GuidedToursScreen extends StatelessWidget {
     final rows = <(GuideTourId, IconData, String, String, bool)>[
       (
         GuideTourId.general,
-        Icons.home_outlined,
+        HIcons.home_outlined,
         strings.gt1215TourGeneral,
         strings.gt1215TourGeneralSubtitle,
         true,
       ),
       (
         GuideTourId.chat,
-        Icons.chat_bubble_outline_rounded,
+        HIcons.chat_bubble_outline_rounded,
         strings.gt1215TourChat,
         strings.gt1215TourChatSubtitle,
         hasServer || debugChatScreen != null,
       ),
       (
         GuideTourId.bots,
-        Icons.smart_toy_outlined,
+        HIcons.smart_toy_outlined,
         strings.gt1215TourBots,
         strings.gt1215TourBotsSubtitle,
         (hasServer && connManager != null) || debugBotsScreen != null,

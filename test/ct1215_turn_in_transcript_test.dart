@@ -16,6 +16,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'package:hermes_android/core/design/hicons.dart';
 
 // ct1215 · «C1 — como Desktop»: what Hermes is doing is told inside its turn
 // in the transcript. While it works: one status line and, in loose lines,
@@ -879,7 +880,7 @@ void main() {
       expect(
         find.descendant(
           of: history,
-          matching: find.byIcon(Icons.check_rounded),
+          matching: find.byIcon(HIcons.check_rounded),
         ),
         findsNWidgets(3),
       );

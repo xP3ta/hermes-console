@@ -9,6 +9,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/chat_markdown_body.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// A 400x200 PNG.
 final _png = base64Decode(
@@ -100,7 +101,7 @@ void main() {
       findsOneWidget,
       reason:
           'spinner: ${find.byType(CircularProgressIndicator).evaluate().length}'
-          ' retry: ${find.byIcon(Icons.refresh_rounded).evaluate().length}'
+          ' retry: ${find.byIcon(HIcons.refresh_rounded).evaluate().length}'
           ' requests: ${client.requests}',
     );
     // 300 dp wide, 2:1, before any frame of the picture was decoded.

@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/box_edge_probe.dart';
 import 'support/theme_profile_fixtures.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Future<void> _pump(
   WidgetTester tester,
@@ -737,7 +738,7 @@ void main() {
               key: const ValueKey('tonal-icon'),
               style: hermesTonalButtonStyle,
               onPressed: () {},
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(HIcons.refresh),
               label: const Text('Again'),
             ),
           ],

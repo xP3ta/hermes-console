@@ -6,6 +6,7 @@ import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Render de código/comandos/salida: monoespaciado real y `markdown` prosa que
 /// NO debe verse como bloque de código.
@@ -104,7 +105,7 @@ void main() {
       expect(find.text('completado'), findsOneWidget);
       expect(find.byType(SelectableText), findsNothing);
       expect(find.byType(SelectionArea), findsNothing);
-      expect(find.byIcon(Icons.content_copy), findsNothing);
+      expect(find.byIcon(HIcons.content_copy), findsNothing);
       final diagnostics = tester.allWidgets
           .map((widget) => widget.toStringDeep())
           .join('\n');

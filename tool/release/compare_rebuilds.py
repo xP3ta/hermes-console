@@ -18,6 +18,7 @@ PUBLIC_APKS = (
     "app-armeabi-v7a-full-release.apk",
     "app-x86_64-full-release.apk",
 )
+UNIVERSAL_APKS = ("app-full-release.apk",)
 PLAY_AAB = "app-play-release.aab"
 SIGNATURE_SUFFIXES = (".SF", ".RSA", ".DSA", ".EC")
 MAX_ENTRIES = 100_000
@@ -153,12 +154,17 @@ def zip_facts(path: Path) -> dict[str, Any]:
     }
 
 
-def compare_public(first: Path, second: Path) -> tuple[dict[str, Any], bool]:
-    left = exact_directory(first, PUBLIC_APKS)
-    right = exact_directory(second, PUBLIC_APKS)
+def compare_public(
+    first: Path,
+    second: Path,
+    names: tuple[str, ...] = PUBLIC_APKS,
+    channel: str = "direct-public",
+) -> tuple[dict[str, Any], bool]:
+    left = exact_directory(first, names)
+    right = exact_directory(second, names)
     artifacts = []
     equal = True
-    for name in PUBLIC_APKS:
+    for name in names:
         first_digest = sha256_file(left[name])
         second_digest = sha256_file(right[name])
         identical = first_digest == second_digest
@@ -173,7 +179,7 @@ def compare_public(first: Path, second: Path) -> tuple[dict[str, Any], bool]:
         )
     report = {
         "schema": 1,
-        "channel": "direct-public",
+        "channel": channel,
         "acceptance": "all signed APK bytes must be identical",
         "gatePassed": equal,
         "inputsCryptographicallyPinned": False,
@@ -245,7 +251,7 @@ def write_exclusive(path: Path, value: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--channel", choices=("direct-public", "play-private"), required=True)
+    parser.add_argument("--channel", choices=("direct-public", "direct-universal", "play-private"), required=True)
     parser.add_argument("--first", type=Path, required=True)
     parser.add_argument("--second", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -253,6 +259,10 @@ def main() -> int:
     try:
         if args.channel == "direct-public":
             report, passed = compare_public(args.first, args.second)
+        elif args.channel == "direct-universal":
+            report, passed = compare_public(
+                args.first, args.second, UNIVERSAL_APKS, "direct-universal"
+            )
         else:
             report, passed = compare_play(args.first, args.second)
         write_exclusive(args.output, report)

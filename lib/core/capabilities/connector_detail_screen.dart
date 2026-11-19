@@ -2,6 +2,7 @@
 // the organisation's locks. Tool edits are a local draft; one Save sends the
 // full `disabled_tools` list against the member layer's revision. A stale
 // revision keeps the draft and offers "Keep mine" or "Discard".
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -282,7 +283,7 @@ class _ConnectorDetailScreenState extends State<ConnectorDetailScreen> {
           children: [
             HermesToggleRow(
               key: const ValueKey('cph-connector-enabled'),
-              icon: Icons.power_settings_new_rounded,
+              icon: HIcons.power_settings_new_rounded,
               title: s.cphConnectorEnabled,
               subtitle: state.locked ? s.cphConnectorLockedByOrg : null,
               value: state.enabled,
@@ -329,7 +330,7 @@ class _ConnectorDetailScreenState extends State<ConnectorDetailScreen> {
               key: const ValueKey('cph-connector-save'),
               primary: true,
               label: s.commonSave,
-              icon: Icons.check_rounded,
+              icon: HIcons.check_rounded,
               onPressed: _save,
             )
           : null,

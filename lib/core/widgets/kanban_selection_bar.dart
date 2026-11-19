@@ -1,6 +1,7 @@
 // Barra flotante de acciones masivas de la piel nueva del Kanban. Aparece
 // con la selección múltiple; no sabe nada de red: cada botón llama a lo que
 // la pantalla le da.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -88,7 +89,7 @@ class KanbanSelectionBar extends StatelessWidget {
               key: const ValueKey('kanban-bulk-close'),
               tooltip: s.kanbanSkinSelectExit,
               onPressed: onClose,
-              icon: const Icon(Icons.close_rounded),
+              icon: const Icon(HIcons.close_rounded),
             ),
           ],
         ),

@@ -4,6 +4,7 @@
 // workspaces, with their state) and Recent. Everything is read first, with
 // the app's own read-only commands; choosing a row only returns the line to
 // type, built from a validated id or name.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -399,7 +400,7 @@ class _SessionRow extends StatelessWidget {
                   ),
                   if (onTap != null)
                     Icon(
-                      Icons.chevron_right_rounded,
+                      HIcons.chevron_right_rounded,
                       color: colors.textSecondary,
                     ),
                 ],

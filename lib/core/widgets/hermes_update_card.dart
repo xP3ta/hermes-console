@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -170,22 +171,22 @@ class HermesUpdateCard extends StatelessWidget {
         presentation.hasUpdate && (presentation.canApply || isLocal);
     final (icon, iconColor) = switch (presentation.kind) {
       HermesUpdateKind.checking => (
-        Icons.system_update_alt,
+        HIcons.system_update_alt,
         colors.textSecondary,
       ),
-      HermesUpdateKind.current => (Icons.verified_outlined, colors.success),
-      HermesUpdateKind.available => (Icons.system_update_alt, colors.accent),
-      HermesUpdateKind.external => (Icons.terminal_rounded, colors.warning),
+      HermesUpdateKind.current => (HIcons.verified_outlined, colors.success),
+      HermesUpdateKind.available => (HIcons.system_update_alt, colors.accent),
+      HermesUpdateKind.external => (HIcons.terminal_rounded, colors.warning),
       HermesUpdateKind.dashboardAccessRequired => (
-        Icons.lock_open_rounded,
+        HIcons.lock_open_rounded,
         colors.warning,
       ),
       HermesUpdateKind.checkFailed => (
-        Icons.sync_problem_outlined,
+        HIcons.sync_problem_outlined,
         colors.warning,
       ),
       HermesUpdateKind.apiUnavailable => (
-        Icons.info_outline_rounded,
+        HIcons.info_outline_rounded,
         colors.textSecondary,
       ),
     };
@@ -215,7 +216,7 @@ class HermesUpdateCard extends StatelessWidget {
                   child: TextButton.icon(
                     key: const Key('hermes_update_configure_dashboard'),
                     onPressed: busy ? null : onConfigureDashboard,
-                    icon: const Icon(Icons.settings_outlined, size: 17),
+                    icon: const Icon(HIcons.settings_outlined, size: 17),
                     label: Text(strings.setConfigureDashboardAccess),
                     style: TextButton.styleFrom(
                       visualDensity: VisualDensity.compact,
@@ -296,21 +297,21 @@ class HermesUpdateCard extends StatelessWidget {
 
   Widget _statusIcon(BuildContext context, HermesThemeColors colors) =>
       switch (presentation.kind) {
-        HermesUpdateKind.current => Icon(Icons.check, color: colors.success),
+        HermesUpdateKind.current => Icon(HIcons.check, color: colors.success),
         HermesUpdateKind.external => Icon(
-          Icons.open_in_new_rounded,
+          HIcons.open_in_new_rounded,
           color: colors.warning,
         ),
         HermesUpdateKind.dashboardAccessRequired => Icon(
-          Icons.lock_open_rounded,
+          HIcons.lock_open_rounded,
           color: colors.warning,
         ),
         HermesUpdateKind.checkFailed =>
           onRetry == null
-              ? Icon(Icons.refresh_rounded, color: colors.warning)
+              ? Icon(HIcons.refresh_rounded, color: colors.warning)
               : IconButton(
                   key: const Key('hermes_update_retry'),
-                  icon: Icon(Icons.refresh_rounded, color: colors.warning),
+                  icon: Icon(HIcons.refresh_rounded, color: colors.warning),
                   tooltip: Strings.of(context).commonRetry,
                   onPressed: busy ? null : onRetry,
                 ),
@@ -320,11 +321,11 @@ class HermesUpdateCard extends StatelessWidget {
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
         HermesUpdateKind.apiUnavailable => Icon(
-          Icons.remove_rounded,
+          HIcons.remove_rounded,
           color: colors.textDisabled,
         ),
         HermesUpdateKind.available => Icon(
-          Icons.system_update_alt,
+          HIcons.system_update_alt,
           color: colors.accent,
         ),
       };

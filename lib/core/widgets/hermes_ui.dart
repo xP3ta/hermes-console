@@ -7,6 +7,7 @@
 // Regla de renderizado: nunca combinar borderRadius con un Border no
 // uniforme de colores distintos (ver AccentCard). Todos los bordes aquí
 // son uniformes.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -605,7 +606,7 @@ class HermesNavRow extends StatelessWidget {
               // the body (the disabled ink sat at ~2.3:1 on a dark card).
               trailing ??
                   Icon(
-                    Icons.chevron_right,
+                    HIcons.chevron_right,
                     size: 18,
                     color: colors.textTertiary,
                   ),
@@ -1207,7 +1208,7 @@ class HermesInfoBanner extends StatelessWidget {
 
   const HermesInfoBanner(
     this.text, {
-    this.icon = Icons.info_outline,
+    this.icon = HIcons.info_outline,
     this.tone,
     super.key,
   });

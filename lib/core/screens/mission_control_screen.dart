@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -1383,12 +1384,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           children: [
             ListTile(
               title: Text(s.botSectionRename),
-              leading: const Icon(Icons.edit_outlined),
+              leading: const Icon(HIcons.edit_outlined),
               onTap: () => Navigator.pop(context, 'rename'),
             ),
             ListTile(
               title: Text(s.botSectionDelete),
-              leading: const Icon(Icons.delete_outline),
+              leading: const Icon(HIcons.delete_outline),
               onTap: () => Navigator.pop(context, 'delete'),
             ),
           ],
@@ -1852,20 +1853,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           moreActions: [
             BotProfileAction(
               key: const ValueKey('bot-profile-recent'),
-              icon: Icons.history,
+              icon: HIcons.history,
               label: strings.botRecentSession,
               onTap: () => unawaited(_openRecentSession(_currentAgent(agent))),
             ),
             if (!readOnly && gateway != null) ...[
               BotProfileAction(
                 key: const ValueKey('bot-profile-advanced'),
-                icon: Icons.tune,
+                icon: HIcons.tune,
                 label: strings.botAdvanced,
                 onTap: () => _openAdvancedSettings(name),
               ),
               BotProfileAction(
                 key: const ValueKey('bot-profile-duplicate'),
-                icon: Icons.copy_outlined,
+                icon: HIcons.copy_outlined,
                 label: strings.botDuplicate,
                 onTap: () => unawaited(_duplicateBot(_currentAgent(agent))),
               ),
@@ -1873,7 +1874,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             if (!readOnly && !agent.profile.isDefault && name != 'default')
               BotProfileAction(
                 key: const ValueKey('bot-profile-delete'),
-                icon: Icons.delete_outline,
+                icon: HIcons.delete_outline,
                 label: strings.prfDeleteTitle,
                 onTap: () => unawaited(_deleteBot(name)),
               ),
@@ -1892,7 +1893,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           .push<bool>(
             MaterialPageRoute(
               builder: (_) =>
-                  BotProfileSettingsScreen(profile: profile, gateway: gateway),
+                  BotProfileSettingsScreen(
+                    profile: profile,
+                    gateway: gateway,
+                    connection: widget.connection,
+                  ),
             ),
           )
           .then((saved) {
@@ -2000,7 +2005,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           for (final room in rooms)
             ListTile(
               title: Text(room.name),
-              leading: const Icon(Icons.forum_outlined),
+              leading: const Icon(HIcons.forum_outlined),
               trailing:
                   !widget.connection.readOnly &&
                       _profileAssetsGateway is BotRoomLinkGateway &&
@@ -2008,7 +2013,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                         (m) => m.owner.connectionId != room.authorityGatewayId,
                       )
                   ? IconButton(
-                      icon: const Icon(Icons.link),
+                      icon: const Icon(HIcons.link),
                       tooltip: Strings.of(context).botReconnectRoom,
                       onPressed: () =>
                           Navigator.pop(context, 'link:${room.roomId}'),
@@ -2019,7 +2024,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           if (_canCreateHostedRoom)
             ListTile(
               title: Text(MissionControlCopy.of(context).createSharedRoom),
-              leading: const Icon(Icons.add),
+              leading: const Icon(HIcons.add),
               onTap: () => Navigator.pop(context, 'new'),
             ),
           Padding(
@@ -2367,7 +2372,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               key: ValueKey(
                 'mission-attention-approval-${approval.profileName}',
               ),
-              leading: const Icon(Icons.approval_outlined),
+              leading: const Icon(HIcons.approval_outlined),
               title: Text(strings.missionApprovalPending),
               subtitle: Text('@${approval.profileName}'),
               onTap: () => Navigator.pop(sheetContext, approval),
@@ -2375,7 +2380,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           if (projection.blockedCount > 0)
             ListTile(
               key: const ValueKey('mission-attention-board'),
-              leading: const Icon(Icons.view_kanban_outlined),
+              leading: const Icon(HIcons.view_kanban_outlined),
               title: Text(strings.missionTaskBoardLabel),
               onTap: () => Navigator.pop(sheetContext, 'board'),
             ),
@@ -2465,24 +2470,24 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                       ),
                     ),
                   ),
-                  item('open', Icons.forum_outlined, strings.missionOpenRoom),
+                  item('open', HIcons.forum_outlined, strings.missionOpenRoom),
                   item(
                     'members',
-                    Icons.group_outlined,
+                    HIcons.group_outlined,
                     strings.roomMenuMembers,
                   ),
                   if (can(GroupMethod.rename))
-                    item('rename', Icons.edit_outlined, copy.renameSharedRoom),
+                    item('rename', HIcons.edit_outlined, copy.renameSharedRoom),
                   if (can(GroupMethod.stop))
                     item(
                       'stop',
-                      Icons.stop_circle_outlined,
+                      HIcons.stop_circle_outlined,
                       copy.stopSharedRoomAction,
                     ),
                   if (can(GroupMethod.disband))
                     item(
                       'disband',
-                      Icons.block_rounded,
+                      HIcons.block_rounded,
                       copy.disbandSharedRoomAction,
                       destructive: true,
                     ),
@@ -2663,6 +2668,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           rooms: hosted.rooms,
           logs: hosted.logs,
           driverStatuses: hosted.driverStatuses,
+          unreadableRooms: hosted.unreadableRooms,
         ),
         hostedGroupsCapability: snapshot.hostedGroupsCapability,
         failures: snapshot.failures,
@@ -2671,12 +2677,16 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     });
   }
 
+  /// What the server proved it can do, not whether its rooms could be read
+  /// just now: rooms that fail to load (one, all, or the list itself) never
+  /// take «New ▸ room» away (review B1).
   bool get _canCreateHostedRoom {
     final snapshot = _snapshot;
     final capabilities = snapshot?.hostedGroups.capabilities;
     return !widget.connection.readOnly &&
         _hostedGroupsDataSource != null &&
-        snapshot?.hostedGroupsCapability == MissionCapabilityState.available &&
+        snapshot != null &&
+        snapshot.hostedGroupsCapability != MissionCapabilityState.unsupported &&
         capabilities?.supports(GroupMethod.create) == true;
   }
 
@@ -2937,6 +2947,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             rooms: List.unmodifiable(rooms),
             logs: List.unmodifiable(logs),
             driverStatuses: Map.unmodifiable(driverStatuses),
+            unreadableRooms: snapshot.hostedGroups.unreadableRooms,
           ),
           hostedGroupsCapability: snapshot.hostedGroupsCapability,
           failures: snapshot.failures,
@@ -2985,7 +2996,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         snapshot?.sessionsCapability == MissionCapabilityState.available ||
         snapshot?.kanbanCapability == MissionCapabilityState.available;
     return Scaffold(
-      drawerEnableOpenDragGesture: true,
+      drawerEnableOpenDragGesture: HermesDrawer.openDragEnabled(context),
       drawerEdgeDragWidth: HermesDrawer.edgeDragWidth(context),
       drawer: HermesDrawer(
         connection: widget.connection,
@@ -3117,14 +3128,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         icon: ValueListenableBuilder<bool>(
           valueListenable: _rosterSearchOpen,
           builder: (context, open, _) =>
-              Icon(open ? Icons.close_rounded : Icons.search_rounded, size: 21),
+              Icon(open ? HIcons.close_rounded : HIcons.search_rounded, size: 21),
         ),
         onPressed: () => _rosterSearchOpen.value = !_rosterSearchOpen.value,
       ),
       IconButton(
         key: const ValueKey('mission-create-agent'),
         tooltip: strings.rosterNew,
-        icon: const Icon(Icons.add_rounded, size: 22),
+        icon: const Icon(HIcons.add_rounded, size: 22),
         onPressed: _hasNewMenu ? () => unawaited(_showNewMenu()) : null,
       ),
     ];
@@ -3163,14 +3174,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           if (_canCreateBot)
             ListTile(
               key: const ValueKey('mission-create-chooser-bot'),
-              leading: const Icon(Icons.account_circle_outlined),
+              leading: const Icon(HIcons.account_circle_outlined),
               title: Text(strings.missionCreateBotLabel),
               onTap: () => Navigator.pop(sheetContext, 'bot'),
             ),
           if (_canCreateHostedRoom)
             ListTile(
               key: const ValueKey('mission-create-chooser-room'),
-              leading: const Icon(Icons.groups_2_outlined),
+              leading: const Icon(HIcons.groups_2_outlined),
               title: Text(strings.missionCreateRoomLabel),
               onTap: () => Navigator.pop(sheetContext, 'room'),
             ),
@@ -3178,33 +3189,33 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             const Divider(height: 1),
             ListTile(
               key: const ValueKey('mission-create-chooser-section'),
-              leading: const Icon(Icons.create_new_folder_outlined),
+              leading: const Icon(HIcons.create_new_folder_outlined),
               title: Text(strings.botSectionNew),
               onTap: () => Navigator.pop(sheetContext, 'section'),
             ),
             for (final entry in sections.entries)
               ListTile(
-                leading: const Icon(Icons.folder_outlined),
+                leading: const Icon(HIcons.folder_outlined),
                 title: Text(entry.value),
-                trailing: const Icon(Icons.more_horiz),
+                trailing: const Icon(HIcons.more_horiz),
                 onTap: () =>
                     Navigator.pop(sheetContext, 'section:${entry.key}'),
               ),
           ],
           ListTile(
-            leading: const Icon(Icons.forum_outlined),
+            leading: const Icon(HIcons.forum_outlined),
             title: Text(strings.botManageRooms),
             onTap: () => Navigator.pop(sheetContext, 'rooms'),
           ),
           ListTile(
             key: const ValueKey('mission-create-chooser-board'),
-            leading: const Icon(Icons.view_kanban_outlined),
+            leading: const Icon(HIcons.view_kanban_outlined),
             title: Text(strings.missionTaskBoardLabel),
             onTap: () => Navigator.pop(sheetContext, 'board'),
           ),
           ListTile(
             key: const ValueKey('mission-create-chooser-workspaces'),
-            leading: const Icon(Icons.hub_outlined),
+            leading: const Icon(HIcons.hub_outlined),
             title: Text(MissionControlCopy.of(sheetContext).workspaces),
             subtitle: _selectedOrganization == null
                 ? null
@@ -3215,7 +3226,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           // screen of Ajustes, not a second list here.
           ListTile(
             key: const ValueKey('mission-create-chooser-profiles'),
-            leading: const Icon(Icons.account_tree_outlined),
+            leading: const Icon(HIcons.account_tree_outlined),
             title: Text(strings.pfuManageProfiles),
             onTap: () => Navigator.pop(sheetContext, 'profiles'),
           ),
@@ -3310,7 +3321,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       DockCreateOrbit(
         controlKey: const ValueKey('bot-mode-create-bot'),
         label: strings.missionCreateBotLabel,
-        icon: Icons.account_circle_outlined,
+        icon: HIcons.account_circle_outlined,
         onTap:
             widget.connection.readOnly ||
                 snapshot?.profilesCapability != MissionCapabilityState.available
@@ -3327,7 +3338,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       DockCreateOrbit(
         controlKey: const ValueKey('bot-mode-create-room'),
         label: strings.missionCreateRoomLabel,
-        icon: Icons.groups_2_outlined,
+        icon: HIcons.groups_2_outlined,
         onTap: _canCreateHostedRoom
             ? () => unawaited(_createHostedRoom())
             : null,
@@ -3338,14 +3349,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Widget _buildBody(MissionControlCopy copy) {
     if (_loading && _snapshot == null) {
       return _CenteredState(
-        icon: Icons.hub_outlined,
+        icon: HIcons.hub_outlined,
         text: copy.loading,
         loading: true,
       );
     }
     if (_loadFailure != null && _snapshot == null) {
       return _CenteredState(
-        icon: Icons.cloud_off_outlined,
+        icon: HIcons.cloud_off_outlined,
         text: copy.offline,
         actionLabel: copy.retry,
         onAction: _load,
@@ -3368,20 +3379,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     return Column(
       children: [
         if (_loadFailure != null || unavailableSources.length == 3)
-          _InlineNotice(icon: Icons.cloud_off_outlined, text: copy.offline)
+          _InlineNotice(icon: HIcons.cloud_off_outlined, text: copy.offline)
         else if (unavailableSources.isNotEmpty)
           _InlineNotice(
-            icon: Icons.history_toggle_off_outlined,
+            icon: HIcons.history_toggle_off_outlined,
             text: copy.staleData,
           ),
         if (projection.missingProfileCount > 0)
           _InlineNotice(
-            icon: Icons.person_off_outlined,
+            icon: HIcons.person_off_outlined,
             text: copy.staleProfiles,
           ),
         if (projection.unattributedSessionCount > 0)
           _InlineNotice(
-            icon: Icons.link_off_outlined,
+            icon: HIcons.link_off_outlined,
             text: copy.unattributedSessions(
               projection.unattributedSessionCount,
             ),
@@ -3701,7 +3712,7 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
               isDense: true,
-              prefixIcon: const Icon(Icons.search_rounded, size: 19),
+              prefixIcon: const Icon(HIcons.search_rounded, size: 19),
               hintText: widget.copy.searchAgents,
               suffixIcon: _filter.text.isEmpty
                   ? null
@@ -3709,7 +3720,7 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
                       key: const ValueKey('mission-hosted-create-filter-clear'),
                       tooltip: widget.copy.clearSearch,
                       onPressed: () => setState(() => _filter.clear()),
-                      icon: const Icon(Icons.close_rounded, size: 18),
+                      icon: const Icon(HIcons.close_rounded, size: 18),
                     ),
             ),
             onChanged: (_) => setState(() {}),
@@ -3739,7 +3750,7 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
         if (widget.loadPeers != null) ...[
           TextButton.icon(
             onPressed: _peersLoading ? null : _readPeers,
-            icon: const Icon(Icons.public),
+            icon: const Icon(HIcons.public),
             label: Text(Strings.of(context).botOtherConnections),
           ),
           if (_peersLoading) const LinearProgressIndicator(),
@@ -3851,7 +3862,7 @@ class _HostedGroupChosenStrip extends StatelessWidget {
                       ),
                       const SizedBox(width: 5),
                       Icon(
-                        Icons.close_rounded,
+                        HIcons.close_rounded,
                         size: 14,
                         color: colors.accentText,
                       ),
@@ -3981,7 +3992,7 @@ class _HostedGroupMemberOption extends StatelessWidget {
                     ),
                     child: selected
                         ? Icon(
-                            Icons.check_rounded,
+                            HIcons.check_rounded,
                             size: 15,
                             color: colors.accentText,
                           )
@@ -4056,11 +4067,11 @@ class _WorkspaceSheet extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             child: ListTile(
               key: const ValueKey('mission-workspace-all'),
-              leading: const Icon(Icons.hub_outlined),
+              leading: const Icon(HIcons.hub_outlined),
               title: Text(copy.allAgents),
               subtitle: Text(copy.title),
               trailing: selectedId == null
-                  ? Icon(Icons.check_rounded, color: colors.accentText)
+                  ? Icon(HIcons.check_rounded, color: colors.accentText)
                   : null,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
@@ -4100,13 +4111,13 @@ class _WorkspaceSheet extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (organization.id == selectedId)
-                          Icon(Icons.check_rounded, color: colors.accentText),
+                          Icon(HIcons.check_rounded, color: colors.accentText),
                         if (!readOnly)
                           HermesMenuButton<_WorkspaceActionKind>(
                             key: ValueKey(
                               'mission-workspace-menu-${organization.id}',
                             ),
-                            icon: const Icon(Icons.more_horiz_rounded),
+                            icon: const Icon(HIcons.more_horiz_rounded),
                             onSelected: (kind) => Navigator.pop(
                               context,
                               _WorkspaceAction(kind, organization),
@@ -4144,7 +4155,7 @@ class _WorkspaceSheet extends StatelessWidget {
             Divider(color: colors.divider.withValues(alpha: 0.55)),
             ListTile(
               key: const ValueKey('mission-workspace-create'),
-              leading: const Icon(Icons.add_rounded),
+              leading: const Icon(HIcons.add_rounded),
               title: Text(copy.createOrganization),
               onTap: () => Navigator.pop(
                 context,
@@ -4294,9 +4305,13 @@ class _BotsTabState extends State<_BotsTab> {
       attentionSummary: widget.attentionSummary,
       onRefresh: widget.onRefresh,
       clipBehavior: widget.underHeader ? hermesUnderHeader : Clip.hardEdge,
+      roomsNotice: _UnreadableRoomsNotice.of(
+        widget.snapshot,
+        onRetry: widget.onRefresh,
+      ),
       header: [if (unsupported) _MessageCard(text: copy.profilesUnavailable)],
       emptyState: _LoungeEmptyState(
-        icon: Icons.smart_toy_outlined,
+        icon: HIcons.smart_toy_outlined,
         message: copy.noBots,
         actionLabel: copy.newAgent,
         onAction: widget.onCreateAgent,
@@ -4521,7 +4536,7 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
           : RoomMirrorAvatar(
               image: identity!.image!,
               size: 28,
-              fallback: const Icon(Icons.groups_outlined, size: 28),
+              fallback: const Icon(HIcons.groups_outlined, size: 28),
             ),
       onOpenMember: (member) {
         if (_profileFor(member) != null) {
@@ -4777,6 +4792,136 @@ class _MessageCard extends StatelessWidget {
     ),
     child: Text(text),
   );
+}
+
+/// Rooms the server listed that this Console could not read: said plainly,
+/// with a retry, so a partial list never passes for the whole one. Only
+/// names of rows that did parse are shown; nothing of a rejected row is.
+class _UnreadableRoomsNotice extends StatelessWidget {
+  final List<HostedGroupUnreadableRoom> rooms;
+  final Future<void> Function() onRetry;
+
+  /// Rooms shown from their last good read (their latest read failed).
+  final int staleCount;
+
+  /// The rooms read itself failed (the list, or the connection while
+  /// reading): what is shown, if anything, is the last good read.
+  final bool loadFailed;
+
+  const _UnreadableRoomsNotice({
+    required this.rooms,
+    required this.onRetry,
+    this.staleCount = 0,
+    this.loadFailed = false,
+  });
+
+  /// The notice [snapshot] calls for, or null when every room loaded.
+  static _UnreadableRoomsNotice? of(
+    MissionBackendSnapshot snapshot, {
+    required Future<void> Function() onRetry,
+  }) {
+    final hosted = snapshot.hostedGroups;
+    final loadFailed =
+        snapshot.failures.containsKey('hostedGroups') &&
+        snapshot.hostedGroupsCapability == MissionCapabilityState.unavailable;
+    final stale = hosted.staleRoomIds.length;
+    if (!loadFailed && stale == 0 && hosted.unreadableRooms.isEmpty) {
+      return null;
+    }
+    return _UnreadableRoomsNotice(
+      rooms: hosted.unreadableRooms,
+      onRetry: onRetry,
+      staleCount: stale,
+      loadFailed: loadFailed,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final names = [for (final room in rooms) ?room.name];
+    final caption = TextStyle(
+      fontSize: HermesType.captionSize,
+      color: colors.textSecondary,
+    );
+    final heading = TextStyle(
+      fontWeight: FontWeight.w600,
+      color: colors.textPrimary,
+    );
+    return Container(
+      key: const ValueKey('mission-rooms-unreadable'),
+      margin: const EdgeInsets.symmetric(vertical: HermesSpace.x2),
+      padding: const EdgeInsets.fromLTRB(
+        HermesSpace.x3,
+        HermesSpace.x3,
+        HermesSpace.x2,
+        HermesSpace.x2,
+      ),
+      decoration: BoxDecoration(
+        color: colors.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: Icon(
+                  HIcons.warning_amber_rounded,
+                  size: 18,
+                  color: colors.warning,
+                ),
+              ),
+              const SizedBox(width: HermesSpace.x2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (loadFailed)
+                      Text(
+                        s.roomsLoadFailedTitle,
+                        key: const ValueKey('mission-rooms-load-failed'),
+                        style: heading,
+                      ),
+                    if (rooms.isNotEmpty) ...[
+                      Text(s.roomsUnreadableTitle(rooms.length), style: heading),
+                      if (names.isNotEmpty)
+                        Text(
+                          s.roomsUnreadableNamed(
+                            withoutBidiControls(names.take(3).join(', ')),
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: caption,
+                        ),
+                      const SizedBox(height: 2),
+                      Text(s.roomsUnreadableBody, style: caption),
+                    ],
+                    if (staleCount > 0) ...[
+                      Text(s.roomsStaleTitle(staleCount), style: heading),
+                      Text(s.roomsStaleBody, style: caption),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: TextButton(
+              key: const ValueKey('mission-rooms-unreadable-retry'),
+              onPressed: () => unawaited(onRetry()),
+              child: Text(s.commonRetry),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _InlineNotice extends StatelessWidget {

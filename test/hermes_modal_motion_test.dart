@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _surface = ValueKey('hermes-floating-surface');
 const _dialog = ValueKey('hermes-dialog');
@@ -68,7 +69,7 @@ Future<Object?> _confirm(BuildContext context, {bool dismissible = true}) =>
 Future<Object?> _actions(BuildContext context) => showHermesMenu<String>(
   context: context,
   actions: const [
-    HermesAction(value: 'a', label: 'Actualizar', icon: Icons.refresh),
+    HermesAction(value: 'a', label: 'Actualizar', icon: HIcons.refresh),
     HermesAction(value: 'b', label: 'Ordenar', icon: Icons.sort),
   ],
 );

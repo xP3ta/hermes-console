@@ -4,7 +4,22 @@
 /// Pure (no I/O) so the routing table is unit-testable. The viewer only ever
 /// receives bytes the app already holds in private storage; this function
 /// decides how they are presented, never where they come from.
-enum ArtifactViewerKind { html, svg, markdown, text, image, pdf, unsupported }
+enum ArtifactViewerKind {
+  html,
+  svg,
+  markdown,
+  text,
+  image,
+  pdf,
+
+  /// A Mermaid diagram source (`.mmd`, `.mermaid`): drawn, with its source
+  /// one tap away.
+  mermaid,
+
+  /// A 3D model the viewer can turn (`.glb`, self-contained `.gltf`).
+  model3d,
+  unsupported,
+}
 
 const Set<String> _htmlExtensions = {'.html', '.htm', '.xhtml'};
 const Set<String> _markdownExtensions = {'.md', '.markdown', '.mdown'};
@@ -91,6 +106,8 @@ ArtifactViewerKind artifactViewerKindFor({
   if (ext == '.svg') return ArtifactViewerKind.svg;
   if (_markdownExtensions.contains(ext)) return ArtifactViewerKind.markdown;
   if (ext == '.pdf') return ArtifactViewerKind.pdf;
+  if (ext == '.mmd' || ext == '.mermaid') return ArtifactViewerKind.mermaid;
+  if (ext == '.glb' || ext == '.gltf') return ArtifactViewerKind.model3d;
   if (_imageExtensions.contains(ext)) return ArtifactViewerKind.image;
   if (_textExtensions.containsKey(ext)) return ArtifactViewerKind.text;
   if (mime == 'text/html' || mime == 'application/xhtml+xml') {
@@ -101,6 +118,9 @@ ArtifactViewerKind artifactViewerKindFor({
     return ArtifactViewerKind.markdown;
   }
   if (mime == 'application/pdf') return ArtifactViewerKind.pdf;
+  if (mime == 'model/gltf-binary' || mime == 'model/gltf+json') {
+    return ArtifactViewerKind.model3d;
+  }
   if (const {
     'image/png',
     'image/jpeg',
@@ -141,7 +161,9 @@ String? artifactHighlightLanguage({
   };
 }
 
-/// Whether the viewer shows this kind inside the app (anything except the
-/// metadata/open-with fallback).
+/// Whether a sent attachment of this kind opens in the viewer. A PDF does
+/// not: it keeps its own page preview, which reads the stored copy only
+/// after checking its place, size and digest. Unknown kinds get the
+/// metadata card.
 bool artifactViewerRendersInline(ArtifactViewerKind kind) =>
     kind != ArtifactViewerKind.pdf && kind != ArtifactViewerKind.unsupported;

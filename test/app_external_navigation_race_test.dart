@@ -18,6 +18,7 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 
 import 'package:hermes_android/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 class _DraftProbe extends StatefulWidget {
   const _DraftProbe({
@@ -48,7 +49,7 @@ class _DraftProbeState extends State<_DraftProbe> {
     floatingActionButton: FloatingActionButton(
       key: const ValueKey('new-draft-first-submit'),
       onPressed: _submit,
-      child: const Icon(Icons.arrow_upward),
+      child: const Icon(HIcons.arrow_upward),
     ),
   );
 }

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -29,40 +30,9 @@ class AccountLimitsSection extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
     final preferred = preferredProvider?.trim().toLowerCase();
-    final creditsProvider = limits.creditsIdentity?.provider
-        .trim()
-        .toLowerCase();
-    final creditsFirst =
-        preferred == null || preferred.isEmpty || preferred == creditsProvider;
+    final creditsFirst = AccountCreditBars.leads(limits, preferred);
     final body = <Widget>[];
-    for (final bar in limits.bars) {
-      body.add(
-        _UsageBarRow(
-          bar: bar,
-          label: switch (bar.kind) {
-            AccountUsageBarKind.plan =>
-              limits.planName ?? strings.acl1215PlanBar,
-            AccountUsageBarKind.topup => strings.acl1215TopupBar,
-          },
-        ),
-      );
-    }
-    if (limits.renews case final renews?) {
-      body.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Text(
-            strings.acl1215Renews(renews),
-            style: TextStyle(
-              fontSize: HermesType.captionSize,
-              color: colors.textSecondary,
-            ),
-          ),
-        ),
-      );
-    }
-    final creditRows = List<Widget>.of(body);
-    body.clear();
+    final creditRows = AccountCreditBars.rows(context, limits);
     if (creditsFirst) {
       body.addAll(creditRows);
     }
@@ -170,6 +140,67 @@ class AccountLimitsSection extends StatelessWidget {
           ...body,
         ],
       ),
+    );
+  }
+}
+
+/// The `usage.bars` credit bars (plan and top-up, what is left of each) and
+/// the renewal date: the part of [AccountLimitsSection] that is not a
+/// `session.usage` line, so the Usage screen's limits show it the same way.
+/// Paints nothing when Hermes sent none.
+class AccountCreditBars extends StatelessWidget {
+  const AccountCreditBars({required this.limits, super.key});
+
+  final AccountUsageLimits limits;
+
+  /// Whether the credits go before the provider-account windows: unless the
+  /// session runs on another provider than the one the credits are from.
+  static bool leads(AccountUsageLimits limits, String? preferredProvider) {
+    final preferred = preferredProvider?.trim().toLowerCase();
+    final creditsProvider = limits.creditsIdentity?.provider
+        .trim()
+        .toLowerCase();
+    return preferred == null ||
+        preferred.isEmpty ||
+        preferred == creditsProvider;
+  }
+
+  /// One row per bar, then when the plan renews.
+  static List<Widget> rows(BuildContext context, AccountUsageLimits limits) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    return [
+      for (final bar in limits.bars)
+        _UsageBarRow(
+          bar: bar,
+          label: switch (bar.kind) {
+            AccountUsageBarKind.plan =>
+              limits.planName ?? strings.acl1215PlanBar,
+            AccountUsageBarKind.topup => strings.acl1215TopupBar,
+          },
+        ),
+      if (limits.renews case final renews?)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            strings.acl1215Renews(renews),
+            style: TextStyle(
+              fontSize: HermesType.captionSize,
+              color: colors.textSecondary,
+            ),
+          ),
+        ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final children = rows(context, limits);
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
     );
   }
 }
@@ -312,8 +343,8 @@ class _ProviderDetailsState extends State<_ProviderDetails> {
                   ),
                   Icon(
                     _open
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
+                        ? HIcons.expand_less_rounded
+                        : HIcons.expand_more_rounded,
                     size: 18,
                     color: colors.textSecondary,
                   ),

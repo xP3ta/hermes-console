@@ -24,6 +24,14 @@ android {
        isCoreLibraryDesugaringEnabled = true
    }
 
+   // AGP's dependency information (encrypted for Google Play, in the APK
+   // Signing Block) changes on every build: two otherwise identical direct
+   // APKs could never be byte-identical. The APK leaves it out; the Play
+   // bundle keeps it.
+   dependenciesInfo {
+       includeInApk = false
+   }
+
    defaultConfig {
        // Identidad pública en Play (inmutable tras la primera publicación).
        // Propia de XPeta Lab para no colisionar con el package de Nous/Hermes.

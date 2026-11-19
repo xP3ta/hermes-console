@@ -6,6 +6,7 @@
 // in the detail pane through the screen's own mechanism and the panel
 // closes. The rail is a view of what the Chats screen hands it (its list,
 // plus the other profiles' first pages): nothing here reads the network.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -279,7 +280,7 @@ class _ChatSwitcherRailState extends State<ChatSwitcherRail> {
                           key: const ValueKey('chat-switcher-open-list'),
                           tooltip: s.cwsOpenList,
                           icon: Icon(
-                            Icons.menu_rounded,
+                            HIcons.menu_rounded,
                             color: colors.textPrimary,
                           ),
                           onPressed: widget.onOpenList,
@@ -312,7 +313,7 @@ class _ChatSwitcherRailState extends State<ChatSwitcherRail> {
                         IconButton(
                           key: const ValueKey('chat-switcher-new'),
                           tooltip: s.slNewSession,
-                          icon: const Icon(Icons.edit_outlined),
+                          icon: const Icon(HIcons.edit_outlined),
                           style: IconButton.styleFrom(
                             backgroundColor: colors.surface,
                             foregroundColor: colors.accent,
@@ -442,7 +443,7 @@ class _AgentFace extends StatelessWidget {
   }
 }
 
-/// What a face with [count] chats says to a screen reader: «Forja, 2
+/// What a face with [count] chats says to a screen reader: «Leo, 2
 /// conversaciones», «pi, 10+ conversaciones» when [more]. The rail and the
 /// Chats list's profile strip (open Fold, a tablet, a phone on its side)
 /// word it the same.
@@ -755,7 +756,7 @@ class _ChatSwitcherPanelState extends State<_ChatSwitcherPanel> {
               if (hidden > 0)
                 _PanelAction(
                   key: const ValueKey('chat-switcher-more'),
-                  icon: Icons.expand_more_rounded,
+                  icon: HIcons.expand_more_rounded,
                   label: s.cswSeeMore(hidden),
                   onTap: () =>
                       setState(() => _shown += ChatSwitcherRail.pageSize),
@@ -769,7 +770,7 @@ class _ChatSwitcherPanelState extends State<_ChatSwitcherPanel> {
               ),
               _PanelAction(
                 key: const ValueKey('chat-switcher-new-with'),
-                icon: Icons.edit_outlined,
+                icon: HIcons.edit_outlined,
                 label: s.cswNewChatWith(agent.name),
                 accent: true,
                 onTap: widget.onNewChat,
@@ -875,7 +876,7 @@ class _ChatRow extends StatelessWidget {
                 if (current) ...[
                   const SizedBox(width: HermesSpace.x2),
                   Icon(
-                    Icons.check_rounded,
+                    HIcons.check_rounded,
                     key: ValueKey('chat-switcher-current-${chat.id}'),
                     size: HermesIcon.md,
                     color: colors.accent,

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,6 +21,7 @@ import '../screens/tasks_screen.dart';
 import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/connection_status.dart';
+import '../services/drawer_swipe_prefs.dart';
 import '../services/new_session_factory.dart';
 import '../services/session_archive.dart';
 import '../services/tui_gateway_client.dart';
@@ -118,6 +120,13 @@ class HermesDrawer extends StatelessWidget {
   /// detector horizontal.
   static double edgeDragWidth(BuildContext context) =>
       MediaQuery.systemGestureInsetsOf(context).left + 48;
+
+  /// Whether a drag from the left edge opens the menu: only when the reader
+  /// turned on «Abrir el menú deslizando» (off by default). The menu button
+  /// and closing the open menu do not depend on it. Every Scaffold with a
+  /// [HermesDrawer] reads it here (test/drawer_edge_gesture_contract_test).
+  static bool openDragEnabled(BuildContext context) =>
+      DrawerSwipeScope.enabledOf(context);
 
   final SavedConnection? connection;
   final ConnectionManager connManager;
@@ -382,13 +391,13 @@ class HermesDrawer extends StatelessWidget {
                         : _newChat(context),
                   ),
                   _DrawerItem(
-                    icon: Icons.home_outlined,
+                    icon: HIcons.home_outlined,
                     label: strings.drawerHome,
                     selected: current == DrawerSection.home,
                     onTap: () => _goHome(context),
                   ),
                   _DrawerItem(
-                    icon: Icons.forum_outlined,
+                    icon: HIcons.forum_outlined,
                     label: strings.drawerSessions,
                     selected: current == DrawerSection.sessions,
                     enabled: supports(capabilities.sessionsRead),
@@ -410,7 +419,7 @@ class HermesDrawer extends StatelessWidget {
                   ),
                   _DrawerSectionLabel(strings.drawerSectionWork),
                   _DrawerItem(
-                    icon: Icons.folder_copy_outlined,
+                    icon: HIcons.folder_copy_outlined,
                     label: strings.drawerProjects,
                     selected: current == DrawerSection.projects,
                     enabled: hasConn,
@@ -421,7 +430,7 @@ class HermesDrawer extends StatelessWidget {
                     ),
                   ),
                   _DrawerItem(
-                    icon: Icons.view_kanban_outlined,
+                    icon: HIcons.view_kanban_outlined,
                     label: strings.drawerKanban,
                     selected: current == DrawerSection.kanban,
                     enabled: hasConn,
@@ -440,7 +449,7 @@ class HermesDrawer extends StatelessWidget {
                   // generadas»): what the recent conversations produced.
                   _DrawerItem(
                     key: const ValueKey('drawer-artifacts'),
-                    icon: Icons.view_in_ar_outlined,
+                    icon: HIcons.view_in_ar_outlined,
                     label: strings.chaArtifactsAction,
                     detail: strings.artGlobalDetail,
                     selected: current == DrawerSection.artifacts,
@@ -459,7 +468,7 @@ class HermesDrawer extends StatelessWidget {
                           ),
                   ),
                   _DrawerItem(
-                    icon: Icons.schedule_outlined,
+                    icon: HIcons.schedule_outlined,
                     label: strings.drawerCron,
                     selected: current == DrawerSection.cron,
                     enabled: supports(capabilities.cronRead),
@@ -481,7 +490,7 @@ class HermesDrawer extends StatelessWidget {
                   ),
                   _DrawerSectionLabel(strings.drawerSectionAgents),
                   _DrawerItem(
-                    icon: Icons.hub_outlined,
+                    icon: HIcons.hub_outlined,
                     label: strings.missionBotsLabel,
                     selected: current == DrawerSection.missionControl,
                     enabled: hasConn,
@@ -508,7 +517,7 @@ class HermesDrawer extends StatelessWidget {
                   if (FeatureFlags.instance.agentsSection)
                     _DrawerItem(
                       key: const ValueKey('drawer-agents'),
-                      icon: Icons.smart_toy_outlined,
+                      icon: HIcons.smart_toy_outlined,
                       label: strings.hdaTitle,
                       selected: current == DrawerSection.agents,
                       enabled: hasConn,
@@ -522,7 +531,7 @@ class HermesDrawer extends StatelessWidget {
                             ),
                     ),
                   _DrawerItem(
-                    icon: Icons.graphic_eq_rounded,
+                    icon: HIcons.graphic_eq_rounded,
                     label: strings.voiceTitle,
                     selected: current == DrawerSection.voice,
                     enabled: hasConn,
@@ -537,12 +546,12 @@ class HermesDrawer extends StatelessWidget {
                   // drawer opens the active profile's.
                   _DrawerItem(
                     key: const ValueKey('drawer-profile'),
-                    icon: Icons.account_circle_outlined,
+                    icon: HIcons.account_circle_outlined,
                     label: strings.botProfileProfileSection,
                     selected: current == DrawerSection.profileHub,
                     enabled: hasConn,
                     trailing: Icon(
-                      Icons.chevron_right_rounded,
+                      HIcons.chevron_right_rounded,
                       size: 19,
                       color: colors.textDisabled,
                     ),
@@ -602,7 +611,7 @@ class HermesDrawer extends StatelessWidget {
                   children: [
                     Expanded(
                       child: _DrawerItem(
-                        icon: Icons.router_outlined,
+                        icon: HIcons.router_outlined,
                         label: strings.drawerInstances,
                         selected: current == DrawerSection.gateways,
                         dense: true,
@@ -615,7 +624,7 @@ class HermesDrawer extends StatelessWidget {
                     ),
                     Expanded(
                       child: _DrawerItem(
-                        icon: Icons.settings_outlined,
+                        icon: HIcons.settings_outlined,
                         label: strings.drawerSettings,
                         selected: current == DrawerSection.settings,
                         dense: true,
@@ -903,7 +912,7 @@ class _DrawerHeader extends StatelessWidget {
               ),
               trailingIcon: saved.id == activeConnectionId
                   ? Icon(
-                      Icons.check_rounded,
+                      HIcons.check_rounded,
                       size: 20,
                       color: colors.accent,
                       semanticLabel: Strings.of(context).drawerActiveInstance,
@@ -951,26 +960,28 @@ class _DrawerHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
+                    // Logo and name side by side; when the reader's text size
+                    // leaves no room for both on one line, the name goes
+                    // under the logo, whole, instead of being cut.
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 4,
                       children: [
                         // The same logo as Home's title, seasons included.
                         const SeasonalMark(
                           size: 23,
                           key: ValueKey('drawer-header-mark'),
                         ),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            'Console',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.3,
-                              color: colors.textPrimary,
-                            ),
+                        Text(
+                          'Console',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                            color: colors.textPrimary,
                           ),
                         ),
                       ],
@@ -1004,7 +1015,7 @@ class _DrawerHeader extends StatelessWidget {
                         if (canSwitch) ...[
                           const SizedBox(width: 4),
                           Icon(
-                            Icons.expand_more_rounded,
+                            HIcons.expand_more_rounded,
                             size: 18,
                             color: colors.textSecondary,
                           ),
@@ -1054,7 +1065,7 @@ class _NewChatItem extends StatelessWidget {
                   children: [
                     SizedBox.square(
                       dimension: 28,
-                      child: Icon(Icons.edit_square, size: 20, color: accent),
+                      child: Icon(HIcons.edit_square, size: 20, color: accent),
                     ),
                     const SizedBox(width: 12),
                     Expanded(

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../design/list.dart';
@@ -110,7 +111,7 @@ class _BotSettingsRowState extends State<BotSettingsRow> {
           value: _expanded ? null : widget.summary,
           onTap: _toggle,
           trailing: _expanded
-              ? Icon(Icons.expand_less, size: 18, color: colors.textSecondary)
+              ? Icon(HIcons.expand_less, size: 18, color: colors.textSecondary)
               : null,
         ),
         if (_expanded)

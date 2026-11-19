@@ -25,6 +25,7 @@ import 'package:hermes_android/core/widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl;
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _rows = 40;
 
@@ -532,7 +533,7 @@ void main() {
                     const SizedBox(width: 6),
                     HermesFloatingIconButton(
                       key: const ValueKey('filter'),
-                      icon: Icons.filter_alt_outlined,
+                      icon: HIcons.filter_alt_outlined,
                       tooltip: 'Filtrar',
                       onPressed: () {},
                     ),

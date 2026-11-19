@@ -14,6 +14,7 @@ import 'package:hermes_android/core/widgets/frosted_backdrop.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/core/widgets/island.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _menu = ValueKey('test-menu');
 const _views = ValueKey('test-views');
@@ -79,14 +80,14 @@ Widget _chat({
           faces: const SizedBox.square(dimension: FloatingChatHeader.faceSize),
           leading: FloatingHeaderButton(
             key: _menu,
-            icon: Icons.menu_rounded,
+            icon: HIcons.menu_rounded,
             tooltip: 'Menú',
             onPressed: () {},
           ),
           trailingSecondary: FloatingHeaderButton(
             key: _views,
-            icon: Icons.view_sidebar_outlined,
-            selectedIcon: Icons.view_sidebar,
+            icon: HIcons.view_sidebar_outlined,
+            selectedIcon: HIcons.view_sidebar,
             toggled: viewsOn,
             tooltip: viewsOn ? 'Cerrar el panel' : 'Abrir el panel',
             onPressed: () {},
@@ -95,7 +96,7 @@ Widget _chat({
           ),
           trailing: FloatingHeaderButton(
             key: _settings,
-            icon: Icons.more_horiz_rounded,
+            icon: HIcons.more_horiz_rounded,
             tooltip: 'Esta conversación',
             onPressed: () {},
           ),
@@ -308,7 +309,7 @@ void main() {
               title: const Text('Conversaciones'),
               actions: [
                 IconButton(
-                  icon: const Icon(Icons.edit_outlined),
+                  icon: const Icon(HIcons.edit_outlined),
                   tooltip: 'Nuevo',
                   onPressed: () {},
                 ),
@@ -465,7 +466,7 @@ void main() {
             body: Center(
               child: FloatingHeaderButton(
                 key: _views,
-                icon: Icons.view_sidebar_outlined,
+                icon: HIcons.view_sidebar_outlined,
                 tooltip: 'Vistas',
                 onPressed: null,
               ),
@@ -477,7 +478,7 @@ void main() {
       final icon = tester.widget<Icon>(
         find.descendant(
           of: find.byKey(_views),
-          matching: find.byIcon(Icons.view_sidebar_outlined),
+          matching: find.byIcon(HIcons.view_sidebar_outlined),
         ),
       );
       expect(icon.color, chrome.mutedInk);
@@ -493,7 +494,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(_views),
-          matching: find.byIcon(Icons.view_sidebar),
+          matching: find.byIcon(HIcons.view_sidebar),
         ),
         findsOneWidget,
       );

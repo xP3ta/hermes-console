@@ -105,6 +105,10 @@ abstract final class HermesType {
   /// A short code the user reads out or types (a device sign-in code).
   static const double codeSize = 32;
 
+  /// The large figure of a summary panel (the context used in the usage
+  /// sheet).
+  static const double figureSize = 26;
+
   /// The content boxes (cards, groups, lists, fields), on their solid body:
   /// the label of a section (12, w600, a moderate tracking), the subtitle of
   /// a row or a notice (13) and the placeholder of a field (14). Nothing in

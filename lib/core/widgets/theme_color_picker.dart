@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -389,7 +390,7 @@ class _ShadePalette extends StatelessWidget {
                     ),
                     child: (hsv.value - values[index]).abs() < 0.04
                         ? Icon(
-                            Icons.check_rounded,
+                            HIcons.check_rounded,
                             size: 18,
                             color:
                                 ThemeData.estimateBrightnessForColor(

@@ -380,6 +380,10 @@ class PillMorphSurfaceState extends State<PillMorphSurface>
       child: NotificationListener<ScrollNotification>(
         onNotification: _onScroll,
         child: GestureDetector(
+          // The whole surface takes the drag, not only where something is
+          // painted: a short title leaves most of the header blank, and a
+          // finger on that blank must move the sheet as on the grabber.
+          behavior: HitTestBehavior.opaque,
           onVerticalDragUpdate: _dragUpdate,
           onVerticalDragEnd: _dragEnd,
           onVerticalDragCancel: () => drag.release(0),

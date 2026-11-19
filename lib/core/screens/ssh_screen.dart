@@ -1,5 +1,6 @@
 // Hub del módulo SSH de una instancia: estado de configuración y accesos a
 // terminal, archivos (SFTP) y edición de credenciales. Entrada desde el drawer.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -153,19 +154,19 @@ class _SshScreenState extends State<SshScreen> {
           ChatWorkspaceMenuEntry(
             key: const ValueKey('ssh-pane-menu-credentials'),
             label: Strings.of(context).ssh2EditCreds,
-            icon: Icons.edit_outlined,
+            icon: HIcons.edit_outlined,
             onSelected: _configure,
           ),
           ChatWorkspaceMenuEntry(
             key: const ValueKey('ssh-pane-menu-host-key'),
             label: Strings.of(context).ssh2ForgetHostKey,
-            icon: Icons.gpp_maybe_outlined,
+            icon: HIcons.gpp_maybe_outlined,
             onSelected: _forgetHostKey,
           ),
           ChatWorkspaceMenuEntry(
             key: const ValueKey('ssh-pane-menu-remove'),
             label: Strings.of(context).ssh2RemoveSsh,
-            icon: Icons.delete_outline,
+            icon: HIcons.delete_outline,
             onSelected: _remove,
             destructive: true,
           ),
@@ -194,11 +195,11 @@ class _SshScreenState extends State<SshScreen> {
           ? Center(
               child: HermesEmptyState(
                 key: const ValueKey('ssh-hub-load-error'),
-                icon: Icons.error_outline,
+                icon: HIcons.error_outline,
                 title: Strings.of(context).sftpUnreadableTitle,
                 body: Strings.of(context).sshHubLoadError,
                 primaryLabel: Strings.of(context).sftpTryAgain,
-                primaryIcon: Icons.refresh,
+                primaryIcon: HIcons.refresh,
                 onPrimary: _retryLoad,
               ),
             )
@@ -215,7 +216,7 @@ class _SshScreenState extends State<SshScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.terminal_rounded, size: 48, color: colors.accent),
+            Icon(HIcons.terminal_rounded, size: 48, color: colors.accent),
             const SizedBox(height: 16),
             Text(
               Strings.of(context).ssh2AccessTitle,
@@ -238,7 +239,7 @@ class _SshScreenState extends State<SshScreen> {
             const SizedBox(height: 22),
             FilledButton.icon(
               onPressed: _configure,
-              icon: const Icon(Icons.settings_ethernet_rounded, size: 18),
+              icon: const Icon(HIcons.settings_ethernet_rounded, size: 18),
               label: Text(Strings.of(context).ssh2Configure),
             ),
           ],
@@ -260,7 +261,7 @@ class _SshScreenState extends State<SshScreen> {
           ),
           child: Row(
             children: [
-              Icon(Icons.dns_outlined, size: 22, color: colors.secondary),
+              Icon(HIcons.dns_outlined, size: 22, color: colors.secondary),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -298,7 +299,7 @@ class _SshScreenState extends State<SshScreen> {
         const SizedBox(height: 18),
         _action(
           colors,
-          icon: Icons.terminal_rounded,
+          icon: HIcons.terminal_rounded,
           title: Strings.of(context).ssh2OpenTerminal,
           subtitle: Strings.of(context).ssh2OpenTerminalSub,
           onTap: _terminal,
@@ -306,14 +307,14 @@ class _SshScreenState extends State<SshScreen> {
         ),
         _action(
           colors,
-          icon: Icons.folder_open_outlined,
+          icon: HIcons.folder_open_outlined,
           title: Strings.of(context).sshFilesSftp,
           subtitle: Strings.of(context).ssh2FilesSub,
           onTap: _sftp,
         ),
         _action(
           colors,
-          icon: Icons.edit_outlined,
+          icon: HIcons.edit_outlined,
           title: Strings.of(context).ssh2EditCreds,
           subtitle: Strings.of(context).ssh2EditCredsSub,
           onTap: _configure,
@@ -322,14 +323,14 @@ class _SshScreenState extends State<SshScreen> {
         const Divider(),
         _action(
           colors,
-          icon: Icons.gpp_maybe_outlined,
+          icon: HIcons.gpp_maybe_outlined,
           title: Strings.of(context).ssh2ForgetHostKey,
           subtitle: Strings.of(context).ssh2ForgetHostKeySub,
           onTap: _forgetHostKey,
         ),
         _action(
           colors,
-          icon: Icons.delete_outline,
+          icon: HIcons.delete_outline,
           title: Strings.of(context).ssh2RemoveSsh,
           subtitle: Strings.of(context).ssh2RemoveSshSub,
           onTap: _remove,
@@ -390,7 +391,7 @@ class _SshScreenState extends State<SshScreen> {
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
+                Icon(HIcons.chevron_right, size: 18, color: colors.textTertiary),
               ],
             ),
           ),

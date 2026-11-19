@@ -11,6 +11,7 @@ import 'package:hermes_android/core/screens/look_feel_screen.dart';
 import 'package:hermes_android/core/theme/look_feel.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// The ticks the platform was asked for, by name.
 List<String> _ticks = <String>[];
@@ -197,7 +198,7 @@ void main() {
               IconButton(
                 key: const Key('ib'),
                 onPressed: () {},
-                icon: const Icon(Icons.add),
+                icon: const Icon(HIcons.add),
               ),
               Switch(
                 key: const Key('sw'),

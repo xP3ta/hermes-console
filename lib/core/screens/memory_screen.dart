@@ -8,6 +8,7 @@
 // per-entry edits through /api/learning/node (MemoryEntriesScreen). A
 // "backup" action serialises the API response JSON and saves it to
 // getApplicationDocumentsDirectory() via path_provider.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -245,7 +246,7 @@ class _MemoryScreenState extends State<MemoryScreen>
           key: const ValueKey('mem-file-reset'),
           value: true,
           label: s.memResetFile,
-          icon: Icons.delete_outline_rounded,
+          icon: HIcons.delete_outline_rounded,
           destructive: true,
         ),
       ],
@@ -412,7 +413,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                         color: colors.textSecondary,
                       ),
                     )
-                  : const Icon(Icons.archive_outlined),
+                  : const Icon(HIcons.archive_outlined),
               tooltip: Strings.of(context).memBackupJson,
               onPressed: _backingUp ? null : _backup,
             ),
@@ -423,7 +424,7 @@ class _MemoryScreenState extends State<MemoryScreen>
             onTap: _loading ? null : _load,
             excludeSemantics: true,
             child: IconButton(
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(HIcons.refresh),
               tooltip: Strings.of(context).commonRefresh,
               onPressed: _loading ? null : _load,
             ),
@@ -512,7 +513,7 @@ class _MemoryScreenState extends State<MemoryScreen>
               decoration: InputDecoration(
                 hintText: Strings.of(context).memoryFilterHint,
                 prefixIcon: Icon(
-                  Icons.search,
+                  HIcons.search,
                   size: 18,
                   color: colors.textSecondary,
                 ),
@@ -525,7 +526,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                         child: IconButton(
                           tooltip: Strings.of(context).slClearSearch,
                           icon: Icon(
-                            Icons.clear,
+                            HIcons.clear,
                             size: 16,
                             color: colors.textSecondary,
                           ),
@@ -549,7 +550,7 @@ class _MemoryScreenState extends State<MemoryScreen>
               dividerIndent: HermesSpace.rowH,
               children: [
                 d.HermesListRow(
-                  icon: Icons.auto_awesome_outlined,
+                  icon: HIcons.auto_awesome_outlined,
                   title: Strings.of(context).constellationTitle,
                   onTap: _openConstellation,
                 ),
@@ -602,7 +603,7 @@ class _MemoryScreenState extends State<MemoryScreen>
           children: [
             Row(
               children: [
-                Icon(Icons.psychology, size: 18, color: colors.accent),
+                Icon(HIcons.psychology, size: 18, color: colors.accent),
                 const SizedBox(width: 8),
                 Text(
                   Strings.of(context).memActiveProviderLabel,
@@ -672,7 +673,7 @@ class _MemoryScreenState extends State<MemoryScreen>
             Row(
               children: [
                 Icon(
-                  Icons.article_outlined,
+                  HIcons.article_outlined,
                   size: 18,
                   color: colors.textSecondary,
                 ),
@@ -712,7 +713,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                             if (_hasDraft(e.key)) ...[
                               const SizedBox(width: 6),
                               Icon(
-                                Icons.edit_note_outlined,
+                                HIcons.edit_note_outlined,
                                 size: 14,
                                 color: colors.accentHover,
                               ),
@@ -730,7 +731,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                             ),
                             const SizedBox(width: 4),
                             Icon(
-                              Icons.info_outline,
+                              HIcons.info_outline,
                               size: 14,
                               color: colors.textDisabled,
                             ),
@@ -843,9 +844,9 @@ class _MemoryScreenState extends State<MemoryScreen>
               child: Icon(
                 provider.configured
                     ? (isActive
-                          ? Icons.check_circle
-                          : Icons.check_circle_outline)
-                    : Icons.radio_button_unchecked,
+                          ? HIcons.check_circle
+                          : HIcons.check_circle_outline)
+                    : HIcons.radio_button_unchecked,
                 size: 16,
                 color: isActive
                     ? colors.success
@@ -947,7 +948,7 @@ class _FileMoreButtonState extends State<_FileMoreButton> {
     tooltip: Strings.of(context).cphMore,
     visualDensity: VisualDensity.compact,
     iconSize: 18,
-    icon: const Icon(Icons.more_vert_rounded),
+    icon: const Icon(HIcons.more_vert_rounded),
     onPressed: () => widget.onPressed(widget.fileKey, _anchor),
   );
 }
@@ -993,14 +994,14 @@ class MemoryFileDetailPage extends StatelessWidget {
           : HermesActionButton(
               key: const ValueKey('memory-file-edit-entries'),
               primary: true,
-              icon: Icons.edit_note_outlined,
+              icon: HIcons.edit_note_outlined,
               label: s.memEditEntries,
               onPressed: onEditEntries,
             ),
       secondaryAction: hasDraft
           ? HermesActionButton(
               key: const ValueKey('memory-file-open-draft'),
-              icon: Icons.drafts_outlined,
+              icon: HIcons.drafts_outlined,
               label: s.memOpenDraft,
               onPressed: onOpenDraft,
             )

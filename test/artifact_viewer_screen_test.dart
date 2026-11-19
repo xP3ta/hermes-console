@@ -469,6 +469,14 @@ void main() {
           ),
         );
         await settle(tester);
+        if (name.endsWith('.pdf')) {
+          // Not a readable PDF: the page renderer gives nothing back, so the
+          // viewer ends on the metadata card. The attempt does real I/O.
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 400)),
+          );
+          await settle(tester);
+        }
         expect(
           find.byKey(const ValueKey('artifact-viewer-fallback')),
           findsOne,

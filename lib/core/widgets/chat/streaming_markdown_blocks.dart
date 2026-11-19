@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../utils/streaming_normalizer.dart';
 import '../markdown_table.dart';
 
-/// F1 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §2.3.6): the closed
+/// F1 of the fluidity plan: the closed
 /// prefix of a live answer as a list of blocks, each projected once and
 /// drawn in its own [RepaintBoundary].
 ///

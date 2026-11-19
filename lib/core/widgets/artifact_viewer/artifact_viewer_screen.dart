@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -19,6 +20,8 @@ import '../chat/chat_markdown_body.dart';
 import '../hermes_app_bar.dart';
 import 'artifact_html_policy.dart';
 import 'code_view_prefs.dart';
+import 'pdf_document_view.dart';
+import 'web_preview.dart';
 import '../console_loader.dart';
 import '../../feedback/feedback_policy.dart';
 
@@ -152,49 +155,49 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
         if (_showsTextView && !_compact) ...[
           HermesAction(
             value: 'font-up',
-            icon: Icons.text_increase_rounded,
+            icon: HIcons.text_increase_rounded,
             label: strings.mc1215FontLarger,
           ),
           HermesAction(
             value: 'font-down',
-            icon: Icons.text_decrease_rounded,
+            icon: HIcons.text_decrease_rounded,
             label: strings.mc1215FontSmaller,
           ),
         ],
         if (_isTextual)
           HermesAction(
             value: 'copy',
-            icon: Icons.copy_rounded,
+            icon: HIcons.copy_rounded,
             label: strings.commonCopy,
           ),
         if (widget.sourcePath != null)
           HermesAction(
             value: 'copy-path',
-            icon: Icons.link_rounded,
+            icon: HIcons.link_rounded,
             label: strings.fcoCopyPath,
           ),
         if (widget.onOpenFolder != null)
           HermesAction(
             value: 'open-folder',
-            icon: Icons.folder_open_rounded,
+            icon: HIcons.folder_open_rounded,
             label: strings.fcoOpenFolder,
           ),
         if (widget.onShare != null)
           HermesAction(
             value: 'share',
-            icon: Icons.share_outlined,
+            icon: HIcons.share_outlined,
             label: strings.commonShare,
           ),
         if (widget.onOpenExternal != null)
           HermesAction(
             value: 'open',
-            icon: Icons.open_in_new_rounded,
+            icon: HIcons.open_in_new_rounded,
             label: strings.vw1215OpenOutside,
           ),
         if (widget.onSave != null)
           HermesAction(
             value: 'save',
-            icon: Icons.save_alt_rounded,
+            icon: HIcons.save_alt_rounded,
             label: strings.commonSave,
           ),
       ],
@@ -238,6 +241,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
     ArtifactViewerKind.html ||
     ArtifactViewerKind.svg ||
     ArtifactViewerKind.markdown ||
+    ArtifactViewerKind.mermaid ||
     ArtifactViewerKind.text => true,
     _ => false,
   };
@@ -300,7 +304,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
             IconButton(
               key: const ValueKey('artifact-viewer-search'),
               tooltip: strings.vw1215Search,
-              icon: const Icon(Icons.search_rounded),
+              icon: const Icon(HIcons.search_rounded),
               onPressed: () => _textKey.currentState?.openSearch(),
             ),
             const CodeWrapButton(),
@@ -312,7 +316,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
                   ? strings.vw1215ViewRendered
                   : strings.vw1215ViewSource,
               icon: Icon(
-                _showSource ? Icons.preview_outlined : Icons.code_rounded,
+                _showSource ? HIcons.preview_outlined : HIcons.code_rounded,
               ),
               onPressed: () => setState(() => _showSource = !_showSource),
             ),
@@ -320,7 +324,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
             IconButton(
               key: const ValueKey('artifact-viewer-edit'),
               tooltip: strings.pw1215Edit,
-              icon: const Icon(Icons.edit_outlined),
+              icon: const Icon(HIcons.edit_outlined),
               onPressed: widget.onEdit,
             ),
           IconButton(
@@ -328,7 +332,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
             // Anchor for the menu surface.
             icon: KeyedSubtree(
               key: _menuAnchor,
-              child: const Icon(Icons.more_vert_rounded),
+              child: const Icon(HIcons.more_vert_rounded),
             ),
             tooltip: MaterialLocalizations.of(context).showMenuTooltip,
             onPressed: () => unawaited(_openMenu(strings)),
@@ -383,7 +387,11 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
                     name: widget.name,
                     mimeType: widget.mimeType,
                   )
-            : (_kind == ArtifactViewerKind.markdown ? 'markdown' : 'xml'),
+            : switch (_kind) {
+                ArtifactViewerKind.markdown => 'markdown',
+                ArtifactViewerKind.mermaid => null,
+                _ => 'xml',
+              },
         compact: _compact,
         initialLine: widget.initialLine,
         endLine: widget.endLine,
@@ -412,8 +420,56 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
         );
       case ArtifactViewerKind.image:
         return _ImageArtifactView(bytes: bytes);
-      case ArtifactViewerKind.text:
+      case ArtifactViewerKind.mermaid:
+        final colors = Theme.of(context).hermes;
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        final source = _decode(bytes);
+        return WebDocumentView(
+          key: ValueKey('artifact-viewer-diagram-$dark'),
+          settingsFor: widget.webViewSettingsFor,
+          document: () => buildMermaidDocument(
+            source,
+            dark: dark,
+            background: colors.background,
+            ink: colors.textPrimary,
+          ),
+        );
+      case ArtifactViewerKind.model3d:
+        final background = Theme.of(context).hermes.background;
+        if (bytes.length > kModelMaxBytes) {
+          return _FallbackCard(
+            name: widget.name,
+            mimeType: widget.mimeType,
+            sizeBytes: widget.sizeBytes ?? bytes.length,
+            message: Strings.of(context).vw1215Unsupported,
+            onOpenExternal: widget.onOpenExternal,
+            onShare: widget.onShare,
+            onSave: widget.onSave,
+          );
+        }
+        return WebDocumentView(
+          key: const ValueKey('artifact-viewer-model'),
+          settingsFor: widget.webViewSettingsFor,
+          document: () => buildModelDocument(
+            bytes,
+            mimeType: modelMimeFor(widget.name) ?? 'model/gltf-binary',
+            background: background,
+          ),
+        );
       case ArtifactViewerKind.pdf:
+        return PdfDocumentView(
+          bytes: bytes,
+          fallback: _FallbackCard(
+            name: widget.name,
+            mimeType: widget.mimeType,
+            sizeBytes: widget.sizeBytes ?? bytes.length,
+            message: Strings.of(context).vw1215Unsupported,
+            onOpenExternal: widget.onOpenExternal,
+            onShare: widget.onShare,
+            onSave: widget.onSave,
+          ),
+        );
+      case ArtifactViewerKind.text:
       case ArtifactViewerKind.unsupported:
         return _FallbackCard(
           name: widget.name,
@@ -660,7 +716,7 @@ class _ImageArtifactView extends StatelessWidget {
           fit: BoxFit.contain,
           gaplessPlayback: true,
           errorBuilder: (context, _, _) => Icon(
-            Icons.broken_image_outlined,
+            HIcons.broken_image_outlined,
             size: 48,
             color: Theme.of(context).hermes.textSecondary,
           ),
@@ -704,7 +760,7 @@ class _FallbackCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.insert_drive_file_outlined,
+              HIcons.insert_drive_file_outlined,
               size: 56,
               color: colors.textSecondary,
             ),
@@ -738,7 +794,7 @@ class _FallbackCard extends StatelessWidget {
               FilledButton.icon(
                 key: const ValueKey('artifact-viewer-open-with'),
                 onPressed: onOpenExternal,
-                icon: const Icon(Icons.open_in_new_rounded),
+                icon: const Icon(HIcons.open_in_new_rounded),
                 label: Text(strings.genMediaOpenWith),
               ),
             const SizedBox(height: 8),
@@ -749,13 +805,13 @@ class _FallbackCard extends StatelessWidget {
                 if (onShare != null)
                   TextButton.icon(
                     onPressed: onShare,
-                    icon: const Icon(Icons.share_outlined),
+                    icon: const Icon(HIcons.share_outlined),
                     label: Text(strings.commonShare),
                   ),
                 if (onSave != null)
                   TextButton.icon(
                     onPressed: onSave,
-                    icon: const Icon(Icons.save_alt_rounded),
+                    icon: const Icon(HIcons.save_alt_rounded),
                     label: Text(strings.commonSave),
                   ),
               ],
@@ -797,7 +853,7 @@ class CodeWrapButton extends StatelessWidget {
           key: const ValueKey('artifact-viewer-wrap'),
           tooltip: wrap ? strings.mc1215NoWrapLines : strings.mc1215WrapLines,
           isSelected: wrap,
-          icon: const Icon(Icons.wrap_text_rounded),
+          icon: const Icon(HIcons.wrap_text_rounded),
           onPressed: () => unawaited(prefs.setWrap(!wrap)),
         );
       },
@@ -1322,18 +1378,18 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
             key: const ValueKey('artifact-viewer-search-prev'),
             tooltip: strings.vw1215PreviousMatch,
             onPressed: _matches.isEmpty ? null : () => _step(-1),
-            icon: const Icon(Icons.keyboard_arrow_up_rounded),
+            icon: const Icon(HIcons.keyboard_arrow_up_rounded),
           ),
           IconButton(
             key: const ValueKey('artifact-viewer-search-next'),
             tooltip: strings.vw1215NextMatch,
             onPressed: _matches.isEmpty ? null : () => _step(1),
-            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+            icon: const Icon(HIcons.keyboard_arrow_down_rounded),
           ),
           IconButton(
             tooltip: strings.vw1215CloseSearch,
             onPressed: _closeSearch,
-            icon: const Icon(Icons.close_rounded),
+            icon: const Icon(HIcons.close_rounded),
           ),
         ],
       ),
@@ -1357,14 +1413,14 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
             IconButton(
               key: const ValueKey('artifact-viewer-search'),
               tooltip: strings.vw1215Search,
-              icon: const Icon(Icons.search_rounded),
+              icon: const Icon(HIcons.search_rounded),
               onPressed: openSearch,
             ),
             const CodeWrapButton(),
             IconButton(
               key: const ValueKey('artifact-viewer-font-down'),
               tooltip: strings.mc1215FontSmaller,
-              icon: const Icon(Icons.text_decrease_rounded),
+              icon: const Icon(HIcons.text_decrease_rounded),
               onPressed: _prefs.canShrink
                   ? () => unawaited(_prefs.stepFont(-1))
                   : null,
@@ -1372,7 +1428,7 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
             IconButton(
               key: const ValueKey('artifact-viewer-font-up'),
               tooltip: strings.mc1215FontLarger,
-              icon: const Icon(Icons.text_increase_rounded),
+              icon: const Icon(HIcons.text_increase_rounded),
               onPressed: _prefs.canGrow
                   ? () => unawaited(_prefs.stepFont(1))
                   : null,
@@ -1380,14 +1436,14 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
             IconButton(
               key: const ValueKey('artifact-viewer-copy'),
               tooltip: strings.commonCopy,
-              icon: const Icon(Icons.copy_rounded),
+              icon: const Icon(HIcons.copy_rounded),
               onPressed: widget.onCopy,
             ),
             if (widget.onShare != null)
               IconButton(
                 key: const ValueKey('artifact-viewer-share'),
                 tooltip: strings.commonShare,
-                icon: const Icon(Icons.share_outlined),
+                icon: const Icon(HIcons.share_outlined),
                 onPressed: widget.onShare,
               ),
           ],

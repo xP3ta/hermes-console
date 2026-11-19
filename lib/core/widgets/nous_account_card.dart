@@ -5,6 +5,7 @@
 // with what tier and until when; free tier; not connected; not offered by
 // this server) and the one action that follows from it.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -123,8 +124,8 @@ class NousAccountCard extends StatelessWidget {
                           children: [
                             Icon(
                               signedIn
-                                  ? Icons.check_circle_rounded
-                                  : Icons.radio_button_unchecked,
+                                  ? HIcons.check_circle_rounded
+                                  : HIcons.radio_button_unchecked,
                               size: 14,
                               color: signedIn
                                   ? colors.success
@@ -153,7 +154,7 @@ class NousAccountCard extends StatelessWidget {
                       key: const ValueKey('nac-card-manage'),
                       tooltip: s.nacCardManage,
                       onPressed: enabled ? onManage : null,
-                      icon: const Icon(Icons.more_horiz_rounded),
+                      icon: const Icon(HIcons.more_horiz_rounded),
                       constraints: const BoxConstraints(
                         minWidth: HermesSpace.tap,
                         minHeight: HermesSpace.tap,
@@ -177,7 +178,7 @@ class NousAccountCard extends StatelessWidget {
                 HermesPrimaryButton(
                   key: const ValueKey('nac-card-connect'),
                   label: s.nacCardConnect,
-                  icon: Icons.login_rounded,
+                  icon: HIcons.login_rounded,
                   onTap: enabled ? onConnect : null,
                 ),
               ],

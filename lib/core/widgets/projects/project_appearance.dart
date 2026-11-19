@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/desktop_control_center.dart';
@@ -8,34 +9,34 @@ import '../../models/desktop_control_center.dart';
 /// colors are its `PROFILE_SWATCHES` strings, so a look chosen on the phone
 /// renders identically on Desktop and vice versa.
 const List<(String, IconData)> projectIconChoices = [
-  ('folder-library', Icons.folder_copy_outlined),
-  ('repo', Icons.source_outlined),
-  ('rocket', Icons.rocket_launch_outlined),
-  ('beaker', Icons.science_outlined),
-  ('flame', Icons.local_fire_department_outlined),
-  ('star-full', Icons.star_rounded),
-  ('heart', Icons.favorite_rounded),
-  ('zap', Icons.bolt_rounded),
-  ('target', Icons.track_changes_rounded),
-  ('lightbulb', Icons.lightbulb_outline_rounded),
-  ('tools', Icons.build_outlined),
-  ('device-desktop', Icons.desktop_windows_outlined),
-  ('device-mobile', Icons.smartphone_outlined),
-  ('terminal', Icons.terminal_rounded),
-  ('dashboard', Icons.dashboard_outlined),
-  ('globe', Icons.public_rounded),
-  ('broadcast', Icons.podcasts_rounded),
-  ('cloud', Icons.cloud_outlined),
-  ('database', Icons.storage_rounded),
-  ('package', Icons.inventory_2_outlined),
-  ('book', Icons.menu_book_outlined),
-  ('organization', Icons.groups_outlined),
-  ('bug', Icons.bug_report_outlined),
-  ('shield', Icons.shield_outlined),
-  ('key', Icons.key_rounded),
-  ('gift', Icons.card_giftcard_rounded),
-  ('telescope', Icons.travel_explore_rounded),
-  ('home', Icons.home_outlined),
+  ('folder-library', HIcons.folder_copy_outlined),
+  ('repo', HIcons.source_outlined),
+  ('rocket', HIcons.rocket_launch_outlined),
+  ('beaker', HIcons.science_outlined),
+  ('flame', HIcons.local_fire_department_outlined),
+  ('star-full', HIcons.star_rounded),
+  ('heart', HIcons.favorite_rounded),
+  ('zap', HIcons.bolt_rounded),
+  ('target', HIcons.track_changes_rounded),
+  ('lightbulb', HIcons.lightbulb_outline_rounded),
+  ('tools', HIcons.build_outlined),
+  ('device-desktop', HIcons.desktop_windows_outlined),
+  ('device-mobile', HIcons.smartphone_outlined),
+  ('terminal', HIcons.terminal_rounded),
+  ('dashboard', HIcons.dashboard_outlined),
+  ('globe', HIcons.public_rounded),
+  ('broadcast', HIcons.podcasts_rounded),
+  ('cloud', HIcons.cloud_outlined),
+  ('database', HIcons.storage_rounded),
+  ('package', HIcons.inventory_2_outlined),
+  ('book', HIcons.menu_book_outlined),
+  ('organization', HIcons.groups_outlined),
+  ('bug', HIcons.bug_report_outlined),
+  ('shield', HIcons.shield_outlined),
+  ('key', HIcons.key_rounded),
+  ('gift', HIcons.card_giftcard_rounded),
+  ('telescope', HIcons.travel_explore_rounded),
+  ('home', HIcons.home_outlined),
 ];
 
 /// Desktop `PROFILE_SWATCHES`: 12 hues, 68 % saturation, 58 % lightness.
@@ -52,9 +53,9 @@ IconData? projectIconFor(String id) {
 
 /// Default glyph when no icon is chosen, matching Desktop's overview rows.
 IconData projectDefaultIcon(ProjectNode project) {
-  if (project.noProject) return Icons.home_outlined;
-  if (project.automatic) return Icons.source_outlined;
-  return Icons.folder_copy_outlined;
+  if (project.noProject) return HIcons.home_outlined;
+  if (project.automatic) return HIcons.source_outlined;
+  return HIcons.folder_copy_outlined;
 }
 
 IconData projectGlyph(ProjectNode project) =>

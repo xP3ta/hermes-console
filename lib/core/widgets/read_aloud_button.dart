@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -56,19 +57,19 @@ class ReadAloudButton extends StatelessWidget {
     final (label, icon) = switch (action) {
       ReadAloudButtonAction.read => (
         strings.chaReadAloud,
-        Icons.volume_up_outlined,
+        HIcons.volume_up_outlined,
       ),
       ReadAloudButtonAction.pause => (
         strings.chaPauseReading,
-        Icons.pause_circle_outline_rounded,
+        HIcons.pause_circle_outline_rounded,
       ),
       ReadAloudButtonAction.resume => (
         strings.chaContinueReading,
-        Icons.play_circle_outline_rounded,
+        HIcons.play_circle_outline_rounded,
       ),
       ReadAloudButtonAction.stop => (
         strings.chaStopReading,
-        Icons.stop_circle_outlined,
+        HIcons.stop_circle_outlined,
       ),
     };
     final emphasized = action != ReadAloudButtonAction.read;

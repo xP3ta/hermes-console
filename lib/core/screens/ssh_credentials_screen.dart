@@ -1,6 +1,7 @@
 // Editor de credenciales SSH por instancia. Importación fácil: host derivado
 // del gateway, clave privada pegada o importada de archivo, passphrase opcional
 // o contraseña. "Probar conexión" valida contra el servidor real (con TOFU).
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -274,12 +275,12 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
               ButtonSegment(
                 value: SshAuthMethod.key,
                 label: Text(Strings.of(context).sshcPrivateKey),
-                icon: const Icon(Icons.vpn_key_outlined, size: 16),
+                icon: const Icon(HIcons.vpn_key_outlined, size: 16),
               ),
               ButtonSegment(
                 value: SshAuthMethod.password,
                 label: Text(Strings.of(context).commonPassword),
-                icon: const Icon(Icons.password_outlined, size: 16),
+                icon: const Icon(HIcons.password_outlined, size: 16),
               ),
             ],
             selected: {_method},
@@ -333,7 +334,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
                           height: 15,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.wifi_tethering, size: 16),
+                      : const Icon(HIcons.wifi_tethering, size: 16),
                   label: Text(
                     _testing
                         ? Strings.of(context).sshcTesting
@@ -351,7 +352,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
                           height: 15,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.save_outlined, size: 16),
+                      : const Icon(HIcons.save_outlined, size: 16),
                   label: Text(Strings.of(context).commonSave),
                 ),
               ),
@@ -378,7 +379,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
           ),
           TextButton.icon(
             onPressed: _importKeyFile,
-            icon: const Icon(Icons.upload_file_outlined, size: 16),
+            icon: const Icon(HIcons.upload_file_outlined, size: 16),
             label: Text(
               Strings.of(context).sshcImportFile,
               style: TextStyle(fontSize: 12),
@@ -438,8 +439,8 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       suffix: IconButton(
         icon: Icon(
           _obscurePass
-              ? Icons.visibility_outlined
-              : Icons.visibility_off_outlined,
+              ? HIcons.visibility_outlined
+              : HIcons.visibility_off_outlined,
           size: 18,
           color: colors.textSecondary,
         ),
@@ -481,7 +482,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.shield_outlined, size: 15, color: colors.textSecondary),
+          Icon(HIcons.shield_outlined, size: 15, color: colors.textSecondary),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -518,7 +519,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            ok ? Icons.check_circle_outline : Icons.error_outline,
+            ok ? HIcons.check_circle_outline : HIcons.error_outline,
             size: 16,
             color: tone,
           ),

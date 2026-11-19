@@ -1,0 +1,11 @@
+Novedades de la 1.4.1:
+• Nuevo aspecto del chat: iconos más ligeros y caja de texto más limpia.
+• Archivos previsualizados en el chat: páginas, PDF, diagramas y modelos 3D.
+• Nueva pantalla de Uso: coste, tokens y límites.
+• El chat ya no pierde ni repite texto al volver o tras un corte.
+• Los subagentes siguen «en marcha».
+• Arreglos en Salas y Proyectos.
+• Inicio se reconecta solo.
+• Dictado: vuelve la descarga del modelo.
+• Tamaño de letra 85–150 %.
+• Menú deslizando: opcional.

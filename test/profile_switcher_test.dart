@@ -20,6 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/face_halo.dart';
 import 'support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 AgentProfile _profile(String name, {bool isDefault = false}) =>
     AgentProfile.fromJson({
@@ -584,7 +585,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.descendant(of: ana, matching: find.byIcon(Icons.check_rounded)),
+        find.descendant(of: ana, matching: find.byIcon(HIcons.check_rounded)),
         findsOneWidget,
       );
       final bob = find.byKey(const ValueKey('profile-switcher-option-bob'));
@@ -593,7 +594,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.descendant(of: bob, matching: find.byIcon(Icons.check_rounded)),
+        find.descendant(of: bob, matching: find.byIcon(HIcons.check_rounded)),
         findsNothing,
       );
       // No «Ver perfil» unless the caller offers it.

@@ -12,6 +12,7 @@
 //
 // Las tareas viven en Tareas (TaskCenterScreen); esta pantalla es solo el
 // registro.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -330,12 +331,12 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.copy_all_outlined, size: 18),
+                icon: const Icon(HIcons.copy_all_outlined, size: 18),
                 tooltip: Strings.of(context).actCopyVisibleLines,
                 onPressed: _entries.isEmpty ? null : _copyVisible,
               ),
               IconButton(
-                icon: const Icon(Icons.refresh, size: 19),
+                icon: const Icon(HIcons.refresh, size: 19),
                 tooltip: Strings.of(context).commonRefresh,
                 onPressed: _loading ? null : _load,
               ),
@@ -429,7 +430,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
               hintText: Strings.of(context).actSearchHint,
               hintStyle: TextStyle(fontSize: 12, color: colors.textTertiary),
               prefixIcon: Icon(
-                Icons.search,
+                HIcons.search,
                 size: 16,
                 color: colors.textDisabled,
               ),
@@ -438,7 +439,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
                   : IconButton(
                       tooltip: Strings.of(context).slClearSearch,
                       icon: Icon(
-                        Icons.clear,
+                        HIcons.clear,
                         size: 15,
                         color: colors.textDisabled,
                       ),
@@ -500,7 +501,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, size: 36, color: colors.error),
+              Icon(HIcons.error_outline, size: 36, color: colors.error),
               const SizedBox(height: 12),
               Text(
                 Strings.of(context).actLogsReadError,
@@ -515,7 +516,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
               const SizedBox(height: 16),
               HermesSecondaryButton(
                 label: Strings.of(context).commonRetry,
-                icon: Icons.refresh,
+                icon: HIcons.refresh,
                 onTap: _load,
               ),
             ],
@@ -528,7 +529,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.receipt_long_outlined,
+            HIcons.receipt_long_outlined,
             size: 36,
             color: colors.textDisabled,
           ),

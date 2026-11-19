@@ -59,7 +59,7 @@ abstract final class FrostedBackdropPolicy {
   static String lastDecision = '[glass] blur=on (no report)';
 
   /// Rule 6: a mid or low range device gets the surface without blur until
-  /// the measured cost says it can pay for it (REPORT-Q9-CHAT5, the frame
+  /// the measured cost says it can pay for it (the frame
   /// cost with and without glass).
   static const bool blurNeedsHighEnd = true;
 
@@ -327,7 +327,7 @@ class FrostedBackdrop extends StatefulWidget {
   /// Legacy glass keeps its widget contract until its owner migrates it.
   final HermesLiquid? liquid;
 
-  /// OPUS-CRISTAL: with [liquid] set, the band's smoked tone instead of the
+  /// Foot glass: with [liquid] set, the band's smoked tone instead of the
   /// liquid touch (HermesGlassStrip.tone): one blur, no shader, the opaque
   /// fallback where an ink of [toneInks] would not read. Null: as before.
   final HermesSmokedGlass? tone;

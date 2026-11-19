@@ -1,4 +1,4 @@
--- F0 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §4): what the chat's
+-- F0 of the fluidity plan: what the chat's
 -- streaming path did during a trace. Needs a qa build run with
 -- --dart-define=HERMES_CHAT_STREAM_TRACE=true (lib/core/services/
 -- chat_stream_trace.dart): it emits instant events named

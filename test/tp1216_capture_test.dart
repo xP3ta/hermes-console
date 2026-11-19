@@ -22,6 +22,7 @@ import 'package:hermes_android/core/widgets/status_pill_sheet.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _shotKey = ValueKey('tp1216-shot');
 final _t0 = DateTime(2026, 9, 30, 12);
@@ -65,7 +66,7 @@ Widget _assistantBlock(List<ChatTraceEvent> events, {required bool active}) =>
             name: 'Hermes',
             subtitle: summary,
             actions: [
-              for (final icon in [Icons.copy_rounded, Icons.refresh_rounded])
+              for (final icon in [HIcons.copy_rounded, HIcons.refresh_rounded])
                 SizedBox.square(dimension: 48, child: Icon(icon, size: 16)),
             ],
           ),
@@ -100,7 +101,7 @@ Widget _composer(
                     style: TextStyle(color: colors.textSecondary),
                   ),
                 ),
-                Icon(Icons.arrow_upward, color: colors.textSecondary),
+                Icon(HIcons.arrow_upward, color: colors.textSecondary),
                 const SizedBox(width: 16),
               ],
             ),

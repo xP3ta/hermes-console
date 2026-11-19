@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -976,10 +977,10 @@ String _typeLabel(Strings strings, MediaViewerItem item) {
 }
 
 IconData _kindIcon(MediaViewerKind kind) => switch (kind) {
-  MediaViewerKind.image => Icons.image_outlined,
-  MediaViewerKind.video => Icons.movie_outlined,
-  MediaViewerKind.audio => Icons.audiotrack_outlined,
-  MediaViewerKind.document => Icons.insert_drive_file_outlined,
+  MediaViewerKind.image => HIcons.image_outlined,
+  MediaViewerKind.video => HIcons.movie_outlined,
+  MediaViewerKind.audio => HIcons.audiotrack_outlined,
+  MediaViewerKind.document => HIcons.insert_drive_file_outlined,
 };
 
 // ---- Sheet -----------------------------------------------------------------
@@ -1103,21 +1104,21 @@ class _Capsule extends StatelessWidget {
             if (copy != null)
               IconButton(
                 key: const ValueKey('media-viewer-copy'),
-                icon: const Icon(Icons.copy_rounded),
+                icon: const Icon(HIcons.copy_rounded),
                 tooltip: copyLabel,
                 onPressed: copy,
               ),
             if (share != null)
               IconButton(
                 key: const ValueKey('media-viewer-share'),
-                icon: const Icon(Icons.ios_share),
+                icon: const Icon(HIcons.ios_share),
                 tooltip: strings.commonShare,
                 onPressed: share,
               ),
             if (save != null)
               IconButton(
                 key: const ValueKey('media-viewer-save'),
-                icon: const Icon(Icons.download_rounded),
+                icon: const Icon(HIcons.download_rounded),
                 tooltip: saveLabel,
                 onPressed: save,
               ),
@@ -1246,7 +1247,7 @@ class _InfoCardState extends State<_InfoCard> {
                         child: TextButton.icon(
                           key: const ValueKey('media-viewer-open-chat'),
                           onPressed: widget.onOpenChat,
-                          icon: const Icon(Icons.forum_outlined, size: 18),
+                          icon: const Icon(HIcons.forum_outlined, size: 18),
                           label: Text(
                             strings.artChat,
                             semanticsLabel: strings.artOpenChat(conversation),
@@ -1335,7 +1336,7 @@ class _ZoomBar extends StatelessWidget {
                 children: [
                   IconButton(
                     key: const ValueKey('media-viewer-zoom-out'),
-                    icon: const Icon(Icons.zoom_out_rounded),
+                    icon: const Icon(HIcons.zoom_out_rounded),
                     tooltip: strings.mvZoomOut,
                     onPressed: scale <= _minScale + 0.001 ? null : onZoomOut,
                   ),
@@ -1358,7 +1359,7 @@ class _ZoomBar extends StatelessWidget {
                   ),
                   IconButton(
                     key: const ValueKey('media-viewer-zoom-in'),
-                    icon: const Icon(Icons.zoom_in_rounded),
+                    icon: const Icon(HIcons.zoom_in_rounded),
                     tooltip: strings.mvZoomIn,
                     onPressed: scale >= _maxScale - 0.001 ? null : onZoomIn,
                   ),
@@ -1907,7 +1908,7 @@ class _Failure extends StatelessWidget {
           _CardHeading(
             item: item,
             icon: item.kind == MediaViewerKind.image
-                ? Icons.broken_image_outlined
+                ? HIcons.broken_image_outlined
                 : null,
           ),
           const SizedBox(height: HermesSpace.x4),
@@ -1922,7 +1923,7 @@ class _Failure extends StatelessWidget {
             HermesSecondaryButton(
               key: const ValueKey('media-viewer-retry'),
               label: strings.artThumbRetry,
-              icon: Icons.refresh_rounded,
+              icon: HIcons.refresh_rounded,
               onTap: retry,
             ),
           ],
@@ -1962,7 +1963,7 @@ class _Poster extends StatelessWidget {
             HermesPrimaryButton(
               key: const ValueKey('media-viewer-play'),
               label: strings.mvPlay,
-              icon: Icons.play_arrow_rounded,
+              icon: HIcons.play_arrow_rounded,
               onTap: onPlay,
             ),
         ],
@@ -2065,7 +2066,7 @@ class _DocumentPage extends StatelessWidget {
               HermesPrimaryButton(
                 key: const ValueKey('media-viewer-view'),
                 label: strings.mvView,
-                icon: Icons.visibility_outlined,
+                icon: HIcons.visibility_outlined,
                 onTap: onView,
               ),
               const SizedBox(height: HermesSpace.x2),
@@ -2074,7 +2075,7 @@ class _DocumentPage extends StatelessWidget {
               HermesSecondaryButton(
                 key: const ValueKey('media-viewer-open-outside'),
                 label: strings.vw1215OpenOutside,
-                icon: Icons.open_in_new_rounded,
+                icon: HIcons.open_in_new_rounded,
                 onTap: open,
               ),
               const SizedBox(height: HermesSpace.x2),
@@ -2082,7 +2083,7 @@ class _DocumentPage extends StatelessWidget {
             HermesSecondaryButton(
               key: const ValueKey('media-viewer-save-file'),
               label: strings.commonSave,
-              icon: Icons.save_alt_rounded,
+              icon: HIcons.save_alt_rounded,
               onTap: onSave,
             ),
           ],

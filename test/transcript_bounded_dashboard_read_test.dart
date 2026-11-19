@@ -188,6 +188,10 @@ void main() {
         throwsA(isA<SessionTranscriptTooLargeException>()),
       );
       expect(await client.healthReachable(), isTrue);
+      // The status probe carries no credentials (public /api/status, 1.4.1):
+      // the next authenticated read is what shows the session kept the
+      // cookie the Dashboard rotated on the refused body.
+      await dashboard.getServerStatus();
 
       expect(cookies.first, contains('hermes_session_at=first'));
       expect(cookies.last, contains('hermes_session_at=rotated'));

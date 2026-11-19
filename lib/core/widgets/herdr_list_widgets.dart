@@ -2,6 +2,7 @@
 // failed to), the quiet «updated N s ago» line and the closing card for
 // agents running outside Herdr. Presentation only; the state is
 // HerdrAgentsController's. The rows themselves are in herdr_flat_widgets.dart.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -140,7 +141,7 @@ class HerdrStartTile extends StatelessWidget {
                 height: HermesIcon.xl,
                 child: failed
                     ? Icon(
-                        Icons.error_outline_rounded,
+                        HIcons.error_outline_rounded,
                         size: HermesIcon.xl,
                         color: colors.error,
                       )

@@ -16,6 +16,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/fake_folder_source.dart';
 import 'support/fake_herdr_server.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 class _Store implements HerdrAgentsStore {
   bool dismissed = false;
@@ -258,8 +259,8 @@ void main() {
     expect(find.text('Working…'), findsOneWidget);
     expect(find.text('Approval'), findsWidgets);
     expect(find.text('Free'), findsOneWidget);
-    expect(find.byIcon(Icons.front_hand_outlined), findsWidgets);
-    expect(find.byIcon(Icons.autorenew_rounded), findsWidgets);
+    expect(find.byIcon(HIcons.front_hand_outlined), findsWidgets);
+    expect(find.byIcon(HIcons.autorenew_rounded), findsWidgets);
     expect(find.byKey(const ValueKey('hda-need-w1:p2')), findsOneWidget);
     expect(find.byKey(const ValueKey('hda-need-w1:p1')), findsNothing);
     expect(rig.controller.needsYou, 1);

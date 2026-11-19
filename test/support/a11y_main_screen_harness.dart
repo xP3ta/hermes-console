@@ -468,7 +468,12 @@ final class A11yDesktopGateway
   }
 }
 
-Future<void> pumpA11yChat(WidgetTester tester, {double textScale = 2}) async {
+Future<void> pumpA11yChat(
+  WidgetTester tester, {
+  double textScale = 2,
+  // The reader's own size (Ajustes → Aspecto), over the app density.
+  double? textSizeFactor,
+}) async {
   tester.platformDispatcher.localesTestValue = const [Locale('en')];
   tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.platformDispatcher.clearLocalesTestValue);
@@ -476,6 +481,9 @@ Future<void> pumpA11yChat(WidgetTester tester, {double textScale = 2}) async {
 
   final manager = await createA11yManager();
   final prefs = manager.prefs;
+  if (textSizeFactor != null) {
+    await prefs.setDouble(FontSizeService.prefsKey, textSizeFactor);
+  }
   final secureStorage = SecureStorage();
   final activeChats = ActiveChatService();
   addTearDown(activeChats.dispose);

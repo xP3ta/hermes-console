@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -997,10 +998,10 @@ class HermesNoticeCard extends StatelessWidget {
   final Widget? _inIsland;
 
   static IconData iconFor(HermesNoticeKind kind) => switch (kind) {
-    HermesNoticeKind.info => Icons.info_outline_rounded,
-    HermesNoticeKind.success => Icons.check_circle_outline_rounded,
-    HermesNoticeKind.warning => Icons.warning_amber_rounded,
-    HermesNoticeKind.error => Icons.error_outline_rounded,
+    HermesNoticeKind.info => HIcons.info_outline_rounded,
+    HermesNoticeKind.success => HIcons.check_circle_outline_rounded,
+    HermesNoticeKind.warning => HIcons.warning_amber_rounded,
+    HermesNoticeKind.error => HIcons.error_outline_rounded,
   };
 
   static Color tintFor(HermesNoticeKind kind, ThemeData theme) {
@@ -1163,7 +1164,7 @@ class HermesNoticeCard extends StatelessWidget {
             tooltip: dismissLabel ?? Strings.of(context).inAppDismiss,
             constraints: const BoxConstraints.tightFor(width: 48, height: 48),
             icon: Icon(
-              Icons.close_rounded,
+              HIcons.close_rounded,
               color: colors.textSecondary,
               size: 18,
             ),

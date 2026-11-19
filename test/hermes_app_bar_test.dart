@@ -11,6 +11,7 @@ import 'package:hermes_android/core/widgets/frosted_backdrop.dart';
 import 'package:hermes_android/core/widgets/hermes_app_bar.dart';
 import 'package:hermes_android/core/widgets/read_only.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget _scaffold(String themeId) => MaterialApp(
   theme: AppTheme.fromId(themeId),
@@ -108,8 +109,8 @@ void main() {
               titleInPill: true,
               title: const Text('Conversaciones'),
               actions: [
-                icon(Icons.edit_square, 'Nueva'),
-                icon(Icons.more_vert, 'Más'),
+                icon(HIcons.edit_square, 'Nueva'),
+                icon(HIcons.more_vert, 'Más'),
               ],
             ),
             drawer: const Drawer(),
@@ -248,8 +249,8 @@ void main() {
             titleInPill: true,
             title: const Text('Kanban'),
             actions: [
-              icon(Icons.add, 'Nueva'),
-              icon(Icons.refresh, 'Recargar'),
+              icon(HIcons.add, 'Nueva'),
+              icon(HIcons.refresh, 'Recargar'),
             ],
           ),
           drawer: const Drawer(),
@@ -289,7 +290,7 @@ void main() {
                   'Un nombre de página larguísimo que no cabe en la cabecera',
                 ),
                 titleBadge: const HermesTitleBadge('organización-muy-larga'),
-                actions: [icon(Icons.add, 'Nuevo')],
+                actions: [icon(HIcons.add, 'Nuevo')],
               ),
             ),
           ),
@@ -332,8 +333,8 @@ void main() {
                 // A badge that does not shrink by itself.
                 titleBadge: const SizedBox(width: 400, height: 12),
                 actions: [
-                  icon(Icons.add, 'Nuevo'),
-                  icon(Icons.inventory_2_outlined, 'Archivo'),
+                  icon(HIcons.add, 'Nuevo'),
+                  icon(HIcons.inventory_2_outlined, 'Archivo'),
                 ],
               ),
             ),
@@ -420,7 +421,7 @@ void main() {
             titleInPill: true,
             title: const Text(''),
             actions: [
-              icon(Icons.refresh, 'Actualizar'),
+              icon(HIcons.refresh, 'Actualizar'),
               Padding(
                 padding: const EdgeInsets.only(right: 10),
                 child: FilledButton(
@@ -455,7 +456,7 @@ void main() {
             actions: [
               const ScreenHelpButton(paragraphs: ['Ayuda de la pantalla']),
               icon(
-                Icons.save_outlined,
+                HIcons.save_outlined,
                 'Guardar',
                 onTap: () => log.add('save'),
               ),
@@ -464,7 +465,7 @@ void main() {
                 'Plantillas',
                 onTap: () => log.add('tpl'),
               ),
-              icon(Icons.copy_outlined, 'Copiar', onTap: () => log.add('copy')),
+              icon(HIcons.copy_outlined, 'Copiar', onTap: () => log.add('copy')),
             ],
           ),
         ),
@@ -490,7 +491,7 @@ void main() {
 
       await tester.tap(find.byKey(moreKey));
       await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.help_outline_rounded));
+      await tester.tap(find.byIcon(HIcons.help_outline_rounded));
       await tester.pumpAndSettle();
       expect(find.text('Ayuda de la pantalla'), findsOneWidget);
     });
@@ -500,10 +501,10 @@ void main() {
     ) async {
       List<Widget> four() => [
         for (final (i, data) in const [
-          Icons.search,
-          Icons.code,
-          Icons.edit_outlined,
-          Icons.more_vert,
+          HIcons.search,
+          HIcons.code,
+          HIcons.edit_outlined,
+          HIcons.more_vert,
         ].indexed)
           icon(data, 'Acción $i'),
       ];

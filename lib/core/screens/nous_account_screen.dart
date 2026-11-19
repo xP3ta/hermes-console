@@ -5,6 +5,7 @@
 // disconnected from, and the shared flow every entry point (Models,
 // Settings, the first run, the chat's model sheet) runs.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -413,14 +414,14 @@ class _NousAccountScreenState extends State<NousAccountScreen> {
                 child: TextButton.icon(
                   key: const ValueKey('nac-screen-retry'),
                   onPressed: () => unawaited(_load()),
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  icon: const Icon(HIcons.refresh_rounded, size: 18),
                   label: Text(s.commonRetry),
                 ),
               ),
             const SizedBox(height: HermesSpace.x4),
             HermesNavRow(
               key: const ValueKey('nac-screen-models'),
-              icon: Icons.memory_outlined,
+              icon: HIcons.memory_outlined,
               title: s.nacScreenManageModels,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(

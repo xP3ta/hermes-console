@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -228,7 +229,7 @@ class _DiagnosticBundleTileState extends State<DiagnosticBundleTile> {
               ),
               FilledButton.icon(
                 onPressed: () => Navigator.pop(context, true),
-                icon: const Icon(Icons.share_outlined),
+                icon: const Icon(HIcons.share_outlined),
                 label: Text(s.commonShare),
               ),
             ],
@@ -256,7 +257,7 @@ class _DiagnosticBundleTileState extends State<DiagnosticBundleTile> {
     return Material(
       type: MaterialType.transparency,
       child: HermesNavRow(
-        icon: Icons.bug_report_outlined,
+        icon: HIcons.bug_report_outlined,
         title: s.diagBundleTitle,
         subtitle: s.diagBundleSubtitle,
         trailing: _busy

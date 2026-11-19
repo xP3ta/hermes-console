@@ -6,6 +6,7 @@
 //
 // Todo se pinta al abrir con lo último que la app sabe (ajustes locales y la
 // última configuración de voz leída del servidor) y se refresca después.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io' show Platform;
 
@@ -1337,7 +1338,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
         key: const ValueKey('voice_server_auth_action'),
         style: style,
         onPressed: _openDashboardAuthentication,
-        icon: const Icon(Icons.lock_open_rounded),
+        icon: const Icon(HIcons.lock_open_rounded),
         label: Text(s.voiceServerAuthAction),
       );
     }
@@ -1346,7 +1347,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
         key: const ValueKey('voice_server_update_action'),
         style: style,
         onPressed: _showServerUpdateHelp,
-        icon: const Icon(Icons.system_update_alt_rounded),
+        icon: const Icon(HIcons.system_update_alt_rounded),
         label: Text(s.voiceServerUpdateAction),
       );
     }
@@ -1355,7 +1356,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
         key: const ValueKey('voice_server_check_action'),
         style: style,
         onPressed: _nativeVoiceLoading ? null : _checkServerVoice,
-        icon: const Icon(Icons.refresh_rounded),
+        icon: const Icon(HIcons.refresh_rounded),
         label: Text(s.voiceServerCheckAction),
       );
     }
@@ -1707,8 +1708,8 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
                       ? _stopServerVoiceTest
                       : _testServerVoice,
                   icon: _serverVoiceTesting
-                      ? const Icon(Icons.stop_rounded)
-                      : const Icon(Icons.play_arrow_rounded),
+                      ? const Icon(HIcons.stop_rounded)
+                      : const Icon(HIcons.play_arrow_rounded),
                   label: Text(
                     _serverVoiceTesting
                         ? s.voiceServerStopTestAction
@@ -1833,7 +1834,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
         ),
         child: Row(
           children: [
-            Icon(Icons.translate_rounded, size: 17, color: colors.warning),
+            Icon(HIcons.translate_rounded, size: 17, color: colors.warning),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -2098,7 +2099,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
         ),
       ),
       const SizedBox(width: 2),
-      Icon(Icons.chevron_right_rounded, size: 18, color: colors.textTertiary),
+      Icon(HIcons.chevron_right_rounded, size: 18, color: colors.textTertiary),
     ],
   );
 
@@ -2193,7 +2194,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
             key: const ValueKey('voice_live_try'),
             style: _quietButtonStyle(colors),
             onPressed: _tryLiveConversation,
-            icon: const Icon(Icons.play_arrow_rounded),
+            icon: const Icon(HIcons.play_arrow_rounded),
             label: Text(s.voiceServerTestAction),
           ),
         ),
@@ -2697,7 +2698,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
               onPressed: engine == SttEngineKind.whisper
                   ? _downloadWhisper
                   : () => _downloadSherpa(model),
-              icon: const Icon(Icons.download_rounded),
+              icon: const Icon(HIcons.download_rounded),
               label: Text('${s.voiceDownloadAction} · $sizeMb MB'),
             )
           else if (downloaded)
@@ -2858,7 +2859,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
                     key: const ValueKey('voice_phone_voice_download'),
                     style: style,
                     onPressed: () => _downloadOnnx(selected),
-                    icon: const Icon(Icons.download_rounded),
+                    icon: const Icon(HIcons.download_rounded),
                     label: Text(
                       '${s.voiceDownloadAction} · ${selected.sizeMb} MB',
                     ),
@@ -2874,7 +2875,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen>
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.play_arrow_rounded),
+                        : const Icon(HIcons.play_arrow_rounded),
                     label: Text(
                       _testingVoice
                           ? s.voiceTestPreparing
@@ -3231,7 +3232,7 @@ class _FieldRow extends StatelessWidget {
               if (onTap != null) ...[
                 const SizedBox(width: 2),
                 Icon(
-                  Icons.chevron_right_rounded,
+                  HIcons.chevron_right_rounded,
                   size: 18,
                   color: colors.textTertiary,
                 ),
@@ -3341,8 +3342,8 @@ class _RadioRow extends StatelessWidget {
             children: [
               Icon(
                 selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_unchecked,
+                    ? HIcons.radio_button_checked
+                    : HIcons.radio_button_unchecked,
                 size: 20,
                 color: !enabled
                     ? colors.textDisabled

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -302,7 +303,7 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
     if (state.canFinishListening && w.onFinishListening != null) {
       return _LineAction(
         actionKey: 'voice-strip-finish-listening',
-        icon: Icons.arrow_upward_rounded,
+        icon: HIcons.arrow_upward_rounded,
         label: w.labels.finishListening,
         onPressed: w.onFinishListening!,
         tint: tone,
@@ -311,7 +312,7 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
     if (state.offersRetry && w.onRetry != null) {
       return _LineAction(
         actionKey: 'voice-strip-retry',
-        icon: Icons.refresh_rounded,
+        icon: HIcons.refresh_rounded,
         label: w.labels.retry,
         onPressed: w.onRetry!,
         tint: tone,
@@ -320,7 +321,7 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
     if (state.offersReview && w.onReview != null) {
       return _LineAction(
         actionKey: 'voice-strip-review',
-        icon: Icons.shield_outlined,
+        icon: HIcons.shield_outlined,
         label: w.labels.review,
         onPressed: w.onReview!,
         tint: tone,
@@ -330,7 +331,7 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
         w.onResume != null) {
       return _LineAction(
         actionKey: 'voice-strip-resume',
-        icon: Icons.play_arrow_rounded,
+        icon: HIcons.play_arrow_rounded,
         label: w.labels.resume,
         onPressed: w.onResume!,
       );
@@ -338,7 +339,7 @@ class _VoiceStatusLineState extends State<VoiceStatusLine> {
     if (state.canStopAndTalk && w.onStopAndTalk != null) {
       return _LineAction(
         actionKey: 'voice-strip-stop-and-talk',
-        icon: Icons.mic_rounded,
+        icon: HIcons.mic_rounded,
         label: w.labels.stopAndTalk,
         onPressed: w.onStopAndTalk!,
         tint: tone,
@@ -529,11 +530,11 @@ class _StateBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final icon = switch (state) {
-      VoiceStripState.listening => Icons.mic_rounded,
-      VoiceStripState.speaking => Icons.volume_up_rounded,
-      VoiceStripState.paused => Icons.pause_rounded,
-      VoiceStripState.error => Icons.warning_amber_rounded,
-      VoiceStripState.waiting => Icons.shield_outlined,
+      VoiceStripState.listening => HIcons.mic_rounded,
+      VoiceStripState.speaking => HIcons.volume_up_rounded,
+      VoiceStripState.paused => HIcons.pause_rounded,
+      VoiceStripState.error => HIcons.warning_amber_rounded,
+      VoiceStripState.waiting => HIcons.shield_outlined,
       VoiceStripState.loading ||
       VoiceStripState.transcribing ||
       VoiceStripState.thinking ||
@@ -779,7 +780,7 @@ class VoiceComposerControls extends StatelessWidget {
               if (pause)
                 _RoundControl(
                   actionKey: 'voice-strip-pause',
-                  icon: Icons.pause_rounded,
+                  icon: HIcons.pause_rounded,
                   label: labels.pause,
                   onPressed: onPause!,
                   foreground: colors.textPrimary,
@@ -788,7 +789,7 @@ class VoiceComposerControls extends StatelessWidget {
               if (finish)
                 _RoundControl(
                   actionKey: 'voice-strip-finish-listening',
-                  icon: Icons.arrow_upward_rounded,
+                  icon: HIcons.arrow_upward_rounded,
                   label: labels.finishListening,
                   onPressed: onFinishListening!,
                   foreground: colors.accent,
@@ -797,7 +798,7 @@ class VoiceComposerControls extends StatelessWidget {
               else if (cancel)
                 _RoundControl(
                   actionKey: 'voice-strip-cancel',
-                  icon: Icons.stop_rounded,
+                  icon: HIcons.stop_rounded,
                   label: labels.cancel,
                   onPressed: onCancel!,
                   foreground: colors.accent,
@@ -806,7 +807,7 @@ class VoiceComposerControls extends StatelessWidget {
               else if (onStop != null)
                 _RoundControl(
                   actionKey: 'voice-strip-stop',
-                  icon: Icons.stop_rounded,
+                  icon: HIcons.stop_rounded,
                   label: labels.stop,
                   onPressed: onStop!,
                   foreground: colors.accent,

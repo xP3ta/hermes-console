@@ -7,6 +7,7 @@
 //
 // Sin dependencias nuevas — drag & drop con LongPressDraggable + DragTarget;
 // tiempo real con dart:io WebSocket dentro de KanbanClient.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -712,7 +713,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
             IconButton(
               key: const ValueKey('kanban-create'),
               tooltip: s.kanbanNewTask,
-              icon: const Icon(Icons.add_rounded),
+              icon: const Icon(HIcons.add_rounded),
               onPressed: () => _openTaskForm(),
             ),
           if (!_newSkin && _boards.length > 1)
@@ -720,7 +721,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
               key: const ValueKey('kanban-board-selector'),
               tooltip: s.kanbanBoardLabel,
               onSelected: _selectBoard,
-              icon: const Icon(Icons.view_kanban_outlined),
+              icon: const Icon(HIcons.view_kanban_outlined),
               actions: (context) => [
                 for (final board in _boards)
                   HermesAction(
@@ -732,12 +733,12 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
             ),
           IconButton(
             tooltip: s.kanbanHelpTooltip,
-            icon: const Icon(Icons.help_outline_rounded),
+            icon: const Icon(HIcons.help_outline_rounded),
             onPressed: _showHelp,
           ),
           IconButton(
             tooltip: s.kanbanRefresh,
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(HIcons.refresh_rounded),
             onPressed: _loading ? null : _load,
           ),
         ],
@@ -819,7 +820,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
                     labelText: s.kanbanSearch,
-                    prefixIcon: const Icon(Icons.search_rounded),
+                    prefixIcon: const Icon(HIcons.search_rounded),
                     suffixIcon: queryCtrl.text.isEmpty
                         ? null
                         : IconButton(
@@ -829,7 +830,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                               setState(() => _searchQuery = '');
                               setSheet(() {});
                             },
-                            icon: const Icon(Icons.close_rounded),
+                            icon: const Icon(HIcons.close_rounded),
                           ),
                   ),
                   onChanged: (value) {
@@ -963,7 +964,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
             Row(
               children: [
                 Icon(
-                  Icons.dashboard_customize_outlined,
+                  HIcons.dashboard_customize_outlined,
                   size: 20,
                   color: colors.accent,
                 ),
@@ -991,7 +992,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
               const SizedBox(height: 14),
               HermesListRow(
                 key: const ValueKey('kanban-orchestration-row'),
-                icon: Icons.account_tree_outlined,
+                icon: HIcons.account_tree_outlined,
                 title: s.kanbanOrchestrationTitle,
                 subtitle: s.kanbanOrchestrationSubtitle,
                 onTap: () =>
@@ -1127,7 +1128,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 12),
                   HermesListRow(
                     key: const ValueKey('kanban-orchestrator-profile'),
-                    icon: Icons.account_tree_outlined,
+                    icon: HIcons.account_tree_outlined,
                     title: s.kanbanOrchestratorProfile,
                     subtitle:
                         state.orchestratorProfile ??
@@ -1138,7 +1139,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   ),
                   HermesListRow(
                     key: const ValueKey('kanban-default-assignee'),
-                    icon: Icons.person_outline_rounded,
+                    icon: HIcons.person_outline_rounded,
                     title: s.kanbanDefaultAssignee,
                     subtitle:
                         state.defaultAssignee ?? s.kanbanOrchestrationDefault,
@@ -1148,7 +1149,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   ),
                   HermesToggleRow(
                     key: const ValueKey('kanban-auto-decompose'),
-                    icon: Icons.call_split_rounded,
+                    icon: HIcons.call_split_rounded,
                     title: s.kanbanAutoDecompose,
                     subtitle: s.kanbanAutoDecomposeSubtitle,
                     value: state.autoDecompose,
@@ -1249,7 +1250,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                                                 actions: [
                                                   HermesAction(
                                                     value: 'auto',
-                                                    icon: Icons.auto_awesome,
+                                                    icon: HIcons.auto_awesome,
                                                     label:
                                                         s.kanbanDescriptionAuto,
                                                   ),
@@ -1270,7 +1271,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                                             ),
                                           );
                                         },
-                                  icon: const Icon(Icons.more_vert_rounded),
+                                  icon: const Icon(HIcons.more_vert_rounded),
                                 ),
                               ),
                             ],
@@ -1441,8 +1442,8 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
             key: const ValueKey('kanban-filter-button'),
             tooltip: s.kanbanFilterTitle,
             icon: _hasActiveFilters
-                ? Icons.filter_alt_rounded
-                : Icons.filter_alt_outlined,
+                ? HIcons.filter_alt_rounded
+                : HIcons.filter_alt_outlined,
             color: _hasActiveFilters ? colors.accent : null,
             onPressed: _openFilters,
           ),
@@ -1782,7 +1783,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                 key: const ValueKey('kanban-board-selector'),
                 tooltip: s.kanbanBoardLabel,
                 onSelected: _selectBoard,
-                icon: const Icon(Icons.view_kanban_outlined),
+                icon: const Icon(HIcons.view_kanban_outlined),
                 actions: (context) => [
                   for (final b in _boards)
                     HermesAction(
@@ -2229,7 +2230,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         'attention',
         s.kanbanGroupAttention,
         s.kanbanColBlocked,
-        Icons.warning_amber_rounded,
+        HIcons.warning_amber_rounded,
         colors.error,
         attention,
       ),
@@ -2237,7 +2238,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         'working',
         s.kanbanGroupWorking,
         s.kanbanColRunning,
-        Icons.settings_suggest_outlined,
+        HIcons.settings_suggest_outlined,
         colors.accent,
         working,
       ),
@@ -2245,7 +2246,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         'queued',
         s.kanbanGroupQueued,
         s.kanbanGroupQueued,
-        Icons.schedule_rounded,
+        HIcons.schedule_rounded,
         colors.accent,
         queued,
       ),
@@ -2253,7 +2254,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         'notes',
         s.kanbanGroupNotes,
         s.kanbanUnassigned,
-        Icons.sticky_note_2_outlined,
+        HIcons.sticky_note_2_outlined,
         colors.textSecondary,
         notes,
       ),
@@ -2261,7 +2262,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         'done',
         s.kanbanGroupDone,
         s.kanbanColDone,
-        Icons.check_circle_outline_rounded,
+        HIcons.check_circle_outline_rounded,
         colors.success,
         done,
       ),
@@ -2272,7 +2273,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
           'archived',
           s.kanbanFilterArchived,
           s.kanbanFilterArchived,
-          Icons.archive_outlined,
+          HIcons.archive_outlined,
           colors.textSecondary,
           archived,
         ),
@@ -2314,7 +2315,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
               ListTile(
                 dense: true,
                 leading: Icon(
-                  Icons.arrow_forward_rounded,
+                  HIcons.arrow_forward_rounded,
                   size: 18,
                   color: colors.accent,
                 ),
@@ -2548,7 +2549,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   children: [
                     _taskTemplateChip(
                       colors,
-                      Icons.bug_report_outlined,
+                      HIcons.bug_report_outlined,
                       s.kanbanTplBugName,
                       () {
                         applyTemplate(s.kanbanTplBugName, s.kanbanTplBugBody);
@@ -2557,7 +2558,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                     ),
                     _taskTemplateChip(
                       colors,
-                      Icons.auto_awesome_outlined,
+                      HIcons.auto_awesome_outlined,
                       s.kanbanTplFeatureName,
                       () {
                         applyTemplate(
@@ -2569,7 +2570,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                     ),
                     _taskTemplateChip(
                       colors,
-                      Icons.search,
+                      HIcons.search,
                       s.kanbanTplResearchName,
                       () {
                         applyTemplate(s.kanbanTplResearchName, '');
@@ -2641,7 +2642,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                 const SizedBox(height: 12),
                 HermesListRow(
                   key: const ValueKey('kanban-create-model'),
-                  icon: Icons.memory_rounded,
+                  icon: HIcons.memory_rounded,
                   title: s.kanbanCreateModel,
                   subtitle: createModel?.model.isNotEmpty == true
                       ? '${createModel!.provider}: ${createModel!.model}'
@@ -2738,7 +2739,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Icon(
-          assigned ? Icons.play_circle_outline : Icons.sticky_note_2_outlined,
+          assigned ? HIcons.play_circle_outline : HIcons.sticky_note_2_outlined,
           size: 14,
           color: assigned ? colors.accent : colors.textSecondary,
         ),
@@ -2773,7 +2774,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       child: InputDecorator(
         decoration: InputDecoration(
           labelText: label,
-          suffixIcon: Icon(Icons.expand_more_rounded, color: colors.accent),
+          suffixIcon: Icon(HIcons.expand_more_rounded, color: colors.accent),
         ),
         child: Text(
           valueText,
@@ -2852,7 +2853,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                 ),
               ),
               trailing: o.value == current
-                  ? Icon(Icons.check_rounded, size: 18, color: colors.accent)
+                  ? Icon(HIcons.check_rounded, size: 18, color: colors.accent)
                   : null,
               onTap: () => Navigator.of(sheetCtx).pop(o.value),
             ),
@@ -3614,7 +3615,7 @@ class _FilterSummary extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.filter_alt_rounded, size: 16, color: colors.accent),
+          Icon(HIcons.filter_alt_rounded, size: 16, color: colors.accent),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -3632,7 +3633,7 @@ class _FilterSummary extends StatelessWidget {
             tooltip: clearLabel,
             visualDensity: VisualDensity.compact,
             onPressed: onClear,
-            icon: const Icon(Icons.close_rounded, size: 18),
+            icon: const Icon(HIcons.close_rounded, size: 18),
           ),
         ],
       ),
@@ -3660,7 +3661,7 @@ class _TaskDetailError extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.cloud_off_rounded, size: 34, color: colors.textSecondary),
+          Icon(HIcons.cloud_off_rounded, size: 34, color: colors.textSecondary),
           const SizedBox(height: 12),
           Text(
             s.kanbanDetailLoadError,
@@ -3681,7 +3682,7 @@ class _TaskDetailError extends StatelessWidget {
             key: const ValueKey('kanban-task-detail-retry'),
             style: FilledButton.styleFrom(backgroundColor: colors.accent),
             onPressed: onRetry,
-            icon: Icon(Icons.refresh_rounded, color: colors.onAccent),
+            icon: Icon(HIcons.refresh_rounded, color: colors.onAccent),
             label: Text(
               s.kanbanRetry,
               style: TextStyle(color: colors.onAccent),
@@ -3752,7 +3753,7 @@ class _GroupHeader extends StatelessWidget {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               icon: Icon(
-                Icons.cleaning_services_outlined,
+                HIcons.cleaning_services_outlined,
                 size: 14,
                 color: colors.textSecondary,
               ),
@@ -3789,7 +3790,7 @@ class _TaskAvatar extends StatelessWidget {
       ),
       child: initial.isEmpty
           ? Icon(
-              Icons.sticky_note_2_outlined,
+              HIcons.sticky_note_2_outlined,
               size: 11,
               color: colors.textSecondary,
             )
@@ -3862,7 +3863,7 @@ class _TaskRowTile extends StatelessWidget {
                 if (highPrio) ...[
                   const SizedBox(width: 6),
                   Icon(
-                    Icons.priority_high_rounded,
+                    HIcons.priority_high_rounded,
                     size: 14,
                     color: colors.error,
                   ),
@@ -3887,7 +3888,7 @@ class _TaskRowTile extends StatelessWidget {
                 ),
                 if (task.commentCount > 0) ...[
                   Icon(
-                    Icons.mode_comment_outlined,
+                    HIcons.mode_comment_outlined,
                     size: 12,
                     color: colors.textSecondary,
                   ),
@@ -4271,7 +4272,7 @@ class _ErrorState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.cloud_off_rounded,
+              HIcons.cloud_off_rounded,
               size: 40,
               color: colors.textSecondary,
             ),
@@ -4298,7 +4299,7 @@ class _ErrorState extends StatelessWidget {
             FilledButton.icon(
               style: FilledButton.styleFrom(backgroundColor: colors.accent),
               onPressed: onRetry,
-              icon: Icon(Icons.refresh, color: colors.onAccent),
+              icon: Icon(HIcons.refresh, color: colors.onAccent),
               label: Text(
                 Strings.of(context).kanbanRetry,
                 style: TextStyle(color: colors.onAccent),
@@ -4334,7 +4335,7 @@ class _EmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.dashboard_customize_outlined,
+              HIcons.dashboard_customize_outlined,
               size: 46,
               color: colors.accent,
             ),
@@ -4363,7 +4364,7 @@ class _EmptyState extends StatelessWidget {
               FilledButton.icon(
                 style: FilledButton.styleFrom(backgroundColor: colors.accent),
                 onPressed: onCreate,
-                icon: Icon(Icons.add, color: colors.onAccent),
+                icon: Icon(HIcons.add, color: colors.onAccent),
                 label: Text(
                   s.kanbanEmptyCta,
                   style: TextStyle(color: colors.onAccent),
@@ -4373,7 +4374,7 @@ class _EmptyState extends StatelessWidget {
             TextButton.icon(
               onPressed: onHelp,
               icon: Icon(
-                Icons.help_outline_rounded,
+                HIcons.help_outline_rounded,
                 size: 16,
                 color: colors.accent,
               ),

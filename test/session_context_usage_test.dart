@@ -138,7 +138,10 @@ void main() {
 
     expect(find.text('840 ms'), findsOneWidget);
     expect(find.text('0'), findsOneWidget);
-    expect(find.text('Not published by Hermes'), findsOneWidget);
+    // What Hermes has not published (the session total, the cache write) is
+    // a dash in its tile, never an invented zero or a sentence.
+    expect(find.text('—'), findsNWidgets(2));
+    expect(find.text('Not published by Hermes'), findsNothing);
   });
 
   test('formatea tokens igual que el formatter compartido de Desktop', () {
@@ -258,9 +261,10 @@ void main() {
     );
     addTearDown(metrics.dispose);
 
+    // The tile is titled with the plain «Tokens» label of the usage views.
     for (final (locale, label) in [
-      (const Locale('en'), 'Session total tokens'),
-      (const Locale('es'), 'Tokens acumulados de la sesión'),
+      (const Locale('en'), 'Tokens'),
+      (const Locale('es'), 'Tokens'),
     ]) {
       await tester.pumpWidget(
         _TestApp(
@@ -278,6 +282,7 @@ void main() {
       expect(find.text(label), findsOneWidget);
       expect(find.text('99k'), findsOneWidget);
       expect(find.text('99k tok'), findsNothing);
+      expect(find.text('Session total tokens'), findsNothing);
     }
   });
 
@@ -352,7 +357,13 @@ void main() {
     await tester.pump();
 
     expect(find.text('25%'), findsOneWidget);
-    expect(find.text('5k of 20k tokens'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('context-sheet-ring')))
+          .data,
+      '5k',
+    );
+    expect(find.text(' / 20k'), findsOneWidget);
     expect(find.textContaining('~5k'), findsNothing);
     expect(find.text('System prompt'), findsOneWidget);
     expect(find.text('Subagent definitions'), findsOneWidget);
@@ -395,7 +406,9 @@ void main() {
       ),
     );
 
-    testWidgets('big ring, tokens of the window and Compactar', (tester) async {
+    testWidgets('big figure, tokens of the window and Compactar', (
+      tester,
+    ) async {
       final colors = AppTheme.fromId('amber').hermes;
       final metrics = ValueNotifier(
         const SessionContextMetrics(
@@ -419,19 +432,27 @@ void main() {
       await tester.pump();
 
       expect(find.text('80%'), findsOneWidget);
-      expect(find.text('89.6k de 200k tokens'), findsOneWidget);
-      final ring = tester.widget<SessionContextRing>(
+      // The figure is large with the window after it.
+      final figure = tester.widget<Text>(
         find.byKey(const ValueKey('context-sheet-ring')),
       );
-      expect(ring.color, colors.warning);
-      // Honest notice: this server publishes no breakdown.
+      expect(figure.data, '89.6k');
+      expect(find.text(' / 200k'), findsOneWidget);
+      // The share wears the level colour.
+      expect(tester.widget<Text>(find.text('80%')).style?.color, colors.warning);
+      // A server that publishes no breakdown gets no explanatory sentence
+      // any more (few words): the panel simply has no category list.
       expect(
         find.text(
           Strings.of(
             tester.element(find.byType(SessionContextSheetBody)),
           ).chaContextUsageUnavailable,
         ),
-        findsOneWidget,
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('session-context-segmented-bar')),
+        findsNothing,
       );
 
       await tester.tap(find.byKey(const ValueKey('context-compress-now')));
@@ -486,7 +507,7 @@ void main() {
       expect(compacts, 0);
     });
 
-    testWidgets('red ring from 90 %', (tester) async {
+    testWidgets('red share from 90 %', (tester) async {
       final colors = AppTheme.fromId('amber').hermes;
       final metrics = ValueNotifier(
         const SessionContextMetrics(
@@ -497,14 +518,7 @@ void main() {
       );
       addTearDown(metrics.dispose);
       await pumpBody(tester, metrics: metrics);
-      expect(
-        tester
-            .widget<SessionContextRing>(
-              find.byKey(const ValueKey('context-sheet-ring')),
-            )
-            .color,
-        colors.error,
-      );
+      expect(tester.widget<Text>(find.text('92%')).style?.color, colors.error);
     });
   });
 

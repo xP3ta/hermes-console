@@ -1,6 +1,7 @@
 // "Tu constelación": the agent's learning graph as a star map you can turn,
 // zoom and tap. Opened from the Memory screen; it asks the server for the
 // graph only when it opens, so the Memory screen itself stays as it was.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -139,7 +140,7 @@ class _ConstellationScreenState extends State<ConstellationScreen> {
           IconButton(
             tooltip: MaterialLocalizations.of(context).backButtonTooltip,
             icon: const Icon(
-              Icons.arrow_back_ios_new_rounded,
+              HIcons.arrow_back_ios_new_rounded,
               size: 20,
               color: Colors.white,
             ),
@@ -247,7 +248,7 @@ class _ConstellationScreenState extends State<ConstellationScreen> {
               IconButton(
                 tooltip: s.constellationRecenter,
                 icon: const Icon(
-                  Icons.center_focus_strong_outlined,
+                  HIcons.center_focus_strong_outlined,
                   color: Colors.white,
                 ),
                 onPressed: _controller.recenter,

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -79,32 +80,28 @@ class TurnMemoryPill extends StatelessWidget {
                   onTap: open,
                   excludeSemantics: true,
                   child: Material(
-                    color: colors.surface,
-                    shape: StadiumBorder(
-                      side: BorderSide(color: colors.divider),
-                    ),
+                    color: Colors.transparent,
+                    shape: const StadiumBorder(),
                     clipBehavior: Clip.antiAlias,
                     child: InkWell(
                       key: const ValueKey('turn-memory-pill'),
                       onTap: open,
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          minHeight: HermesSize.tap,
-                        ),
+                        constraints: const BoxConstraints(minHeight: 28),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: HermesSpace.x3,
-                            vertical: HermesSpace.x2,
+                            horizontal: HermesSpace.x1,
+                            vertical: 2,
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                Icons.psychology_outlined,
-                                size: HermesIcon.md,
+                                HIcons.psychology_outlined,
+                                size: HermesIcon.sm,
                                 color: ink,
                               ),
-                              const SizedBox(width: HermesSpace.x2),
+                              const SizedBox(width: HermesSpace.x1),
                               Flexible(
                                 child: Text(
                                   label,
@@ -115,7 +112,7 @@ class TurnMemoryPill extends StatelessWidget {
                               ),
                               const SizedBox(width: HermesSpace.x1),
                               Icon(
-                                Icons.chevron_right_rounded,
+                                HIcons.chevron_right_rounded,
                                 size: HermesIcon.sm,
                                 color: ink,
                               ),
@@ -166,7 +163,7 @@ class _MemoryReceipt extends StatelessWidget {
                 IconButton(
                   tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
                   onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded, size: HermesIcon.lg),
+                  icon: const Icon(HIcons.close_rounded, size: HermesIcon.lg),
                 ),
               ],
             ),

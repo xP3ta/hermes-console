@@ -17,7 +17,7 @@ import 'live_turn_probe.dart';
 ///
 /// Compile-time switch (DISENO-REGISTRO-ESTADO §5, phase R1-R6): ON by
 /// default since the Pixel harness passed with it (9980, two rounds, SC16
-/// and the rest; coordinator decision, REPORT-REVISION-4 MEDIO 2). Rollback:
+/// and the rest). Rollback:
 /// `--dart-define=HERMES_SESSION_TURN_REGISTRY=false`.
 const bool kSessionTurnRegistryDefault = bool.fromEnvironment(
   'HERMES_SESSION_TURN_REGISTRY',

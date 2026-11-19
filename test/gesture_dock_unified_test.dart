@@ -26,6 +26,7 @@ import 'package:hermes_android/core/widgets/dock_style.dart';
 import 'package:hermes_android/core/widgets/general_dock_shell.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _connection = SavedConnection(
   id: 'dock-unified',
@@ -138,13 +139,13 @@ class _BotsHomeStandIn extends StatelessWidget {
                 DockCreateOrbit(
                   controlKey: const ValueKey('stand-in-create-bot'),
                   label: strings.missionCreateBotLabel,
-                  icon: Icons.account_circle_outlined,
+                  icon: HIcons.account_circle_outlined,
                   onTap: () => log.add('orbit:bot'),
                 ),
                 DockCreateOrbit(
                   controlKey: const ValueKey('stand-in-create-room'),
                   label: strings.missionCreateRoomLabel,
-                  icon: Icons.groups_2_outlined,
+                  icon: HIcons.groups_2_outlined,
                   onTap: () => log.add('orbit:room'),
                 ),
               ],

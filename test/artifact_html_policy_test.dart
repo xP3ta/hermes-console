@@ -167,6 +167,20 @@ void main() {
       expect(html, isNot(contains('Object.defineProperty(window,"open"')));
     });
 
+    test('the window.open lock lets a guest script declare its own '
+        'top-level function open', () {
+      // A non-writable, non-configurable global makes the engine reject a
+      // top-level `function open(){}` and drop the whole script; a
+      // writable + enumerable data property is the form it accepts.
+      final html = buildGuardedArtifactHtml(
+        '<script>function open(t){}</script>',
+        scriptsEnabled: true,
+      );
+      expect(html, contains('writable:true,enumerable:true'));
+      expect(html, contains('configurable:false'));
+      expect(html, isNot(contains('writable:false')));
+    });
+
     test('with scripts on, only inline scripts run and window.open is a '
         'no-op', () {
       final html = buildGuardedArtifactHtml(

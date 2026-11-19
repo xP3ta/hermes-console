@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -157,14 +158,14 @@ class _RecoveryCenterScreenState extends State<RecoveryCenterScreen> {
           IconButton(
             tooltip: strings.recoveryCenterRefreshTooltip,
             onPressed: !_hasRuntime || _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(HIcons.refresh_rounded),
           ),
         ],
       ),
       body: SafeArea(
         child: !_hasRuntime
             ? _RecoveryMessage(
-                icon: Icons.forum_outlined,
+                icon: HIcons.forum_outlined,
                 title: strings.recoveryCenterNoActiveTitle,
                 body: strings.recoveryCenterNoActiveBody,
               )
@@ -186,21 +187,21 @@ class _RecoveryCenterScreenState extends State<RecoveryCenterScreen> {
                       Padding(
                         padding: const EdgeInsets.only(top: 12),
                         child: _RecoveryNotice(
-                          icon: Icons.lock_outline_rounded,
+                          icon: HIcons.lock_outline_rounded,
                           text: strings.recoveryCenterReadOnlyNotice,
                         ),
                       ),
                     HermesSectionHeader(strings.recoveryCenterTimelineSection),
                     if (timeline?.enabled == false)
                       _RecoveryMessage(
-                        icon: Icons.history_toggle_off_rounded,
+                        icon: HIcons.history_toggle_off_rounded,
                         title: strings.recoveryCenterDisabledTitle,
                         body: strings.recoveryCenterDisabledBody,
                         compact: true,
                       )
                     else if (timeline == null || timeline.checkpoints.isEmpty)
                       _RecoveryMessage(
-                        icon: Icons.history_rounded,
+                        icon: HIcons.history_rounded,
                         title: strings.recoveryCenterEmptyTitle,
                         body: strings.recoveryCenterEmptyBody,
                         compact: true,
@@ -217,7 +218,7 @@ class _RecoveryCenterScreenState extends State<RecoveryCenterScreen> {
                             child: Row(
                               children: [
                                 const HermesIconTile(
-                                  Icons.restore_page_outlined,
+                                  HIcons.restore_page_outlined,
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
@@ -264,7 +265,7 @@ class _RecoveryCenterScreenState extends State<RecoveryCenterScreen> {
                                 ),
                                 const SizedBox(width: 8),
                                 Icon(
-                                  Icons.chevron_right_rounded,
+                                  HIcons.chevron_right_rounded,
                                   color: colors.textDisabled,
                                 ),
                               ],
@@ -401,7 +402,7 @@ class _RecoveryCheckpointSheetState extends State<_RecoveryCheckpointSheet> {
           padding: const EdgeInsets.fromLTRB(20, 16, 12, 10),
           child: Row(
             children: [
-              const Icon(Icons.restore_page_outlined),
+              const Icon(HIcons.restore_page_outlined),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -435,7 +436,7 @@ class _RecoveryCheckpointSheetState extends State<_RecoveryCheckpointSheet> {
               IconButton(
                 tooltip: strings.commonClose,
                 onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close_rounded),
+                icon: const Icon(HIcons.close_rounded),
               ),
             ],
           ),
@@ -456,7 +457,7 @@ class _RecoveryCheckpointSheetState extends State<_RecoveryCheckpointSheet> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: _RecoveryNotice(
-                          icon: Icons.lock_outline_rounded,
+                          icon: HIcons.lock_outline_rounded,
                           text: strings.recoveryCenterReadOnlyRestore,
                         ),
                       ),
@@ -501,7 +502,7 @@ class _RecoveryCheckpointSheetState extends State<_RecoveryCheckpointSheet> {
                       label: _restoring
                           ? strings.recoveryCenterRestoring
                           : strings.recoveryCenterRestoreAction,
-                      icon: Icons.settings_backup_restore_rounded,
+                      icon: HIcons.settings_backup_restore_rounded,
                       color: colors.error,
                       onTap: widget.readOnly || _restoring ? null : _restore,
                     ),
@@ -685,7 +686,7 @@ class _RecoveryFailure extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.error_outline_rounded, size: 34),
+          const Icon(HIcons.error_outline_rounded, size: 34),
           const SizedBox(height: 12),
           Text(message, textAlign: TextAlign.center),
           const SizedBox(height: 14),

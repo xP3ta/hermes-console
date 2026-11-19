@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_update_card.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 void main() {
   group('HermesUpdatePresentation', () {
@@ -105,7 +106,7 @@ void main() {
     expect(find.textContaining('fuera de la app'), findsOneWidget);
     expect(find.textContaining('docker pull'), findsOneWidget);
     expect(find.textContaining('al día'), findsNothing);
-    expect(find.byIcon(Icons.check), findsNothing);
+    expect(find.byIcon(HIcons.check), findsNothing);
     expect(find.byKey(const Key('hermes_update_command')), findsOneWidget);
   });
 

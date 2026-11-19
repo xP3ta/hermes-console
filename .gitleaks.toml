@@ -29,9 +29,10 @@ condition = "AND"
 paths = [
   '''^lib/core/shell/gesture_dock_state\.dart$''',
   '''^lib/core/widgets/mascot/float/mascot_prefs\.dart$''',
+  '''^lib/core/characters/bot_character_store\.dart$''',
 ]
 regexes = [
-  '''^(gesture_dock|mascot_float_[a-z_]+)_v[0-9]+$''',
+  '''^(gesture_dock|mascot_float_[a-z_]+|characters_dirty)_v[0-9]+$''',
 ]
 
 # gen-l10n message keys (`s.hr1215KeyRejectedBody`, `i18n1215Ssh...`) next to

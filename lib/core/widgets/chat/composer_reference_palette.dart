@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -65,9 +66,9 @@ class ComposerReferencePalette extends StatelessWidget {
     PathCompletionItem item,
   ) {
     final icon = switch (item.kind) {
-      ComposerReferenceKind.file => Icons.description_outlined,
-      ComposerReferenceKind.folder => Icons.folder_outlined,
-      ComposerReferenceKind.url => Icons.link_rounded,
+      ComposerReferenceKind.file => HIcons.description_outlined,
+      ComposerReferenceKind.folder => HIcons.folder_outlined,
+      ComposerReferenceKind.url => HIcons.link_rounded,
     };
     final title = item.isStarter ? '@${item.kind.name}:' : item.display;
     final subtitle = item.isStarter
@@ -124,7 +125,7 @@ class ComposerReferencePalette extends StatelessWidget {
                 tooltip: s.t1215RefOpenFolder,
                 visualDensity: VisualDensity.compact,
                 icon: Icon(
-                  Icons.chevron_right_rounded,
+                  HIcons.chevron_right_rounded,
                   color: colors.textSecondary,
                 ),
                 onPressed: () => onDescend(item),

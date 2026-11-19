@@ -7,6 +7,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/agent_task_widgets.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 AgentTaskList _list(
   List<(String, String, String)> rows, {
@@ -362,7 +363,7 @@ void main() {
       expect(find.text('1/4'), findsOneWidget);
       // collapsed by default: the list only appears once expanded
       expect(find.byKey(const ValueKey('activity-tasks-section')), findsNothing);
-      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.tap(find.byIcon(HIcons.expand_more));
       await tester.pump(const Duration(milliseconds: 250));
       // The history expansion shares the live panel's «Tareas» section.
       expect(
@@ -384,7 +385,7 @@ void main() {
         card([todoEvent('mine')], tasks: _finished(), owner: 'mine'),
       );
       await tester.pump();
-      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.tap(find.byIcon(HIcons.expand_more));
       await tester.pump(const Duration(milliseconds: 250));
       final text = tester
           .widget<Text>(find.byKey(const ValueKey('activity-tasks-title')))
@@ -429,7 +430,7 @@ void main() {
         card([todoEvent('mine')], tasks: _running(), owner: 'mine'),
       );
       await tester.pump();
-      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.tap(find.byIcon(HIcons.expand_more));
       await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(const ValueKey('thinking-trace-copy')));
       await tester.pump();
@@ -452,7 +453,7 @@ void main() {
         ),
       );
       await tester.pump();
-      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.tap(find.byIcon(HIcons.expand_more));
       await tester.pump(const Duration(milliseconds: 250));
       expect(tester.takeException(), isNull);
       expect(

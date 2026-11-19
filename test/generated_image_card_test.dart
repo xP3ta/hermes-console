@@ -109,7 +109,7 @@ void main() {
     expect(retried, 1);
   });
 
-  // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A1, P1): downloading used to be a
+  // F5: downloading used to be a
   // one-line card (~31 dp) that the picture then replaced with a ~200 dp
   // frame in one frame. It now holds the image's own box; the words stay
   // for TalkBack.

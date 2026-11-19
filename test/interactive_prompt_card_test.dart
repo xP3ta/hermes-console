@@ -9,6 +9,7 @@ import 'package:hermes_android/core/widgets/accent_card.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/interactive_prompt_card.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 InteractivePromptEntry _entry(InteractivePromptRequest request) =>
     InteractivePromptEntry(
@@ -192,19 +193,19 @@ void main() {
       await tester.tap(find.text('dev'));
       await tester.pump();
       expect(submitted, isEmpty, reason: 'a toggle must not answer');
-      expect(find.byIcon(Icons.check_box_rounded), findsNWidgets(2));
+      expect(find.byIcon(HIcons.check_box_rounded), findsNWidgets(2));
 
       // A second tap on a ticked choice unticks it and keeps it out of the
       // answer.
       await tester.tap(find.text('qa'));
       await tester.pump();
-      expect(find.byIcon(Icons.check_box_rounded), findsNWidgets(3));
+      expect(find.byIcon(HIcons.check_box_rounded), findsNWidgets(3));
       await tester.tap(find.text('qa'));
       await tester.pump();
-      expect(find.byIcon(Icons.check_box_rounded), findsNWidgets(2));
+      expect(find.byIcon(HIcons.check_box_rounded), findsNWidgets(2));
 
       await tester.enterText(find.byType(TextField), ' otra ');
-      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.tap(find.byIcon(HIcons.send_rounded));
       await tester.pump();
       expect(submitted, hasLength(1));
       expect(jsonDecode(submitted.single), ['main', 'dev', 'otra']);

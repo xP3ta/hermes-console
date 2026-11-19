@@ -8,6 +8,7 @@ import 'package:hermes_android/core/widgets/bot_chat_header.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/l10n/app_localizations_en.dart';
 import 'package:hermes_android/l10n/app_localizations_es.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // dc1215: the canonical Bot Chat header in the Dots style. The bot's face
 // sits centred over a pill with its name in bold and ONE grey line of live
@@ -96,7 +97,7 @@ Widget _scaffold({
           compact: compact,
         ),
         actions: [
-          IconButton(onPressed: () {}, icon: const Icon(Icons.more_vert)),
+          IconButton(onPressed: () {}, icon: const Icon(HIcons.more_vert)),
         ],
       ),
       body: const SizedBox.expand(),

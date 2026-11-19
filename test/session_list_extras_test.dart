@@ -107,12 +107,14 @@ final class _MoveGateway extends TuiGatewayClient {
   Object? moveError;
   Completer<void>? moveGate;
   int treeCalls = 0;
+  final List<String?> treeProfiles = [];
   int closes = 0;
   final List<({String key, String cwd, String? profile})> moves = [];
 
   @override
-  Future<ProjectTreeSnapshot> projectTree() async {
+  Future<ProjectTreeSnapshot> projectTree({String? profile}) async {
     treeCalls++;
+    treeProfiles.add(profile);
     return tree;
   }
 
@@ -449,6 +451,8 @@ void main() {
       expect(gateway.moves, [
         (key: 'stored-aaaa-1111', cwd: '/srv/work/beta', profile: 'default'),
       ]);
+      // User report: the targets come from the session's profile.
+      expect(gateway.treeProfiles, ['default']);
       expectRoutineFeedback(tester, strings(tester).se1215MovedTo('Beta'));
       await tester.pump(const Duration(seconds: 6));
     });

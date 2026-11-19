@@ -30,8 +30,14 @@ void main() {
     expect(handler, contains('MAX_RENDERED_PAGES = 40'));
     expect(
       handler,
-      contains('minOf(renderer.pageCount, MAX_RENDERED_PAGES)'),
+      contains('renderFilePage(file, pageIndex, MAX_RENDERED_PAGES)'),
     );
+    expect(handler, contains('minOf(renderer.pageCount, maxPages)'));
+    // The in-app PDF viewer reads only its own private folder, by digest.
+    expect(handler, contains('VIEWER_PDF_DIRECTORY'));
+    expect(handler, contains('require(file.sha256() == key)'));
+    expect(handler, contains('MAX_VIEWER_PAGES = 500'));
+    expect(handler, contains('MAX_VIEWER_PDF_BYTES'));
     expect(handler, contains('SENT_ATTACHMENTS_DIRECTORY'));
     expect(handler, contains('canonicalFile'));
     expect(handler, contains('expectedSha256 == storageKey'));

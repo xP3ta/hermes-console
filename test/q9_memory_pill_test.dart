@@ -226,7 +226,7 @@ void main() {
     for (final dark in [false, true]) {
       for (final scale in [1.0, 2.0]) {
         testWidgets(
-          '$width dp, ${dark ? 'dark' : 'light'}, ${scale}x: full label and 48 dp target at reduced motion',
+          '$width dp, ${dark ? 'dark' : 'light'}, ${scale}x: full label and quiet-line target at reduced motion',
           (tester) async {
             tester.view.physicalSize = Size(width, 884);
             tester.view.devicePixelRatio = 1;
@@ -242,7 +242,8 @@ void main() {
               ),
             );
             final pill = find.byKey(const ValueKey('turn-memory-pill'));
-            expect(tester.getSize(pill).height, greaterThanOrEqualTo(48));
+            // A quiet line at the foot of the turn: 28 dp high, as wide as its words.
+            expect(tester.getSize(pill).height, greaterThanOrEqualTo(28));
             final rect = tester.getRect(pill);
             expect(rect.left, greaterThanOrEqualTo(0));
             expect(rect.right, lessThanOrEqualTo(width));
@@ -252,11 +253,10 @@ void main() {
             );
             expect(text.maxLines, isNull);
             expect(text.overflow, isNull);
-            final material = tester.widget<Material>(
-              find.ancestor(of: pill, matching: find.byType(Material)).first,
-            );
+            // No chip behind it any more: the ink sits straight on the page.
+            final surface = Theme.of(tester.element(pill)).hermes.background;
             expect(
-              ThemeContrast.ratio(text.style!.color!, material.color!),
+              ThemeContrast.ratio(text.style!.color!, surface),
               greaterThanOrEqualTo(4.5),
             );
             expect(tester.takeException(), isNull);

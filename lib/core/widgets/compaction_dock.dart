@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -220,8 +221,8 @@ class CompactionGlyph extends StatelessWidget {
     if (compaction.isFinished) {
       return Icon(
         compaction.noop
-            ? Icons.check_circle_outline_rounded
-            : Icons.check_circle_rounded,
+            ? HIcons.check_circle_outline_rounded
+            : HIcons.check_circle_rounded,
         key: const ValueKey('compaction-done-icon'),
         size: size + 1,
         color: compaction.noop ? colors.textSecondary : colors.success,

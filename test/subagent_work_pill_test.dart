@@ -10,6 +10,7 @@ import 'package:hermes_android/core/widgets/subagent_work_pill.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/inter_font.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Widget host(Widget child, {double scale = 1}) => MaterialApp(
   theme: AppTheme.fromId('dark'),
@@ -362,10 +363,10 @@ void main() {
         tester.widget<Text>(clock).style!.fontSize,
         HermesType.captionSize,
       );
-      expect(find.byIcon(Icons.group_outlined), findsNothing);
+      expect(find.byIcon(HIcons.group_outlined), findsNothing);
       if (count.total > 0) {
         final countLabel = find.byKey(const ValueKey('subagent-work-count'));
-        final chevron = find.byIcon(Icons.keyboard_arrow_down_rounded);
+        final chevron = find.byIcon(HIcons.keyboard_arrow_down_rounded);
         expect(chevron, findsOneWidget);
         expect(
           tester.getCenter(countLabel).dy,
@@ -377,7 +378,7 @@ void main() {
         );
         expect(find.text('·'), findsOneWidget);
       } else {
-        expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsNothing);
+        expect(find.byIcon(HIcons.keyboard_arrow_down_rounded), findsNothing);
       }
     }
   });
@@ -437,7 +438,7 @@ void main() {
     );
     await tester.pumpWidget(pill(true, SubagentGroupCount.none));
     expect(find.text('Trabajando'), findsOneWidget);
-    expect(find.byIcon(Icons.group_outlined), findsNothing);
+    expect(find.byIcon(HIcons.group_outlined), findsNothing);
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('subagent-work-pill')),

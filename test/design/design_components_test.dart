@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _viewports = <Size>[Size(360, 800), Size(390, 844)];
 const _scales = <double>[1.0, 1.3, 2.0];
@@ -60,7 +61,7 @@ void main() {
                 children: [
                   HermesListRow(
                     key: const ValueKey('row'),
-                    icon: Icons.memory_rounded,
+                    icon: HIcons.memory_rounded,
                     title: 'Model',
                     value: 'openai · gpt-5.5',
                     onTap: () {},
@@ -77,7 +78,7 @@ void main() {
         tester.getSize(find.byKey(const ValueKey('row'))).height,
         greaterThanOrEqualTo(52),
       );
-      expect(find.byIcon(Icons.chevron_right_rounded), findsOneWidget);
+      expect(find.byIcon(HIcons.chevron_right_rounded), findsOneWidget);
       final header = tester.widget<Text>(find.text('MODEL'));
       expect(header.style?.fontSize, 11.5);
     });
@@ -95,7 +96,7 @@ void main() {
                   HermesListGroup(
                     children: [
                       HermesListRow(
-                        icon: Icons.schedule_rounded,
+                        icon: HIcons.schedule_rounded,
                         title: _long,
                         subtitle: _long,
                         value: 'A very long value that must ellipsize',
@@ -267,7 +268,7 @@ void main() {
               ),
               primaryAction: HermesActionButton(
                 primary: true,
-                icon: Icons.play_arrow_rounded,
+                icon: HIcons.play_arrow_rounded,
                 label: 'Run now',
                 onPressed: () {},
               ),

@@ -41,6 +41,10 @@ class HermesDocumentPreviewHandler(
             openGeneratedFile(call, result)
             return
         }
+        if (call.method == "renderViewerPdfPage") {
+            renderViewerPdfPage(call, result)
+            return
+        }
         if (call.method != "renderPdfPage") {
             result.notImplemented()
             return
@@ -101,10 +105,62 @@ class HermesDocumentPreviewHandler(
             generatedFileKey = generatedFileKey,
             maxGeneratedBytes = MAX_GENERATED_PDF_BYTES,
         )
+        return renderFilePage(file, pageIndex, MAX_RENDERED_PAGES)
+    }
 
+    /**
+     * Página de un PDF que el visor de la app guardó en su caché privada
+     * (`cacheDir/pdf_viewer/<sha256>.pdf`). El canal solo acepta el digest,
+     * nunca una ruta; se revalidan raíz canónica, tamaño y digest.
+     */
+    private fun renderViewerPdfPage(call: MethodCall, result: MethodChannel.Result) {
+        val key = call.argument<String>("key").orEmpty()
+        val pageIndex = (call.argument<Number>("page"))?.toInt() ?: -1
+        try {
+            executor.execute {
+                val response = runCatching {
+                    require(key.matches(SHA256_PATTERN))
+                    val cacheRoot = applicationContext.cacheDir.canonicalFile
+                    val unresolvedDirectory = File(cacheRoot, VIEWER_PDF_DIRECTORY).absoluteFile
+                    val directory = unresolvedDirectory.canonicalFile
+                    require(directory == unresolvedDirectory)
+                    require(directory.parentFile == cacheRoot)
+                    require(directory.isDirectory)
+                    val unresolved = File(directory, "$key.pdf").absoluteFile
+                    val file = unresolved.canonicalFile
+                    require(file == unresolved)
+                    require(file.parentFile == directory)
+                    require(file.isFile)
+                    require(file.length() in 1..MAX_VIEWER_PDF_BYTES)
+                    require(file.sha256() == key)
+                    renderFilePage(file, pageIndex, MAX_VIEWER_PAGES)
+                }
+                mainHandler.post {
+                    response.fold(
+                        onSuccess = result::success,
+                        onFailure = {
+                            result.error(
+                                "preview_unavailable",
+                                "The private PDF preview is unavailable",
+                                null,
+                            )
+                        },
+                    )
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            result.error(
+                "preview_unavailable",
+                "The private PDF preview is unavailable",
+                null,
+            )
+        }
+    }
+
+    private fun renderFilePage(file: File, pageIndex: Int, maxPages: Int): Map<String, Any> {
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
             PdfRenderer(descriptor).use { renderer ->
-                require(pageIndex in 0 until minOf(renderer.pageCount, MAX_RENDERED_PAGES))
+                require(pageIndex in 0 until minOf(renderer.pageCount, maxPages))
                 renderer.openPage(pageIndex).use { page ->
                     var width = minOf(MAX_RENDER_WIDTH, (page.width * 2).coerceAtLeast(1))
                     var height = (page.height * (width.toDouble() / page.width)).roundToInt()
@@ -302,6 +358,9 @@ class HermesDocumentPreviewHandler(
         const val MAX_GENERATED_PDF_BYTES = 20L * 1024L * 1024L
         const val MAX_GENERATED_FILE_BYTES = 100L * 1024L * 1024L
         const val MAX_RENDERED_PAGES = 40
+        const val VIEWER_PDF_DIRECTORY = "pdf_viewer"
+        const val MAX_VIEWER_PDF_BYTES = 50L * 1024L * 1024L
+        const val MAX_VIEWER_PAGES = 500
         const val MAX_RENDER_WIDTH = 1440
         const val MAX_RENDER_HEIGHT = 4096
         val SHA256_PATTERN = Regex("^[a-f0-9]{64}$")

@@ -1,5 +1,5 @@
 // Estado de Herdr leído desde la app (1.4.0, F5). Verificado contra un Herdr
-// 0.9.5 real (ver REPORT-WS-F5): `herdr api snapshot` imprime en stdout un
+// 0.9.5 real: `herdr api snapshot` imprime en stdout un
 // JSON `{"result":{"snapshot":{…}}}` y sale con 0; si falla, imprime en
 // stderr `{"error":{"code":…,"message":…}}` y sale con 1 (por ejemplo,
 // `server_not_running`).

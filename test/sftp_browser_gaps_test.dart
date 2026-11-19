@@ -30,6 +30,7 @@ import 'package:hermes_android/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _home = '/home/demo';
 
@@ -481,7 +482,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('sftp-pane-path')),
-        matching: find.byIcon(Icons.lock_outline),
+        matching: find.byIcon(HIcons.lock_outline),
       ),
       findsOneWidget,
     );
@@ -697,7 +698,7 @@ void main() {
       expect(row, findsOneWidget);
       final more = find.descendant(
         of: row,
-        matching: find.byIcon(Icons.more_vert),
+        matching: find.byIcon(HIcons.more_vert),
       );
       await tester.tap(more);
       await until(

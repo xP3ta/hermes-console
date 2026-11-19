@@ -232,7 +232,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       // Empty Home has one primary action; exercise its actual navigation.
-      await tester.tap(find.byIcon(Icons.add).last);
+      // (HIcons.add and add_rounded are one glyph now, so the icon alone no
+      // longer singles the button out: tap it by its label.)
+      await tester.tap(find.text('Connect'));
       await tester.pumpAndSettle();
       expect(find.byType(OnboardingScreen), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());

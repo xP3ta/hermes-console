@@ -184,13 +184,35 @@ class RealChatGlassProbe {
       }
     }
     if (name.endsWith('-no-foot-ink')) {
-      expect(progressInk, hasLength(1));
+      // The context ring left the composer for the chat settings' «Uso»:
+      // the foot paints no progress ink of its own.
+      expect(progressInk, isEmpty);
+    }
+    // The status row sits inside the composer now, with the model on a
+    // soft chip: that fill is the row's own ink too, not image colour
+    // transmitted through the composer.
+    final chipInk = <RenderDecoratedBox, Decoration>{};
+    for (final element
+        in find
+            .descendant(
+              of: target,
+              matching: find.descendant(
+                of: capsule,
+                matching: find.byType(DecoratedBox),
+              ),
+            )
+            .evaluate()) {
+      final render = element.renderObject;
+      if (render is RenderDecoratedBox) chipInk[render] = render.decoration;
     }
     final before = regions();
     try {
       for (final render in progressInk.keys) {
         render.painter = null;
         render.foregroundPainter = null;
+      }
+      for (final render in chipInk.keys) {
+        render.decoration = const BoxDecoration();
       }
       for (final editable in cursors.keys) {
         editable.showCursor.value = false;
@@ -202,6 +224,10 @@ class RealChatGlassProbe {
       expect(regions(), before, reason: 'ink control preserves geometry');
       return bare ? await _bare(name) : await _take(name);
     } finally {
+      for (final entry in chipInk.entries) {
+        expect(entry.key.attached, isTrue);
+        entry.key.decoration = entry.value;
+      }
       for (final entry in progressInk.entries) {
         expect(entry.key.attached, isTrue);
         entry.key.painter = entry.value.$1;

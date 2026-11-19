@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -48,10 +49,10 @@ class ConnectWayCards extends StatelessWidget {
   static const order = [ConnectWay.nous, ConnectWay.manual, ConnectWay.scan];
 
   static IconData iconOf(ConnectWay way) => switch (way) {
-    ConnectWay.nous => Icons.account_circle_outlined,
-    ConnectWay.manual => Icons.language_rounded,
-    ConnectWay.ssh => Icons.terminal_rounded,
-    ConnectWay.scan => Icons.qr_code_scanner_rounded,
+    ConnectWay.nous => HIcons.account_circle_outlined,
+    ConnectWay.manual => HIcons.language_rounded,
+    ConnectWay.ssh => HIcons.terminal_rounded,
+    ConnectWay.scan => HIcons.qr_code_scanner_rounded,
   };
 
   static String titleOf(Strings s, ConnectWay way) => switch (way) {
@@ -275,7 +276,7 @@ class _WayCard extends StatelessWidget {
               ),
               const SizedBox(width: HermesSpace.x1),
               Icon(
-                Icons.chevron_right_rounded,
+                HIcons.chevron_right_rounded,
                 size: 22,
                 color: c.textSecondary,
               ),

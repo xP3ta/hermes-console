@@ -23,6 +23,7 @@ import 'package:hermes_android/core/widgets/hermes_premium_ui.dart'
     show HermesComposerSurface;
 
 import 'support/design_shots.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _dir = String.fromEnvironment('GLASS_SHOTS');
 const _shotKey = ValueKey('chat-foot-shot');
@@ -121,7 +122,7 @@ Widget _page(
                       child: Row(
                         children: [
                           const SizedBox(width: 14),
-                          Icon(Icons.add, color: colors.textPrimary),
+                          Icon(HIcons.add, color: colors.textPrimary),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(

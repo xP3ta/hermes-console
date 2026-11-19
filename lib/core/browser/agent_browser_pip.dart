@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -739,7 +740,7 @@ class _WatchPill extends StatelessWidget {
                   _Dot(color: live ? colors.error : colors.textSecondary),
                   const SizedBox(width: HermesSpace.x2),
                   Icon(
-                    Icons.language_rounded,
+                    HIcons.language_rounded,
                     size: HermesIcon.md,
                     color: chrome.ink,
                   ),
@@ -829,7 +830,7 @@ class _PipBar extends StatelessWidget {
                 color: colors.surfaceVariant,
               ),
               child: Icon(
-                Icons.language_rounded,
+                HIcons.language_rounded,
                 size: HermesIcon.xl,
                 color: chrome.mutedInk,
               ),
@@ -859,21 +860,21 @@ class _PipBar extends StatelessWidget {
             ),
           ),
           if (onRetry case final retry?)
-            action('retry', Icons.refresh_rounded, strings.commonRetry, retry),
+            action('retry', HIcons.refresh_rounded, strings.commonRetry, retry),
           if (onDock case final dock?)
             action(
               'dock',
-              docked ? Icons.open_in_full_rounded : Icons.vertical_align_top,
+              docked ? HIcons.open_in_full_rounded : HIcons.vertical_align_top,
               docked ? strings.brwPipUndock : strings.brwPipDock,
               dock,
             ),
           action(
             'expand',
-            Icons.fullscreen_rounded,
+            HIcons.fullscreen_rounded,
             strings.brwPipExpand,
             onExpand,
           ),
-          action('close', Icons.close_rounded, strings.brwPipClose, onClose),
+          action('close', HIcons.close_rounded, strings.brwPipClose, onClose),
         ],
       ),
     );
@@ -914,7 +915,7 @@ class _CloseTarget extends StatelessWidget {
           border: Border.all(color: colors.error),
         ),
         child: Icon(
-          Icons.close_rounded,
+          HIcons.close_rounded,
           size: HermesIcon.xl,
           color: hot ? colors.background : colors.error,
         ),

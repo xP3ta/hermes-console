@@ -320,7 +320,7 @@ String inlineTurnSummary(
   return [
     measured == null
         ? s.turnLineWorked
-        : s.tk140WorkedFor(s.i18n131DurationSeconds('${measured.inSeconds}')),
+        : s.tk140WorkedFor(workedSpan(s, measured)),
     if (commands > 0) s.chatLiveCommands(commands),
     // Calls are not a child roster. Preserve their honest existing wording.
     if (agentCount > 0)
@@ -331,4 +331,19 @@ String inlineTurnSummary(
     if (all.any((a) => a.failed))
       s.turnLineFailed(all.where((a) => a.failed).length),
   ].join(' · ');
+}
+
+/// How long a turn worked, in the units a person reads: «45 s», «1 min 58 s»,
+/// «1 h 12 min».
+String workedSpan(Strings s, Duration value) {
+  final total = value.isNegative ? 0 : value.inSeconds;
+  if (total < 60) return s.i18n131DurationSeconds('$total');
+  final minutes = total ~/ 60;
+  final seconds = total % 60;
+  if (minutes < 60) {
+    return seconds == 0 ? '$minutes min' : '$minutes min $seconds s';
+  }
+  final hours = minutes ~/ 60;
+  final rest = minutes % 60;
+  return rest == 0 ? '$hours h' : '$hours h $rest min';
 }

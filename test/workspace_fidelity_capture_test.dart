@@ -1,4 +1,4 @@
-// Capturas «ahora» de REPORT-WS-FIDELIDAD, para ponerlas al lado de la v25.
+// Capturas «ahora» del espacio de trabajo, para ponerlas al lado de la v25.
 // No forma parte de la suite: solo corre con WS_FIDELITY_CAPTURE=1 y deja
 // los PNG en WS_FIDELITY_OUT (por defecto build/ws_fidelity). Pinta el host
 // real (marco, selector y acciones del panel, navegación lateral) y el composer y
@@ -18,6 +18,7 @@ import 'package:hermes_android/core/widgets/session_context_usage.dart';
 import 'package:hermes_android/core/widgets/workspace/chat_workspace.dart';
 import 'package:hermes_android/core/widgets/workspace/chat_workspace_host.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final bool _enabled = Platform.environment['WS_FIDELITY_CAPTURE'] == '1';
 final String _out =
@@ -165,7 +166,7 @@ class _SampleTabState extends State<_SampleTab> {
           menu: [
             ChatWorkspaceMenuEntry(
               label: 'Editar credenciales',
-              icon: Icons.edit_outlined,
+              icon: HIcons.edit_outlined,
               onSelected: _noop,
             ),
           ],
@@ -187,7 +188,7 @@ class _SampleTabState extends State<_SampleTab> {
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
                   child: Row(
                     children: [
-                      Icon(Icons.dns_outlined, color: colors.textSecondary),
+                      Icon(HIcons.dns_outlined, color: colors.textSecondary),
                       const SizedBox(width: 8),
                       Text(
                         'xpeta@servidor:22 · Hermes',

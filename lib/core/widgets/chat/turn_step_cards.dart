@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -272,7 +273,7 @@ class _Caret extends StatelessWidget {
     turns: open ? 0 : -0.25,
     duration: reduceMotion ? Duration.zero : HermesMotion.fast,
     child: Icon(
-      Icons.expand_more,
+      HIcons.expand_more,
       size: HermesIcon.sm,
       color: Theme.of(context).hermes.textSecondary,
     ),
@@ -298,8 +299,8 @@ class _StepCard extends StatelessWidget {
         : chrome.line;
     final glyph = Icon(
       entry.failed
-          ? Icons.error_outline_rounded
-          : entry.icon ?? Icons.info_outline_rounded,
+          ? HIcons.error_outline_rounded
+          : entry.icon ?? HIcons.info_outline_rounded,
       size: HermesIcon.sm,
       color: entry.failed ? colors.error : colors.textSecondary,
     );

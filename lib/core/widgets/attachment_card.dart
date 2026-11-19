@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -14,6 +15,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
+import '../services/artifact_viewer_kind.dart';
 import '../services/connection_manager.dart';
 import '../services/generated_media_service.dart';
 import '../services/media_dimensions.dart';
@@ -22,6 +24,8 @@ import '../theme/app_theme.dart';
 import '../theme/theme_contrast.dart';
 import '../design/tokens.dart' show HermesRadius;
 import '../theme/motion.dart' show HermesMotion;
+import 'artifact_viewer/web_preview.dart' show kModelMaxBytes;
+import 'chat/embeds/document_previews.dart';
 import 'generated_image_card.dart';
 import 'hermes_app_bar.dart';
 import 'hermes_notice.dart';
@@ -408,7 +412,7 @@ class AttachmentCard extends StatelessWidget {
                     PositionedDirectional(
                       end: 0,
                       child: Icon(
-                        Icons.chevron_right_rounded,
+                        HIcons.chevron_right_rounded,
                         key: const ValueKey('attachment-file-card-open'),
                         size: 20,
                         color: colors.textSecondary,
@@ -483,16 +487,16 @@ class AttachmentCard extends StatelessWidget {
   }
 
   static IconData _tileIcon(AttachmentKind kind) => switch (kind) {
-    AttachmentKind.image => Icons.image_outlined,
-    AttachmentKind.video => Icons.movie_outlined,
-    AttachmentKind.audio => Icons.audiotrack_outlined,
-    AttachmentKind.archive => Icons.folder_zip_outlined,
-    AttachmentKind.other => Icons.insert_drive_file_outlined,
+    AttachmentKind.image => HIcons.image_outlined,
+    AttachmentKind.video => HIcons.movie_outlined,
+    AttachmentKind.audio => HIcons.audiotrack_outlined,
+    AttachmentKind.archive => HIcons.folder_zip_outlined,
+    AttachmentKind.other => HIcons.insert_drive_file_outlined,
     AttachmentKind.pdf ||
     AttachmentKind.doc ||
     AttachmentKind.sheet ||
     AttachmentKind.code ||
-    AttachmentKind.text => Icons.description_outlined,
+    AttachmentKind.text => HIcons.description_outlined,
   };
 
   String _fileSubtitle(BuildContext context, AttachmentKind kind) {
@@ -622,7 +626,7 @@ class AttachmentCard extends StatelessWidget {
                     border: Border.all(color: colors.divider),
                   ),
                   child: Icon(
-                    Icons.close,
+                    HIcons.close,
                     size: 14,
                     color: colors.textSecondary,
                   ),
@@ -662,7 +666,7 @@ class AttachmentCard extends StatelessWidget {
                     border: Border.all(color: colors.divider),
                   ),
                   child: Icon(
-                    Icons.refresh_rounded,
+                    HIcons.refresh_rounded,
                     size: compact ? 14 : 15,
                     color: colors.textSecondary,
                   ),
@@ -765,21 +769,21 @@ class GeneratedFileCard extends StatelessWidget {
           if (status == GeneratedFileStatus.consent)
             TextButton.icon(
               onPressed: onDownload,
-              icon: const Icon(Icons.download_rounded),
+              icon: const Icon(HIcons.download_rounded),
               label: Text(strings.commonDownload),
             )
           else if (status == GeneratedFileStatus.downloading &&
               onCancel != null)
             TextButton.icon(
               onPressed: onCancel,
-              icon: const Icon(Icons.close_rounded),
+              icon: const Icon(HIcons.close_rounded),
               label: Text(strings.commonCancel),
             )
           else if (status == GeneratedFileStatus.error ||
               status == GeneratedFileStatus.offline)
             TextButton.icon(
               onPressed: onDownload,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(HIcons.refresh_rounded),
               label: Text(strings.commonRetry),
             )
           else if (status == GeneratedFileStatus.ready)
@@ -788,17 +792,17 @@ class GeneratedFileCard extends StatelessWidget {
               children: [
                 TextButton.icon(
                   onPressed: onOpen,
-                  icon: const Icon(Icons.open_in_new_rounded),
+                  icon: const Icon(HIcons.open_in_new_rounded),
                   label: Text(strings.commonOpen),
                 ),
                 TextButton.icon(
                   onPressed: onShare,
-                  icon: const Icon(Icons.share_outlined),
+                  icon: const Icon(HIcons.share_outlined),
                   label: Text(strings.commonShare),
                 ),
                 TextButton.icon(
                   onPressed: onSave,
-                  icon: const Icon(Icons.save_alt_rounded),
+                  icon: const Icon(HIcons.save_alt_rounded),
                   label: Text(strings.commonSave),
                 ),
               ],
@@ -1575,6 +1579,49 @@ class _GeneratedMediaAttachmentCardState
     );
   }
 
+  /// A document shown as it looks, not as its source: a page, an SVG, a
+  /// diagram, a 3D model, a note. Null for everything else (code, data,
+  /// plain text keep the text preview; media has its own cards).
+  Widget? _inlineDocument(File file) {
+    if (widget.reference.kind != GeneratedMediaKind.file ||
+        widget.reference.htmlPreview) {
+      return null;
+    }
+    final name = widget.reference.displayName;
+    final kind = artifactViewerKindFor(
+      name: name,
+      mimeType: widget.reference.mimeType,
+    );
+    final small = _receivedBytes <= kInlineDocumentMaxBytes;
+    final Widget preview;
+    switch (kind) {
+      case ArtifactViewerKind.html when small:
+        preview = DocumentFilePreview.html(file: file, onOpen: _open);
+      case ArtifactViewerKind.svg when small:
+        preview = DocumentFilePreview.svg(file: file, onOpen: _open);
+      case ArtifactViewerKind.mermaid when small:
+        preview = DocumentFilePreview.mermaid(file: file, onOpen: _open);
+      case ArtifactViewerKind.model3d when _receivedBytes <= kModelMaxBytes:
+        preview = DocumentFilePreview.model(
+          file: file,
+          name: name,
+          onOpen: _open,
+        );
+      case ArtifactViewerKind.markdown when _text != null:
+        preview = MarkdownFilePreview(text: _text!, onOpen: _open);
+      default:
+        return null;
+    }
+    return GeneratedDocumentPreviewCard(
+      name: name,
+      sizeBytes: _receivedBytes,
+      preview: preview,
+      onOpen: _open,
+      onShare: _share,
+      onSave: _save,
+    );
+  }
+
   void _showActionError() {
     HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).genMediaError)),
@@ -1602,7 +1649,7 @@ class _GeneratedMediaAttachmentCardState
   @override
   Widget build(BuildContext context) {
     final card = KeyedSubtree(key: _contentKey, child: _buildCard(context));
-    // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A3/A4/A5): the download card giving
+    // F5: the download card giving
     // way to the file's own card (a PDF page, a player, a text or HTML
     // preview, the actions of a finished file) eases instead of jumping.
     // A presized image already does it in its own frame. Instant with
@@ -1633,6 +1680,8 @@ class _GeneratedMediaAttachmentCardState
       if (image != null) return image;
     }
     if (_status == GeneratedFileStatus.ready && file != null) {
+      final document = _inlineDocument(file);
+      if (document != null) return document;
       if (_text != null) {
         return GeneratedTextPreviewCard(
           name: widget.reference.displayName,
@@ -1778,17 +1827,84 @@ class GeneratedTextPreviewCard extends StatelessWidget {
             children: [
               TextButton.icon(
                 onPressed: onOpen,
-                icon: const Icon(Icons.open_in_full_rounded),
+                icon: const Icon(HIcons.open_in_full_rounded),
                 label: Text(strings.genMediaViewFullText),
               ),
               TextButton.icon(
                 onPressed: onShare,
-                icon: const Icon(Icons.share_outlined),
+                icon: const Icon(HIcons.share_outlined),
                 label: Text(strings.commonShare),
               ),
               TextButton.icon(
                 onPressed: onSave,
-                icon: const Icon(Icons.save_alt_rounded),
+                icon: const Icon(HIcons.save_alt_rounded),
+                label: Text(strings.commonSave),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A document previewed as it looks ([preview]) over its name, its size and
+/// the same actions as every finished file.
+class GeneratedDocumentPreviewCard extends StatelessWidget {
+  const GeneratedDocumentPreviewCard({
+    super.key,
+    required this.name,
+    required this.sizeBytes,
+    required this.preview,
+    required this.onOpen,
+    required this.onShare,
+    required this.onSave,
+  });
+
+  final String name;
+  final int sizeBytes;
+  final Widget preview;
+  final VoidCallback onOpen;
+  final VoidCallback onShare;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Column(
+        key: const ValueKey<String>('generated-document-preview'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          preview,
+          Padding(
+            padding: const EdgeInsets.only(top: 2, left: 2),
+            child: Text(
+              '$name · ${_formatFileBytes(sizeBytes)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+            ),
+          ),
+          Wrap(
+            spacing: 4,
+            children: [
+              TextButton.icon(
+                onPressed: onOpen,
+                icon: const Icon(HIcons.open_in_full_rounded),
+                label: Text(strings.commonOpen),
+              ),
+              TextButton.icon(
+                onPressed: onShare,
+                icon: const Icon(HIcons.share_outlined),
+                label: Text(strings.commonShare),
+              ),
+              TextButton.icon(
+                onPressed: onSave,
+                icon: const Icon(HIcons.save_alt_rounded),
                 label: Text(strings.commonSave),
               ),
             ],
@@ -1835,17 +1951,17 @@ class GeneratedTextViewerScreen extends StatelessWidget {
               );
             },
             tooltip: strings.commonCopy,
-            icon: const Icon(Icons.copy_rounded),
+            icon: const Icon(HIcons.copy_rounded),
           ),
           IconButton(
             onPressed: onShare,
             tooltip: strings.commonShare,
-            icon: const Icon(Icons.share_outlined),
+            icon: const Icon(HIcons.share_outlined),
           ),
           IconButton(
             onPressed: onSave,
             tooltip: strings.commonSave,
-            icon: const Icon(Icons.save_alt_rounded),
+            icon: const Icon(HIcons.save_alt_rounded),
           ),
         ],
       ),
@@ -1987,7 +2103,7 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
           } else {
             card = _previewCard(strings, colors, preview);
           }
-          // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A4): while the first page
+          // F5: while the first page
           // renders, the card already has an A4 page, its caption and its
           // actions, so an A4 PDF takes its place without moving the chat;
           // another shape eases into its own. Instant with reduced motion.
@@ -2095,17 +2211,17 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
           children: [
             TextButton.icon(
               onPressed: ready ? widget.onOpen : null,
-              icon: const Icon(Icons.open_in_full_rounded),
+              icon: const Icon(HIcons.open_in_full_rounded),
               label: Text(strings.commonOpen),
             ),
             TextButton.icon(
               onPressed: ready ? widget.onShare : null,
-              icon: const Icon(Icons.share_outlined),
+              icon: const Icon(HIcons.share_outlined),
               label: Text(strings.commonShare),
             ),
             TextButton.icon(
               onPressed: ready ? widget.onSave : null,
-              icon: const Icon(Icons.save_alt_rounded),
+              icon: const Icon(HIcons.save_alt_rounded),
               label: Text(strings.commonSave),
             ),
           ],
@@ -2281,7 +2397,7 @@ class _GeneratedAudioPlayerCardState extends State<GeneratedAudioPlayerCard> {
                         ? Strings.of(context).a11yPauseAudio
                         : Strings.of(context).a11yPlayAudio,
                     icon: Icon(
-                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      _playing ? HIcons.pause_rounded : HIcons.play_arrow_rounded,
                     ),
                   ),
                 ),
@@ -2304,17 +2420,17 @@ class _GeneratedAudioPlayerCardState extends State<GeneratedAudioPlayerCard> {
               if (widget.showOpenAction)
                 TextButton.icon(
                   onPressed: widget.onOpen ?? _toggle,
-                  icon: const Icon(Icons.open_in_new_rounded),
+                  icon: const Icon(HIcons.open_in_new_rounded),
                   label: Text(strings.commonOpen),
                 ),
               TextButton.icon(
                 onPressed: widget.onShare,
-                icon: const Icon(Icons.share_outlined),
+                icon: const Icon(HIcons.share_outlined),
                 label: Text(strings.commonShare),
               ),
               TextButton.icon(
                 onPressed: widget.onSave,
-                icon: const Icon(Icons.save_alt_rounded),
+                icon: const Icon(HIcons.save_alt_rounded),
                 label: Text(strings.commonSave),
               ),
             ],
@@ -2355,12 +2471,12 @@ class GeneratedAudioViewerScreen extends StatelessWidget {
           IconButton(
             onPressed: onShare,
             tooltip: strings.commonShare,
-            icon: const Icon(Icons.share_outlined),
+            icon: const Icon(HIcons.share_outlined),
           ),
           IconButton(
             onPressed: onSave,
             tooltip: strings.commonSave,
-            icon: const Icon(Icons.save_alt_rounded),
+            icon: const Icon(HIcons.save_alt_rounded),
           ),
         ],
       ),
@@ -2416,12 +2532,12 @@ class GeneratedFileViewerScreen extends StatelessWidget {
           IconButton(
             onPressed: onShare,
             tooltip: strings.commonShare,
-            icon: const Icon(Icons.share_outlined),
+            icon: const Icon(HIcons.share_outlined),
           ),
           IconButton(
             onPressed: onSave,
             tooltip: strings.commonSave,
-            icon: const Icon(Icons.save_alt_rounded),
+            icon: const Icon(HIcons.save_alt_rounded),
           ),
         ],
       ),
@@ -2452,7 +2568,7 @@ class GeneratedFileViewerScreen extends StatelessWidget {
                 const SizedBox(height: 24),
                 FilledButton.icon(
                   onPressed: onOpenWith,
-                  icon: const Icon(Icons.open_in_new_rounded),
+                  icon: const Icon(HIcons.open_in_new_rounded),
                   label: Text(strings.genMediaOpenWith),
                 ),
                 const SizedBox(height: 8),
@@ -2461,12 +2577,12 @@ class GeneratedFileViewerScreen extends StatelessWidget {
                   children: [
                     TextButton.icon(
                       onPressed: onShare,
-                      icon: const Icon(Icons.share_outlined),
+                      icon: const Icon(HIcons.share_outlined),
                       label: Text(strings.commonShare),
                     ),
                     TextButton.icon(
                       onPressed: onSave,
-                      icon: const Icon(Icons.save_alt_rounded),
+                      icon: const Icon(HIcons.save_alt_rounded),
                       label: Text(strings.commonSave),
                     ),
                   ],

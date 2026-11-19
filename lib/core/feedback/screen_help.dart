@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -32,7 +33,7 @@ class ScreenHelpButton extends StatelessWidget {
     return IconButton(
       key: const ValueKey('screen-help-button'),
       tooltip: s.kanbanHelpTooltip,
-      icon: const Icon(Icons.help_outline_rounded),
+      icon: const Icon(HIcons.help_outline_rounded),
       onPressed: () => showScreenHelp(
         context,
         paragraphs: paragraphs,

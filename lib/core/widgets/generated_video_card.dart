@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -195,7 +196,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
   @override
   Widget build(BuildContext context) {
     final content = _content(context);
-    // F5 (REPORT-AUDITORIA-FLUIDEZ §3, A5): the placeholder already holds the
+    // F5: the placeholder already holds the
     // player's 16:9 box; a clip of another shape eases into its own instead
     // of jumping, and the player fades in. Instant with reduced motion.
     if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return content;
@@ -238,7 +239,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
           child: TextButton.icon(
             onPressed: _startOrRetry,
             icon: Icon(
-              failed ? Icons.refresh_rounded : Icons.play_arrow_rounded,
+              failed ? HIcons.refresh_rounded : HIcons.play_arrow_rounded,
             ),
             label: Text(failed ? strings.commonRetry : strings.genVideoPlay),
           ),
@@ -283,7 +284,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
                       onFullscreen: () => unawaited(_openFullscreen()),
                       leading: [
                         VideoControlButton(
-                          icon: Icons.download_rounded,
+                          icon: HIcons.download_rounded,
                           label: strings.imgSaveToGallery,
                           onPressed: () => saveMediaToGallery(
                             context,
@@ -292,7 +293,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
                           ),
                         ),
                         VideoControlButton(
-                          icon: Icons.share_outlined,
+                          icon: HIcons.share_outlined,
                           label: strings.commonShare,
                           onPressed: () => shareMediaFile(widget.file),
                         ),
@@ -460,17 +461,17 @@ class _GeneratedVideoViewerState extends State<_GeneratedVideoViewer> {
     final controller = _controller;
     final file = widget.file;
     final download = VideoControlButton(
-      icon: Icons.download_rounded,
+      icon: HIcons.download_rounded,
       label: strings.imgSaveToGallery,
       onPressed: () => saveMediaToGallery(context, file, isVideo: true),
     );
     final share = VideoControlButton(
-      icon: Icons.share_outlined,
+      icon: HIcons.share_outlined,
       label: strings.commonShare,
       onPressed: () => shareMediaFile(file),
     );
     final close = VideoControlButton(
-      icon: Icons.close,
+      icon: HIcons.close,
       label: strings.commonClose,
       onPressed: _close,
     );
@@ -517,7 +518,7 @@ class _GeneratedVideoViewerState extends State<_GeneratedVideoViewer> {
                       const SizedBox(height: 12),
                       TextButton.icon(
                         onPressed: () => unawaited(_start()),
-                        icon: const Icon(Icons.refresh_rounded),
+                        icon: const Icon(HIcons.refresh_rounded),
                         label: Text(strings.commonRetry),
                       ),
                     ],

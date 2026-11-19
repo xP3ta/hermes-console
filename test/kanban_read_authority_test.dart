@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/header_actions.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 class _Read {
   _Read(this.url);
@@ -125,7 +126,7 @@ class _Fixture {
     await tapHeaderAction(
       tester,
       inBar: find.byTooltip('Refresh'),
-      inMenu: find.byIcon(Icons.refresh_rounded),
+      inMenu: find.byIcon(HIcons.refresh_rounded),
     );
     await settle(tester);
   }
@@ -151,7 +152,7 @@ class _Fixture {
     await tapHeaderAction(
       tester,
       inBar: find.byKey(const ValueKey('kanban-filter-button')),
-      inMenu: find.byIcon(Icons.filter_alt_outlined),
+      inMenu: find.byIcon(HIcons.filter_alt_outlined),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -116,7 +117,7 @@ class _HermesFormPageState extends State<HermesFormPage> {
           leading: IconButton(
             key: widget.closeKey,
             tooltip: s.commonClose,
-            icon: const Icon(Icons.close_rounded),
+            icon: const Icon(HIcons.close_rounded),
             onPressed: widget.busy
                 ? null
                 : () => Navigator.of(context).maybePop(),

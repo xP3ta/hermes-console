@@ -2,6 +2,7 @@
 /// actions the screen wires, and the soft card every widget sits on.
 library;
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -156,17 +157,17 @@ String homeSizeName(Strings s, HomeWidgetSize size) => switch (size) {
 };
 
 IconData homeWidgetIcon(HomeWidgetKind kind) => switch (kind) {
-  HomeWidgetKind.now => Icons.bolt_rounded,
-  HomeWidgetKind.team => Icons.smart_toy_outlined,
-  HomeWidgetKind.bot => Icons.smart_toy_outlined,
-  HomeWidgetKind.room => Icons.forum_outlined,
-  HomeWidgetKind.chat => Icons.chat_bubble_outline_rounded,
-  HomeWidgetKind.continueChats => Icons.chat_bubble_outline_rounded,
-  HomeWidgetKind.cron => Icons.schedule_rounded,
-  HomeWidgetKind.tasks => Icons.view_kanban_outlined,
-  HomeWidgetKind.planLimits => Icons.donut_large_rounded,
-  HomeWidgetKind.server => Icons.dns_outlined,
-  HomeWidgetKind.today => Icons.wb_sunny_outlined,
+  HomeWidgetKind.now => HIcons.bolt_rounded,
+  HomeWidgetKind.team => HIcons.smart_toy_outlined,
+  HomeWidgetKind.bot => HIcons.smart_toy_outlined,
+  HomeWidgetKind.room => HIcons.forum_outlined,
+  HomeWidgetKind.chat => HIcons.chat_bubble_outline_rounded,
+  HomeWidgetKind.continueChats => HIcons.chat_bubble_outline_rounded,
+  HomeWidgetKind.cron => HIcons.schedule_rounded,
+  HomeWidgetKind.tasks => HIcons.view_kanban_outlined,
+  HomeWidgetKind.planLimits => HIcons.donut_large_rounded,
+  HomeWidgetKind.server => HIcons.dns_outlined,
+  HomeWidgetKind.today => HIcons.wb_sunny_outlined,
 };
 
 /// Identity hue of a kind (a role; the colour comes from the theme).

@@ -12,6 +12,7 @@
 // models are offered, so a server with many providers is still one short
 // list.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -118,7 +119,7 @@ class _ModelVisibilityScreenState extends State<ModelVisibilityScreen> {
             title: provider.name.isEmpty ? provider.slug : provider.name,
             subtitle: s.mdlVisibleCount(shown, provider.models.length),
             trailing: Icon(
-              open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              open ? HIcons.expand_less_rounded : HIcons.expand_more_rounded,
               size: 20,
               color: colors.textDisabled,
             ),

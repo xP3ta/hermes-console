@@ -12,6 +12,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/l10n/app_localizations_es.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
+import 'package:hermes_android/core/design/hicons.dart';
 
 // «En marcha»: what a conversation still has alive outside its turn
 // (background processes, subagents, loops, the goal), as ONE widget that
@@ -234,13 +235,13 @@ void main() {
     Icon icon(String row) => tester.widget<Icon>(
       find.descendant(of: _key(row), matching: find.byType(Icon)),
     );
-    expect(icon('running-process-p1').icon, Icons.terminal_rounded);
+    expect(icon('running-process-p1').icon, HIcons.terminal_rounded);
     expect(icon('running-process-p1').semanticLabel, 'Segundo plano');
-    expect(icon('running-subagent-a').icon, Icons.smart_toy_outlined);
+    expect(icon('running-subagent-a').icon, HIcons.smart_toy_outlined);
     expect(icon('running-subagent-a').semanticLabel, 'Subagente');
-    expect(icon('running-loop-0').icon, Icons.schedule_rounded);
+    expect(icon('running-loop-0').icon, HIcons.schedule_rounded);
     expect(icon('running-loop-0').semanticLabel, 'Bucle recurrente');
-    expect(icon('running-goal').icon, Icons.flag_outlined);
+    expect(icon('running-goal').icon, HIcons.flag_outlined);
     expect(icon('running-goal').semanticLabel, 'Objetivo');
 
     // One named action per row, and it does what it says.

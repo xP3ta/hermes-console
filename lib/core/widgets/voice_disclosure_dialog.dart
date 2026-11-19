@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -16,7 +17,7 @@ Future<VoiceDisclosureChoice?> showVoiceDisclosureDialog(
     final s = Strings.of(context);
     return AlertDialog(
       scrollable: true,
-      icon: const Icon(Icons.graphic_eq_rounded),
+      icon: const Icon(HIcons.graphic_eq_rounded),
       title: Text(s.voiceDisclosureTitle),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
@@ -27,7 +28,7 @@ Future<VoiceDisclosureChoice?> showVoiceDisclosureDialog(
             Text(s.voiceDisclosureBody),
             const SizedBox(height: 16),
             _DisclosureChoiceTile(
-              icon: Icons.phone_android_rounded,
+              icon: HIcons.phone_android_rounded,
               title: s.voiceForegroundOnlyTitle,
               subtitle: s.voiceForegroundOnlySub,
               onTap: () => Navigator.of(
@@ -36,7 +37,7 @@ Future<VoiceDisclosureChoice?> showVoiceDisclosureDialog(
             ),
             const SizedBox(height: 8),
             _DisclosureChoiceTile(
-              icon: Icons.lock_outline_rounded,
+              icon: HIcons.lock_outline_rounded,
               title: s.voiceContinueLockedTitle,
               subtitle: s.voiceContinueLockedSub,
               onTap: () => Navigator.of(
@@ -66,7 +67,7 @@ Future<bool?> showNativeVoiceConsentDialog(BuildContext context) =>
         final s = Strings.of(context);
         return AlertDialog(
           scrollable: true,
-          icon: const Icon(Icons.dns_rounded),
+          icon: const Icon(HIcons.dns_rounded),
           title: Text(s.nativeVoiceConsentTitle),
           content: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
@@ -77,14 +78,14 @@ Future<bool?> showNativeVoiceConsentDialog(BuildContext context) =>
                 Text(s.nativeVoiceConsentBody),
                 const SizedBox(height: 16),
                 _DisclosureChoiceTile(
-                  icon: Icons.record_voice_over_rounded,
+                  icon: HIcons.record_voice_over_rounded,
                   title: s.nativeVoiceConsentAccept,
                   subtitle: s.nativeVoiceConsentAcceptSub,
                   onTap: () => Navigator.of(context).pop(true),
                 ),
                 const SizedBox(height: 8),
                 _DisclosureChoiceTile(
-                  icon: Icons.phone_android_rounded,
+                  icon: HIcons.phone_android_rounded,
                   title: s.nativeVoiceConsentDecline,
                   subtitle: s.nativeVoiceConsentDeclineSub,
                   onTap: () => Navigator.of(context).pop(false),

@@ -243,7 +243,10 @@ void _push(NavigatorState navigator, String key, Session session) =>
 
 Future<void> _send(WidgetTester tester, String text) async {
   await tester.enterText(find.byType(TextField).first, text);
+  // Focus stacks the controls under the text: build that frame, then let the
+  // animation finish.
   await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
   final send = find.byKey(const ValueKey('send')).hitTestable();
   expect(send, findsOneWidget);
   await tester.tap(send);

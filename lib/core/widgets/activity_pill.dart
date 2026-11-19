@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -62,14 +63,14 @@ enum ActivityGlyph {
 
 /// Null for [ActivityGlyph.thinking]: the brain is drawn ([ThinkingGlyph]).
 IconData? _glyphIcon(ActivityGlyph glyph) => switch (glyph) {
-  ActivityGlyph.connecting => Icons.cloud_queue_rounded,
+  ActivityGlyph.connecting => HIcons.cloud_queue_rounded,
   ActivityGlyph.thinking => null,
-  ActivityGlyph.tool => Icons.terminal_rounded,
-  ActivityGlyph.skill => Icons.auto_awesome_rounded,
-  ActivityGlyph.waiting => Icons.help_outline_rounded,
-  ActivityGlyph.tasks => Icons.check_circle_outline_rounded,
-  ActivityGlyph.background => Icons.layers_outlined,
-  ActivityGlyph.subagents => Icons.account_tree_outlined,
+  ActivityGlyph.tool => HIcons.terminal_rounded,
+  ActivityGlyph.skill => HIcons.auto_awesome_rounded,
+  ActivityGlyph.waiting => HIcons.help_outline_rounded,
+  ActivityGlyph.tasks => HIcons.check_circle_outline_rounded,
+  ActivityGlyph.background => HIcons.layers_outlined,
+  ActivityGlyph.subagents => HIcons.account_tree_outlined,
 };
 
 /// Lo que la pastilla enseña en UNA línea. Se calcula solo desde el
@@ -641,7 +642,7 @@ class ActivityPillRow extends StatelessWidget {
               ? Duration.zero
               : const Duration(milliseconds: 200),
           child: Icon(
-            Icons.keyboard_arrow_up_rounded,
+            HIcons.keyboard_arrow_up_rounded,
             size: 20,
             color: colors.textSecondary,
           ),

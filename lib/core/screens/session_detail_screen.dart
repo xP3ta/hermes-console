@@ -8,6 +8,7 @@
 //
 // Solo se muestran métricas que el servidor informa; nada derivado se
 // presenta como dato del servidor.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -612,7 +613,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           ? HermesTag(
               label: s.sesUiReadOnlyTag,
               tone: HermesStatusTone.neutral,
-              icon: Icons.lock_outline_rounded,
+              icon: HIcons.lock_outline_rounded,
             )
           : null,
       status: HermesStatusText(
@@ -627,13 +628,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       primaryAction: HermesActionButton(
         key: const ValueKey('session-detail-resume'),
         primary: true,
-        icon: Icons.play_arrow_rounded,
+        icon: HIcons.play_arrow_rounded,
         label: s.sesUiResume,
         onPressed: _resume,
       ),
       actions: [
         IconButton(
-          icon: const Icon(Icons.refresh_rounded, size: 20),
+          icon: const Icon(HIcons.refresh_rounded, size: 20),
           tooltip: s.sesRefreshTooltip,
           onPressed: _refreshing ? null : _refresh,
         ),
@@ -656,7 +657,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             if (session.isJob)
               HermesListRow(
                 key: const ValueKey('session-detail-open-routine'),
-                icon: Icons.schedule_rounded,
+                icon: HIcons.schedule_rounded,
                 title: s.sesUiOpenRoutine,
                 onTap: _openLinkedCron,
               ),
@@ -665,7 +666,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 key: const ValueKey('session-detail-pr'),
                 load: _loadPullRequest,
                 builder: (context, label, onTap) => HermesListRow(
-                  icon: Icons.merge_type_rounded,
+                  icon: HIcons.merge_type_rounded,
                   title: label,
                   onTap: onTap,
                 ),
@@ -676,14 +677,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ))
               HermesListRow(
                 key: const ValueKey('session-detail-branches'),
-                icon: Icons.account_tree_outlined,
+                icon: HIcons.account_tree_outlined,
                 title: s.sesBranchesTitle,
                 onTap: _openBranches,
               ),
             if (!readOnly)
               HermesListRow(
                 key: const ValueKey('session-detail-duplicate'),
-                icon: Icons.call_split_rounded,
+                icon: HIcons.call_split_rounded,
                 title: s.sesUiDuplicate,
                 showChevron: false,
                 onTap: _fork,
@@ -691,8 +692,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             HermesListRow(
               key: const ValueKey('session-detail-archive'),
               icon: _archived
-                  ? Icons.unarchive_outlined
-                  : Icons.archive_outlined,
+                  ? HIcons.unarchive_outlined
+                  : HIcons.archive_outlined,
               title: _archived ? s.sesUiUnarchive : s.sesUiArchive,
               showChevron: false,
               onTap: _archive == null || _archivePending
@@ -701,7 +702,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ),
             HermesListRow(
               key: const ValueKey('session-detail-copy-summary'),
-              icon: Icons.content_copy_outlined,
+              icon: HIcons.content_copy_outlined,
               title: s.sesUiCopySummary,
               showChevron: false,
               onTap: _copySummary,
@@ -709,7 +710,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             if (!readOnly)
               HermesListRow(
                 key: const ValueKey('session-detail-delete'),
-                icon: Icons.delete_outline_rounded,
+                icon: HIcons.delete_outline_rounded,
                 title: s.sesUiDelete,
                 destructive: true,
                 showChevron: false,
@@ -721,24 +722,24 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         HermesListGroup(
           children: [
             HermesListRow(
-              icon: Icons.chat_bubble_outline_rounded,
+              icon: HIcons.chat_bubble_outline_rounded,
               title: s.sesUiMessages,
               value: '${session.messageCount}',
             ),
             if (showModel)
               HermesListRow(
-                icon: Icons.memory_rounded,
+                icon: HIcons.memory_rounded,
                 title: s.sesUiModel,
                 value: session.model,
               ),
             HermesListRow(
-              icon: Icons.dns_outlined,
+              icon: HIcons.dns_outlined,
               title: s.sesUiInstance,
               value: widget.connection.label,
             ),
             HermesListRow(
               key: const ValueKey('session-detail-context'),
-              icon: Icons.info_outline_rounded,
+              icon: HIcons.info_outline_rounded,
               title: s.sesUiContext,
               subtitle: s.sesUiContextHint,
               onTap: _openContext,
@@ -746,13 +747,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             if (technical.isNotEmpty) ...[
               HermesListRow(
                 key: const ValueKey('session-detail-technical'),
-                icon: Icons.tune_rounded,
+                icon: HIcons.tune_rounded,
                 title: s.sesUiTechnical,
                 onTap: () => setState(() => _technicalOpen = !_technicalOpen),
                 trailing: Icon(
                   _technicalOpen
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
+                      ? HIcons.expand_less_rounded
+                      : HIcons.expand_more_rounded,
                   size: 20,
                   color: colors.textSecondary,
                 ),
@@ -863,7 +864,7 @@ class _SessionContextPage extends StatelessWidget {
       subtitle: row.$2,
       subtitleMaxLines: 3,
       trailing: Icon(
-        Icons.content_copy_outlined,
+        HIcons.content_copy_outlined,
         size: 16,
         color: colors.textDisabled,
       ),

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -245,13 +246,13 @@ class _EmbedCardState extends State<EmbedCard> {
           children: [
             ListTile(
               key: const ValueKey('embed-load-once'),
-              leading: const Icon(Icons.play_arrow_rounded),
+              leading: const Icon(HIcons.play_arrow_rounded),
               title: Text(s.embedLoadOnce),
               onTap: () => Navigator.pop(ctx, EmbedMode.ask),
             ),
             ListTile(
               key: const ValueKey('embed-always-allow'),
-              leading: const Icon(Icons.verified_user_outlined),
+              leading: const Icon(HIcons.verified_user_outlined),
               title: Text(s.embedAlwaysAllow(_label)),
               onTap: () => Navigator.pop(ctx, EmbedMode.always),
             ),
@@ -323,7 +324,7 @@ class _EmbedCardState extends State<EmbedCard> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
-                                    Icons.play_circle_outline_rounded,
+                                    HIcons.play_circle_outline_rounded,
                                     color: colors.textSecondary,
                                   ),
                                   const SizedBox(height: 6),

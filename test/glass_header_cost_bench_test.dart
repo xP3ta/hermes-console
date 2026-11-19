@@ -1,5 +1,5 @@
 // Q9-CRISTAL (the owner, rule 7 of the order): the frame cost of the header's
-// glass, measured as REPORT-Q9-CHAT5 measures the foot's
+// glass, measured as the foot's is
 // (test/glass_cost_bench_test.dart): a reply streaming at the end of a
 // long list that scrolls a step each frame, under a header of three pieces
 // (a round button, a title pill, an actions pill), in three set-ups:
@@ -8,7 +8,7 @@
 //   pieces   each piece its own blur: what the strip avoids.
 // The whole screen is rasterized (toImage) and timed each frame; the
 // numbers are printed as `[glass-cost-header]` lines for the report (the host
-// rasterizes in software; on the Fold see REPORT-Q9-CRISTAL). The test
+// rasterizes in software; a device is measured apart). The test
 // asserts what the design promises: the strip pushes one backdrop layer
 // for three pieces.
 import 'dart:ui' as ui;

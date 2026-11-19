@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -111,12 +112,12 @@ class _ChatPinnedPromptHeaderState extends State<ChatPinnedPromptHeader> {
               ),
             ),
           if (_revealed && widget.attachmentCount > 0) ...[
-            const Icon(Icons.attach_file, size: 16),
+            const Icon(HIcons.attach_file, size: 16),
             Text('${widget.attachmentCount}'),
           ],
           const SizedBox.square(
             dimension: 48,
-            child: Icon(Icons.arrow_upward_rounded, size: 18),
+            child: Icon(HIcons.arrow_upward_rounded, size: 18),
           ),
         ],
       ),

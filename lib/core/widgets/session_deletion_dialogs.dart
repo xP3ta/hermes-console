@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -52,7 +53,7 @@ Future<LinkedCronDeletionMode?> showCronConversationDeleteDialog(
             const SizedBox(height: 16),
             _CronDeletionChoice(
               key: const ValueKey('cron_delete_conversation_only'),
-              icon: Icons.chat_bubble_outline,
+              icon: HIcons.chat_bubble_outline,
               title: strings.cronDeleteConversationOnly,
               subtitle: strings.cronDeleteConversationOnlyHelp,
               onTap: () => Navigator.pop(
@@ -63,7 +64,7 @@ Future<LinkedCronDeletionMode?> showCronConversationDeleteDialog(
             const SizedBox(height: 8),
             _CronDeletionChoice(
               key: const ValueKey('cron_delete_conversation_and_schedule'),
-              icon: Icons.delete_outline,
+              icon: HIcons.delete_outline,
               title: strings.cronDeleteConversationAndSchedule,
               subtitle: strings.cronDeleteConversationAndScheduleHelp,
               destructive: true,
@@ -146,7 +147,7 @@ class _CronDeletionChoice extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(Icons.chevron_right, size: 18, color: foreground),
+                Icon(HIcons.chevron_right, size: 18, color: foreground),
               ],
             ),
           ),

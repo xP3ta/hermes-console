@@ -11,6 +11,7 @@
 //    and asks again if that changed, and a failed save keeps the typed text.
 //    Restoring the original goes through the same guarded write, and after
 //    any write the viewer shows what the server now holds, not what was sent.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -217,7 +218,7 @@ class _SkillContentScreenState extends State<SkillContentScreen> {
         ..add(
           HermesEmptyStateView(
             key: const ValueKey('spp-content-error'),
-            icon: Icons.cloud_off_rounded,
+            icon: HIcons.cloud_off_rounded,
             title: s.sppContentErrorTitle,
             body: s.sppContentErrorBody,
           ),
@@ -241,7 +242,7 @@ class _SkillContentScreenState extends State<SkillContentScreen> {
             padding: const EdgeInsets.only(bottom: HermesSpace.x3),
             child: HermesInlineNotice(
               key: const ValueKey('spp-content-readonly'),
-              icon: Icons.lock_outline_rounded,
+              icon: HIcons.lock_outline_rounded,
               message: widget.readOnlyReason!,
             ),
           ),
@@ -255,7 +256,7 @@ class _SkillContentScreenState extends State<SkillContentScreen> {
             child: HermesInlineNotice(
               key: const ValueKey('spp-content-too-long'),
               tone: HermesStatusTone.warn,
-              icon: Icons.warning_amber_rounded,
+              icon: HIcons.warning_amber_rounded,
               message: s.sppContentTooLongToEdit,
             ),
           ),
@@ -352,7 +353,7 @@ class _SkillContentScreenState extends State<SkillContentScreen> {
             HermesActionButton(
               key: const ValueKey('spp-content-restore'),
               label: s.sppRestoreOriginal,
-              icon: Icons.history_rounded,
+              icon: HIcons.history_rounded,
               onPressed: _busy ? null : _restore,
             ),
           );
@@ -370,7 +371,7 @@ class _SkillContentScreenState extends State<SkillContentScreen> {
               minWidth: HermesSpace.tap,
               minHeight: HermesSpace.tap,
             ),
-            icon: const Icon(Icons.edit_outlined),
+            icon: const Icon(HIcons.edit_outlined),
             onPressed: _busy ? null : _edit,
           ),
       ],
@@ -543,7 +544,7 @@ class _SkillEditPageState extends State<SkillEditPage> {
       onSubmit: _dirty && issue == null ? _submit : null,
       children: [
         HermesInlineNotice(
-          icon: Icons.warning_amber_rounded,
+          icon: HIcons.warning_amber_rounded,
           tone: HermesStatusTone.warn,
           message: s.sppEditWarning,
         ),

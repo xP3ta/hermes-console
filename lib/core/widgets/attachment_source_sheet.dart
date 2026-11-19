@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -89,30 +90,30 @@ class AttachmentSourceMenuButton extends StatelessWidget {
         menuChildren: [
           item(
             onTap: () => onSelected(AttachmentSourceChoice.camera),
-            icon: Icons.photo_camera_outlined,
+            icon: HIcons.photo_camera_outlined,
             label: strings.chatAttachCamera,
           ),
           item(
             onTap: () => onSelected(AttachmentSourceChoice.photos),
-            icon: Icons.photo_library_outlined,
+            icon: HIcons.photo_library_outlined,
             label: strings.chatAttachPhotos,
           ),
           item(
             onTap: () => onSelected(AttachmentSourceChoice.files),
-            icon: Icons.attach_file_rounded,
+            icon: HIcons.attach_file_rounded,
             label: strings.chatAttachFiles,
           ),
           if (onScanDocument != null)
             item(
               onTap: onScanDocument!,
-              icon: Icons.document_scanner_outlined,
+              icon: HIcons.document_scanner_outlined,
               label: strings.scanDocMenuLabel,
             ),
         ],
         builder: (context, controller, child) {
           return HermesTactileAction(
-            icon: Icons.add_rounded,
-            iconSize: 23,
+            icon: HIcons.add_rounded,
+            iconSize: 21,
             semanticLabel: semanticLabel,
             onPressed: !enabled
                 ? null

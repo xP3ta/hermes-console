@@ -23,6 +23,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 
 import '../support/inter_font.dart';
 import 'capabilities_fakes.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Future<List<(String, bool)>> _pump(
   WidgetTester tester,
@@ -559,7 +560,7 @@ void main() {
           await tester.tapAt(const Offset(5, 5));
           await tester.pumpAndSettle();
         }
-        await tester.tap(find.byIcon(Icons.more_vert_rounded));
+        await tester.tap(find.byIcon(HIcons.more_vert_rounded));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       });

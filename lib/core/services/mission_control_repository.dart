@@ -119,6 +119,12 @@ abstract interface class MissionHostedGroupsIncrementalGateway {
   });
 }
 
+/// Optional `groups.list` surface that keeps the rows Console could not read
+/// apart instead of failing the whole list (see [HostedGroupListing]).
+abstract interface class MissionHostedGroupsListingGateway {
+  Future<HostedGroupListing> listing({required int generation});
+}
+
 final class _CallbackMissionHostedGroupsGateway
     implements MissionHostedGroupsGateway {
   final Future<GroupsCapabilities> Function() _capabilities;
@@ -225,7 +231,8 @@ final class _CallbackMissionHostedGroupsGateway
 final class _TuiMissionHostedGroupsGateway
     implements
         MissionHostedGroupsGateway,
-        MissionHostedGroupsIncrementalGateway {
+        MissionHostedGroupsIncrementalGateway,
+        MissionHostedGroupsListingGateway {
   final TuiGatewayClient client;
 
   const _TuiMissionHostedGroupsGateway(this.client);
@@ -241,6 +248,9 @@ final class _TuiMissionHostedGroupsGateway
   @override
   Future<List<HostedGroupRoom>> list({required int generation}) =>
       client.listGroups(generation: generation);
+  @override
+  Future<HostedGroupListing> listing({required int generation}) =>
+      client.listGroupsDetailed(generation: generation);
   @override
   Future<HostedGroupRoom> state(String roomId, {required int generation}) =>
       client.groupState(roomId, generation: generation);
@@ -654,7 +664,17 @@ final class MissionControlRepository
     final profilesResult = results[0] as _MissionLoadResult<List<AgentProfile>>;
     final sessionsResult = results[1] as _MissionLoadResult<List<Session>>;
     final boardResult = results[2] as _MissionLoadResult<KanbanBoard>;
-    final groupsResult = results[3] as _MissionLoadResult<HostedGroupsSnapshot>;
+    final rawGroups = results[3] as _MissionLoadResult<HostedGroupsSnapshot>;
+    // A read that failed after `groups.capabilities` answered keeps those
+    // capabilities: what the server can do (create a room) does not depend
+    // on whether its rooms could be read just now.
+    final readFailure = switch (rawGroups.error) {
+      final _HostedGroupsReadFailure failure => failure,
+      _ => null,
+    };
+    final groupsResult = readFailure == null
+        ? rawGroups
+        : _MissionLoadResult<HostedGroupsSnapshot>(error: readFailure.cause);
     final active = results[4] as _ActiveSessionsRead;
     final failures = <String, Object>{
       'profiles': ?profilesResult.error,
@@ -669,7 +689,11 @@ final class MissionControlRepository
       profilesCapability: _capability(profilesResult),
       sessionsCapability: _capability(sessionsResult),
       kanbanCapability: _capability(boardResult),
-      hostedGroups: groupsResult.value ?? HostedGroupsSnapshot.empty,
+      hostedGroups:
+          groupsResult.value ??
+          (readFailure == null
+              ? HostedGroupsSnapshot.empty
+              : HostedGroupsSnapshot(capabilities: readFailure.capabilities)),
       hostedGroupsCapability: hostedGroupsGateway == null
           ? MissionCapabilityState.unsupported
           : groupsResult.value?.capabilities?.hasSharedRoomSurface == false
@@ -774,21 +798,25 @@ final class MissionControlRepository
         previous.rooms.length != previous.logs.length) {
       throw StateError('hosted groups capability changed');
     }
-    final listed = await gateway.list(generation: capabilities.generation);
+    final listing = await _list(gateway, capabilities.generation);
+    final listed = listing.rooms;
     final previousIndex = {
       for (var i = 0; i < previous.rooms.length; i++)
         previous.rooms[i].roomId: i,
     };
-    final stale = <String>[
+    final stale = <HostedGroupRoom>[
       for (final room in listed)
-        if (_roomMoved(room, switch (previousIndex[room.roomId]) {
-          final i? => previous.rooms[i],
-          null => null,
-        }, previous.driverStatuses[room.roomId]))
-          room.roomId,
+        // A room shown from its last good read is always read again.
+        if (previous.staleRoomIds.contains(room.roomId) ||
+            _roomMoved(room, switch (previousIndex[room.roomId]) {
+              final i? => previous.rooms[i],
+              null => null,
+            }, previous.driverStatuses[room.roomId]))
+          room,
     ];
     final listedIds = {for (final room in listed) room.roomId};
     _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
+    _lastGoodRooms.removeWhere((roomId, _) => !listedIds.contains(roomId));
     final reads = await _readRooms(
       gateway,
       stale,
@@ -796,39 +824,92 @@ final class MissionControlRepository
       skipLogAtTip: true,
     );
     final readById = {
-      for (var i = 0; i < stale.length; i++) stale[i]: reads[i],
+      for (var i = 0; i < stale.length; i++) stale[i].roomId: reads[i],
     };
-    final states = <HostedGroupRoom>[];
-    final logs = <HostedGroupLogPage>[];
-    final driverStatuses = <String, RoomDriverStatus>{};
+    final out = _RoomsAssembly(listing.unreadable);
     for (final listedRoom in listed) {
-      final read = readById[listedRoom.roomId];
-      if (read == null) {
-        final i = previousIndex[listedRoom.roomId]!;
-        states.add(previous.rooms[i]);
-        logs.add(previous.logs[i]);
-        if (previous.driverStatuses[listedRoom.roomId] case final status?) {
-          driverStatuses[listedRoom.roomId] = status;
-        }
+      final roomId = listedRoom.roomId;
+      final i = previousIndex[roomId];
+      final shown = i == null
+          ? null
+          : _ReadableRoomRead(
+              previous.rooms[i],
+              previous.logs[i],
+              previous.driverStatuses[roomId],
+            );
+      if (!readById.containsKey(roomId)) {
+        out.add(shown!);
         continue;
       }
-      final state = read.room;
-      if (state.roomId != listedRoom.roomId ||
-          state.revision < listedRoom.revision) {
-        throw const FormatException('incoherent hosted room state');
-      }
-      states.add(state);
-      logs.add(read.log);
-      if (read.driverStatus case final status?) {
-        driverStatuses[state.roomId] = status;
+      _place(out, _coherentRead(listedRoom, readById[roomId]!), shown);
+    }
+    return out.snapshot(capabilities);
+  }
+
+  /// The last good read of every listed room this repository has seen: a
+  /// room whose next read fails with a server error of its own (transient:
+  /// «database is locked») stays on screen from here, marked stale, on the
+  /// incremental refresh and on a full reload alike.
+  final Map<String, _ReadableRoomRead> _lastGoodRooms = {};
+
+  /// Puts one room's read into [out]. A good read replaces the last good
+  /// one; a server error keeps the last good read ([fallback] when this
+  /// repository has none of its own) as stale; data Console rejects, or a
+  /// room never read, is unreadable — nothing is ever invented.
+  void _place(
+    _RoomsAssembly out,
+    _RoomReadResult read,
+    _ReadableRoomRead? fallback,
+  ) {
+    switch (read) {
+      case final _ReadableRoomRead ok:
+        _lastGoodRooms[ok.room.roomId] = ok;
+        out.add(ok);
+      case _UnreadableRoomRead(:final room):
+        final id = room.roomId;
+        final kept = id == null ? null : (_lastGoodRooms[id] ?? fallback);
+        if (room.reason == HostedGroupUnreadableReason.serverError &&
+            kept != null) {
+          out.add(kept, stale: true);
+        } else {
+          if (id != null) _lastGoodRooms.remove(id);
+          out.unreadable.add(room);
+        }
+    }
+  }
+
+  /// `groups.list` with unreadable rows kept apart when the gateway can
+  /// (see [MissionHostedGroupsListingGateway]); all-or-nothing otherwise.
+  static Future<HostedGroupListing> _list(
+    MissionHostedGroupsGateway gateway,
+    int generation,
+  ) async {
+    if (gateway is MissionHostedGroupsListingGateway) {
+      return (gateway as MissionHostedGroupsListingGateway).listing(
+        generation: generation,
+      );
+    }
+    return HostedGroupListing(rooms: await gateway.list(generation: generation));
+  }
+
+  /// A read is only this room's when its state names the listed room at the
+  /// listed revision or later; anything else makes the room unreadable.
+  static _RoomReadResult _coherentRead(
+    HostedGroupRoom listed,
+    _RoomReadResult read,
+  ) {
+    if (read case _ReadableRoomRead(:final room)) {
+      if (room.roomId != listed.roomId || room.revision < listed.revision) {
+        return _UnreadableRoomRead(
+          HostedGroupUnreadableRoom(
+            roomId: listed.roomId,
+            name: listed.name,
+            reason: HostedGroupUnreadableReason.invalidData,
+          ),
+        );
       }
     }
-    return HostedGroupsSnapshot(
-      capabilities: capabilities,
-      rooms: List.unmodifiable(states),
-      logs: List.unmodifiable(logs),
-      driverStatuses: Map.unmodifiable(driverStatuses),
-    );
+    return read;
   }
 
   /// Resumes each room log from [snapshot] (the last one this client showed)
@@ -849,63 +930,80 @@ final class MissionControlRepository
     if (!capabilities.hasSharedRoomSurface) {
       return HostedGroupsSnapshot(capabilities: capabilities);
     }
-    final listed = await gateway.list(generation: capabilities.generation);
-    final states = <HostedGroupRoom>[];
-    final logs = <HostedGroupLogPage>[];
-    final driverStatuses = <String, RoomDriverStatus>{};
-    final listedIds = {for (final room in listed) room.roomId};
-    _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
-    final reads = await _readRooms(gateway, [
-      for (final room in listed) room.roomId,
-    ], generation: capabilities.generation);
-    for (var i = 0; i < listed.length; i++) {
-      final listedRoom = listed[i];
-      final read = reads[i];
-      final state = read.room;
-      if (state.roomId != listedRoom.roomId ||
-          state.revision < listedRoom.revision) {
-        throw const FormatException('incoherent hosted room state');
+    try {
+      final listing = await _list(gateway, capabilities.generation);
+      final listed = listing.rooms;
+      final listedIds = {for (final room in listed) room.roomId};
+      _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
+      _lastGoodRooms.removeWhere((roomId, _) => !listedIds.contains(roomId));
+      final reads = await _readRooms(
+        gateway,
+        listed,
+        generation: capabilities.generation,
+      );
+      final out = _RoomsAssembly(listing.unreadable);
+      for (var i = 0; i < listed.length; i++) {
+        _place(out, _coherentRead(listed[i], reads[i]), null);
       }
-      states.add(state);
-      logs.add(read.log);
-      if (read.driverStatus case final status?) {
-        driverStatuses[state.roomId] = status;
-      }
+      return out.snapshot(capabilities);
+    } catch (error) {
+      throw _HostedGroupsReadFailure(capabilities, error);
     }
-    return HostedGroupsSnapshot(
-      capabilities: capabilities,
-      rooms: List.unmodifiable(states),
-      logs: List.unmodifiable(logs),
-      driverStatuses: Map.unmodifiable(driverStatuses),
-    );
   }
 
   /// Reads every room with at most [roomReadConcurrency] in flight, keeping
-  /// the listed order. Any failure fails the whole read, as before.
-  Future<List<_RoomRead>> _readRooms(
+  /// the listed order. A failure that belongs to one room (its own server
+  /// error or data Console rejects) marks only that room unreadable; any
+  /// other failure (lost socket, timeout, stale generation, unsupported
+  /// method) fails the whole read, as before.
+  Future<List<_RoomReadResult>> _readRooms(
     MissionHostedGroupsGateway gateway,
-    List<String> roomIds, {
+    List<HostedGroupRoom> rooms, {
     required int generation,
     bool skipLogAtTip = false,
   }) async {
-    final results = List<_RoomRead?>.filled(roomIds.length, null);
+    final results = List<_RoomReadResult?>.filled(rooms.length, null);
     var next = 0;
     Future<void> worker() async {
-      while (next < roomIds.length) {
+      while (next < rooms.length) {
         final index = next++;
-        results[index] = await _readRoom(
-          gateway,
-          roomIds[index],
-          generation: generation,
-          skipLogAtTip: skipLogAtTip,
-        );
+        final room = rooms[index];
+        try {
+          final read = await _readRoom(
+            gateway,
+            room.roomId,
+            generation: generation,
+            skipLogAtTip: skipLogAtTip,
+          );
+          results[index] = _ReadableRoomRead(
+            read.room,
+            read.log,
+            read.driverStatus,
+          );
+        } catch (error) {
+          final reason = roomLocalReadFailure(error);
+          if (reason == null) rethrow;
+          // A cursor that failed mid-read starts again from scratch.
+          _logCursors.remove(room.roomId);
+          results[index] = _UnreadableRoomRead(
+            HostedGroupUnreadableRoom(
+              roomId: room.roomId,
+              name: room.name,
+              reason: reason,
+            ),
+            error,
+          );
+        }
       }
     }
 
     await Future.wait([
-      for (var i = 0; i < roomReadConcurrency && i < roomIds.length; i++)
+      for (var i = 0; i < roomReadConcurrency && i < rooms.length; i++)
         worker(),
     ]);
+    // Each room's outcome is its own, however many rooms there are: a
+    // count heuristic («all failed = the server's problem») hid every room
+    // and «New ▸ room» on a cold start (review B1).
     return [for (final result in results) result!];
   }
 
@@ -1212,6 +1310,7 @@ final class MissionControlRepository
     _closed = true;
     _logCursors.clear();
     _logSeeds.clear();
+    _lastGoodRooms.clear();
     onClose?.call();
   }
 }
@@ -1221,6 +1320,67 @@ typedef _RoomRead = ({
   HostedGroupLogPage log,
   RoomDriverStatus? driverStatus,
 });
+
+/// One room of a load: read, or kept apart as unreadable.
+sealed class _RoomReadResult {
+  const _RoomReadResult();
+}
+
+final class _ReadableRoomRead extends _RoomReadResult {
+  final HostedGroupRoom room;
+  final HostedGroupLogPage log;
+  final RoomDriverStatus? driverStatus;
+  const _ReadableRoomRead(this.room, this.log, this.driverStatus);
+}
+
+final class _UnreadableRoomRead extends _RoomReadResult {
+  final HostedGroupUnreadableRoom room;
+
+  /// What the read threw (null for an incoherent answer).
+  final Object? error;
+  const _UnreadableRoomRead(this.room, [this.error]);
+}
+
+/// [HostedGroupsSnapshot] being built in listed order.
+final class _RoomsAssembly {
+  _RoomsAssembly(List<HostedGroupUnreadableRoom> listedUnreadable)
+    : unreadable = [...listedUnreadable];
+
+  final List<HostedGroupUnreadableRoom> unreadable;
+  final List<HostedGroupRoom> _rooms = [];
+  final List<HostedGroupLogPage> _logs = [];
+  final Map<String, RoomDriverStatus> _drivers = {};
+  final Set<String> _stale = {};
+
+  void add(_ReadableRoomRead read, {bool stale = false}) {
+    _rooms.add(read.room);
+    _logs.add(read.log);
+    if (read.driverStatus case final status?) {
+      _drivers[read.room.roomId] = status;
+    }
+    if (stale) _stale.add(read.room.roomId);
+  }
+
+  HostedGroupsSnapshot snapshot(GroupsCapabilities capabilities) =>
+      HostedGroupsSnapshot(
+        capabilities: capabilities,
+        rooms: List.unmodifiable(_rooms),
+        logs: List.unmodifiable(_logs),
+        driverStatuses: Map.unmodifiable(_drivers),
+        unreadableRooms: List.unmodifiable(unreadable),
+        staleRoomIds: Set.unmodifiable(_stale),
+      );
+}
+
+/// A rooms read that failed after `groups.capabilities` answered.
+final class _HostedGroupsReadFailure implements Exception {
+  final GroupsCapabilities capabilities;
+  final Object cause;
+  const _HostedGroupsReadFailure(this.capabilities, this.cause);
+
+  @override
+  String toString() => '$cause';
+}
 
 final class _MissionLoadResult<T> {
   final T? value;

@@ -2,6 +2,7 @@
 // the folder (chosen, not typed: recent, pinned and browsable) and an
 // optional name for the workspace; then «Start». The folder picker reads the
 // server's directories over SFTP and can create a folder there.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -186,7 +187,7 @@ class _CreateFormState extends State<_CreateForm> {
                               minHeight: HermesSpace.tap,
                             ),
                             onPressed: () => _c.detectHarnesses(force: true),
-                            icon: const Icon(Icons.refresh_rounded),
+                            icon: const Icon(HIcons.refresh_rounded),
                           ),
                       ],
                     ),
@@ -380,7 +381,7 @@ class _FolderField extends StatelessWidget {
               child: Row(
                 children: [
                   Icon(
-                    Icons.folder_open_rounded,
+                    HIcons.folder_open_rounded,
                     size: HermesIcon.lg,
                     color: colors.textSecondary,
                   ),
@@ -402,7 +403,7 @@ class _FolderField extends StatelessWidget {
                     ),
                   ),
                   Icon(
-                    Icons.chevron_right_rounded,
+                    HIcons.chevron_right_rounded,
                     color: colors.textSecondary,
                   ),
                 ],
@@ -660,7 +661,7 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
         if (_home != null)
           _FolderRow(
             key: const ValueKey('hda-folder-home'),
-            icon: Icons.home_outlined,
+            icon: HIcons.home_outlined,
             title: strings.hdpFolderHome,
             subtitle: shortServerPath(_home!),
             onTap: () => _open(_home!),
@@ -670,7 +671,7 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
           for (final folder in _favorites)
             _FolderRow(
               key: ValueKey('hda-folder-fav-$folder'),
-              icon: Icons.star_rounded,
+              icon: HIcons.star_rounded,
               title: shortServerPath(folder),
               subtitle: folder,
               onTap: () => Navigator.of(context).pop(folder),
@@ -683,7 +684,7 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
           for (final folder in running)
             _FolderRow(
               key: ValueKey('hda-folder-running-$folder'),
-              icon: Icons.smart_toy_outlined,
+              icon: HIcons.smart_toy_outlined,
               title: shortServerPath(folder),
               subtitle: folder,
               onTap: () => Navigator.of(context).pop(folder),
@@ -696,7 +697,7 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
           for (final folder in recents)
             _FolderRow(
               key: ValueKey('hda-folder-recent-$folder'),
-              icon: Icons.history_rounded,
+              icon: HIcons.history_rounded,
               title: shortServerPath(folder),
               subtitle: folder,
               onTap: () => Navigator.of(context).pop(folder),
@@ -794,7 +795,7 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
                 for (var i = 0; i < crumbs.length; i++) ...[
                   if (i > 1)
                     Icon(
-                      Icons.chevron_right_rounded,
+                      HIcons.chevron_right_rounded,
                       size: HermesIcon.md,
                       color: colors.textSecondary,
                     ),
@@ -842,8 +843,8 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
                   minHeight: HermesSpace.tap,
                 ),
                 onPressed: () => setState(() => _showHidden = !_showHidden),
-                icon: const Icon(Icons.visibility_off_outlined),
-                selectedIcon: const Icon(Icons.visibility_outlined),
+                icon: const Icon(HIcons.visibility_off_outlined),
+                selectedIcon: const Icon(HIcons.visibility_outlined),
               ),
             ],
           ),
@@ -860,7 +861,7 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
               key: const ValueKey('hda-folder-git'),
               children: [
                 Icon(
-                  Icons.commit_rounded,
+                  HIcons.commit_rounded,
                   size: HermesIcon.sm,
                   color: colors.textSecondary,
                 ),
@@ -908,7 +909,7 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
                   children: [
                     _FolderRow(
                       key: const ValueKey('hda-folder-up'),
-                      icon: Icons.arrow_upward_rounded,
+                      icon: HIcons.arrow_upward_rounded,
                       title: strings.hdpFolderUp,
                       onTap: _up,
                     ),
@@ -926,7 +927,7 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
                     for (final dir in dirs)
                       _FolderRow(
                         key: ValueKey('hda-folder-dir-${dir.name}'),
-                        icon: Icons.folder_outlined,
+                        icon: HIcons.folder_outlined,
                         title: dir.name,
                         onTap: () => _open(herdrJoinPath(path, dir.name)),
                       ),
@@ -1021,8 +1022,8 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
             ),
             isSelected: pinned,
             onPressed: () => _toggleFavorite(path),
-            icon: const Icon(Icons.star_outline_rounded),
-            selectedIcon: const Icon(Icons.star_rounded),
+            icon: const Icon(HIcons.star_outline_rounded),
+            selectedIcon: const Icon(HIcons.star_rounded),
           ),
           if (_source != null)
             HerdrGelButton(
@@ -1129,7 +1130,7 @@ class _FolderRow extends StatelessWidget {
             ),
             onPressed: onBrowse,
             icon: Icon(
-              Icons.chevron_right_rounded,
+              HIcons.chevron_right_rounded,
               color: colors.textSecondary,
             ),
           ),

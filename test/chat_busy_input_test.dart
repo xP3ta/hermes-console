@@ -549,7 +549,10 @@ void main() {
       const text =
           'Dame la lista exacta de reglas WAF y de límites de peticiones activas en Cloudflare para api.example.com, y la prueba de que el registro con una invitación válida entra y uno sin invitación no';
       await tester.enterText(composerField(), text);
+      // Focus stacks the controls under the text: build that frame, then let
+      // the animation finish.
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(
         tester.widget<ConsoleComposer>(find.byType(ConsoleComposer)).hintText,
         labels['interrupt'],
@@ -934,7 +937,10 @@ void main() {
     final chat = await pumpChat(tester, mode: 'interrupt', busy: true);
     gateway.calls.clear();
     await tester.enterText(composerField(), 'follow up');
+    // Focus stacks the controls under the text: build that frame, then let
+    // the animation finish.
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     final button = find.descendant(
       of: find.byType(ConsoleSendButton),
       matching: find.byType(GestureDetector),

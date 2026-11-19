@@ -54,7 +54,7 @@ void main() {
     expect(lang('payload', 'application/json'), 'json');
   });
 
-  test('only PDF and unknown types skip the in-app renderer', () {
+  test('only PDF and unknown types skip the viewer for a sent attachment', () {
     expect(artifactViewerRendersInline(ArtifactViewerKind.pdf), isFalse);
     expect(
       artifactViewerRendersInline(ArtifactViewerKind.unsupported),
@@ -66,6 +66,8 @@ void main() {
       ArtifactViewerKind.markdown,
       ArtifactViewerKind.text,
       ArtifactViewerKind.image,
+      ArtifactViewerKind.mermaid,
+      ArtifactViewerKind.model3d,
     ]) {
       expect(artifactViewerRendersInline(k), isTrue, reason: '$k');
     }

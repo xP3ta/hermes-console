@@ -390,13 +390,11 @@ class SherpaSttModelManager {
             m.decoder,
             if (m.isTransducer) m.joiner,
           ];
-          await Isolate.run(
-            () => extractSherpaModelArchive(
-              tmp.path,
-              base.path,
-              dirName: m.dirName,
-              requiredFiles: requiredFiles,
-            ),
+          await _extractInIsolate(
+            tmp.path,
+            base.path,
+            m.dirName,
+            requiredFiles,
           );
         } finally {
           if (tmp.existsSync()) tmp.deleteSync();
@@ -420,6 +418,26 @@ class SherpaSttModelManager {
     }
     onProgress?.call(const SherpaPrepProgress(SherpaPrepPhase.done, 1));
   }
+
+  /// The hand-off to the worker isolate lives in its own scope. Written
+  /// inline in [download], its closure shared a context with the `cancelled`
+  /// and `onProgress` closures above it, so the caller's progress callback
+  /// (a screen's State) was sent to the isolate too and the VM refused it
+  /// with "Illegal argument in isolate message" once the bytes were in
+  /// (issue #227). Only these four values cross.
+  static Future<void> _extractInIsolate(
+    String tarPath,
+    String destRoot,
+    String dirName,
+    List<String> requiredFiles,
+  ) => Isolate.run(
+    () => extractSherpaModelArchive(
+      tarPath,
+      destRoot,
+      dirName: dirName,
+      requiredFiles: requiredFiles,
+    ),
+  );
 }
 
 /// Extrae únicamente los artefactos int8 que usa la app, sin materializar en

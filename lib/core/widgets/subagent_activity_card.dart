@@ -1,10 +1,15 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart'
+    show CupertinoSlidingSegmentedControl;
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart';
 import '../models/subagent_activity.dart';
+import '../models/agent_task_list.dart';
+import 'agent_task_widgets.dart';
 import '../models/activity_snapshot.dart';
 import '../models/subagent_steps.dart';
 import '../screens/subagent_detail_screen.dart';
@@ -136,6 +141,9 @@ class SubagentActivityCard extends StatefulWidget {
   final DateTime? now;
   final bool background;
   final bool unconfirmed;
+
+  /// S1: rows confirmed not active (see `ActiveChat.subagentAbsentConfirmedKeys`).
+  final Set<SubagentActivityKey> absentConfirmed;
   final bool appForeground;
   final int safeChildCount;
   final VoidCallback? onDismiss;
@@ -201,6 +209,7 @@ class SubagentActivityCard extends StatefulWidget {
     this.now,
     this.background = false,
     this.unconfirmed = false,
+    this.absentConfirmed = const {},
     this.appForeground = true,
     this.safeChildCount = 0,
     this.onDismiss,
@@ -218,8 +227,12 @@ class SubagentActivityCard extends StatefulWidget {
     this.controller,
     this.closedIds = const <String>{},
     this.reopenable = const <SubagentActivity>[],
+    this.tasks,
     super.key,
   });
+
+  /// The agent's task list while the capsule carries it.
+  final AgentTaskList? tasks;
 
   @override
   State<SubagentActivityCard> createState() => _SubagentActivityCardState();
@@ -234,6 +247,39 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
   bool _publicationScheduled = false;
   bool _rosterDirty = false;
   bool _sheetDirty = false;
+
+  // The sheet's sections as tabs: 0 tasks, 1 agents, 2 processes.
+  int? _sheetTab;
+  bool get _hasTasks => widget.tasks != null && widget.tasks!.isNotEmpty;
+  bool get _hasAgents => _presentation.isNotEmpty || _genericRowCount > 0;
+  bool get _hasBackground {
+    final turn = widget.turnSnapshot;
+    return widget.backgroundSectionBuilder != null &&
+        turn != null &&
+        turn.backgroundCount > 0;
+  }
+
+  List<int> get _sheetTabs => [
+    if (_hasTasks) 0,
+    if (_hasAgents) 1,
+    if (_hasBackground) 2,
+  ];
+  bool get _tabbed => _sheetTabs.length > 1;
+  int get _activeTab {
+    final tabs = _sheetTabs;
+    if (tabs.contains(_sheetTab)) return _sheetTab!;
+    return _hasAgents ? 1 : tabs.firstOrNull ?? 1;
+  }
+
+  bool get _showTasks => _hasTasks && (!_tabbed || _activeTab == 0);
+  bool get _showAgents => !_tabbed || _activeTab == 1;
+  bool get _showBackground =>
+      !_tabbed || _activeTab == (_hasBackground ? 2 : _sheetTabs.last);
+  String _tabLabel(Strings s, int tab) => switch (tab) {
+    0 => s.agentTasksPillTitle(widget.tasks!.done, widget.tasks!.total),
+    1 => s.subagentPillAgents,
+    _ => s.activityProcessCount(widget.turnSnapshot?.backgroundCount ?? 0),
+  };
   late final ValueNotifier<List<SubagentActivity>> _roster = ValueNotifier(
     _reachable,
   );
@@ -385,6 +431,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
       _sheetSignature = signature;
       _sheetDirty = true;
     }
+    if (!identical(oldWidget.tasks, widget.tasks)) _sheetDirty = true;
     if (_rosterDirty || (_sheetDirty && _surfaceOpen)) _schedulePublication();
     if (_surfaceOpen) _readFinishedRecords();
   }
@@ -507,6 +554,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
     if (_surfaceOpen || !mounted || widget.interactionsLocked) return;
     _surfaceOpen = true;
     _sheetDirty = false;
+    _sheetTab = null;
     final releasePresentation = widget.acquirePresentation?.call();
     final s = Strings.of(context);
     _roster.value = _reachable;
@@ -575,7 +623,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
                                 minWidth: HermesSpace.tap,
                                 minHeight: HermesSpace.tap,
                               ),
-                              icon: const Icon(Icons.more_horiz_rounded),
+                              icon: const Icon(HIcons.more_horiz_rounded),
                               onPressed: _delegationBusy
                                   ? null
                                   : () => unawaited(
@@ -591,7 +639,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
                                 minWidth: HermesSpace.tap,
                                 minHeight: HermesSpace.tap,
                               ),
-                              icon: const Icon(Icons.visibility_off_outlined),
+                              icon: const Icon(HIcons.visibility_off_outlined),
                               onPressed: () {
                                 widget.onDismiss?.call();
                                 Navigator.of(surfaceContext).pop();
@@ -599,6 +647,47 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
                             ),
                         ],
                       ),
+                      if (_tabbed)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                          child: CupertinoSlidingSegmentedControl<int>(
+                            key: const ValueKey('delegates-tabs'),
+                            groupValue: _activeTab,
+                            backgroundColor: Theme.of(context)
+                                .hermes
+                                .textPrimary
+                                .withValues(alpha: 0.07),
+                            thumbColor: Theme.of(context)
+                                .hermes
+                                .textPrimary
+                                .withValues(alpha: 0.16),
+                            children: {
+                              for (final tab in _sheetTabs)
+                                tab: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 6,
+                                    horizontal: 4,
+                                  ),
+                                  child: Text(
+                                    _tabLabel(s, tab),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Theme.of(
+                                        context,
+                                      ).hermes.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                            },
+                            onValueChanged: (tab) {
+                              if (tab == null) return;
+                              _sheetTab = tab;
+                              _sheetRevision.value++;
+                            },
+                          ),
+                        ),
                       Flexible(
                         child: ListView(
                           shrinkWrap: true,
@@ -606,10 +695,19 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
                             bottom: HermesSpace.x2,
                           ),
                           children: [
-                            if (_presentation.isNotEmpty ||
-                                _genericRowCount > 0)
+                            if (_showTasks)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  8,
+                                  20,
+                                  12,
+                                ),
+                                child: AgentTaskChecklist(tasks: widget.tasks!),
+                              ),
+                            if (_hasAgents && !_tabbed)
                               HermesSurfaceHeader(title: s.subagentPillAgents),
-                            if (_genericRowCount > 0)
+                            if (_genericRowCount > 0 && _showAgents)
                               Padding(
                                 padding: const EdgeInsets.all(HermesSpace.x4),
                                 child: Text(
@@ -621,11 +719,14 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
                                   ),
                                 ),
                               ),
-                            for (final (index, activity)
-                                in _presentation.indexed)
+                            if (_showAgents)
+                              for (final (index, activity)
+                                  in _presentation.indexed)
                               _SubagentListRow(
                                 key: ValueKey(activity.key),
                                 activity: activity,
+                                absentConfirmed: widget.absentConfirmed
+                                    .contains(activity.key),
                                 level: subagentNestingLevels(_presentation)[activity.key] ?? 0,
                                 ordinal: _presentation.length > 1
                                     ? index + 1
@@ -649,8 +750,9 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
                                 onTap: () =>
                                     Navigator.of(surfaceContext).pop(activity),
                               ),
-                            if (widget.backgroundSectionBuilder
-                                case final builder?)
+                            if (_showBackground)
+                              if (widget.backgroundSectionBuilder
+                                  case final builder?)
                               builder(
                                 context,
                                 () => Navigator.of(surfaceContext).pop(),
@@ -741,7 +843,11 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
     );
     final unknown =
         widget.unconfirmed ||
-        _presentation.any((a) => a.phase == SubagentActivityPhase.unknown);
+        _presentation.any(
+          (a) =>
+              a.phase == SubagentActivityPhase.unknown &&
+              !widget.absentConfirmed.contains(a.key),
+        );
     final starts =
         widget.activities
             .map((a) => a.details.startedAt)
@@ -777,7 +883,10 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
         padding: widget.capsulePadding,
         idle: widget.headerIdle,
         showIdle: widget.headerPriority,
-        hidden: widget.hidden || (agentsClosed && processes == 0),
+        hidden:
+            widget.hidden ||
+            (agentsClosed && processes == 0 && widget.tasks == null),
+        tasks: widget.capsule ? widget.tasks : null,
         clock: widget.clock ?? (widget.now == null ? null : () => widget.now!),
         onOpen: _openList,
         snapshot: ActivitySnapshot(
@@ -790,6 +899,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
           schedules: turn?.schedules ?? const [],
           goal: turn?.goal,
           backgroundStartedAt: turn?.backgroundStartedAt,
+          subagentsAbsentConfirmed: widget.absentConfirmed,
           processesStale: turn?.processesStale ?? false,
         ),
       );
@@ -854,6 +964,9 @@ Map<SubagentActivityKey, int> subagentNestingLevels(
 
 class _SubagentListRow extends StatelessWidget {
   final SubagentActivity activity;
+
+  /// Confirmed not active by this binding's fenced roster.
+  final bool absentConfirmed;
   final int level;
   final DateTime now;
   final bool showGoal;
@@ -868,6 +981,7 @@ class _SubagentListRow extends StatelessWidget {
 
   const _SubagentListRow({
     required this.activity,
+    this.absentConfirmed = false,
     this.level = 0,
     required this.now,
     required this.showGoal,
@@ -883,10 +997,18 @@ class _SubagentListRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final status =
-        subagentIsLive(activity) &&
-            activity.phase != SubagentActivityPhase.unknown &&
-            !stopping
+    // Confirmed not active (the phase stays unknown): the row says the same
+    // as the capsule, «No activo · Resultado final no disponible».
+    final status = absentConfirmed
+        ? (
+            label:
+                '${s.subagentUiStatusNotActive(1)} · '
+                '${s.subagentUiResultUnavailable}',
+            tone: HermesStatusTone.neutral,
+          )
+        : subagentIsLive(activity) &&
+              activity.phase != SubagentActivityPhase.unknown &&
+              !stopping
         ? (label: s.subagentPillWorking, tone: HermesStatusTone.active)
         : subagentHumanStatus(s, activity, stopping: stopping);
     final recordSeconds = record?.durationSeconds;
@@ -997,21 +1119,7 @@ class _SubagentListRow extends StatelessWidget {
                         label: status.label,
                         tone: status.tone,
                         meta: meta.isEmpty ? null : meta.join(' · '),
-                        maxLines: 1,
-                      ),
-                      const SizedBox(height: 6),
-                      LinearProgressIndicator(
-                        key: ValueKey(
-                          'delegate-row-progress-${activity.key.stableId}',
-                        ),
-                        value: activity.phase == SubagentActivityPhase.unknown
-                            ? 0
-                            : activity.isTerminal
-                            ? 1
-                            : activity.progress?.displayFraction ?? 0,
-                        minHeight: 3,
-                        color: status.tone.colorIn(colors),
-                        backgroundColor: colors.divider,
+                        maxLines: absentConfirmed ? 3 : 1,
                       ),
                     ],
                   ),
@@ -1025,10 +1133,10 @@ class _SubagentListRow extends StatelessWidget {
                     ),
                     tooltip: s.subagentUiStop,
                     onPressed: stopping ? null : onStop,
-                    icon: Icon(Icons.stop_rounded, color: colors.textSecondary),
+                    icon: Icon(HIcons.stop_rounded, color: colors.textSecondary),
                   ),
                 Icon(
-                  Icons.chevron_right_rounded,
+                  HIcons.chevron_right_rounded,
                   size: 20,
                   color: colors.textDisabled,
                 ),
@@ -1138,7 +1246,7 @@ class SubagentCompletionCard extends StatelessWidget {
                       )
                     else
                       Icon(
-                        Icons.chevron_right_rounded,
+                        HIcons.chevron_right_rounded,
                         size: 20,
                         color: colors.textDisabled,
                       ),

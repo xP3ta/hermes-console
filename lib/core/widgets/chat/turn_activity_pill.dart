@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -7,7 +8,7 @@ import '../activity_pill.dart' show ActivityTicker;
 import '../chat_turn_activity.dart' show TurnType;
 import 'chat_live_icon.dart';
 import 'live_motion.dart';
-import 'live_turn_window.dart' show LiveRingCheck, LiveSpinnerRing;
+import 'live_turn_window.dart' show LiveSpinnerRing;
 import '../../theme/live_turn_tokens.dart';
 import '../../feedback/haptics.dart';
 
@@ -89,11 +90,11 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
-        fontSize: TurnType.row,
+        fontSize: live ? TurnType.row : 13,
         height: 1.3,
         // Live: the «Trabajando» card of the approved look, in bold.
         fontWeight: live ? FontWeight.w600 : null,
-        color: live ? colors.textPrimary : colors.textSecondary,
+        color: live ? colors.textPrimary : colors.textTertiary,
       ),
     );
     final metaStyle = TextStyle(
@@ -123,8 +124,12 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
                   color: colors.error,
                 )
               // A settled turn: the green ring with its check inside.
-              : const LiveRingCheck(size: HermesIcon.md),
-        const SizedBox(width: HermesSpace.x2),
+              // A settled turn: one thin check, as quiet as its line.
+              : Text(
+                  '·',
+                  style: TextStyle(fontSize: 13, color: colors.textTertiary),
+                ),
+        SizedBox(width: live ? HermesSpace.x2 : 6),
         Expanded(
           child: RepaintBoundary(
             child: live
@@ -137,33 +142,51 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
                 : text,
           ),
         ),
-        if (showClock) ...[
-          const SizedBox(width: HermesSpace.x2),
-          ActivityTicker(
-            active: true,
-            clock: widget.clock,
-            builder: (context, now) => Text(
-              formatTurnClock(now.difference(widget.startedAt!)),
-              key: const ValueKey('chat-inline-activity-clock'),
-              style: metaStyle,
+        if (live || showClock)
+          // The clock and the count are one group that can never be wider
+          // than 60% of the row: with a wide font or a long translation it
+          // scales down instead of pushing the label and the chevron out.
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: room * 0.6),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerEnd,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (showClock) ...[
+                    const SizedBox(width: HermesSpace.x2),
+                    ActivityTicker(
+                      active: true,
+                      clock: widget.clock,
+                      builder: (context, now) => Text(
+                        formatTurnClock(now.difference(widget.startedAt!)),
+                        key: const ValueKey('chat-inline-activity-clock'),
+                        style: metaStyle,
+                      ),
+                    ),
+                  ],
+                  if (live) ...[
+                    if (showClock) Text(' · ', style: metaStyle),
+                    Text(
+                      countWords
+                          ? s.tk140ToolsCount(widget.steps)
+                          : '${widget.steps}',
+                      key: const ValueKey('chat-inline-activity-count'),
+                      style: metaStyle,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
-        ],
-        if (live) ...[
-          if (showClock) Text(' · ', style: metaStyle),
-          Text(
-            countWords ? s.tk140ToolsCount(widget.steps) : '${widget.steps}',
-            key: const ValueKey('chat-inline-activity-count'),
-            style: metaStyle,
-          ),
-        ],
         const SizedBox(width: HermesSpace.x2),
         AnimatedRotation(
           turns: widget.open ? .5 : 0,
           duration: HermesMotion.duration(context, HermesMotion.fast),
           child: Icon(
-            Icons.expand_more,
-            size: 16,
+            HIcons.expand_more_rounded,
+            size: 13,
             color: live ? colors.success : colors.textTertiary,
           ),
         ),
@@ -188,7 +211,7 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
         onTap: widget.onTap,
         borderRadius: BorderRadius.circular(HermesRadius.control),
         child: SizedBox(
-          height: HermesSpace.tap,
+          height: live ? HermesSpace.tap : 32,
           child: live
               // The 48 dp target stays; only the card is painted, hugging
               // the bottom so the connector hangs straight from it.
@@ -200,9 +223,7 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
                     key: const ValueKey('live-turn-card'),
                     decoration: BoxDecoration(
                       color: colors.success.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(
-                        HermesRadius.control,
-                      ),
+                      borderRadius: BorderRadius.circular(HermesRadius.tag),
                       border: Border.all(
                         color: colors.success.withValues(alpha: 0.45),
                       ),
@@ -412,7 +433,7 @@ class TurnWorkedPill extends StatelessWidget {
                   ? Duration.zero
                   : HermesMotion.fast,
               child: Icon(
-                Icons.expand_more,
+                HIcons.expand_more_rounded,
                 size: HermesIcon.sm,
                 color: colors.textSecondary,
               ),

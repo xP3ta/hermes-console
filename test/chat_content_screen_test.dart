@@ -19,6 +19,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'support/fake_webview_platform.dart';
 import 'support/quiet_feedback.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Newest first, as ActiveChat stores it.
 List<Map<String, dynamic>> _recent() => [
@@ -172,7 +173,7 @@ void main() {
     expect(
       find.descendant(
         of: _row('informe.pdf'),
-        matching: find.byIcon(Icons.picture_as_pdf_outlined),
+        matching: find.byIcon(HIcons.picture_as_pdf_outlined),
       ),
       findsOneWidget,
     );
@@ -574,10 +575,10 @@ void main() {
     await tester.pumpAndSettle();
 
     final groups = [
-      ('archive', 'COMPRIMIDOS · 1', 'fuentes.zip', Icons.folder_zip_outlined),
-      ('app', 'APPS ANDROID · 1', 'app-release.apk', Icons.android_rounded),
-      ('audio', 'AUDIO · 1', 'voz.mp3', Icons.audiotrack_outlined),
-      ('data', 'DATOS · 1', 'datos.json', Icons.data_object_rounded),
+      ('archive', 'COMPRIMIDOS · 1', 'fuentes.zip', HIcons.folder_zip_outlined),
+      ('app', 'APPS ANDROID · 1', 'app-release.apk', HIcons.android_rounded),
+      ('audio', 'AUDIO · 1', 'voz.mp3', HIcons.audiotrack_outlined),
+      ('data', 'DATOS · 1', 'datos.json', HIcons.data_object_rounded),
     ];
     var previous = -1.0;
     for (final (key, header, name, icon) in groups) {
@@ -630,7 +631,7 @@ void main() {
     expect(
       find.descendant(
         of: _row('some-guide'),
-        matching: find.byIcon(Icons.link_rounded),
+        matching: find.byIcon(HIcons.link_rounded),
       ),
       findsOneWidget,
     );

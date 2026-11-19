@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -82,8 +83,12 @@ class ChatStatusPill extends StatelessWidget {
     this.onOpenPermissions,
     this.modelPulse,
     this.material,
+    this.embedded = false,
     super.key,
   });
+
+  /// Inside the composer: the zones alone, with no capsule of their own.
+  final bool embedded;
 
   /// pm1215 (owner, QA 9494): picking a model no longer drops a toast over
   /// the header; each notification of this briefly highlights the model
@@ -143,6 +148,15 @@ class ChatStatusPill extends StatelessWidget {
   /// The labels' type: the support step of the scale (it was 10,5 and 11).
   static const TextStyle labelStyle = HermesType.support;
 
+  /// The model zone's row always lays out with room for its marks (logo,
+  /// pending clock, limit dot, chevron: two touch targets hold them all);
+  /// what the zone cannot show of it is clipped.
+  static BoxConstraints _modelZoneConstraints(BoxConstraints constraints) =>
+      constraints.copyWith(
+        minWidth: 0,
+        maxWidth: math.max(constraints.maxWidth, 2 * minTouchHeight),
+      );
+
   /// The capsule's height for [scaler]: [capsuleHeight], or what a label
   /// line needs with a [HermesSpace.x1] margin above and below once the
   /// text is larger, never more than the zone's touch height.
@@ -156,7 +170,7 @@ class ChatStatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // OPUS-CRISTAL: on the chat foot's smoked glass the pill's status inks
+    // Foot glass: on the chat foot's smoked glass the pill's status inks
     // are adjusted, just enough and keeping their hue, to read on all that
     // can sit under it (HermesSmokedGlass.adaptedInks), as the dock's
     // selected icon: AA is never lowered. Off the glass: as before.
@@ -186,6 +200,9 @@ class ChatStatusPill extends StatelessWidget {
               permissionsColor;
     final strings = Strings.of(context);
     final zones = <Widget>[
+      // Inside the composer the context ring lives in the chat's settings
+      // («Uso»); it only comes back while the chat compacts.
+      if (!embedded || compaction != null)
       _ContextZone(
         metrics: metrics,
         pending: contextPending,
@@ -212,73 +229,81 @@ class ChatStatusPill extends StatelessWidget {
             ].join(' · '),
             child: _ModelPulse(
               pulse: modelPulse,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (modelLeading case final leading?) ...[
-                    leading,
-                    const SizedBox(width: 4),
-                  ],
-                  Flexible(
-                    child: modelDetail == null
-                        ? Text(
-                            modelLabel!,
-                            // Keyed by the name: a swap paints a new label.
-                            key: ValueKey<String>(modelLabel!),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: labelStyle.copyWith(
-                              color: colors.textPrimary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          )
-                        : Text.rich(
-                            TextSpan(
-                              text: modelLabel!,
-                              children: [
-                                TextSpan(
-                                  text: ' · $modelDetail',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w400,
-                                    color: colors.textSecondary,
+              // A row squeezed below its marks (a compaction taking the
+              // line, a width in mid-resize) is clipped at its end instead
+              // of overflowing.
+              child: ConstraintsTransformBox(
+                alignment: AlignmentDirectional.centerStart,
+                clipBehavior: Clip.hardEdge,
+                constraintsTransform: _modelZoneConstraints,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (modelLeading case final leading?) ...[
+                      leading,
+                      const SizedBox(width: 4),
+                    ],
+                    Flexible(
+                      child: modelDetail == null
+                          ? Text(
+                              modelLabel!,
+                              // Keyed by the name: a swap paints a new label.
+                              key: ValueKey<String>(modelLabel!),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: labelStyle.copyWith(
+                                color: colors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                          : Text.rich(
+                              TextSpan(
+                                text: modelLabel!,
+                                children: [
+                                  TextSpan(
+                                    text: ' · $modelDetail',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w400,
+                                      color: colors.textSecondary,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
+                              key: ValueKey<String>(modelLabel!),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: labelStyle.copyWith(
+                                color: colors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                            key: ValueKey<String>(modelLabel!),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: labelStyle.copyWith(
-                              color: colors.textPrimary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                  ),
-                  if (modelTrailing case final trailing?) ...[
-                    const SizedBox(width: 4),
-                    trailing,
-                  ],
-                  if (limitLevel != SubscriptionLimitLevel.none) ...[
-                    const SizedBox(width: 4),
-                    Container(
-                      key: const ValueKey('status-pill-limit-dot'),
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: limitLevel == SubscriptionLimitLevel.reached
-                            ? colors.error
-                            : colors.warning,
-                        shape: BoxShape.circle,
+                    ),
+                    if (modelTrailing case final trailing?) ...[
+                      const SizedBox(width: 4),
+                      trailing,
+                    ],
+                    if (limitLevel != SubscriptionLimitLevel.none) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        key: const ValueKey('status-pill-limit-dot'),
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: limitLevel == SubscriptionLimitLevel.reached
+                              ? colors.error
+                              : colors.warning,
+                          shape: BoxShape.circle,
+                        ),
                       ),
+                    ],
+                    const SizedBox(width: 1),
+                    Icon(
+                      HIcons.expand_more_rounded,
+                      size: 10,
+                      color: colors.textSecondary,
                     ),
                   ],
-                  const SizedBox(width: 1),
-                  Icon(
-                    Icons.arrow_drop_down_rounded,
-                    size: 16,
-                    color: colors.textSecondary,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -299,7 +324,7 @@ class ChatStatusPill extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  Icons.shield_outlined,
+                  HIcons.shield_outlined,
                   size: 14,
                   color: permissionsFlag == null
                       ? colors.textSecondary
@@ -331,7 +356,7 @@ class ChatStatusPill extends StatelessWidget {
     }
     // Ola 3 (AUDITORIA-PULIDO T2/T3): the one tone of what floats.
     final chrome = HermesChrome.of(colors);
-    // OPUS-CRISTAL: a piece of the chat foot's toned strip, as the
+    // Foot glass: a piece of the chat foot's toned strip, as the
     // composer; the opaque chrome of before anywhere else.
     final glass = HermesGlassStrip.toneOf(context);
     final shape = RoundedRectangleBorder(
@@ -364,6 +389,62 @@ class ChatStatusPill extends StatelessWidget {
     final visibleCapsule = HermesGlassStrip.tonedAround(context)
         ? HermesGlassPiece(shape: shape, child: finished)
         : finished;
+    if (embedded) {
+      // The model at the start, under the text; context and permissions at
+      // the end: three zones with air between them, no dividers.
+      final hasModel = modelLabel != null && onOpenModel != null;
+      // The context ring is only among the zones while the chat compacts.
+      final hasContext = compaction != null;
+      final modelAt = hasContext ? 1 : 0;
+      return Opacity(
+        opacity: 0.82,
+        child: Row(
+          children: [
+            // The model keeps the start and gives way first; what is left
+            // of the line pushes context and permissions to the end.
+            Expanded(
+              child: Row(
+                children: [
+                  if (hasModel)
+                    Flexible(
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            height: 30,
+                            child: DecoratedBox(
+                              decoration: ShapeDecoration(
+                                color: colors.textPrimary.withValues(
+                                  alpha: 0.07,
+                                ),
+                                shape: const StadiumBorder(),
+                              ),
+                            ),
+                          ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [zones[modelAt]],
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (hasContext) zones[0],
+                for (var i = modelAt + (hasModel ? 1 : 0); i < zones.length; i++)
+                  zones[i],
+              ],
+            ),
+          ],
+        ),
+      );
+    }
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -566,7 +647,7 @@ class _ContextZone extends StatelessWidget {
                   SessionContextRing(
                     percent: percent,
                     size: 14,
-                    strokeWidth: 2,
+                    strokeWidth: 1.5,
                     color: level,
                   ),
                   const SizedBox(width: 5),
@@ -612,7 +693,7 @@ class _ContextZone extends StatelessWidget {
               if (compressionCount > 0 && compaction == null) ...[
                 const SizedBox(width: 5),
                 Icon(
-                  Icons.compress_rounded,
+                  HIcons.compress_rounded,
                   size: 12,
                   color: colors.textSecondary,
                 ),

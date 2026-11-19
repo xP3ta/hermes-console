@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -22,7 +23,7 @@ Future<bool> showSshHostKeyDialog(
       title: Row(
         children: [
           Icon(
-            changed ? Icons.gpp_bad_outlined : Icons.verified_user_outlined,
+            changed ? HIcons.gpp_bad_outlined : HIcons.verified_user_outlined,
             size: 20,
             color: tone,
           ),

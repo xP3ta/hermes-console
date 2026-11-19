@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -386,7 +387,7 @@ class _StudioCanvasState extends State<StudioCanvas> {
                           label: studioStateLabel(state, s),
                           semanticLabel:
                               '${s.bstStateButton}: ${studioStateLabel(state, s)}',
-                          icon: Icons.unfold_more_rounded,
+                          icon: HIcons.unfold_more_rounded,
                           onTap: widget.onPickState,
                         ),
                       ),

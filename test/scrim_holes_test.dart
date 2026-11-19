@@ -1,4 +1,4 @@
-// OPUS-CRISTAL: the chat foot scrim leaves the smoked glass's still pieces
+// Foot glass: the chat foot scrim leaves the smoked glass's still pieces
 // alone (HermesScrimHoles), so their one blur takes the real content under
 // them; the gaps keep the scrim, and without a frosting toned strip the
 // scrim paints exactly as before. ChatScreen's wiring is out of scope.
@@ -444,7 +444,7 @@ void main() {
     });
   });
 
-  // Git, OPUS-SCRIM-CONTOUR-FRESHNESS-1: a piece whose contour changes
+  // A piece whose contour changes
   // within the same bounds (rectangular to bevelled) must not keep the old
   // rectangular hole: its first paint cuts the live outline only.
   testWidgets('a contour changed within the same bounds cuts no old corner', (

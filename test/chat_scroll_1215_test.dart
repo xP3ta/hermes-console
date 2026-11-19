@@ -59,6 +59,7 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 import 'support/bottom_transparency.dart';
 import 'support/fake_webview_platform.dart';
 import 'support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // ignore: unused_element
 ScrollPosition _primaryVerticalScrollPosition(
@@ -1258,6 +1259,9 @@ void main() {
         step();
       }
       await settle(tester);
+      // The sent message's entrance (a spring of its own) lands first: this
+      // test is about what the timers and the tokens rebuild.
+      await tester.pump(const Duration(seconds: 1));
 
       // Every element of every row except the live turn's.
       Set<Element> olderRows() {
@@ -1313,6 +1317,8 @@ void main() {
       debugOnRebuildDirtyWidget = null;
       gateway.emit('message.delta', {'text': 'Las tres partes funcionan.'});
       await settle(tester);
+      // The reply's bubble opens on a spring: let it land first.
+      await tester.pump(const Duration(seconds: 1));
       older = olderRows();
       olderRebuilds = 0;
       debugOnRebuildDirtyWidget = (element, _) {
@@ -1335,7 +1341,7 @@ void main() {
     });
   });
 
-  // F0 of the fluidity plan (REPORT-AUDITORIA-FLUIDEZ §4): the streaming
+  // F0 of the fluidity plan: the streaming
   // path is measured before it changes. A reply streams while the reader
   // follows the bottom, with an open code fence, then the turn ends. The
   // counts are printed as the reference baseline (work, not milliseconds); the
@@ -2979,7 +2985,7 @@ void main() {
       expect(
         find.descendant(
           of: header(),
-          matching: find.byIcon(Icons.arrow_upward_rounded),
+          matching: find.byIcon(HIcons.arrow_upward_rounded),
         ),
         findsOneWidget,
       );
@@ -3776,7 +3782,10 @@ void main() {
         ),
         'Mensaje propio',
       );
+      // The primary action lives in the control row that opens (200 ms) while
+      // the field has focus.
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byKey(const ValueKey('send')));
       // The ACK crosses real async work (outbox, storage): give it real time.
       for (var frame = 0; frame < 40; frame++) {

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -188,7 +189,7 @@ class ProfileSwitcherButton extends StatelessWidget {
                           border: Border.all(color: colors.divider),
                         ),
                         child: Icon(
-                          Icons.expand_more_rounded,
+                          HIcons.expand_more_rounded,
                           size: 12,
                           color: colors.textSecondary,
                         ),
@@ -212,7 +213,7 @@ class ProfileSwitcherButton extends StatelessWidget {
           title: strings.chaProfileChip(label),
           semanticHint: strings.profileSwitcherHint,
           trailing: Icon(
-            Icons.unfold_more_rounded,
+            HIcons.unfold_more_rounded,
             size: 18,
             color: colors.textDisabled,
           ),
@@ -467,7 +468,7 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
                 decoration: InputDecoration(
                   hintText: strings.psfSearchHint,
                   isDense: true,
-                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  prefixIcon: const Icon(HIcons.search_rounded, size: 20),
                 ),
               ),
             ),
@@ -480,7 +481,7 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
         if (profiles.isEmpty && _failed)
           HermesListRow(
             key: const ValueKey('profile-switcher-retry'),
-            icon: Icons.refresh_rounded,
+            icon: HIcons.refresh_rounded,
             title: strings.profileSwitcherLoadFailed,
             onTap: _read,
           ),
@@ -517,7 +518,7 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
                   ),
                   selected: _ownerOf(profile) == active,
                   trailing: _ownerOf(profile) == active
-                      ? Icon(Icons.check_rounded, color: colors.accent)
+                      ? Icon(HIcons.check_rounded, color: colors.accent)
                       : null,
                   onTap: () => _pick(profile),
                 ),
@@ -527,14 +528,14 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
         if (widget.onViewProfile != null)
           HermesListRow(
             key: const ValueKey('profile-switcher-view-profile'),
-            icon: Icons.person_outline_rounded,
+            icon: HIcons.person_outline_rounded,
             title: strings.psfViewProfile,
             onTap: widget.onViewProfile,
           ),
         if (widget.onManage != null)
           HermesListRow(
             key: const ValueKey('profile-switcher-manage'),
-            icon: Icons.tune_rounded,
+            icon: HIcons.tune_rounded,
             title: strings.profileSwitcherManage,
             onTap: widget.onManage,
           ),

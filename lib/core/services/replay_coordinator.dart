@@ -296,10 +296,11 @@ final class ReplayCoordinator {
           : ReplayLiveDisposition.dispatch;
     }
     if (sequence <= previous) return ReplayLiveDisposition.ignored;
-    if (sequence != previous + 1) {
-      quarantine(runtime);
-      return ReplayLiveDisposition.quarantined;
-    }
+    // Desktop parity: a live frame newer than the watermark advances it and
+    // dispatches, gap or not (apps/shared/src/json-rpc-gateway.ts:478-501
+    // `recordSeq` + `dispatchEvent`). Missed frames are recovered by the
+    // reconnect replay (`fetchReplay`, :558-611) or the authoritative
+    // transcript, never by withholding the live stream.
     _recordWatermark(runtime, sequence);
     return ReplayLiveDisposition.dispatch;
   }
@@ -308,6 +309,46 @@ final class ReplayCoordinator {
     final transaction = _transactions[runtime];
     if (transaction == null || transaction.closed) {
       return const ReplayBatchQuarantine('replay transaction is not current');
+    }
+    // Desktop parity (hermes-agent 3b421578, apps/shared/src/
+    // json-rpc-gateway.ts:620-631 + :709-719 `skipTruncatedWindow` +
+    // :784-809 `flushReplayHold` -> :724-742 `dispatchIfNewer`): a truncated
+    // window of the socket's own epoch is never painted; the cursor jumps to
+    // the server's head and the live frames parked during the replay that are
+    // newer than that head still dispatch. `snapshot_required` and an epoch
+    // change are other branches (:651-704) and keep today's handling.
+    if (result is Map &&
+        result['truncated'] == true &&
+        result['snapshot_required'] != true &&
+        (result['epoch'] == null || result['epoch'] == transaction.epoch)) {
+      final events = result['events'];
+      var head = transaction.lastSeen;
+      final latest = result['latest_seq'];
+      if (latest is int && latest > head) head = latest;
+      if (events is List) {
+        for (final event in events) {
+          final seq = event is Map ? event['seq'] : null;
+          if (seq is int && seq > head) head = seq;
+        }
+      }
+      // dispatchIfNewer: in sequence order, each frame only if it advances.
+      final parked = [...transaction.held]
+        ..sort((a, b) => (a.sequence ?? 0).compareTo(b.sequence ?? 0));
+      final newer = <SessionGatewayEvent>[];
+      var cursor = head;
+      for (final event in parked) {
+        final seq = event.sequence ?? 0;
+        if (seq <= cursor) continue;
+        cursor = seq;
+        newer.add(event);
+      }
+      _totalHeldEvents -= transaction.held.length;
+      transaction.held.clear();
+      transaction.closed = true;
+      _transactions.remove(runtime);
+      final watermark = cursor;
+      _recordWatermark(runtime, watermark);
+      return ReplayBatchCommit(const <SessionGatewayEvent>[], newer, watermark);
     }
     final decision = ReplayBatchProof.validate(
       runtime: runtime,

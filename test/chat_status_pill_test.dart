@@ -6,6 +6,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat_status_pill.dart';
 import 'package:hermes_android/core/widgets/session_context_usage.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 const _contextZone = ValueKey('desktop-context-usage-status');
 const _modelZone = ValueKey('status-pill-model');
@@ -90,7 +91,7 @@ void main() {
 
     expect(find.text('45%'), findsOneWidget);
     expect(find.text('Sonnet 5'), findsOneWidget);
-    expect(find.byIcon(Icons.shield_outlined), findsOneWidget);
+    expect(find.byIcon(HIcons.shield_outlined), findsOneWidget);
     // The global mode is only a shield: no text.
     expect(find.text('Ask'), findsNothing);
 
@@ -406,7 +407,7 @@ void main() {
         ),
       ),
     );
-    expect(find.byIcon(Icons.compress_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.compress_rounded), findsOneWidget);
     expect(
       tester.getSemantics(find.byKey(_contextZone)).getSemanticsData().label,
       'Open context usage, 8% used · '

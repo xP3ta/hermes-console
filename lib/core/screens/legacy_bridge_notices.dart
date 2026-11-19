@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // SPDX-FileCopyrightText: Copyright (c) 2026 XPeta Lab
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -106,7 +107,7 @@ abstract final class LegacyBridgeNotices {
       return notices.show(
         id: 'legacy-bridge-sign-in-${waiting.id}',
         noticeKey: const ValueKey('legacy-bridge-sign-in-notice'),
-        icon: Icons.login_rounded,
+        icon: HIcons.login_rounded,
         tint: accent,
         title: s.legacyBridgeStepTitle,
         message: connections.length > 1
@@ -144,7 +145,7 @@ abstract final class LegacyBridgeNotices {
       return notices.show(
         id: 'legacy-bridge-removal',
         noticeKey: const ValueKey('legacy-bridge-removal-notice'),
-        icon: Icons.check_circle_outline_rounded,
+        icon: HIcons.check_circle_outline_rounded,
         tint: accent,
         title: s.bridgeGoneTitle,
         message: s.bridgeGoneBody,
@@ -200,7 +201,7 @@ abstract final class LegacyBridgeNotices {
     return notices.show(
       id: 'gateway-era-${c.id}',
       noticeKey: const ValueKey('gateway-era-notice'),
-      icon: Icons.login_rounded,
+      icon: HIcons.login_rounded,
       tint: Theme.of(nav.context).hermes.accent,
       title: signInOnly ? s.legacyBridgeStepTitle : s.gatewayEraTitle,
       message: connections.length > 1 && signInOnly

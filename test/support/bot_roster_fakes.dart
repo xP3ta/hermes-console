@@ -9,6 +9,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Connection whose roster the cross-screen roster tests share.
 final connection = SavedConnection(
@@ -90,7 +91,7 @@ Future<void> renameOnProfilesScreen(
   String to,
 ) async {
   await tester.tap(
-    inPane(pane, find.byIcon(Icons.more_horiz_rounded)).at(index),
+    inPane(pane, find.byIcon(HIcons.more_horiz_rounded)).at(index),
   );
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(const ValueKey('profile-rename')));

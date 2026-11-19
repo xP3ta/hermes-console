@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -348,7 +349,7 @@ class _DockItemList extends StatelessWidget {
                           // el tamaño visual del icono (bug confirmado: B4).
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           child: Icon(
-                            Icons.drag_indicator_rounded,
+                            HIcons.drag_indicator_rounded,
                             size: 20,
                             color: colors.textDisabled,
                           ),

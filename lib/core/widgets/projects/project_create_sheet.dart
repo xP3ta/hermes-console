@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -424,7 +425,7 @@ class _ProjectCreateSheetState extends State<_ProjectCreateSheet> {
                     foregroundColor: colors.accentText,
                   ),
                   onPressed: _pending || _picking ? null : _addFolder,
-                  icon: const Icon(Icons.create_new_folder_outlined, size: 20),
+                  icon: const Icon(HIcons.create_new_folder_outlined, size: 20),
                   label: Text(strings.pc1215AddFolder),
                 ),
               ),
@@ -497,7 +498,7 @@ class _FolderRow extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(HermesSpace.rowH, 6, 4, 6),
         child: Row(
           children: [
-            Icon(Icons.folder_outlined, size: 22, color: colors.textSecondary),
+            Icon(HIcons.folder_outlined, size: 22, color: colors.textSecondary),
             const SizedBox(width: HermesSpace.x3),
             Expanded(
               child: Column(
@@ -529,7 +530,7 @@ class _FolderRow extends StatelessWidget {
               key: removeKey,
               tooltip: strings.pc1215RemoveFolder,
               onPressed: onRemove,
-              icon: const Icon(Icons.remove_circle_outline_rounded, size: 20),
+              icon: const Icon(HIcons.remove_circle_outline_rounded, size: 20),
             ),
           ],
         ),

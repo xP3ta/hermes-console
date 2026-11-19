@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -31,8 +32,8 @@ class CalloutCard extends StatelessWidget {
     final Color color =
         kind == CalloutKind.error ? colors.error : colors.warning;
     final IconData icon = kind == CalloutKind.error
-        ? Icons.error_outline_rounded
-        : Icons.warning_amber_rounded;
+        ? HIcons.error_outline_rounded
+        : HIcons.warning_amber_rounded;
 
     return AccentCard(
       margin: const EdgeInsets.symmetric(vertical: 4),

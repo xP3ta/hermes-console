@@ -47,7 +47,7 @@ Future<void> copyChatFilePath(
 /// folder follows from the paths the conversation knows. The viewer says
 /// why a file could not be read (it never silently copies the path), and
 /// what the server refuses stays refused: no other folder is tried after a
-/// denial. What cannot be read at all (archives, PDF, a server without the
+/// denial. What cannot be read at all (archives, a server without the
 /// routes, a path that is no path) is left to the chip, which copies it.
 class ChatFileOpener {
   ChatFileOpener({
@@ -114,8 +114,8 @@ class ChatFileOpener {
   bool canOpen(ChatFileRef ref) {
     switch (ref.kind) {
       case ChatFileKind.archive:
-      case ChatFileKind.pdf:
         return false;
+      case ChatFileKind.pdf:
       case ChatFileKind.folder:
       case ChatFileKind.file:
       case ChatFileKind.markdown:

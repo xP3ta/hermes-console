@@ -8,6 +8,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/settings/settings_sections.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // Owner decision (QA 9491): Settings no longer offers "Avanzado" (server
 // settings, tools and search) nor "Terminal" (run a command on the server),
@@ -95,8 +96,8 @@ void main() {
     expect(titles, isNot(contains('Avanzado')));
     expect(titles, isNot(contains('Terminal')));
     expect(find.byKey(const ValueKey('settings-terminal')), findsNothing);
-    expect(find.byIcon(Icons.tune_rounded), findsNothing);
-    expect(find.byIcon(Icons.terminal_rounded), findsNothing);
+    expect(find.byIcon(HIcons.tune_rounded), findsNothing);
+    expect(find.byIcon(HIcons.terminal_rounded), findsNothing);
     // Walking the whole list trips a known debug-only diagnostic of an
     // unrelated row (a ListTile over a coloured box); anything else fails.
     final error = tester.takeException();
@@ -120,8 +121,8 @@ void main() {
     final titles = await _titlesWhileScrolling(tester, pane);
     expect(titles, isNot(contains('Avanzado')));
     expect(titles, isNot(contains('Terminal')));
-    expect(find.byIcon(Icons.tune_rounded), findsNothing);
-    expect(find.byIcon(Icons.terminal_rounded), findsNothing);
+    expect(find.byIcon(HIcons.tune_rounded), findsNothing);
+    expect(find.byIcon(HIcons.terminal_rounded), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

@@ -9,6 +9,7 @@
 //   POST   /api/cron/jobs | /pause | /resume | /trigger
 //   PUT    /api/cron/jobs/:id
 //   DELETE /api/cron/jobs/:id
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -761,24 +762,24 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       actions: [
         HermesAction(
           value: 'trigger',
-          icon: Icons.play_arrow_rounded,
+          icon: HIcons.play_arrow_rounded,
           label: s.crnRunNow,
         ),
         HermesAction(
           value: 'edit',
-          icon: Icons.edit_outlined,
+          icon: HIcons.edit_outlined,
           label: s.commonEdit,
         ),
         HermesAction(
           value: 'toggle',
           icon: job.isPaused
-              ? Icons.play_circle_outline
-              : Icons.pause_circle_outline,
+              ? HIcons.play_circle_outline
+              : HIcons.pause_circle_outline,
           label: job.isPaused ? s.crnResume : s.crnPause,
         ),
         HermesAction(
           value: 'delete',
-          icon: Icons.delete_outline_rounded,
+          icon: HIcons.delete_outline_rounded,
           label: s.commonDelete,
           destructive: true,
         ),
@@ -845,12 +846,12 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
           if (!_mutationsDisabled)
             IconButton(
               key: const ValueKey('cron-create'),
-              icon: const Icon(Icons.add_rounded),
+              icon: const Icon(HIcons.add_rounded),
               tooltip: s.crnAddNew,
               onPressed: _loading ? null : () => _showEditor(),
             ),
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(HIcons.refresh),
             tooltip: s.crnRetry,
             onPressed: _fetching ? null : () => _loadJobs(showLoader: false),
           ),
@@ -895,7 +896,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
             const SizedBox(height: HermesSpace.x2),
             HermesInlineNotice(
               key: const ValueKey('cron-profile-all-readonly'),
-              icon: Icons.visibility_outlined,
+              icon: HIcons.visibility_outlined,
               message: _capitalize(s.statusReadOnly),
             ),
           ],
@@ -956,7 +957,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
           _scopeHeader(),
           if (_jobs.isEmpty)
             HermesEmptyStateView(
-              icon: Icons.schedule_outlined,
+              icon: HIcons.schedule_outlined,
               title: s.crnEmpty,
               body: s.crnCreateDescription,
               actionLabel: _mutationsDisabled ? null : s.crnAddJob,
@@ -970,7 +971,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
               textInputAction: TextInputAction.search,
               decoration: InputDecoration(
                 hintText: s.crnSearch,
-                prefixIcon: const Icon(Icons.search, size: 20),
+                prefixIcon: const Icon(HIcons.search, size: 20),
                 suffixIcon: _query.isEmpty
                     ? null
                     : IconButton(
@@ -979,7 +980,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
                           _searchController.clear();
                           setState(() => _query = '');
                         },
-                        icon: const Icon(Icons.close, size: 18),
+                        icon: const Icon(HIcons.close, size: 18),
                       ),
               ),
             ),
@@ -1093,7 +1094,7 @@ class _CronJobRow extends StatelessWidget {
                         if (!notifies) ...[
                           const SizedBox(width: 6),
                           Icon(
-                            Icons.notifications_off_outlined,
+                            HIcons.notifications_off_outlined,
                             size: 15,
                             color: colors.textDisabled,
                             semanticLabel: s.crnNotifyFinish,
@@ -1154,7 +1155,7 @@ class _CronJobRow extends StatelessWidget {
                     key: ValueKey('cron-job-menu-${job.id}'),
                     tooltip: s.crnMore,
                     icon: Icon(
-                      Icons.more_vert_rounded,
+                      HIcons.more_vert_rounded,
                       color: colors.textSecondary,
                     ),
                     onPressed: () => onMenu(anchor),
@@ -1164,7 +1165,7 @@ class _CronJobRow extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: 12, right: 10),
                   child: Icon(
-                    Icons.chevron_right_rounded,
+                    HIcons.chevron_right_rounded,
                     size: 18,
                     color: colors.textDisabled,
                   ),
@@ -1546,7 +1547,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
                     Builder(
                       builder: (anchor) => HermesSelectRow(
                         key: const ValueKey('cron-template-row'),
-                        icon: Icons.auto_awesome_outlined,
+                        icon: HIcons.auto_awesome_outlined,
                         title: s.crnStartFrom,
                         value: _blueprint?.title ?? s.crnCustomSetup,
                         subtitle: _blueprint?.description,
@@ -1596,7 +1597,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
                 const SizedBox(height: HermesSpace.x3),
                 HermesInlineNotice(
                   key: const ValueKey('cron-editor-error'),
-                  icon: Icons.error_outline_rounded,
+                  icon: HIcons.error_outline_rounded,
                   tone: HermesStatusTone.error,
                   message: _error!,
                 ),
@@ -1639,7 +1640,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
         children: [
           HermesListRow(
             key: const ValueKey('cron-schedule-row'),
-            icon: Icons.schedule_rounded,
+            icon: HIcons.schedule_rounded,
             title: schedule.describe(s),
             subtitle: next == null
                 ? null
@@ -1656,7 +1657,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
           Builder(
             builder: (anchor) => HermesSelectRow(
               key: const ValueKey('cron-delivery-row'),
-              icon: Icons.send_outlined,
+              icon: HIcons.send_outlined,
               title: s.crnDeliveryLabel,
               value: _deliveryTargetLabel(
                 _targets.firstWhere((t) => t.id == _deliver),
@@ -1674,7 +1675,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
             Builder(
               builder: (anchor) => HermesSelectRow(
                 key: const ValueKey('cron-model-row'),
-                icon: Icons.memory_rounded,
+                icon: HIcons.memory_rounded,
                 title: s.crnModelLabel,
                 value: _model.isDefault ? s.crnModelDefault : _model.model,
                 subtitle: hasModels ? null : s.crnModelUnavailable,
@@ -1719,7 +1720,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
         rows.add(
           HermesSelectRow(
             key: ValueKey('${_blueprint!.key}-${field.name}'),
-            icon: Icons.schedule_rounded,
+            icon: HIcons.schedule_rounded,
             title: field.label,
             subtitle: field.help.isEmpty ? null : field.help,
             value: value.isEmpty ? '09:00' : value,

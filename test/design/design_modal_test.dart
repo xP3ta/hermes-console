@@ -5,6 +5,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart'
     show showHermesFloatingSurface;
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Future<BuildContext> _host(
   WidgetTester tester, {
@@ -77,7 +78,7 @@ void main() {
     final shape = material.shape! as RoundedRectangleBorder;
     expect(shape.borderRadius, BorderRadius.circular(22));
     // Selected option shows a check; no search under the threshold.
-    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.check_rounded), findsOneWidget);
     expect(find.byKey(const ValueKey('hermes-option-search')), findsNothing);
     expect(find.text('FIRST'), findsOneWidget);
   });
@@ -248,7 +249,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('OPENAI'), findsOneWidget);
     expect(find.text('LOCAL · GPU'), findsOneWidget);
-    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.check_rounded), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('hermes-model-local-qwen')));
     await tester.pumpAndSettle();
     expect(await result, const HermesModelChoice('local', 'qwen'));

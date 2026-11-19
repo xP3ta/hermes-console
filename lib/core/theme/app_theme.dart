@@ -2556,7 +2556,7 @@ class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         // Standard Material 3 switch: a round thumb (no glyph icon — the old
-        // `Icons.square_rounded` rendered as a black square on device) on the
+        // `HIcons.square_rounded` rendered as a black square on device) on the
         // theme's accent track. The selected thumb is white on every accent,
         // the idle one uses the secondary text tone like M3's outline thumb.
         thumbIcon: const WidgetStatePropertyAll<Icon?>(null),

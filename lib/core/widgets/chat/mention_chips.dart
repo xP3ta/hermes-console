@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -342,17 +343,17 @@ class _MentionChipState extends State<MentionChip> {
     final leading = switch (target.kind) {
       MentionChipKind.agent when target.avatar != null => target.avatar!(mark),
       MentionChipKind.agent => Icon(
-        Icons.smart_toy_outlined,
+        HIcons.smart_toy_outlined,
         size: mark,
         color: tone,
       ),
       MentionChipKind.broadcast => Icon(
-        Icons.groups_rounded,
+        HIcons.groups_rounded,
         size: mark,
         color: tone,
       ),
       MentionChipKind.human => Icon(
-        Icons.person_rounded,
+        HIcons.person_rounded,
         size: mark,
         color: tone,
       ),

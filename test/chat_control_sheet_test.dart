@@ -14,6 +14,7 @@ import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations_en.dart';
 import 'package:hermes_android/l10n/app_localizations_es.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 // The chat's «Ajustes» window, the owner's final windows (ventanas-final-png): a
 // LIST. On top, the conversation's name and the pill of two round buttons
@@ -222,7 +223,7 @@ void main() {
       find.byWidgetPredicate((w) => w is HermesSegmentedControl),
       findsNothing,
     );
-    expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+    expect(find.byIcon(HIcons.chevron_right_rounded), findsNothing);
   });
 
   testWidgets('every row does what it says', (tester) async {
@@ -366,10 +367,10 @@ void main() {
       );
       expect(name.style!.fontWeight, FontWeight.w700);
       for (final (kind, icon) in const [
-        ('terminal', Icons.terminal_rounded),
-        ('files', Icons.folder_open_outlined),
-        ('git', Icons.call_split_rounded),
-        ('browser', Icons.language_rounded),
+        ('terminal', HIcons.terminal_rounded),
+        ('files', HIcons.folder_open_outlined),
+        ('git', HIcons.call_split_rounded),
+        ('browser', HIcons.language_rounded),
       ]) {
         expect(
           find.descendant(of: _panel(kind), matching: find.byIcon(icon)),
@@ -698,7 +699,7 @@ void main() {
                   child: Builder(
                     builder: (anchor) => IconButton(
                       key: const ValueKey('test-settings'),
-                      icon: const Icon(Icons.more_horiz_rounded),
+                      icon: const Icon(HIcons.more_horiz_rounded),
                       onPressed: () => showHermesSurface<void>(
                         context: anchor,
                         surfaceKey: const ValueKey('test-ajustes'),

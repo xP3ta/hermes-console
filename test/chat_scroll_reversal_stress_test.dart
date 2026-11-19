@@ -25,6 +25,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/main.dart';
 import 'support/test_api_client.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 ScrollPosition _primaryVerticalScrollPosition(
   WidgetTester tester,
@@ -434,15 +435,15 @@ void main() {
       findsOneWidget,
       reason: 'el scroll nativo no alcanzó la cabecera virtualizada',
     );
-    expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+    expect(find.byIcon(HIcons.keyboard_arrow_down), findsOneWidget);
     // QA 9493: the single jump sits at the row's end, clear of the centred
     // notch (it used to be centred).
     expect(
-      tester.getCenter(find.byIcon(Icons.keyboard_arrow_down)).dx,
+      tester.getCenter(find.byIcon(HIcons.keyboard_arrow_down)).dx,
       greaterThan(tester.getRect(guardedList).center.dx + 60),
       reason: 'el único salto queda al final de la fila, libre de la muesca',
     );
-    final jumpRect = tester.getRect(find.byIcon(Icons.keyboard_arrow_down));
+    final jumpRect = tester.getRect(find.byIcon(HIcons.keyboard_arrow_down));
     // The transcript runs under the floating bottom group: the composer's
     // top edge is the group's top.
     final composerEdge = tester
@@ -622,7 +623,7 @@ void main() {
       });
       await tester.pump(const Duration(milliseconds: 16));
       expect(
-        find.byIcon(Icons.keyboard_arrow_down),
+        find.byIcon(HIcons.keyboard_arrow_down),
         findsOneWidget,
         reason: 'el delta ${reversal + 1} reactivó el seguimiento',
       );
@@ -677,7 +678,7 @@ void main() {
       closeTo(readerTopAfterReversals, 1),
       reason: 'los deltas posteriores movieron el texto bajo el lector',
     );
-    expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+    expect(find.byIcon(HIcons.keyboard_arrow_down), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     gateway.emit('message.complete', {'text': chat.assistantContent});
@@ -754,7 +755,7 @@ void main() {
       greaterThanOrEqualTo(readerOffset - 1),
       reason: 'tocar mientras se lee no devuelve al fondo',
     );
-    expect(find.byIcon(Icons.keyboard_arrow_down), findsOneWidget);
+    expect(find.byIcon(HIcons.keyboard_arrow_down), findsOneWidget);
 
     gateway.emit('message.complete', {'text': chat.assistantContent});
     for (var frame = 0; frame < 200 && chat.isStreaming; frame++) {

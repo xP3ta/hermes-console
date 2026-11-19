@@ -122,6 +122,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(TimePickerDialog), findsOneWidget);
     // Switch to keyboard entry for a deterministic edit.
+    // The framework's own dialog: its entry-mode button is a Material icon.
     await tester.tap(find.byIcon(Icons.keyboard_outlined));
     await tester.pumpAndSettle();
     final fields = find.byType(TextField);

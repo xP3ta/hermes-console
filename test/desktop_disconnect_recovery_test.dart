@@ -15118,6 +15118,228 @@ void main() {
       });
     });
 
+    // A turn Hermes reports over, whose end frames never arrived (measured
+    // on a Pixel: 5 min in the background with a 40 s network cut), is
+    // settled by the probe and one passive read. The read brings the whole
+    // stored turn; the live projection of the same turn (a sealed interim
+    // reply, or the rows a recovery snapshot projected from `inflight`) must
+    // not stay beside it. Desktop drops a sealed live bubble the stored turn
+    // carries (use-session-actions/utils.ts:581-617 and :895-900).
+    // [uncovered]: live text the stored turn does not hold is never dropped.
+    // [reasoning]: the stored turn is one row whose `reasoning` holds the
+    // interim text (measured on the Pixel's server, GPT via Responses).
+    // [late]: the settle's own read still ends at the previous turn and the
+    // stored turn lands with a later read (measured on the Pixel).
+    for (final shape in const [
+      'interim',
+      'delta',
+      'inflight',
+      'uncovered',
+      'reasoning',
+      'late',
+    ]) {
+      test('an ended turn settled by the probe shows the stored turn once, '
+          'without its live copy [$shape]', () async {
+        SharedPreferences.setMockInitialValues({});
+        final prefs = await SharedPreferences.getInstance();
+        addTearDown(TurnKeepAliveHold.resetForTesting);
+        fakeAsync((time) {
+          final notifications = _CountingReplies(prefs)
+            ..appInForeground = false;
+          final gateway = _ActivityLifecycleRecoverableGateway();
+          final stored = 'session-probe-settled-$shape';
+          var turnStored = shape != 'inflight' && shape != 'late';
+          final folded = shape == 'reasoning' || shape == 'late';
+          Map<String, dynamic> call(int id, String text, String tool) => {
+            'id': id,
+            'role': 'assistant',
+            'content': text,
+            'timestamp': id.toDouble(),
+            'tool_calls': [
+              {
+                'id': tool,
+                'function': {'name': 'terminal', 'arguments': '{}'},
+              },
+            ],
+          };
+          Map<String, dynamic> result(int id, String tool) => {
+            'id': id,
+            'role': 'tool',
+            'name': 'terminal',
+            'tool_call_id': tool,
+            'content': 'ok',
+            'timestamp': id.toDouble(),
+          };
+          final chat = ActiveChat(
+            compressionRestoreStore: testCompressionRestoreStore(),
+            connection: _connection('probe-settled-$shape'),
+            sessionId: stored,
+            sessionTitle: 'probe-settled',
+            notifications: notifications,
+            onTerminal: () {},
+            api: testApiClient(
+              baseUrl: 'http://127.0.0.1:1',
+              httpClient: MockClient((_) async => http.Response('nope', 404)),
+            ),
+            desktopGateway: gateway,
+            allowUnownedDesktopSnapshotForTesting: true,
+            turnIdempotencyCapability: () async => shape == 'inflight',
+            storedMessageLoader: (_, _) async => !turnStored
+                ? []
+                : folded
+                ? [
+                    {'id': 1, 'role': 'user', 'content': 'antes', 'timestamp': 1.0},
+                    {
+                      'id': 2,
+                      'role': 'assistant',
+                      'content': 'respuesta anterior',
+                      'timestamp': 2.0,
+                    },
+                    {'id': 3, 'role': 'user', 'content': 'sigue', 'timestamp': 3.0},
+                    {
+                      ...call(8, 'paso 2 FIN', 'A'),
+                      'reasoning': 'paso 1\n\npaso 2',
+                    },
+                  ]
+                : [
+              {'id': 1, 'role': 'user', 'content': 'antes', 'timestamp': 1.0},
+              {
+                'id': 2,
+                'role': 'assistant',
+                'content': 'respuesta anterior',
+                'timestamp': 2.0,
+              },
+              if (turnStored) ...[
+                {'id': 3, 'role': 'user', 'content': 'sigue', 'timestamp': 3.0},
+                call(4, 'paso 1', 'A'),
+                result(5, 'A'),
+                call(6, 'paso 2', 'B'),
+                result(7, 'B'),
+                {
+                  'id': 8,
+                  'role': 'assistant',
+                  'content': 'paso 2 FIN',
+                  'timestamp': 8.0,
+                },
+              ],
+            ],
+          );
+          {
+            unawaited(
+              chat.send(
+                fullText: 'sigue',
+                model: 'hermes-agent',
+                history: const [],
+              ),
+            );
+            time.flushMicrotasks();
+            final runtime = chat.desktopRuntimeSessionId!;
+            gateway.emit('message.start', sessionId: runtime);
+            gateway.emit(
+              shape == 'delta' ? 'message.delta' : 'message.interim',
+              sessionId: runtime,
+              payload: {
+                'text': shape == 'uncovered' ? 'texto sin guardar' : 'paso 1',
+              },
+            );
+            gateway.emit(
+              'tool.start',
+              sessionId: runtime,
+              payload: const {'tool_id': 'A', 'name': 'terminal'},
+            );
+            time.flushMicrotasks();
+            if (shape == 'inflight' || shape == 'late') {
+              // The socket drops and the recovery projects the running turn
+              // from the snapshot's `inflight` (the stored rows end at the
+              // previous turn until the turn is written).
+              gateway.recoverySnapshot = DesktopSessionSnapshot(
+                runtimeSessionId: runtime,
+                storedSessionId: stored,
+                created: false,
+                messagesProvided: false,
+                running: true,
+                inflight: DesktopInflightTurn(user: 'sigue', streaming: true),
+              );
+              gateway.activeListOverride = listing(runtime, 'working');
+              gateway.drop();
+              time.elapse(const Duration(seconds: 5));
+              turnStored = shape == 'inflight';
+            }
+          }
+          expect(chat.isStreaming, isTrue, reason: 'precondition: turn live');
+          chat.didChangeAppLifecycleState(AppLifecycleState.hidden);
+          chat.didChangeAppLifecycleState(AppLifecycleState.paused);
+          TurnKeepAliveHold.held = true;
+          time.flushMicrotasks();
+          gateway.activeListOverride = const DesktopActiveSessionList();
+          time.elapse(const Duration(seconds: 46));
+          time.elapse(const Duration(seconds: 16));
+          expect(chat.isStreaming, isFalse);
+          chat.didChangeAppLifecycleState(AppLifecycleState.resumed);
+          time.elapse(const Duration(seconds: 20));
+          if (shape == 'late') {
+            turnStored = true;
+            unawaited(
+              chat.loadMessages(passiveOnly: true, observePassiveActivity: false),
+            );
+            time.elapse(const Duration(seconds: 20));
+          }
+          expect(
+            [
+              for (final m in chat.messages.reversed)
+                if (m['role'] == 'user' || m['role'] == 'assistant')
+                  '${m['role']}:${m['content']}',
+            ],
+            [
+              'user:antes',
+              'assistant:respuesta anterior',
+              'user:sigue',
+              if (!folded) 'assistant:paso 1',
+              if (!folded) 'assistant:paso 2',
+              'assistant:paso 2 FIN',
+              if (shape == 'uncovered') 'assistant:texto sin guardar',
+            ],
+            reason: shape == 'uncovered'
+                ? 'live text the stored turn does not hold stays'
+                : 'the stored turn once, in order, and nothing of its '
+                      'live copy',
+          );
+          chat.dispose();
+          time.flushMicrotasks();
+        });
+      });
+    }
+
+    // Measured on a device: the turn ended while the app was
+    // away with its delegated child still running, and the pill read
+    // «Detenido · 1 subagente» for two minutes of live child work. Desktop's
+    // settle interrupts nothing (store/session-states.ts:462-487).
+    test('an ended turn settled by the probe does not stop its running '
+        'subagent', () {
+      fakeAsync((time) {
+        final t = startTurn(time, 'probe-settled-subagent');
+        t.gateway.emit(
+          'subagent.start',
+          sessionId: t.runtime,
+          payload: const {'subagent_id': 'child-bg', 'status': 'running'},
+        );
+        time.flushMicrotasks();
+        expect(t.chat.subagentAggregate.activeCount, 1);
+        t.gateway.activeListOverride = const DesktopActiveSessionList();
+        time.elapse(const Duration(seconds: 46));
+        time.elapse(const Duration(seconds: 16));
+        expect(t.chat.isStreaming, isFalse);
+        expect(
+          t.chat.subagentPhasesForTesting,
+          isNot(contains(SubagentActivityPhase.cancelled)),
+          reason: 'the settle interrupts nothing',
+        );
+        expect(t.chat.subagentAggregate.activeCount, 1);
+        t.chat.dispose();
+        time.flushMicrotasks();
+      });
+    });
+
     // REVISION-3 BAJO 11: a new turn starts with a fresh clock, never the
     // previous turn's server start (message.start seeds it with ??=).
     test('the next turn never inherits the previous turn clock', () {

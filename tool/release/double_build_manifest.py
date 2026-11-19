@@ -26,11 +26,16 @@ PUBLIC_APKS = (
     "app-armeabi-v7a-full-release.apk",
     "app-x86_64-full-release.apk",
 )
+UNIVERSAL_APKS = ("app-full-release.apk",)
 PLAY_AAB = "app-play-release.aab"
 TOOL_NAMES = ("flutter", "git", "python3", "java", "sha256sum", "install", "mktemp", "mv")
 BUILD_COMMANDS = {
     "direct-public": (
         "flutter build apk --release --flavor full --split-per-abi "
+        "--dart-define=HERMES_FLAVOR=full"
+    ),
+    "direct-universal": (
+        "flutter build apk --release --flavor full "
         "--dart-define=HERMES_FLAVOR=full"
     ),
     "play-private": (
@@ -92,6 +97,8 @@ def artifact_record(path: Path, expected_name: str) -> dict[str, Any]:
 def expected_artifact_names(channel: str) -> tuple[str, ...]:
     if channel == "direct-public":
         return PUBLIC_APKS
+    if channel == "direct-universal":
+        return UNIVERSAL_APKS
     if channel == "play-private":
         return (PLAY_AAB,)
     raise ManifestError
@@ -167,7 +174,7 @@ def validate_comparison(
         raise ManifestError
     left = replicas["a"]["artifacts"]
     right = replicas["b"]["artifacts"]
-    if channel == "direct-public":
+    if channel in ("direct-public", "direct-universal"):
         if report.get("observedTwoBuildByteIdentity") is not True:
             raise ManifestError
         expected = [

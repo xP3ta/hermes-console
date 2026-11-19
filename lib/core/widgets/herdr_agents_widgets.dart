@@ -4,6 +4,7 @@
 // el estado vive en HerdrAgentsController (services/herdr_agents.dart) y
 // el SSH en la pantalla. Cristal/gel con los tokens del tema; el estado
 // siempre va con color + icono + texto.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -30,11 +31,11 @@ String hdaStatusLabel(Strings strings, HerdrAgentStatus status) =>
 
 /// The icon that carries the state beside its colour and its word.
 IconData hdaStatusIcon(HerdrAgentStatus status) => switch (status) {
-  HerdrAgentStatus.working => Icons.autorenew_rounded,
-  HerdrAgentStatus.blocked => Icons.front_hand_outlined,
-  HerdrAgentStatus.idle => Icons.radio_button_unchecked,
-  HerdrAgentStatus.done => Icons.check_circle_outline,
-  HerdrAgentStatus.unknown => Icons.help_outline_rounded,
+  HerdrAgentStatus.working => HIcons.autorenew_rounded,
+  HerdrAgentStatus.blocked => HIcons.front_hand_outlined,
+  HerdrAgentStatus.idle => HIcons.radio_button_unchecked,
+  HerdrAgentStatus.done => HIcons.check_circle_outline,
+  HerdrAgentStatus.unknown => HIcons.help_outline_rounded,
 };
 
 /// Colour of a state's icon and tint. The words always take the primary
@@ -250,7 +251,7 @@ class HerdrInstallHintLine extends StatelessWidget {
         key: const ValueKey('hda-install-hint'),
         children: [
           Icon(
-            Icons.info_outline,
+            HIcons.info_outline,
             size: HermesIcon.md,
             color: colors.textSecondary,
           ),
@@ -292,7 +293,7 @@ class HerdrInstallHintLine extends StatelessWidget {
             ),
             onPressed: onDismiss,
             icon: Icon(
-              Icons.close_rounded,
+              HIcons.close_rounded,
               size: HermesIcon.md,
               color: colors.textSecondary,
             ),
@@ -422,7 +423,7 @@ Future<bool?> showHerdrInstallSheet(BuildContext context) {
                   minHeight: HermesSpace.tap,
                 ),
                 icon: Icon(
-                  Icons.copy_rounded,
+                  HIcons.copy_rounded,
                   size: HermesIcon.lg,
                   color: colors.textSecondary,
                 ),

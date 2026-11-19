@@ -6,6 +6,7 @@
 // counted down; and one clear verdict at the end with a way to try again.
 // It reports what [ProviderAccountLink] knows and nothing the server wrote.
 
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -163,7 +164,7 @@ class _AccountLinkScreenState extends State<AccountLinkScreen>
           title: Text(s.nacLinkTitle(name)),
           leading: IconButton(
             key: const ValueKey('nac-link-close'),
-            icon: const Icon(Icons.close),
+            icon: const Icon(HIcons.close),
             tooltip: s.commonClose,
             onPressed: _close,
           ),
@@ -237,7 +238,7 @@ class _AccountLinkScreenState extends State<AccountLinkScreen>
               TextButton.icon(
                 key: const ValueKey('nac-link-copy'),
                 onPressed: _copyCode,
-                icon: const Icon(Icons.copy_rounded, size: 18),
+                icon: const Icon(HIcons.copy_rounded, size: 18),
                 label: Text(s.nacLinkCopyCode),
               ),
             ],
@@ -250,7 +251,7 @@ class _AccountLinkScreenState extends State<AccountLinkScreen>
             label: _openedSession == code.sessionId && !_openFailed
                 ? s.nacLinkOpenAgain
                 : s.nacLinkOpen(name),
-            icon: Icons.open_in_browser_rounded,
+            icon: HIcons.open_in_browser_rounded,
             onTap: () => unawaited(_open(code)),
           ),
         if (_openFailed)
@@ -266,7 +267,7 @@ class _AccountLinkScreenState extends State<AccountLinkScreen>
         HermesSecondaryButton(
           key: const ValueKey('nac-link-check'),
           label: s.nacLinkCheckNow,
-          icon: Icons.refresh_rounded,
+          icon: HIcons.refresh_rounded,
           onTap: () => unawaited(_link.checkNow()),
         ),
         const SizedBox(height: HermesSpace.x6),
@@ -308,7 +309,7 @@ class _AccountLinkScreenState extends State<AccountLinkScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _VerdictHeader(
-          icon: Icons.check_circle_rounded,
+          icon: HIcons.check_circle_rounded,
           color: colors.success,
           title: s.nacLinkApprovedTitle(name),
           body: email == null
@@ -320,7 +321,7 @@ class _AccountLinkScreenState extends State<AccountLinkScreen>
         HermesPrimaryButton(
           key: const ValueKey('nac-link-done'),
           label: s.nacLinkDone,
-          icon: Icons.check_rounded,
+          icon: HIcons.check_rounded,
           onTap: () => Navigator.of(context).pop(true),
         ),
       ],
@@ -332,43 +333,43 @@ class _AccountLinkScreenState extends State<AccountLinkScreen>
       AccountLinkPhase.denied => (
         s.nacLinkDeniedTitle,
         s.nacLinkDeniedBody,
-        Icons.block_rounded,
+        HIcons.block_rounded,
         colors.warning,
       ),
       AccountLinkPhase.expired => (
         s.nacLinkExpiredTitle,
         s.nacLinkExpiredBody,
-        Icons.timer_off_outlined,
+        HIcons.timer_off_outlined,
         colors.warning,
       ),
       AccountLinkPhase.cancelled => (
         s.nacLinkCancelledTitle,
         s.nacLinkCancelledBody,
-        Icons.undo_rounded,
+        HIcons.undo_rounded,
         colors.textSecondary,
       ),
       AccountLinkPhase.offline => (
         s.nacLinkOfflineTitle,
         s.nacLinkOfflineBody,
-        Icons.wifi_off_rounded,
+        HIcons.wifi_off_rounded,
         colors.error,
       ),
       AccountLinkPhase.unsupported => (
         s.nacLinkUnsupportedTitle,
         s.nacLinkUnsupportedBody,
-        Icons.update_disabled_rounded,
+        HIcons.update_disabled_rounded,
         colors.textSecondary,
       ),
       AccountLinkPhase.readOnly => (
         s.nacLinkReadOnlyTitle,
         s.nacLinkReadOnlyBody,
-        Icons.lock_outline_rounded,
+        HIcons.lock_outline_rounded,
         colors.textSecondary,
       ),
       _ => (
         s.nacLinkFailedTitle,
         _failedBody(s),
-        Icons.error_outline_rounded,
+        HIcons.error_outline_rounded,
         colors.error,
       ),
     };
@@ -388,7 +389,7 @@ class _AccountLinkScreenState extends State<AccountLinkScreen>
           HermesPrimaryButton(
             key: const ValueKey('nac-link-retry'),
             label: s.nacLinkTryAgain,
-            icon: Icons.refresh_rounded,
+            icon: HIcons.refresh_rounded,
             onTap: () => unawaited(_link.start()),
           ),
         if (_link.canRetry) const SizedBox(height: HermesSpace.x3),
@@ -545,7 +546,7 @@ class _AddressBox extends StatelessWidget {
             child: TextButton.icon(
               key: const ValueKey('nac-link-copy-address'),
               onPressed: onCopy,
-              icon: const Icon(Icons.copy_rounded, size: 18),
+              icon: const Icon(HIcons.copy_rounded, size: 18),
               label: Text(s.nacLinkCopyAddress),
             ),
           ),

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -30,35 +31,35 @@ class DockItemVisual {
 
 const Map<DockItemId, DockItemVisual> _dockItemVisuals = {
   DockItemId.bots: DockItemVisual(
-    icon: Icons.smart_toy_outlined,
-    selectedIcon: Icons.smart_toy_rounded,
+    icon: HIcons.smart_toy_outlined,
+    selectedIcon: HIcons.smart_toy_rounded,
   ),
-  DockItemId.create: DockItemVisual(icon: Icons.add_rounded),
+  DockItemId.create: DockItemVisual(icon: HIcons.add_rounded),
   DockItemId.home: DockItemVisual(
-    icon: Icons.home_outlined,
-    selectedIcon: Icons.home_rounded,
+    icon: HIcons.home_outlined,
+    selectedIcon: HIcons.home_rounded,
   ),
   DockItemId.settings: DockItemVisual(
-    icon: Icons.settings_outlined,
-    selectedIcon: Icons.settings_rounded,
+    icon: HIcons.settings_outlined,
+    selectedIcon: HIcons.settings_rounded,
   ),
   // Accesos directos opcionales (ocultos por defecto en ambos perfiles):
   // mismo icono que ya usa HermesDrawer para las mismas pantallas.
-  DockItemId.cron: DockItemVisual(icon: Icons.schedule_outlined),
-  DockItemId.tasks: DockItemVisual(icon: Icons.view_kanban_outlined),
-  DockItemId.sessions: DockItemVisual(icon: Icons.forum_outlined),
+  DockItemId.cron: DockItemVisual(icon: HIcons.schedule_outlined),
+  DockItemId.tasks: DockItemVisual(icon: HIcons.view_kanban_outlined),
+  DockItemId.sessions: DockItemVisual(icon: HIcons.forum_outlined),
   DockItemId.agents: DockItemVisual(
-    icon: Icons.terminal_outlined,
-    selectedIcon: Icons.terminal_rounded,
+    icon: HIcons.terminal_outlined,
+    selectedIcon: HIcons.terminal_rounded,
   ),
 };
 
 DockItemVisual dockItemVisual(DockItemId id) =>
-    _dockItemVisuals[id] ?? const DockItemVisual(icon: Icons.circle_outlined);
+    _dockItemVisuals[id] ?? const DockItemVisual(icon: HIcons.circle_outlined);
 
 /// Icono del elemento contextual "Atrás": no vive en el catálogo (ver
 /// [DockItemId]), así que no tiene entrada en [dockItemVisual].
-const IconData dockBackIcon = Icons.arrow_back_rounded;
+const IconData dockBackIcon = HIcons.arrow_back_rounded;
 
 /// Qué elemento se pinta con el color de acento. Es una propiedad del
 /// catálogo, no de la pantalla: vive aquí (y no en lo que cada pantalla le

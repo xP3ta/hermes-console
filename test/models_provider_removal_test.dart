@@ -24,6 +24,7 @@ import 'package:hermes_android/core/widgets/console_loader.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/models_server.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 Map<String, dynamic> _row(
   String slug,
@@ -603,7 +604,7 @@ void main() {
         tester,
         find.descendant(
           of: modelsKey('saved-endpoint-lab'),
-          matching: find.byIcon(Icons.more_vert),
+          matching: find.byIcon(HIcons.more_vert),
         ),
       );
       await tapOn(tester, find.text('Delete'));

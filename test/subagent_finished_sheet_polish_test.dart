@@ -1,5 +1,5 @@
-// The finished-subagent surfaces, side by side with the official app (lanes
-// S2/S5 of REPORT-OFICIAL-VS-CONSOLE): «✓ N subagentes terminados» above the
+// The finished-subagent surfaces, side by side with the official app:
+// «✓ N subagentes terminados» above the
 // composer instead of «Sin confirmar» once the server said every child
 // ended; each sheet row with its goal, «Terminado · 0:35 · modelo» and no
 // «Parar»; «Duración» (not «Terminó») for the time it took, with an outline

@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -44,7 +45,7 @@ class MessageReactionBar extends StatelessWidget {
               padding: EdgeInsets.zero,
               visualDensity: VisualDensity.compact,
               icon: Icon(
-                Icons.add_reaction_outlined,
+                HIcons.add_reaction_outlined,
                 size: 18,
                 color: scheme.onSurfaceVariant,
               ),

@@ -24,6 +24,7 @@
 // full-screen live page) is the visible route and the app is in foreground,
 // with an adaptive 1.5 s → 5 s interval when nothing changes. It reuses the
 // chat's own gateway client through [onTail]; no extra socket.
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -840,7 +841,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
         title: s.subagentUiRowTitle,
         children: [
           HermesEmptyStateView(
-            icon: Icons.account_tree_outlined,
+            icon: HIcons.account_tree_outlined,
             title: s.subagentUiStatusUnknown,
           ),
         ],
@@ -887,7 +888,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
         child: HermesGlassActionButton(
           key: const ValueKey('subagent-detail-stop'),
           destructive: true,
-          icon: Icons.crop_square_rounded,
+          icon: HIcons.crop_square_rounded,
           label: stopping ? s.subagentUiStatusStopping : s.subagentUiStop,
           onPressed: stopping ? null : () => _stop(activity),
         ),
@@ -896,7 +897,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
       primary = Center(
         child: HermesGlassActionButton(
           key: const ValueKey('subagent-detail-retry'),
-          icon: Icons.refresh_rounded,
+          icon: HIcons.refresh_rounded,
           label: s.subagentUiRetry,
           onPressed: () {
             widget.onRetryGoal!(retryGoal);
@@ -908,7 +909,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
       primary = Center(
         child: HermesGlassActionButton(
           key: const ValueKey('subagent-detail-open'),
-          icon: Icons.forum_outlined,
+          icon: HIcons.forum_outlined,
           label: s.subagentUiOpenConversation,
           onPressed: opening
               ? null
@@ -952,7 +953,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
               IconButton(
                 key: _moreKey,
                 tooltip: s.cphMore,
-                icon: const Icon(Icons.more_vert_rounded),
+                icon: const Icon(HIcons.more_vert_rounded),
                 onPressed: _delegationBusy ? null : _openDelegationMenu,
               ),
           ],
@@ -1082,7 +1083,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
             IconButton(
               key: _moreKey,
               tooltip: s.cphMore,
-              icon: const Icon(Icons.more_vert_rounded),
+              icon: const Icon(HIcons.more_vert_rounded),
               onPressed: _delegationBusy ? null : _openDelegationMenu,
             ),
         ],
@@ -1167,7 +1168,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
             children: [
               HermesListRow(
                 key: const ValueKey('subagent-detail-parent'),
-                icon: Icons.chat_bubble_outline_rounded,
+                icon: HIcons.chat_bubble_outline_rounded,
                 title: widget.parentTitle.trim().isEmpty
                     ? s.subagentUiParentChat
                     : widget.parentTitle,
@@ -1177,7 +1178,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
               if (canOpen && live)
                 HermesListRow(
                   key: const ValueKey('subagent-detail-open-row'),
-                  icon: Icons.forum_outlined,
+                  icon: HIcons.forum_outlined,
                   title: s.subagentUiOpenConversation,
                   subtitle: s.subagentUiOpenConversationHint,
                   onTap: opening
@@ -1250,13 +1251,13 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
         children: [
           HermesListRow(
             key: const ValueKey('subagent-detail-technical'),
-            icon: Icons.tune_rounded,
+            icon: HIcons.tune_rounded,
             title: s.subagentUiTechnical,
             onTap: () => setState(() => _technicalOpen = !_technicalOpen),
             trailing: Icon(
               _technicalOpen
-                  ? Icons.expand_less_rounded
-                  : Icons.expand_more_rounded,
+                  ? HIcons.expand_less_rounded
+                  : HIcons.expand_more_rounded,
               size: 20,
               color: Theme.of(context).hermes.textSecondary,
             ),
@@ -1568,7 +1569,7 @@ Widget _subagentPhaseIcon(HermesThemeColors colors, SubagentActivity activity) {
   final phase = activity.phase;
   if (phase == SubagentActivityPhase.unknown) {
     return Icon(
-      Icons.help_outline_rounded,
+      HIcons.help_outline_rounded,
       key: key,
       size: _stepIconSize,
       color: colors.textTertiary,
@@ -1851,11 +1852,11 @@ class _ThoughtState extends State<_Thought> {
         children: [
           HermesListRow(
             key: const ValueKey('subagent-detail-thought-toggle'),
-            icon: Icons.psychology_outlined,
+            icon: HIcons.psychology_outlined,
             title: s.sv2ThoughtSection,
             onTap: () => setState(() => _open = !_open),
             trailing: Icon(
-              _open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              _open ? HIcons.expand_less_rounded : HIcons.expand_more_rounded,
               size: 20,
               color: colors.textSecondary,
             ),
@@ -1978,7 +1979,7 @@ class _SubagentLiveLogPageState extends State<SubagentLiveLogPage> {
         actions: [
           IconButton(
             tooltip: s.commonCopy,
-            icon: const Icon(Icons.copy_rounded),
+            icon: const Icon(HIcons.copy_rounded),
             onPressed: () async {
               await Clipboard.setData(
                 ClipboardData(text: widget.tail.value.text),
@@ -2001,7 +2002,7 @@ class _SubagentLiveLogPageState extends State<SubagentLiveLogPage> {
                 setState(() => _follow = true);
                 _jump();
               },
-              child: const Icon(Icons.arrow_downward_rounded),
+              child: const Icon(HIcons.arrow_downward_rounded),
             ),
       body: SafeArea(
         top: false,
@@ -2094,7 +2095,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
         } else if (snap.hasError) {
           children.add(
             HermesEmptyStateView(
-              icon: Icons.cloud_off_rounded,
+              icon: HIcons.cloud_off_rounded,
               title: snap.error is ProfileTranscriptAccessRequired
                   ? s.chaErrProfileDashboardAccess
                   : s.subagentUiTranscriptError,
@@ -2140,7 +2141,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
           if (children.isEmpty) {
             children.add(
               HermesEmptyStateView(
-                icon: Icons.forum_outlined,
+                icon: HIcons.forum_outlined,
                 title: s.subagentUiTranscriptEmpty,
               ),
             );

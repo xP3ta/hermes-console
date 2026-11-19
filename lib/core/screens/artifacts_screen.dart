@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -342,13 +343,13 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
         key: const ValueKey('artifacts-failed'),
         children: [
           HermesEmptyStateView(
-            icon: Icons.cloud_off_outlined,
+            icon: HIcons.cloud_off_outlined,
             title: strings.artGlobalFailed,
           ),
           HermesSecondaryButton(
             key: const ValueKey('artifacts-retry'),
             label: strings.commonRetry,
-            icon: Icons.refresh_rounded,
+            icon: HIcons.refresh_rounded,
             onTap: () => unawaited(_controller.refresh()),
           ),
         ],
@@ -356,13 +357,13 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
     } else if (all.isEmpty && read) {
       placeholder = HermesEmptyStateView(
         key: const ValueKey('artifacts-empty'),
-        icon: Icons.perm_media_outlined,
+        icon: HIcons.perm_media_outlined,
         title: strings.artGlobalEmptyTitle,
         body: strings.artGlobalEmptyBody,
       );
     } else if (all.isNotEmpty && visible.isEmpty) {
       placeholder = HermesEmptyStateView(
-        icon: Icons.search_off_rounded,
+        icon: HIcons.search_off_rounded,
         title: strings.sa1215NoMatchesTitle,
         body: strings.sa1215NoMatchesBody,
       );
@@ -385,7 +386,7 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
               label: strings.artGlobalLoadMore(
                 (state.listed - state.indexed).clamp(0, _controller.batchSize),
               ),
-              icon: Icons.history_rounded,
+              icon: HIcons.history_rounded,
               onTap: () => unawaited(_controller.loadMore()),
             ),
           ),
@@ -406,7 +407,7 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
             key: const ValueKey('artifacts-gallery'),
             tooltip: strings.galleryAction,
             onPressed: _openGallery,
-            icon: const Icon(Icons.grid_view_rounded),
+            icon: const Icon(HIcons.grid_view_rounded),
           ),
           IconButton(
             key: const ValueKey('artifacts-refresh'),
@@ -414,7 +415,7 @@ class _ArtifactsScreenState extends State<ArtifactsScreen> {
             onPressed: state.busy
                 ? null
                 : () => unawaited(_controller.refresh()),
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(HIcons.refresh_rounded),
           ),
         ],
       ),
@@ -545,7 +546,7 @@ class _Partial extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
-                Icons.warning_amber_rounded,
+                HIcons.warning_amber_rounded,
                 size: 20,
                 color: colors.warning,
               ),

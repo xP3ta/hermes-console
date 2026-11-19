@@ -198,7 +198,7 @@ int streamingMarkdownTailStart(String text) {
   return _markdownTopLevelBlockStarts(text).last;
 }
 
-/// F1 (REPORT-AUDITORIA-FLUIDEZ §2.3.6): the top-level blocks of a live
+/// F1: the top-level blocks of a live
 /// answer's closed prefix, each with its own separators, in the same cuts
 /// [normalizeStableStreamingPrefix] repairs. Closing a paragraph adds one
 /// block; the ones before keep the same text, so a cache keyed by the text

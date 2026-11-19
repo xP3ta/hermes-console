@@ -309,7 +309,9 @@ void main() {
     expect(find.byKey(const ValueKey('account-limits-section')), findsNothing);
   });
 
-  testWidgets('model sheet follows the live notifier', (tester) async {
+  testWidgets('model sheet no longer shows plan limits, whatever the notifier '
+      'holds', (tester) async {
+    // The limits moved to the Usage screen: the sheet ignores the notifier.
     final notifier = ValueNotifier<AccountUsageLimits?>(null);
     addTearDown(notifier.dispose);
     await tester.pumpWidget(_app(_sheet(notifier)));
@@ -318,12 +320,35 @@ void main() {
       fx.usage(account: fx.claudeLines),
     );
     await tester.pump();
+    expect(find.byType(AccountLimitsSection), findsNothing);
+    expect(find.text('Límites de tu plan'), findsNothing);
+    expect(find.text('Uso extra'), findsNothing);
+    expect(_bars(), findsNothing);
+  });
+
+  testWidgets('the section itself renders the live limits it is given', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        AccountLimitsSection(
+          limits: AccountUsageLimits.fromGateway(
+            fx.usage(account: fx.claudeLines),
+          ),
+        ),
+      ),
+    );
     expect(find.text('Límites de tu plan'), findsOneWidget);
     expect(find.text('Uso extra'), findsOneWidget);
     expect(find.text('4.20 de 50.00 USD'), findsOneWidget);
     expect(_bars(), findsNWidgets(3));
-    notifier.value = AccountUsageLimits.fromGateway(fx.usage());
-    await tester.pump();
+    await tester.pumpWidget(
+      _app(
+        AccountLimitsSection(
+          limits: AccountUsageLimits.fromGateway(fx.usage()),
+        ),
+      ),
+    );
     expect(find.text('Límites de tu plan'), findsNothing);
   });
 

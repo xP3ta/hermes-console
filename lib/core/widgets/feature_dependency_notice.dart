@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -53,11 +54,11 @@ class _FeatureDependencyNoticeState extends State<FeatureDependencyNotice> {
   bool _busy = false;
 
   IconData get _icon => switch (widget.kind) {
-    FeatureDependencyKind.dashboard => Icons.space_dashboard_outlined,
-    FeatureDependencyKind.gateway => Icons.hub_outlined,
-    FeatureDependencyKind.permission => Icons.admin_panel_settings_outlined,
-    FeatureDependencyKind.serverVersion => Icons.system_update_alt,
-    FeatureDependencyKind.serverPackage => Icons.inventory_2_outlined,
+    FeatureDependencyKind.dashboard => HIcons.space_dashboard_outlined,
+    FeatureDependencyKind.gateway => HIcons.hub_outlined,
+    FeatureDependencyKind.permission => HIcons.admin_panel_settings_outlined,
+    FeatureDependencyKind.serverVersion => HIcons.system_update_alt,
+    FeatureDependencyKind.serverPackage => HIcons.inventory_2_outlined,
   };
 
   Future<void> _run(Future<void> Function() action) async {
@@ -182,7 +183,7 @@ class _FeatureDependencyNoticeState extends State<FeatureDependencyNotice> {
                     setState(() {});
                   },
                   icon: Icon(
-                    Icons.close,
+                    HIcons.close,
                     size: 17,
                     color: colors.textSecondary,
                   ),

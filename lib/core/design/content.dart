@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -304,7 +305,7 @@ class _HermesTextBlockState extends State<HermesTextBlock> {
                   ).notify(FeedbackKind.routine, s.designCopied);
                 }
               },
-              icon: const Icon(Icons.copy_rounded),
+              icon: const Icon(HIcons.copy_rounded),
             ),
         ];
         final body = Column(
@@ -404,7 +405,7 @@ class HermesLogPage extends StatelessWidget {
           IconButton(
             key: const ValueKey('hermes-log-copy'),
             tooltip: s.commonCopy,
-            icon: const Icon(Icons.copy_rounded),
+            icon: const Icon(HIcons.copy_rounded),
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: text));
               if (context.mounted) {
@@ -499,7 +500,7 @@ class HermesEmptyStateView extends StatelessWidget {
             const SizedBox(height: 18),
             FilledButton.icon(
               onPressed: onAction,
-              icon: const Icon(Icons.add_rounded, size: 18),
+              icon: const Icon(HIcons.add_rounded, size: 18),
               label: Text(actionLabel!),
             ),
           ],
@@ -522,7 +523,7 @@ class HermesInlineNotice extends StatelessWidget {
   const HermesInlineNotice({
     super.key,
     required this.message,
-    this.icon = Icons.info_outline_rounded,
+    this.icon = HIcons.info_outline_rounded,
     this.tone = HermesStatusTone.neutral,
     this.actionLabel,
     this.onAction,
@@ -562,7 +563,7 @@ class HermesInlineNotice extends StatelessWidget {
               iconSize: 18,
               color: colors.textSecondary,
               onPressed: onDismiss,
-              icon: const Icon(Icons.close_rounded),
+              icon: const Icon(HIcons.close_rounded),
             ),
         ],
       ),

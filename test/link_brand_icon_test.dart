@@ -10,6 +10,7 @@ import 'package:hermes_android/core/widgets/link_brand_glyphs.dart';
 import 'package:hermes_android/core/widgets/link_brand_icon.dart';
 import 'package:hermes_android/core/widgets/provider_logo.dart'
     show parseSvgPathData;
+import 'package:hermes_android/core/design/hicons.dart';
 
 /// Bounds of the outline a glyph draws, sampled every 0.1 units along each
 /// contour. Path.getBounds is not that: it also counts curve control
@@ -122,6 +123,6 @@ void main() {
       ),
     );
     expect(find.byKey(const ValueKey('link-brand-github')), findsOneWidget);
-    expect(find.byIcon(Icons.link_rounded), findsOneWidget);
+    expect(find.byIcon(HIcons.link_rounded), findsOneWidget);
   });
 }

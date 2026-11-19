@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -332,17 +333,17 @@ class _GestureDockHostState extends State<GestureDockHost> {
     final common = [
       DockShortcut(
         label: s.gdActivityTitle,
-        icon: Icons.bolt_rounded,
+        icon: HIcons.bolt_rounded,
         onTap: _openActivity,
       ),
       DockShortcut(
         label: s.gdEditDock,
-        icon: Icons.edit_outlined,
+        icon: HIcons.edit_outlined,
         onTap: _openEdit,
       ),
       DockShortcut(
         label: s.gdHideDock,
-        icon: Icons.keyboard_arrow_down_rounded,
+        icon: HIcons.keyboard_arrow_down_rounded,
         onTap: () => GestureDockController.instance.setHidden(true),
       ),
     ];
@@ -374,7 +375,7 @@ class _GestureDockHostState extends State<GestureDockHost> {
         if (newChat != null)
           DockShortcut(
             label: s.gdGotoNewChat,
-            icon: Icons.add_rounded,
+            icon: HIcons.add_rounded,
             onTap: newChat,
           ),
         ...widget.createShortcuts,
@@ -389,7 +390,7 @@ class _GestureDockHostState extends State<GestureDockHost> {
         if (projects != null)
           DockShortcut(
             label: s.gdTabProjects,
-            icon: Icons.folder_outlined,
+            icon: HIcons.folder_outlined,
             onTap: projects,
           ),
         if (tasks != null)
@@ -402,7 +403,7 @@ class _GestureDockHostState extends State<GestureDockHost> {
       GestureDockTab.settings: [
         DockShortcut(
           label: s.gdSettingsTitle,
-          icon: Icons.dashboard_customize_outlined,
+          icon: HIcons.dashboard_customize_outlined,
           onTap: () => push(const GestureDockSettingsScreen()),
         ),
       ],

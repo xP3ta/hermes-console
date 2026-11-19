@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show NumberFormat;
@@ -311,7 +312,7 @@ class _SubagentStreamViewState extends State<SubagentStreamView> {
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.chat_bubble_outline_rounded),
+                          const Icon(HIcons.chat_bubble_outline_rounded),
                           const SizedBox(width: HermesSpace.x2),
                           Expanded(
                             child: Text(
@@ -326,7 +327,7 @@ class _SubagentStreamViewState extends State<SubagentStreamView> {
                             ),
                           ),
                           Icon(
-                            _promptOpen ? Icons.expand_less : Icons.expand_more,
+                            _promptOpen ? HIcons.expand_less : HIcons.expand_more,
                           ),
                         ],
                       ),
@@ -491,7 +492,7 @@ class _SubagentStreamViewState extends State<SubagentStreamView> {
                   _scroll.jumpTo(_scroll.position.maxScrollExtent);
                 }
               },
-              icon: const Icon(Icons.arrow_downward_rounded),
+              icon: const Icon(HIcons.arrow_downward_rounded),
             ),
           ),
       ],
@@ -606,7 +607,7 @@ class _SubagentStreamViewState extends State<SubagentStreamView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(
-              Icons.terminal_rounded,
+              HIcons.terminal_rounded,
               size: HermesSpace.x5,
               color: colors.textSecondary,
             ),

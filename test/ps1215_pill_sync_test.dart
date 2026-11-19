@@ -453,6 +453,15 @@ void main() {
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
       await tester.pump(const Duration(milliseconds: 300));
+      // The status row (with the compaction mini-pill) is shown inside the
+      // composer only while its field has focus.
+      Future<void> focusComposer() async {
+        await tester.tap(find.byType(TextField).last);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      await focusComposer();
       DateTime shownStart() => tester
           .widget<CompactionPillSegment>(find.byType(CompactionPillSegment))
           .compaction
@@ -472,6 +481,7 @@ void main() {
       );
       push(tester);
       await tester.pump();
+      await focusComposer();
       expect(
         shownStart(),
         started,

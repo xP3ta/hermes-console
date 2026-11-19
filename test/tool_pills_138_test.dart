@@ -10,6 +10,7 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 final _start = DateTime(2026, 10, 28, 12);
 final _colors = AppTheme.hermesRedDark.hermes;
@@ -180,7 +181,7 @@ void main() {
               find.descendant(of: _row, matching: find.byType(Icon)),
             )
             .icon,
-        Icons.error_outline_rounded,
+        HIcons.error_outline_rounded,
       );
     });
 
@@ -248,7 +249,7 @@ void main() {
       expect(lead.text, 'Trabajó 12 s · ');
       expect(lead.style!.fontWeight, FontWeight.w600);
       expect(
-        find.descendant(of: summary, matching: find.byIcon(Icons.done_rounded)),
+        find.descendant(of: summary, matching: find.byIcon(HIcons.done_rounded)),
         findsOneWidget,
       );
     });

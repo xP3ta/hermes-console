@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -283,7 +284,7 @@ class HermesListRow extends StatelessWidget {
               ?trailing,
               if (onTap != null && trailing == null && showChevron)
                 Icon(
-                  Icons.chevron_right_rounded,
+                  HIcons.chevron_right_rounded,
                   size: 18,
                   color: colors.textDisabled,
                 ),

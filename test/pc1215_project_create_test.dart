@@ -20,6 +20,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/pj1215_fake_projects_gateway.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 
 SavedConnection _connection({bool readOnly = false}) => SavedConnection(
   id: 'pc1215-${readOnly ? 'ro' : 'rw'}',
@@ -481,7 +482,7 @@ void main() {
         find.byKey(const ValueKey('pc1215-create-remove-/srv/garden')),
         findsOneWidget,
       );
-      expect(find.byIcon(Icons.remove_circle_outline_rounded), findsOneWidget);
+      expect(find.byIcon(HIcons.remove_circle_outline_rounded), findsOneWidget);
       await _tap(tester, 'pc1215-create-submit');
       expect(_calls(gateway, 'projects.create').single[1], {
         'name': 'garden',

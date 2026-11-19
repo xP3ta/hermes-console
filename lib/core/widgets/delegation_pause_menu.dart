@@ -1,6 +1,7 @@
 // «Pausar subagentes nuevos» menu shared by the subagent list and detail.
 // One `delegation.status` read per open; the item states its scope (the
 // whole server; running subagents continue).
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -31,7 +32,7 @@ Future<DelegationPauseOutcome> showDelegationPauseMenu({
           key: actionKey,
           value: !paused,
           label: paused ? s.subagentUiResumeNew : s.subagentUiPauseNew,
-          icon: paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          icon: paused ? HIcons.play_arrow_rounded : HIcons.pause_rounded,
         ),
       ],
     );

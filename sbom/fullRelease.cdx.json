@@ -4323,6 +4323,78 @@
       "version": "2.0.17"
     },
     {
+      "bom-ref": "pkg:npm/%40google/model-viewer@4.4.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "713a5bb3967076b5814488684bc2d94210a62910ea6fc6d1f0749cee34c00b8c"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "model-viewer",
+      "properties": [
+        {
+          "name": "hermes.dependency.source",
+          "value": "vendored"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "assets/viewers/model-viewer-LICENSE.txt"
+        },
+        {
+          "name": "hermes.vendored.paths",
+          "value": "assets/viewers/model-viewer-umd.min.js"
+        },
+        {
+          "name": "hermes.vendored.files",
+          "value": "1"
+        }
+      ],
+      "purl": "pkg:npm/%40google/model-viewer@4.4.0",
+      "type": "library",
+      "version": "4.4.0"
+    },
+    {
+      "bom-ref": "pkg:npm/mermaid@11.17.2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b9fecb13ba5a08b57109a708b1b2d7b070faf652c3ea0411e48c7ae309648d82"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "mermaid",
+      "properties": [
+        {
+          "name": "hermes.dependency.source",
+          "value": "vendored"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "assets/viewers/mermaid-LICENSE.txt"
+        },
+        {
+          "name": "hermes.vendored.paths",
+          "value": "assets/viewers/mermaid.min.js"
+        },
+        {
+          "name": "hermes.vendored.files",
+          "value": "1"
+        }
+      ],
+      "purl": "pkg:npm/mermaid@11.17.2",
+      "type": "library",
+      "version": "11.17.2"
+    },
+    {
       "bom-ref": "pkg:pub/_fe_analyzer_shared@100.0.0",
       "licenses": [
         {
@@ -6325,7 +6397,7 @@
       "version": "2.2.0"
     },
     {
-      "bom-ref": "pkg:pub/hermes_android@1.4.0+9812",
+      "bom-ref": "pkg:pub/hermes_android@1.4.1+14022",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -6346,9 +6418,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.4.0+9812",
+      "purl": "pkg:pub/hermes_android@1.4.1+14022",
       "type": "application",
-      "version": "1.4.0+9812"
+      "version": "1.4.1+14022"
     },
     {
       "bom-ref": "pkg:pub/highlight@0.7.0",
@@ -10893,7 +10965,7 @@
         "pkg:pub/whisper_ggml_plus@1.5.2",
         "pkg:pub/xterm@4.0.0"
       ],
-      "ref": "pkg:pub/hermes_android@1.4.0+9812"
+      "ref": "pkg:pub/hermes_android@1.4.1+14022"
     },
     {
       "dependsOn": [
@@ -12100,7 +12172,7 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:pub/hermes_android@1.4.0+9812",
+      "bom-ref": "pkg:pub/hermes_android@1.4.1+14022",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -12121,14 +12193,14 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.4.0+9812",
+      "purl": "pkg:pub/hermes_android@1.4.1+14022",
       "type": "application",
-      "version": "1.4.0+9812"
+      "version": "1.4.1+14022"
     },
     "properties": [
       {
         "name": "hermes.input.sha256",
-        "value": "3eaf15f158c81bd1220f58acc4891abcc803034885aa424320cb8d5fbda60e13"
+        "value": "889a177af0834208e08decfb16b3c36e40eec6c45d76d471da041261084b65d9"
       },
       {
         "name": "hermes.android.variant",
@@ -12140,7 +12212,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:fe5cba14-143a-4e4e-a55f-8a79c089a9f4",
+  "serialNumber": "urn:uuid:3165a2cf-cb95-4a32-a87c-6b91a868e71a",
   "specVersion": "1.6",
   "version": 1
 }

@@ -202,6 +202,22 @@
     },
     {
       "kind": "asset",
+      "license": "Apache-2.0",
+      "licenseEvidence": "assets/fonts/MaterialSymbols-LICENSE.txt",
+      "path": "assets/fonts/HermesSymbols.ttf",
+      "sha256": "6b42def303c6692c00caaa7698f54fc214fd013e3bb124ef0cfb345f680ed502",
+      "size": 79648
+    },
+    {
+      "kind": "asset",
+      "license": "Apache-2.0",
+      "licenseEvidence": "assets/fonts/MaterialSymbols-LICENSE.txt",
+      "path": "assets/fonts/HermesSymbolsFilled.ttf",
+      "sha256": "f50fe5296848a7ee42c277cdac6db6e068e851446f8daf8b012d21ca23989782",
+      "size": 2832
+    },
+    {
+      "kind": "asset",
       "license": "OFL-1.1",
       "licenseEvidence": "assets/fonts/OFL.txt",
       "path": "assets/fonts/Inter.ttf",
@@ -545,5 +561,5 @@
       "size": 10103
     }
   ],
-  "inputFingerprint": "3eaf15f158c81bd1220f58acc4891abcc803034885aa424320cb8d5fbda60e13"
+  "inputFingerprint": "889a177af0834208e08decfb16b3c36e40eec6c45d76d471da041261084b65d9"
 }

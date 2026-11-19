@@ -573,7 +573,7 @@ void main() {
     },
   );
 
-  // subagent-roster (REPORT-MODELO-DESKTOP plan E): was «native proof after
+  // subagent-roster: was «native proof after
   // list failure confirms only that identity», which emptied the proof on a
   // failed read. Desktop use-subagent-snapshot.ts keeps the event-fed frame
   // when `subagent.list` fails: rows, phases and controls stay as they were.

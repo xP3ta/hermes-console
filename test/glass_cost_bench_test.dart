@@ -1,7 +1,7 @@
 // Q9-CHAT5 v2, the owner's cost rule 5: the frame cost of the glass, with a
 // reply streaming behind it, measured the same way on every run (the host's
-// software rasterizer; on the Fold see REPORT-Q9-CHAT5, «Medir en el
-// dispositivo»). The foot as delivered: the composer solid (it is
+// software rasterizer; a device is measured apart).
+// The foot as delivered: the composer solid (it is
 // `HermesComposerSurface`, opaque by Ola 3's rule; REVIEW-Q9-CHAT5) and the
 // live turn's two pills, in three set-ups:
 //   none     the pills solid (sigma 0): the cost floor;
