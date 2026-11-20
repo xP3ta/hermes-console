@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/prompt_client_surface.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/mk1215_scripted_gateway_channel.dart';
 import 'support/rpc_frame_helpers.dart';
 
 class _TicketDashboardClient extends DashboardClient {
@@ -89,6 +93,93 @@ void main() {
           '"queued":true}',
       '{"session_id":"rt","text":"idem","client_turn_id":"turn-i"}',
     ]);
+  });
+
+  group('prompt.submit deadline', () {
+    // The turn is followed through its events; the reply only admits it.
+    // [respond] answers everything but prompt.submit, whose id it keeps.
+    (TuiGatewayClient, ScriptedGatewayChannel, List<int>) fixture(
+      FakeAsync async,
+    ) {
+      final submitIds = <int>[];
+      final channel = ScriptedGatewayChannel(
+        respond: (frame) {
+          if (frame['method'] == 'gateway.capabilities') {
+            return {'per_session_exclusive_submit': true};
+          }
+          if (frame['method'] == 'prompt.submit') {
+            submitIds.add(frame['id'] as int);
+            return null;
+          }
+          return <String, dynamic>{};
+        },
+      );
+      final client = TuiGatewayClient(
+        _connectionFor(1),
+        dashboard: _TicketDashboardClient(),
+        heartbeatInterval: Duration.zero,
+        now: () => DateTime(2026).add(async.elapsed),
+        channelFactory: (_, _) => channel,
+      );
+      return (client, channel, submitIds);
+    }
+
+    test('is the one Desktop uses, not the generic one', () {
+      expect(
+        TuiGatewayClient.promptSubmitRpcTimeout,
+        const Duration(minutes: 30),
+      );
+    });
+
+    test('a reply later than the generic two minutes still admits the '
+        'turn', () {
+      fakeAsync((async) {
+        final (client, channel, submitIds) = fixture(async);
+        Object? error;
+        var admitted = false;
+        client
+            .submitPrompt('rt', 'long turn')
+            .then<void>(
+              (_) => admitted = true,
+              onError: (Object e) => error = e,
+            );
+        async.elapse(const Duration(minutes: 10));
+        expect(error, isNull, reason: 'Hermes may still be running it');
+        expect(admitted, isFalse);
+        expect(submitIds, hasLength(1));
+
+        channel.reply(submitIds.single, {'status': 'streaming'});
+        async.flushMicrotasks();
+        expect(error, isNull);
+        expect(admitted, isTrue);
+        unawaited(client.close());
+        async.elapse(const Duration(seconds: 30));
+      });
+    });
+
+    test('with no reply at all it ends as a timeout after 30 minutes', () {
+      fakeAsync((async) {
+        final (client, _, submitIds) = fixture(async);
+        Object? error;
+        client
+            .submitPrompt('rt', 'never answered')
+            .then<void>((_) {}, onError: (Object e) => error = e);
+        async.elapse(const Duration(minutes: 29, seconds: 59));
+        expect(error, isNull);
+        async.elapse(const Duration(seconds: 1));
+        expect(
+          error,
+          isA<TuiGatewayRpcError>().having(
+            (e) => e.failureKind,
+            'failureKind',
+            TuiGatewayRpcFailureKind.timeout,
+          ),
+        );
+        expect(submitIds, hasLength(1));
+        unawaited(client.close());
+        async.elapse(const Duration(seconds: 30));
+      });
+    });
   });
 
   group('mergePromptSubmitParams', () {

@@ -1,7 +1,7 @@
 name: hermes_android
 description: "Hermes Agent — chat with your Hermes Gateway API Server over LAN. SSE streaming, Bearer auth, session management."
 publish_to: 'none'
-version: 1.4.1+14022
+version: 1.4.2+14023
 
 environment:
   sdk: ^3.12.0
@@ -68,6 +68,9 @@ dependencies:
   # App lock (biometric/PIN)
   local_auth: ^2.3.0
   crypto: ^3.0.6
+  # ChaCha20-Poly1305 of the cold-start tail files (cold_start_tail_cipher).
+  # Already resolved through dartssh2: pinned to the version the lock holds.
+  pointycastle: 4.0.0
 
   # Voz: dictado (STT del sistema), lectura (TTS on-device) y audio (ElevenLabs)
   speech_to_text: ^7.0.0

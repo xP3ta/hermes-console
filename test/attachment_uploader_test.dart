@@ -119,6 +119,46 @@ void main() {
     },
   );
 
+  test('an image goes up to the image limit, a file does not', () async {
+    // tui_gateway/prompt_attachments.py _ATTACH_BYTES_MAX_BYTES (25 MiB)
+    // bounds image.attach_bytes; file.attach keeps the 8 MiB limit.
+    Future<File> tenMegabytes(String name) async {
+      final file = File('${temp.path}/$name');
+      final handle = await file.open(mode: FileMode.write);
+      await handle.writeFrom(const [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, //
+      ]);
+      await handle.setPosition(10 * 1024 * 1024);
+      await handle.writeByte(0);
+      await handle.close();
+      return file;
+    }
+
+    final image = await tenMegabytes('foto.png');
+    final document = await tenMegabytes('foto.pdf');
+    AttachmentDraft draft(File file, AttachmentType type, String mime) =>
+        AttachmentDraft(
+          type: type,
+          name: file.uri.pathSegments.last,
+          mimeType: mime,
+          sizeBytes: file.lengthSync(),
+          localPath: file.path,
+        );
+
+    expect(
+      await AttachmentUploader.validateBatch([
+        draft(image, AttachmentType.image, 'image/png'),
+      ]),
+      isTrue,
+    );
+    expect(
+      await AttachmentUploader.validateBatch([
+        draft(document, AttachmentType.document, 'application/pdf'),
+      ]),
+      isFalse,
+    );
+  });
+
   test(
     'validateBatch respeta las fronteras exactas de unidad y lote',
     () async {

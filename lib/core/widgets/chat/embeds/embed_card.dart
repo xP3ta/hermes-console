@@ -37,10 +37,15 @@ final class EmbedLiveRegistry {
   }
 }
 
+/// Longest an embed's page may take to finish loading.
+const Duration _embedLoadDeadline = Duration(seconds: 20);
+
 /// A consent-gated embed: a placeholder of the final size until the user
 /// agrees, then a single sandboxed WebView. [fallback] is what the message
 /// showed before embeds existed (the link or the code block); it is shown
-/// whenever the embed cannot be created.
+/// whenever the embed cannot be created. A page that fails to load, or has
+/// not loaded by its deadline, says so in the same box, with Retry and the
+/// link opened in the browser.
 class EmbedCard extends StatefulWidget {
   /// Link embed, or null for an SVG fence.
   final EmbedDescriptor? descriptor;
@@ -76,6 +81,11 @@ class _EmbedCardState extends State<EmbedCard> {
   ArtifactHtmlNavigationPolicy? _policy;
   bool _live = false;
   bool _failed = false;
+
+  /// Why the page did not load: the WebView's own description, '' when it
+  /// ran out of time; null while nothing failed.
+  String? _loadFailure;
+  Timer? _deadline;
   bool _visible = true;
   bool _covered = false;
   ScrollPosition? _position;
@@ -122,6 +132,7 @@ class _EmbedCardState extends State<EmbedCard> {
 
   @override
   void dispose() {
+    _deadline?.cancel();
     _generation++;
     _consent.removeListener(_onConsentChanged);
     _position?.removeListener(_checkVisibility);
@@ -137,7 +148,9 @@ class _EmbedCardState extends State<EmbedCard> {
   }
 
   void _maybeAutoLoad() {
-    if (_live || _failed || _covered || !_visible) return;
+    if (_live || _failed || _loadFailure != null || _covered || !_visible) {
+      return;
+    }
     if (_consent.modeFor(_type) != EmbedMode.always) return;
     if (EmbedLiveRegistry.instance.owner != null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -150,6 +163,7 @@ class _EmbedCardState extends State<EmbedCard> {
   /// Back to the placeholder: scrolled away, route covered, another embed took
   /// the single live slot, or consent was withdrawn. Never reloads by itself.
   void _release() {
+    _deadline?.cancel();
     _generation++;
     EmbedLiveRegistry.instance.drop(this);
     if (!_live && _controller == null) return;
@@ -203,12 +217,23 @@ class _EmbedCardState extends State<EmbedCard> {
     _policy = policy;
     _controller = controller;
     EmbedLiveRegistry.instance.claim(this, _release);
-    setState(() => _live = true);
+    setState(() {
+      _live = true;
+      _loadFailure = null;
+    });
     try {
       await configureArtifactWebView(
         controller,
         policy: policy,
         settingsFor: widget.settingsFor,
+        onPageFinished: (_) {
+          if (generation == _generation) _deadline?.cancel();
+        },
+        onWebResourceError: (error) {
+          if (error.isForMainFrame ?? true) {
+            _loadFailed(generation, error.description);
+          }
+        },
       );
       if (!_stillWanted(generation)) return;
       final svg = _sanitizedSvg;
@@ -224,6 +249,13 @@ class _EmbedCardState extends State<EmbedCard> {
         }
         await controller.loadRequest(Uri.parse(widget.descriptor!.embedUrl!));
       }
+      if (_stillWanted(generation) && _loadFailure == null) {
+        _deadline?.cancel();
+        _deadline = Timer(
+          _embedLoadDeadline,
+          () => _loadFailed(generation, ''),
+        );
+      }
     } catch (_) {
       if (!_stillWanted(generation)) return;
       EmbedLiveRegistry.instance.drop(this);
@@ -233,6 +265,91 @@ class _EmbedCardState extends State<EmbedCard> {
         _controller = null;
       });
     }
+  }
+
+  /// The page of [generation] did not load: the box says why, the live
+  /// slot is given back.
+  void _loadFailed(int generation, String reason) {
+    if (!_stillWanted(generation)) return;
+    _deadline?.cancel();
+    _generation++;
+    EmbedLiveRegistry.instance.drop(this);
+    setState(() {
+      _loadFailure = reason;
+      _live = false;
+      _controller = null;
+      _policy = null;
+    });
+  }
+
+  void _retry() {
+    setState(() => _loadFailure = null);
+    unawaited(_load());
+  }
+
+  void _openLink() {
+    final link = Uri.tryParse(widget.descriptor?.sourceUrl ?? '');
+    if (link == null) return;
+    final launch = widget.launchExternal ?? launchArtifactLinkExternally;
+    unawaited(launch(link));
+  }
+
+  Widget _failure(BuildContext context, String reason) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final detail = reason.isEmpty ? s.vwPreviewTimedOut : reason;
+    return ColoredBox(
+      key: const ValueKey('embed-load-failed'),
+      color: colors.surfaceVariant.withValues(alpha: 0.3),
+      child: Center(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(HIcons.error_outline_rounded, color: colors.textSecondary),
+                const SizedBox(height: 6),
+                Text(
+                  s.embedLoadFailed(_label),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: colors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton.icon(
+                      key: const ValueKey('embed-retry'),
+                      onPressed: _retry,
+                      icon: const Icon(HIcons.refresh_rounded),
+                      label: Text(s.commonRetry),
+                    ),
+                    if (widget.descriptor != null)
+                      TextButton.icon(
+                        key: const ValueKey('embed-open-link'),
+                        onPressed: _openLink,
+                        icon: const Icon(HIcons.open_in_new_rounded),
+                        label: Text(s.brwOpenExternal),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _chooseMode() async {
@@ -296,13 +413,16 @@ class _EmbedCardState extends State<EmbedCard> {
                 : maxWidth;
             final height = _heightFor(width);
             final controller = _controller;
+            final failure = _loadFailure;
             return SizedBox(
               key: const ValueKey('embed-card-box'),
               width: width,
               height: height,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: _live && controller != null
+                child: failure != null
+                    ? _failure(context, failure)
+                    : _live && controller != null
                     ? Listener(
                         behavior: HitTestBehavior.translucent,
                         onPointerUp: (_) => _policy?.registerUserTap(),

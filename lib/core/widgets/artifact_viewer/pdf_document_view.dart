@@ -10,6 +10,10 @@ import 'package:path_provider/path_provider.dart';
 import '../../theme/app_theme.dart';
 import '../console_loader.dart';
 
+/// Longest a page may take to come back from the native renderer: one that
+/// does not is a failure the viewer says, not a spinner for ever.
+const Duration kPdfRenderDeadline = Duration(seconds: 20);
+
 /// Renders the pages of a PDF natively (Android's `PdfRenderer`, through the
 /// app's own `hermes/document_preview` channel) as a scrolling column.
 ///
@@ -81,10 +85,12 @@ class _PdfDocumentViewState extends State<PdfDocumentView> {
   Future<({Uint8List png, int pageCount})?> _render(String key, int index) async {
     final custom = widget.renderPage;
     if (custom != null) return custom(key, index);
-    final response = await _channel.invokeMapMethod<String, dynamic>(
-      'renderViewerPdfPage',
-      {'key': key, 'page': index},
-    );
+    final response = await _channel
+        .invokeMapMethod<String, dynamic>('renderViewerPdfPage', {
+          'key': key,
+          'page': index,
+        })
+        .timeout(kPdfRenderDeadline);
     final png = response?['pngBytes'];
     final count = (response?['pageCount'] as num?)?.toInt();
     if (png is! Uint8List || png.isEmpty || count == null || count <= 0) {

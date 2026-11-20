@@ -55,7 +55,11 @@ class MermaidFencePreview extends StatelessWidget {
       fallback: fallback,
       onOpen: () => Navigator.of(context).push<void>(
         MaterialPageRoute(
-          builder: (_) => WebDocumentScreen(title: label, document: document),
+          builder: (_) => WebDocumentScreen(
+            title: label,
+            document: document,
+            readyScript: kMermaidReadyScript,
+          ),
         ),
       ),
     );
@@ -113,6 +117,7 @@ class DocumentFilePreview extends StatelessWidget {
     String? ready;
     String? capture;
     var auto = true;
+    var deadline = kWebPageDeadline;
     if (_kind == _Kind.model) {
       try {
         auto = file.lengthSync() <= kModelInlineMaxBytes;
@@ -131,22 +136,24 @@ class DocumentFilePreview extends StatelessWidget {
         return null;
       }
     }
+    // Read as the full viewer reads it: a stray byte that is not UTF-8 does
+    // not keep the page from being drawn.
+    Future<String> text() async =>
+        utf8.decode(await file.readAsBytes(), allowMalformed: true);
     switch (_kind) {
       case _Kind.html:
-        document = () async => buildGuardedArtifactHtml(
-          await file.readAsString(),
-          scriptsEnabled: true,
-        );
+        document = () async =>
+            buildGuardedArtifactHtml(await text(), scriptsEnabled: true);
         label = 'HTML';
         icon = HIcons.language_rounded;
       case _Kind.svg:
-        document = () async => buildGuardedSvgHtml(await file.readAsString());
+        document = () async => buildGuardedSvgHtml(await text());
         label = strings.embedSvgLabel;
         icon = HIcons.image_outlined;
         aspect = 16 / 10;
       case _Kind.mermaid:
         document = () async => buildMermaidDocument(
-          await file.readAsString(),
+          await text(),
           dark: dark,
           background: colors.surfaceVariant,
           ink: colors.textPrimary,
@@ -167,6 +174,7 @@ class DocumentFilePreview extends StatelessWidget {
         aspect = 1.2;
         ready = kModelReadyScript;
         capture = kModelCaptureScript;
+        deadline = kModelPageDeadline;
     }
     return InlineWebPreview(
       key: ValueKey('document-preview-${file.path}-$dark'),
@@ -179,6 +187,8 @@ class DocumentFilePreview extends StatelessWidget {
       autoLoad: auto,
       readyScript: ready,
       captureScript: capture,
+      deadline: deadline,
+      model: _kind == _Kind.model,
       onOpen: onOpen,
     );
   }

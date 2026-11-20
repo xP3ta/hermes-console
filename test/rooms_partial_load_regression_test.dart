@@ -28,6 +28,7 @@ import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/services/mission_snapshot_cache.dart';
+import 'package:hermes_android/core/services/mission_snapshot_prewarm.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -144,16 +145,21 @@ Map<String, dynamic> _caps({List<String>? methods}) => {
   'max_log_limit': 500,
 };
 
-GroupsCapabilities _parsedCaps() => GroupsCapabilities.tryParse(
-  _caps(),
-  connectionId: 'regression',
-  generation: 1,
-)!;
+GroupsCapabilities _parsedCaps({List<String>? methods}) =>
+    GroupsCapabilities.tryParse(
+      _caps(methods: methods),
+      connectionId: 'regression',
+      generation: 1,
+    )!;
 
-/// Two rooms through the real repository; [stateOf]/[logOf] may poison B.
+/// Two rooms through the real repository; [stateOf]/[logOf] may poison B,
+/// [listError] (when it returns an error) fails `groups.list`. Every read is
+/// recorded in [reads] (`groups.list`, `groups.state:<id>`, `groups.log:<id>`).
 MissionControlRepository _repo({
   Future<HostedGroupRoom> Function(String roomId)? stateOf,
   Future<HostedGroupLogPage> Function(String roomId)? logOf,
+  TuiGatewayRpcError? Function()? listError,
+  List<String>? reads,
 }) {
   final rooms = [
     HostedGroupRoom.fromJson(_roomJson('room-a', 'Room A')),
@@ -165,26 +171,92 @@ MissionControlRepository _repo({
     boardLoader: () async => const KanbanBoard(columns: []),
     hostedGroupsGateway: MissionHostedGroupsGateway.callbacks(
       capabilities: () async => _parsedCaps(),
-      list: ({required generation}) async => rooms,
-      state: (roomId, {required generation}) =>
-          stateOf?.call(roomId) ??
-          Future.value(rooms.firstWhere((r) => r.roomId == roomId)),
-      log: (roomId, {required generation}) =>
-          logOf?.call(roomId) ??
-          Future.value(_log(roomId, [_userEvent(roomId, 1)])),
+      list: ({required generation}) async {
+        reads?.add('groups.list');
+        if (listError?.call() case final error?) throw error;
+        return rooms;
+      },
+      state: (roomId, {required generation}) {
+        reads?.add('groups.state:$roomId');
+        return stateOf?.call(roomId) ??
+            Future.value(rooms.firstWhere((r) => r.roomId == roomId));
+      },
+      log: (roomId, {required generation}) {
+        reads?.add('groups.log:$roomId');
+        return logOf?.call(roomId) ??
+            Future.value(_log(roomId, [_userEvent(roomId, 1)]));
+      },
     ),
   );
+}
+
+/// A read of one room (`groups.state` or `groups.log`) recorded by [_repo]
+/// or [_repoWith]: the room list never makes one.
+bool _isRoomRead(String read) =>
+    read.startsWith('groups.state:') || read.startsWith('groups.log:');
+
+int _listReads(List<String> reads) =>
+    reads.where((read) => read == 'groups.list').length;
+
+/// [_repo]'s callbacks gateway with `groups.list` answered through
+/// [MissionHostedGroupsListingGateway], so rows Console rejects are kept
+/// apart as [unreadable], as the production gateway does.
+final class _ListingGateway
+    implements MissionHostedGroupsGateway, MissionHostedGroupsListingGateway {
+  _ListingGateway(this.inner, this.unreadable);
+  final MissionHostedGroupsGateway inner;
+  final List<HostedGroupUnreadableRoom> unreadable;
+
+  @override
+  Future<GroupsCapabilities> capabilities() => inner.capabilities();
+  @override
+  Future<List<HostedGroupRoom>> list({required int generation}) =>
+      inner.list(generation: generation);
+  @override
+  Future<HostedGroupListing> listing({required int generation}) async =>
+      HostedGroupListing(
+        rooms: await inner.list(generation: generation),
+        unreadable: unreadable,
+      );
+  @override
+  Future<HostedGroupRoom> state(String roomId, {required int generation}) =>
+      inner.state(roomId, generation: generation);
+  @override
+  Future<HostedGroupLogPage> log(String roomId, {required int generation}) =>
+      inner.log(roomId, generation: generation);
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('regression: ${invocation.memberName}');
 }
 
 MissionControlRepository _repoWith({
   Future<GroupsCapabilities> Function()? capabilities,
   MissionGroupsList? list,
   Future<HostedGroupRoom> Function(String roomId)? state,
+  List<HostedGroupUnreadableRoom> unreadable = const [],
+  List<String>? reads,
 }) {
   final rooms = [
     HostedGroupRoom.fromJson(_roomJson('room-a', 'Room A')),
     HostedGroupRoom.fromJson(_roomJson('room-b', 'Room B')),
   ];
+  final gateway = MissionHostedGroupsGateway.callbacks(
+    capabilities: capabilities ?? () async => _parsedCaps(),
+    list: ({required generation}) async {
+      reads?.add('groups.list');
+      if (list != null) return list(generation: generation);
+      return rooms;
+    },
+    state: (roomId, {required generation}) {
+      reads?.add('groups.state:$roomId');
+      return state?.call(roomId) ??
+          Future.value(rooms.firstWhere((r) => r.roomId == roomId));
+    },
+    log: (roomId, {required generation}) async {
+      reads?.add('groups.log:$roomId');
+      return _log(roomId, [_userEvent(roomId, 1)]);
+    },
+  );
   return MissionControlRepository(
     profilesLoader: () async => const [
       AgentProfile(name: 'builder'),
@@ -192,15 +264,9 @@ MissionControlRepository _repoWith({
     ],
     sessionsLoader: () async => const [],
     boardLoader: () async => const KanbanBoard(columns: []),
-    hostedGroupsGateway: MissionHostedGroupsGateway.callbacks(
-      capabilities: capabilities ?? () async => _parsedCaps(),
-      list: list ?? ({required generation}) async => rooms,
-      state: (roomId, {required generation}) =>
-          state?.call(roomId) ??
-          Future.value(rooms.firstWhere((r) => r.roomId == roomId)),
-      log: (roomId, {required generation}) async =>
-          _log(roomId, [_userEvent(roomId, 1)]),
-    ),
+    hostedGroupsGateway: unreadable.isEmpty
+        ? gateway
+        : _ListingGateway(gateway, unreadable),
   );
 }
 
@@ -258,10 +324,22 @@ Future<bool> _roomCreationOffered(WidgetTester tester) async {
   return offered;
 }
 
-/// Rooms shown from their last good read (review M1). Read dynamically so
-/// the RED run on the API without it fails per test, not at compile time.
-Set<String> _stale(HostedGroupsSnapshot s) =>
-    ((s as dynamic).staleRoomIds as Set).cast<String>();
+/// The room rows of the Bots screen.
+Finder get _roomRows => find.byWidgetPredicate((widget) {
+  final key = widget.key;
+  return key is ValueKey<String> && key.value.startsWith('roster-room-row-');
+});
+
+/// Rooms A and B as `groups.list` gave them, each without a log or a driver
+/// status: no view of either read it, so their conversation is unknown
+/// (never empty), and nothing is reported as unreadable.
+void _expectListedAlone(HostedGroupsSnapshot hosted) {
+  expect([for (final r in hosted.rooms) r.name], ['Room A', 'Room B']);
+  expect(hosted.unreadableRooms, isEmpty);
+  expect(hosted.logAt(0), isNull);
+  expect(hosted.logAt(1), isNull);
+  expect(hosted.driverStatuses, isEmpty);
+}
 
 List<String> _names(MissionBackendSnapshot s) => [
   for (final room in s.hostedGroups.rooms) room.name,
@@ -502,7 +580,7 @@ final class _ProdShapedGateway
       client.listGroups(generation: generation);
   @override
   Future<HostedGroupListing> listing({required int generation}) =>
-      client.listGroupsDetailed(generation: generation);
+      client.listGroupsDetailed(limit: 100, generation: generation);
   @override
   Future<HostedGroupRoom> state(String roomId, {required int generation}) =>
       client.groupState(roomId, generation: generation);
@@ -548,6 +626,28 @@ Future<MissionBackendSnapshot> _loadThroughWire({
   }
 }
 
+/// [body] with a repository over a [_Wire] serving [rooms] and [events];
+/// both are closed afterwards.
+Future<void> _withWireRepo({
+  required List<Map<String, dynamic>> rooms,
+  Map<String, List<Map<String, dynamic>>> events = const {},
+  required Future<void> Function(MissionControlRepository repo) body,
+}) async {
+  final wire = await _Wire.start(rooms: rooms, events: events);
+  final repo = MissionControlRepository(
+    profilesLoader: () async => const [],
+    sessionsLoader: () async => const [],
+    boardLoader: () async => const KanbanBoard(columns: []),
+    hostedGroupsGateway: _ProdShapedGateway(wire.client),
+  );
+  try {
+    await body(repo);
+  } finally {
+    repo.close();
+    await wire.close();
+  }
+}
+
 void main() {
   setUpAll(loadInterFont);
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
@@ -586,12 +686,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final rows = find.byWidgetPredicate((widget) {
-      final key = widget.key;
-      return key is ValueKey<String> &&
-          key.value.startsWith('roster-room-row-');
-    });
-    expect(rows, findsOneWidget, reason: 'room A only');
+    expect(_roomRows, findsOneWidget, reason: 'room A only');
     expect(find.text('Room A'), findsWidgets);
     final notice = find.byKey(const ValueKey('mission-rooms-unreadable'));
     expect(notice, findsOneWidget);
@@ -602,6 +697,15 @@ void main() {
     expect(
       find.descendant(of: notice, matching: find.text('Not loaded: Room B')),
       findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('mission-rooms-unreadable-body')),
+      findsOneWidget,
+    );
+    // The list read itself answered: no failed read to name.
+    expect(
+      find.byKey(const ValueKey('mission-rooms-read-detail')),
+      findsNothing,
     );
     expect(tester.takeException(), isNull);
 
@@ -630,21 +734,23 @@ void main() {
       failureKind: TuiGatewayRpcFailureKind.timeout,
     );
 
-    testWidgets('[RED] cold start, every room 5115: both reported, '
-        'New ▸ room offered', (tester) async {
+    // The rooms list is groups.list alone, as Desktop: a room whose
+    // groups.state answers 5115 is listed like the others, because no room
+    // is read to list it (it was reported unreadable when every room was
+    // read to build the list).
+    testWidgets('[RED] cold start where every groups.state would answer '
+        '5115: both rooms list, no notice, New ▸ room offered', (tester) async {
+      final reads = <String>[];
       await _pumpBots(
         tester,
-        _repoWith(state: (_) async => throw failed),
+        _repoWith(reads: reads, state: (_) async => throw failed),
       );
-      final notice = find.byKey(const ValueKey('mission-rooms-unreadable'));
-      expect(notice, findsOneWidget);
+      expect(_roomRows, findsNWidgets(2));
       expect(
-        find.descendant(
-          of: notice,
-          matching: find.text("2 rooms couldn't be loaded"),
-        ),
-        findsOneWidget,
+        find.byKey(const ValueKey('mission-rooms-unreadable')),
+        findsNothing,
       );
+      expect(reads.where(_isRoomRead), isEmpty);
       expect(await _roomCreationOffered(tester), isTrue);
     });
 
@@ -658,6 +764,15 @@ void main() {
         find.byKey(const ValueKey('mission-rooms-load-failed')),
         findsOneWidget,
       );
+      // Which read failed, as Desktop shows its list error.
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('mission-rooms-read-detail')),
+            )
+            .data,
+        'groups.list · timeout',
+      );
       expect(
         find.byKey(const ValueKey('mission-rooms-unreadable-retry')),
         findsOneWidget,
@@ -665,10 +780,83 @@ void main() {
       expect(await _roomCreationOffered(tester), isTrue);
     });
 
-    testWidgets('[RED] a room kept from its last good read is announced as '
-        'not updated', (tester) async {
+    // Replaces «a room the connection left unread is named, with the read
+    // that failed»: no room is read to list it, so a groups.state that would
+    // time out leaves nothing unread. The notice names only rows the list
+    // itself could not parse, and has no failed read to name while the
+    // list answered.
+    testWidgets('a room whose groups.state would time out still lists, also '
+        'on the 10 s list refresh; only a row the list rejected is reported, '
+        'with Retry and no failed read named', (tester) async {
+      final reads = <String>[];
+      await _pumpBots(
+        tester,
+        _repoWith(
+          reads: reads,
+          unreadable: const [
+            HostedGroupUnreadableRoom(
+              roomId: 'room-c',
+              reason: HostedGroupUnreadableReason.invalidData,
+            ),
+          ],
+          state: (roomId) async {
+            if (roomId == 'room-b') {
+              throw const TuiGatewayRpcError(
+                'groups.state',
+                'Timeout waiting for JSON-RPC response',
+                failureKind: TuiGatewayRpcFailureKind.timeout,
+              );
+            }
+            return HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A'));
+          },
+        ),
+      );
+      expect(_roomRows, findsNWidgets(2));
+      final notice = find.byKey(const ValueKey('mission-rooms-unreadable'));
+      expect(
+        find.descendant(
+          of: notice,
+          matching: find.text("1 room couldn't be loaded"),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: notice, matching: find.text('Not loaded: Room B')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('mission-rooms-unreadable-body')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('mission-rooms-read-detail')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('mission-rooms-unreadable-retry')),
+        findsOneWidget,
+      );
+
+      // The list is read again every 10 s (the screen's
+      // `roomsRefreshInterval`), groups.list only.
+      final listed = _listReads(reads);
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pump();
+      expect(_listReads(reads), greaterThan(listed));
+      expect(reads.where(_isRoomRead), isEmpty);
+      expect(_roomRows, findsNWidgets(2));
+      expect(await _roomCreationOffered(tester), isTrue);
+    });
+
+    // Replaces «a room kept from its last good read is announced as not
+    // updated»: a reload reads no room, so a room whose read would fail
+    // transiently is never left behind nor marked; B stays on screen.
+    testWidgets('[RED] pull-to-refresh while room B\'s groups.state would '
+        'answer 5113 keeps both rooms, with no notice', (tester) async {
       var failB = false;
+      final reads = <String>[];
       final repo = _repoWith(
+        reads: reads,
         state: (roomId) async {
           if (roomId == 'room-b' && failB) {
             throw const TuiGatewayRpcError(
@@ -685,26 +873,20 @@ void main() {
       await _pumpBots(tester, repo);
       expect(find.byKey(const ValueKey('mission-rooms-unreadable')), findsNothing);
       failB = true;
+      final listed = _listReads(reads);
       // Pull-to-refresh: a full reload.
       final state = tester.state<RefreshIndicatorState>(
         find.byType(RefreshIndicator).first,
       );
       unawaited(state.show());
       await tester.pumpAndSettle();
-      final rows = find.byWidgetPredicate((widget) {
-        final key = widget.key;
-        return key is ValueKey<String> &&
-            key.value.startsWith('roster-room-row-');
-      });
-      expect(rows, findsNWidgets(2), reason: 'B stays on screen');
-      final notice = find.byKey(const ValueKey('mission-rooms-unreadable'));
+      expect(_listReads(reads), greaterThan(listed), reason: 'it reloaded');
+      expect(_roomRows, findsNWidgets(2), reason: 'B stays on screen');
       expect(
-        find.descendant(
-          of: notice,
-          matching: find.text("1 room couldn't be updated"),
-        ),
-        findsOneWidget,
+        find.byKey(const ValueKey('mission-rooms-unreadable')),
+        findsNothing,
       );
+      expect(reads.where(_isRoomRead), isEmpty);
     });
 
     testWidgets('[CONTROL] capabilities that fail: no New ▸ room', (
@@ -743,8 +925,20 @@ void main() {
         'unreadable rooms', (tester) async {
       await _pumpBots(
         tester,
-        _repoWith(state: (_) async => throw failed),
+        _repoWith(
+          state: (_) async => throw failed,
+          unreadable: const [
+            HostedGroupUnreadableRoom(
+              roomId: 'room-c',
+              reason: HostedGroupUnreadableReason.invalidData,
+            ),
+          ],
+        ),
         readOnly: true,
+      );
+      expect(
+        find.byKey(const ValueKey('mission-rooms-unreadable')),
+        findsOneWidget,
       );
       expect(await _roomCreationOffered(tester), isFalse);
     });
@@ -1034,75 +1228,104 @@ void main() {
       );
     });
 
-    test('[RED] groups.state error on room B (4114): room A lists and '
-        'creation stays offered', () async {
-      final s = await _repo(
-        stateOf: (roomId) async {
-          if (roomId == 'room-b') {
-            throw const TuiGatewayRpcError(
-              'groups.state',
-              'hosted room not found',
-              code: 4114,
+    // The rooms list is groups.list alone, as Desktop
+    // (`canonical-group-registry.tsx` `useGatewayGroupRooms`): no room's
+    // groups.state or groups.log is read to list it, so no failure of one
+    // can hide a room, shorten the list or take «New ▸ room» away (review
+    // B1: the reported symptom was no room and no «New ▸ room»). Each entry
+    // replaces tests of the earlier design, in which every room was read to
+    // build the list and a room whose read failed was reported unreadable,
+    // kept from its last good read marked stale, or named as not read; the
+    // entry names the failure those tests used.
+    const notFound = TuiGatewayRpcError(
+      'groups.state',
+      'hosted room not found',
+      code: 4114,
+    );
+    // What the real client throws for a log it rejects.
+    const invalidLog = GroupInvalidResponseError(
+      'groups.log',
+      'Hermes returned an invalid room log',
+    );
+    const backingOff = TuiGatewayRpcError(
+      'gateway.connect',
+      'Hermes Desktop reconnect is backing off',
+    );
+    const stateFailed = TuiGatewayRpcError(
+      'groups.state',
+      'hosted room state failed',
+      code: 5115,
+    );
+    const locked = TuiGatewayRpcError(
+      'groups.state',
+      'database is locked',
+      code: 5113,
+    );
+    const lost = TuiGatewayRpcError(
+      'groups.state',
+      'Hermes connection changed during the group operation',
+      failureKind: TuiGatewayRpcFailureKind.connectionLost,
+    );
+    const logTimeout = TuiGatewayRpcError(
+      'groups.log',
+      'Timeout waiting for JSON-RPC response',
+      failureKind: TuiGatewayRpcFailureKind.timeout,
+    );
+    // (name, error, on every room or on room B only, thrown by groups.log
+    // instead of groups.state)
+    for (final (name, error, everyRoom, onLog)
+        in <(String, TuiGatewayRpcError, bool, bool)>[
+          ('groups.state error on room B (4114)', notFound, false, false),
+          ('invalid groups.log on room B', invalidLog, false, true),
+          (
+            'a no-code error of another method (gateway.connect backing '
+                'off) on room B',
+            backingOff,
+            false,
+            false,
+          ),
+          ('every room answering its own server error (5115)', stateFailed,
+              true, false),
+          ('room B failing transiently (5113)', locked, false, false),
+          ('every room failing transiently (5113)', locked, true, false),
+          ('connectionLost while reading room B', lost, false, false),
+          ('timeout while reading room B', logTimeout, false, true),
+          ('connectionLost on every room', lost, true, false),
+          ('timeout on every room', logTimeout, true, true),
+        ]) {
+      test('[RED] $name cannot hide a room: both list from groups.list alone '
+          'on load, reload and refresh, creation stays offered, and no room '
+          'is read', () async {
+        final reads = <String>[];
+        bool hit(String roomId) => everyRoom || roomId == 'room-b';
+        final repo = _repo(
+          reads: reads,
+          stateOf: (roomId) async {
+            if (!onLog && hit(roomId)) throw error;
+            return HostedGroupRoom.fromJson(
+              _roomJson(roomId, roomId == 'room-a' ? 'Room A' : 'Room B'),
             );
-          }
-          return HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A'));
-        },
-      ).load();
-      expect(_names(s), ['Room A']);
-      expect(_createOffered(s), isTrue);
-      expect(s.failures.containsKey('hostedGroups'), isFalse);
-      final bad = s.hostedGroups.unreadableRooms.single;
-      expect(bad.roomId, 'room-b');
-      expect(bad.name, 'Room B');
-      expect(bad.reason, HostedGroupUnreadableReason.serverError);
-      expect(s.hostedGroups.rooms.length, s.hostedGroups.logs.length);
-    });
+          },
+          logOf: (roomId) async {
+            if (onLog && hit(roomId)) throw error;
+            return _log(roomId, [_userEvent(roomId, 1)]);
+          },
+        );
+        final first = await repo.load();
+        final reloaded = await repo.load();
+        final refreshed = await repo.refreshHostedGroups(first.hostedGroups);
+        for (final s in [first, reloaded]) {
+          expect(s.hostedGroupsCapability, MissionCapabilityState.available);
+          expect(s.failures.containsKey('hostedGroups'), isFalse);
+          expect(_createOffered(s), isTrue);
+          _expectListedAlone(s.hostedGroups);
+        }
+        _expectListedAlone(refreshed);
+        expect(_listReads(reads), 3);
+        expect(reads.where(_isRoomRead), isEmpty);
+      });
+    }
 
-    test('[RED] invalid groups.log on room B: room A lists and creation '
-        'stays offered', () async {
-      final s = await _repo(
-        logOf: (roomId) async {
-          if (roomId == 'room-b') {
-            // What the real client throws for a log it rejects.
-            throw const GroupInvalidResponseError(
-              'groups.log',
-              'Hermes returned an invalid room log',
-            );
-          }
-          return _log(roomId, [_userEvent(roomId, 1)]);
-        },
-      ).load();
-      expect(_names(s), ['Room A']);
-      expect(_createOffered(s), isTrue);
-      expect(
-        s.hostedGroups.unreadableRooms.single.reason,
-        HostedGroupUnreadableReason.invalidData,
-      );
-    });
-
-    test('[CONTROL] a no-code error of another method (gateway.connect '
-        'backing off) is the connection\'s, not room B\'s', () async {
-      final s = await _repo(
-        stateOf: (roomId) async {
-          if (roomId == 'room-b') {
-            throw const TuiGatewayRpcError(
-              'gateway.connect',
-              'Hermes Desktop reconnect is backing off',
-            );
-          }
-          return HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A'));
-        },
-      ).load();
-      expect(s.hostedGroupsCapability, MissionCapabilityState.unavailable);
-      expect(s.hostedGroups.unreadableRooms, isEmpty);
-    });
-
-    // Review B1 (console-reddit-independent-review.md): the earlier
-    // «2+ rooms all failing = whole-load failure» heuristic (two [CONTROL]
-    // tests here, written in this same fix series) reproduced the reported
-    // symptom on a cold start: no room and no «New ▸ room». Superseded by
-    // the four tests below; the outcome no longer depends on how many rooms
-    // there are.
     test('[RED] end to end: a room whose member row carries an extra legacy '
         'field lists with the others', () async {
       final s = await _loadThroughWire(
@@ -1122,110 +1345,13 @@ void main() {
       expect(s.hostedGroups.unreadableRooms, isEmpty);
     });
 
-    test('[RED] B1 cold load: every room answering its own server error '
-        '(5115) lists both as unreadable and keeps creation', () async {
-      const failed = TuiGatewayRpcError(
-        'groups.state',
-        'hosted room state failed',
-        code: 5115,
-      );
-      final s = await _repo(stateOf: (_) async => throw failed).load();
-      expect(s.hostedGroupsCapability, MissionCapabilityState.available);
-      expect(s.failures.containsKey('hostedGroups'), isFalse);
-      expect(_createOffered(s), isTrue);
-      expect(s.hostedGroups.rooms, isEmpty);
-      expect(
-        [for (final r in s.hostedGroups.unreadableRooms) r.roomId],
-        ['room-a', 'room-b'],
-      );
-    });
-
-    test('[RED] B1 the same failure on one room or on two is classified the '
-        'same way (no count heuristic)', () async {
-      const failed = TuiGatewayRpcError(
-        'groups.state',
-        'database is locked',
-        code: 5113,
-      );
-      final one = await _repo(
-        stateOf: (roomId) async => roomId == 'room-b'
-            ? throw failed
-            : HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A')),
-      ).load();
-      final both = await _repo(stateOf: (_) async => throw failed).load();
-      expect(one.hostedGroupsCapability, both.hostedGroupsCapability);
-      expect(
-        one.hostedGroups.unreadableRooms.single.reason,
-        HostedGroupUnreadableReason.serverError,
-      );
-      expect(
-        {for (final r in both.hostedGroups.unreadableRooms) r.reason},
-        {HostedGroupUnreadableReason.serverError},
-      );
-    });
-
-    test('[RED] M1 warm refresh where every room fails transiently keeps '
-        'both last good rooms, marked stale', () async {
-      var fail = false;
-      final repo = _repo(
-        stateOf: (roomId) async {
-          if (fail) {
-            throw const TuiGatewayRpcError(
-              'groups.state',
-              'database is locked',
-              code: 5113,
-            );
-          }
-          return HostedGroupRoom.fromJson(
-            _roomJson(roomId, roomId == 'room-a' ? 'Room A' : 'Room B'),
-          );
-        },
-      );
-      final first = await repo.load();
-      fail = true;
-      final refreshed = await repo.refreshHostedGroups(first.hostedGroups);
-      expect([for (final r in refreshed.rooms) r.name], ['Room A', 'Room B']);
-      expect(refreshed.rooms.length, refreshed.logs.length);
-      expect(_stale(refreshed), {'room-a', 'room-b'});
-      expect(refreshed.unreadableRooms, isEmpty);
-    });
-
-    test('[RED] M1 full reload (pull-to-refresh) where room B fails '
-        'transiently keeps B from the last good read, marked stale', () async {
-      var failB = false;
-      final repo = _repo(
-        stateOf: (roomId) async {
-          if (roomId == 'room-b' && failB) {
-            throw const TuiGatewayRpcError(
-              'groups.state',
-              'database is locked',
-              code: 5113,
-            );
-          }
-          return HostedGroupRoom.fromJson(
-            _roomJson(roomId, roomId == 'room-a' ? 'Room A' : 'Room B'),
-          );
-        },
-      );
-      final first = await repo.load();
-      expect(_names(first), ['Room A', 'Room B']);
-      failB = true;
-      final reloaded = await repo.load();
-      expect(_names(reloaded), ['Room A', 'Room B']);
-      expect(_stale(reloaded.hostedGroups), {'room-b'});
-      expect(reloaded.hostedGroups.unreadableRooms, isEmpty);
-      expect(
-        reloaded.hostedGroups.rooms.length,
-        reloaded.hostedGroups.logs.length,
-      );
-      failB = false;
-      final healed = await repo.load();
-      expect(_names(healed), ['Room A', 'Room B']);
-      expect(_stale(healed.hostedGroups), isEmpty);
-    });
-
-    test('[CONTROL] M1 data Console rejects is never papered over with the '
-        'last good copy: the room becomes unreadable', () async {
+    // Replaces «M1 data Console rejects is never papered over with the last
+    // good copy: the room becomes unreadable». The list no longer reads a
+    // room's log, so it cannot reject one: the view of the room reads it and
+    // gets the error. Nothing of the rejected data reaches the list; the
+    // row keeps the log the view last read correctly.
+    test('[CONTROL] a view read Console rejects fails to the view and puts '
+        'nothing of it in the list', () async {
       var bad = false;
       final repo = _repo(
         logOf: (roomId) async {
@@ -1238,13 +1364,22 @@ void main() {
           return _log(roomId, [_userEvent(roomId, 1)]);
         },
       );
-      await repo.load();
+      final first = await repo.load();
+      final roomB = first.hostedGroups.rooms[1];
+      await repo.readHostedGroup(roomB, generation: 1);
       bad = true;
+      await expectLater(
+        repo.readHostedGroup(roomB, generation: 1),
+        throwsA(isA<GroupInvalidResponseError>()),
+      );
       final reloaded = await repo.load();
-      expect(_names(reloaded), ['Room A'], reason: 'B is not retained');
+      expect(_names(reloaded), ['Room A', 'Room B']);
+      expect(reloaded.hostedGroups.unreadableRooms, isEmpty);
+      expect(reloaded.hostedGroups.logAt(0), isNull);
       expect(
-        reloaded.hostedGroups.unreadableRooms.single.reason,
-        HostedGroupUnreadableReason.invalidData,
+        [for (final e in reloaded.hostedGroups.logAt(1)!.events) e.eventId],
+        ['user:room-b-1'],
+        reason: 'what the view last read correctly, nothing after it',
       );
     });
 
@@ -1278,43 +1413,13 @@ void main() {
       );
     });
 
-    test('[RED] incremental refresh: room B failing later (5113) stays '
-        'from its last good read, marked stale; room A is fresh', () async {
-      var failB = false;
+    // Replaces «a room failing on a fresh repository (no last good read)
+    // is unreadable, never invented»: a room no view read is listed with no
+    // log and no driver status (unknown, never an invented empty log), and
+    // a view read of it that fails leaves it so.
+    test('[CONTROL] a room no view read has no log nor driver status: '
+        'unknown, never invented', () async {
       final repo = _repo(
-        stateOf: (roomId) async {
-          if (roomId == 'room-b' && failB) {
-            throw const TuiGatewayRpcError(
-              'groups.state',
-              'database is locked',
-              code: 5113,
-            );
-          }
-          return HostedGroupRoom.fromJson(
-            _roomJson(roomId, roomId == 'room-a' ? 'Room A' : 'Room B'),
-          );
-        },
-      );
-      final first = await repo.load();
-      expect(_names(first), ['Room A', 'Room B']);
-      failB = true;
-      final refreshed = await repo.refreshHostedGroups(first.hostedGroups);
-      // Review M1: before, B left `rooms` for a transient error even though
-      // its previous read was valid.
-      expect([for (final r in refreshed.rooms) r.name], ['Room A', 'Room B']);
-      expect(_stale(refreshed), {'room-b'});
-      expect(refreshed.unreadableRooms, isEmpty);
-      expect(refreshed.rooms.length, refreshed.logs.length);
-      failB = false;
-      final healed = await repo.refreshHostedGroups(refreshed);
-      expect([for (final r in healed.rooms) r.name], ['Room A', 'Room B']);
-      expect(healed.unreadableRooms, isEmpty);
-      expect(_stale(healed), isEmpty, reason: 'a stale room is re-read');
-    });
-
-    test('[CONTROL] a room failing on a fresh repository (no last good '
-        'read) is unreadable, never invented', () async {
-      final s = await _repo(
         stateOf: (roomId) async => roomId == 'room-b'
             ? throw const TuiGatewayRpcError(
                 'groups.state',
@@ -1322,41 +1427,388 @@ void main() {
                 code: 5113,
               )
             : HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A')),
-      ).load();
-      expect(_names(s), ['Room A']);
-      expect(s.hostedGroups.unreadableRooms.single.roomId, 'room-b');
+      );
+      final s = await repo.load();
+      _expectListedAlone(s.hostedGroups);
+      await expectLater(
+        repo.readHostedGroup(s.hostedGroups.rooms[1], generation: 1),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      _expectListedAlone((await repo.load()).hostedGroups);
     });
 
     for (final global in const [
       TuiGatewayRpcError(
-        'groups.state',
+        'groups.list',
         'Hermes connection changed during the group operation',
         failureKind: TuiGatewayRpcFailureKind.connectionLost,
       ),
       TuiGatewayRpcError(
-        'groups.log',
+        'groups.list',
         'Timeout waiting for JSON-RPC response',
         failureKind: TuiGatewayRpcFailureKind.timeout,
       ),
     ]) {
-      test('[CONTROL] ${global.failureKind!.name} while reading room B is a '
-          'whole-load failure, never an «unreadable room»', () async {
-        final s = await _repo(
-          stateOf: (roomId) async {
-            if (roomId == 'room-b') throw global;
-            return HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A'));
-          },
-        ).load();
+      // Replaces «X on every room is a whole-load failure, as before»: room
+      // reads no longer take part in the list (see the table above); the
+      // rooms read fails as a whole when groups.list itself does.
+      test('${global.failureKind!.name} on groups.list is a whole-load '
+          'failure that keeps the proven capabilities', () async {
+        final reads = <String>[];
+        final s = await _repo(reads: reads, listError: () => global).load();
         expect(s.hostedGroupsCapability, MissionCapabilityState.unavailable);
         expect(s.failures['hostedGroups'], same(global));
         expect(s.hostedGroups.rooms, isEmpty);
+        expect(s.hostedGroups.unreadableRooms, isEmpty);
+        expect(_createOffered(s), isFalse);
+        expect(
+          s.hostedGroups.capabilities?.supports(GroupMethod.create),
+          isTrue,
+        );
+        expect(reads.where(_isRoomRead), isEmpty);
+      });
+
+      // Replaces «X on the incremental refresh: a lost connection still
+      // fails it (the caller reloads); one timeout keeps the room as shown».
+      test('${global.failureKind!.name} on groups.list fails the list '
+          'refresh (the caller keeps its list); a room read that would fail '
+          'is never made, and the room keeps the log its view read', () async {
+        final reads = <String>[];
+        var cut = false;
+        TuiGatewayRpcError? listCut;
+        final repo = _repo(
+          reads: reads,
+          listError: () => listCut,
+          stateOf: (roomId) async {
+            if (roomId == 'room-b' && cut) {
+              throw const TuiGatewayRpcError(
+                'groups.state',
+                'Timeout waiting for JSON-RPC response',
+                failureKind: TuiGatewayRpcFailureKind.timeout,
+              );
+            }
+            return HostedGroupRoom.fromJson(
+              _roomJson(roomId, roomId == 'room-a' ? 'Room A' : 'Room B'),
+            );
+          },
+        );
+        final first = await repo.load();
+        // The room's view reads it once.
+        await repo.readHostedGroup(first.hostedGroups.rooms[1], generation: 1);
+        cut = true;
+        reads.clear();
+        final refreshed = await repo.refreshHostedGroups(first.hostedGroups);
+        expect([for (final r in refreshed.rooms) r.name], ['Room A', 'Room B']);
+        expect(refreshed.logAt(0), isNull);
+        expect(refreshed.logAt(1)!.events, hasLength(1));
+        expect(refreshed.unreadableRooms, isEmpty);
+        expect(reads, ['groups.list']);
+
+        listCut = global;
+        await expectLater(
+          repo.refreshHostedGroups(refreshed),
+          throwsA(same(global)),
+        );
+        expect(reads.where(_isRoomRead), isEmpty);
       });
     }
   });
 
+  // Hermes Desktop (apps/desktop/src/plugins/hermes-bots): the room list is
+  // groups.capabilities + groups.list (canonical-groups.ts
+  // discoverCanonicalGroups); groups.state/groups.log are read for a room,
+  // and a failed read keeps what was shown (canonical-group-workspace.tsx).
+  group('the room list does not depend on reading each room', () {
+    const timeout = TuiGatewayRpcError(
+      'groups.state',
+      'Timeout waiting for JSON-RPC response',
+      failureKind: TuiGatewayRpcFailureKind.timeout,
+    );
+
+    // Replaces «a room read cut by the connection keeps its last good
+    // read»: the list keeps no read of its own; a room keeps what its view
+    // read, whatever happens to its next view read.
+    test('a room whose view read it keeps that log in later list reads, '
+        'even when its next view read is cut', () async {
+      var cut = false;
+      final reads = <String>[];
+      final repo = _repo(
+        reads: reads,
+        stateOf: (roomId) async {
+          if (roomId == 'room-b' && cut) throw timeout;
+          return HostedGroupRoom.fromJson(
+            _roomJson(roomId, roomId == 'room-a' ? 'Room A' : 'Room B'),
+          );
+        },
+      );
+      final first = await repo.load();
+      _expectListedAlone(first.hostedGroups);
+      final roomB = first.hostedGroups.rooms[1];
+      await repo.readHostedGroup(roomB, generation: 1);
+      cut = true;
+      await expectLater(
+        repo.readHostedGroup(roomB, generation: 1),
+        throwsA(same(timeout)),
+      );
+      reads.clear();
+      final second = await repo.load();
+      expect(second.hostedGroupsCapability, MissionCapabilityState.available);
+      expect(_names(second), ['Room A', 'Room B']);
+      expect(second.hostedGroups.unreadableRooms, isEmpty);
+      expect(second.hostedGroups.logAt(0), isNull, reason: 'no view read A');
+      expect(second.hostedGroups.logAt(1)!.events, hasLength(1));
+      expect(reads, ['groups.list']);
+    });
+
+    // Replaces «one room that never answers in time does not starve the
+    // rooms listed after it».
+    test('one room that would time out can no longer hide or delay the '
+        'list: no room is read to list it', () async {
+      final rooms = [
+        for (var i = 0; i < 12; i++)
+          HostedGroupRoom.fromJson(_roomJson('room-$i', 'Room $i')),
+      ];
+      var roomReads = 0;
+      final s = await MissionControlRepository(
+        profilesLoader: () async => const [],
+        sessionsLoader: () async => const [],
+        boardLoader: () async => const KanbanBoard(columns: []),
+        hostedGroupsGateway: MissionHostedGroupsGateway.callbacks(
+          capabilities: () async => _parsedCaps(),
+          list: ({required generation}) async => rooms,
+          state: (roomId, {required generation}) async {
+            roomReads++;
+            if (roomId == 'room-1') throw timeout;
+            return rooms.firstWhere((room) => room.roomId == roomId);
+          },
+          log: (roomId, {required generation}) async {
+            roomReads++;
+            return _log(roomId, [_userEvent(roomId, 1)]);
+          },
+        ),
+      ).load();
+      expect(s.hostedGroupsCapability, MissionCapabilityState.available);
+      expect(_names(s), [for (final room in rooms) room.name]);
+      expect(s.hostedGroups.unreadableRooms, isEmpty);
+      expect(roomReads, 0, reason: 'no groups.state nor groups.log');
+    });
+
+    // Replaces «a lost connection stops the reads not yet started; the room
+    // that was read shows and the rest are named» (and its bound of
+    // concurrent room reads, which no longer exist).
+    test('a connection that would be lost on every room read cannot shorten '
+        'the list: every listed room shows, none is read', () async {
+      const lost = TuiGatewayRpcError(
+        'groups.state',
+        'Hermes connection changed during the group operation',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+      final rooms = [
+        for (var i = 0; i < 12; i++)
+          HostedGroupRoom.fromJson(_roomJson('room-$i', 'Room $i')),
+      ];
+      var roomReads = 0;
+      final s = await MissionControlRepository(
+        profilesLoader: () async => const [],
+        sessionsLoader: () async => const [],
+        boardLoader: () async => const KanbanBoard(columns: []),
+        hostedGroupsGateway: MissionHostedGroupsGateway.callbacks(
+          capabilities: () async => _parsedCaps(),
+          list: ({required generation}) async => rooms,
+          state: (roomId, {required generation}) async {
+            roomReads++;
+            if (roomId == 'room-0') return rooms.first;
+            throw lost;
+          },
+          log: (roomId, {required generation}) async {
+            roomReads++;
+            return _log(roomId, [_userEvent(roomId, 1)]);
+          },
+        ),
+      ).load();
+      expect(roomReads, 0);
+      expect(s.hostedGroupsCapability, MissionCapabilityState.available);
+      expect(_names(s), [for (final room in rooms) room.name]);
+      expect(s.hostedGroups.unreadableRooms, isEmpty);
+      expect(
+        [for (var i = 0; i < rooms.length; i++) s.hostedGroups.logAt(i)],
+        everyElement(isNull),
+      );
+    });
+
+    // Replaces «a repository seeded with the shown snapshot keeps a room it
+    // could not read as it was shown»: what a view read survives into the
+    // next repository (Home makes one per read) through the shown snapshot,
+    // and a room no view read stays unknown.
+    test('a repository seeded with the shown snapshot keeps what views '
+        'read, without reading any room', () async {
+      final viewed = _repo();
+      final listed = await viewed.load();
+      await viewed.readHostedGroup(listed.hostedGroups.rooms[1], generation: 1);
+      final shown = await viewed.load();
+      expect(shown.hostedGroups.logAt(0), isNull);
+      expect(shown.hostedGroups.logAt(1)!.events, hasLength(1));
+
+      final reads = <String>[];
+      final next = _repo(
+        reads: reads,
+        stateOf: (roomId) async {
+          if (roomId == 'room-b') throw timeout;
+          return HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A'));
+        },
+      )..seedHostedLogs(shown.hostedGroups);
+      final s = await next.load();
+      expect(_names(s), ['Room A', 'Room B']);
+      expect(s.hostedGroups.logAt(0), isNull);
+      expect(s.hostedGroups.logAt(1)!.events, hasLength(1));
+
+      // The next read uses yet another repository, seeded with that one's
+      // snapshot: B's content survives a second hop too.
+      final third = _repo(
+        reads: reads,
+        stateOf: (roomId) async {
+          if (roomId == 'room-b') throw timeout;
+          return HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A'));
+        },
+      )..seedHostedLogs(s.hostedGroups);
+      final again = await third.load();
+      expect(_names(again), ['Room A', 'Room B']);
+      expect(again.hostedGroups.logAt(1)!.events, hasLength(1));
+      expect(reads.where(_isRoomRead), isEmpty);
+    });
+
+    test('a newer seed replaces an older one: a room is never shown with an '
+        'older copy than the one shown', () async {
+      Future<MissionBackendSnapshot> viewedB(MissionControlRepository repo) async {
+        final listed = await repo.load();
+        await repo.readHostedGroup(listed.hostedGroups.rooms[1], generation: 1);
+        return repo.load();
+      }
+
+      final older = await viewedB(_repo());
+      final newer = await viewedB(
+        _repo(
+          stateOf: (roomId) async => HostedGroupRoom.fromJson(
+            _roomJson(roomId, roomId == 'room-a' ? 'Room A' : 'Room B',
+                latestSeq: 2),
+          ),
+          logOf: (roomId) async =>
+              _log(roomId, [_userEvent(roomId, 1), _userEvent(roomId, 2)]),
+        ),
+      );
+      expect(older.hostedGroups.logAt(1)!.events, hasLength(1));
+      expect(newer.hostedGroups.logAt(1)!.events, hasLength(2));
+      for (final seeds in [
+        [older, newer],
+        [newer, older],
+      ]) {
+        final reads = <String>[];
+        final repo = _repo(
+          reads: reads,
+          stateOf: (roomId) async {
+            if (roomId == 'room-b') throw timeout;
+            return HostedGroupRoom.fromJson(_roomJson(roomId, 'Room A'));
+          },
+        );
+        for (final seed in seeds) {
+          repo.seedHostedLogs(seed.hostedGroups);
+        }
+        final s = await repo.load();
+        expect(s.hostedGroups.logAt(1)!.events, hasLength(2));
+        expect(reads.where(_isRoomRead), isEmpty);
+      }
+    });
+
+    // The list no longer reads groups.state, so a server lacking it is told
+    // by its capabilities, as Desktop does (`hasSharedRoomSurface`).
+    test('a server that lacks groups.state is still not a room list', () async {
+      final reads = <String>[];
+      final repo = MissionControlRepository(
+        profilesLoader: () async => const [],
+        sessionsLoader: () async => const [],
+        boardLoader: () async => const KanbanBoard(columns: []),
+        hostedGroupsGateway: MissionHostedGroupsGateway.callbacks(
+          capabilities: () async => _parsedCaps(
+            methods: const [
+              'groups.capabilities', 'groups.list', 'groups.create',
+              'groups.send', 'groups.rename', 'groups.log', 'groups.disband',
+            ],
+          ),
+          list: ({required generation}) async {
+            reads.add('groups.list');
+            return [HostedGroupRoom.fromJson(_roomJson('room-a', 'Room A'))];
+          },
+          state: (roomId, {required generation}) async =>
+              throw const TuiGatewayRpcError(
+                'groups.state',
+                'Method not found',
+                code: -32601,
+              ),
+          log: (roomId, {required generation}) async =>
+              _log(roomId, [_userEvent(roomId, 1)]),
+        ),
+      );
+      final s = await repo.load();
+      expect(s.hostedGroupsCapability, MissionCapabilityState.unsupported);
+      expect(s.hostedGroups.rooms, isEmpty);
+      expect(reads, isEmpty, reason: 'nothing is listed without the surface');
+    });
+
+    test('Home: a failed rooms read keeps the rooms already shown', () async {
+      final connection = SavedConnection(
+        id: 'rooms',
+        label: 'Rooms',
+        host: 'localhost',
+        port: 8642,
+        apiKey: 'k',
+      );
+      const listTimeout = TuiGatewayRpcError(
+        'groups.list',
+        'Timeout waiting for JSON-RPC response',
+        failureKind: TuiGatewayRpcFailureKind.timeout,
+      );
+      var failList = false;
+      // Snapshots are stamped with the real clock (loadedAt).
+      var clock = DateTime.now();
+      final cache = MissionSnapshotCache();
+      final prewarm = MissionSnapshotPrewarm(
+        cache: cache,
+        now: () => clock,
+        sourceFactory: (_) => failList
+            ? _repoWith(list: ({required generation}) async => throw listTimeout)
+            : _repoWith(),
+      );
+      prewarm.refreshForHome(connection: connection);
+      await prewarm.claim(connection);
+      expect(_names(cache.read(connection)!), ['Room A', 'Room B']);
+
+      failList = true;
+      clock = clock.add(const Duration(minutes: 2));
+      prewarm.refreshForHome(connection: connection);
+      await prewarm.claim(connection);
+      final kept = cache.read(connection)!;
+      expect(kept.hostedGroupsCapability, MissionCapabilityState.unavailable);
+      expect(kept.failures['hostedGroups'], same(listTimeout));
+      expect(_names(kept), ['Room A', 'Room B']);
+
+      // The widget's Retry asks again at once (minAge zero), without
+      // waiting for the once-a-minute cadence.
+      failList = false;
+      prewarm.refreshForHome(connection: connection, minAge: Duration.zero);
+      await prewarm.claim(connection);
+      expect(
+        cache.read(connection)!.hostedGroupsCapability,
+        MissionCapabilityState.available,
+      );
+    });
+  });
+
   group('end to end over the real client', () {
-    test('a Desktop message with a valid image lists both rooms', () async {
-      final s = await _loadThroughWire(
+    // The list reads no room log; the image is read by the room's view, and
+    // the list keeps what that view read.
+    test('a Desktop message with a valid image lists both rooms, and the '
+        'room\'s view reads the image', () async {
+      await _withWireRepo(
         rooms: [_roomJson('room-a', 'Room A'), _roomJson('room-b', 'Room B')],
         events: {
           'room-b': [
@@ -1369,11 +1821,25 @@ void main() {
             ),
           ],
         },
+        body: (repo) async {
+          final s = await repo.load();
+          expect(_names(s), ['Room A', 'Room B']);
+          expect(_createOffered(s), isTrue);
+          expect(s.hostedGroups.unreadableRooms, isEmpty);
+          expect(s.hostedGroups.logAt(1), isNull, reason: 'no view read it');
+
+          final read = await repo.readHostedGroup(
+            s.hostedGroups.rooms[1],
+            generation: s.hostedGroups.capabilities!.generation,
+          );
+          expect(read.log!.events.single.attachments.single.name, 'foto.png');
+          final again = await repo.load();
+          expect(
+            again.hostedGroups.logAt(1)!.events.single.attachments.single.name,
+            'foto.png',
+          );
+        },
       );
-      expect(_names(s), ['Room A', 'Room B']);
-      expect(_createOffered(s), isTrue);
-      expect(s.hostedGroups.unreadableRooms, isEmpty);
-      expect(s.hostedGroups.logs[1].events.single.attachments.single.name, 'foto.png');
     });
 
     test('a list row Console rejects is kept apart; the rest loads', () async {
@@ -1391,9 +1857,12 @@ void main() {
       expect(s.hostedGroups.unreadableRooms.single.name, isNull);
     });
 
-    test('an attachment Console must reject (non-conformant id) hides only '
-        'that room', () async {
-      final s = await _loadThroughWire(
+    // Before, the list read every room's log and this room was reported
+    // unreadable. The list reads no log now: the room lists, and only its
+    // view's read is refused, with nothing of the log shown.
+    test('an attachment Console must reject (non-conformant id) no longer '
+        'hides the room: only its view read is refused', () async {
+      await _withWireRepo(
         rooms: [_roomJson('room-a', 'Room A'), _roomJson('room-b', 'Room B')],
         events: {
           'room-b': [
@@ -1406,12 +1875,23 @@ void main() {
             ),
           ],
         },
-      );
-      expect(_names(s), ['Room A']);
-      expect(_createOffered(s), isTrue);
-      expect(
-        s.hostedGroups.unreadableRooms.single.reason,
-        HostedGroupUnreadableReason.invalidData,
+        body: (repo) async {
+          final s = await repo.load();
+          expect(_names(s), ['Room A', 'Room B']);
+          expect(_createOffered(s), isTrue);
+          expect(s.hostedGroups.unreadableRooms, isEmpty);
+
+          await expectLater(
+            repo.readHostedGroup(
+              s.hostedGroups.rooms[1],
+              generation: s.hostedGroups.capabilities!.generation,
+            ),
+            throwsA(isA<GroupInvalidResponseError>()),
+          );
+          final again = await repo.load();
+          expect(_names(again), ['Room A', 'Room B']);
+          expect(again.hostedGroups.logAt(1), isNull);
+        },
       );
     });
   });

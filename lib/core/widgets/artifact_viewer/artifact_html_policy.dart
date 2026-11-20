@@ -218,15 +218,23 @@ final class _AndroidArtifactWebViewSettings
 }
 
 /// Applies the full lock-down to [controller] and wires [policy] as its only
-/// navigation delegate. Must complete before any content is loaded.
+/// navigation delegate. Must complete before any content is loaded. A page
+/// loaded from the network can hear when it finished ([onPageFinished]) or
+/// failed ([onWebResourceError]).
 Future<void> configureArtifactWebView(
   WebViewController controller, {
   required ArtifactHtmlNavigationPolicy policy,
   ArtifactWebViewSettingsFactory settingsFor = defaultArtifactWebViewSettings,
+  void Function(String url)? onPageFinished,
+  void Function(WebResourceError error)? onWebResourceError,
 }) async {
   await controller.setJavaScriptMode(JavaScriptMode.disabled);
   await controller.setNavigationDelegate(
-    NavigationDelegate(onNavigationRequest: policy.onNavigationRequest),
+    NavigationDelegate(
+      onNavigationRequest: policy.onNavigationRequest,
+      onPageFinished: onPageFinished,
+      onWebResourceError: onWebResourceError,
+    ),
   );
   await controller.enableZoom(true);
   final settings = settingsFor(controller);

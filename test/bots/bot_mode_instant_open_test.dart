@@ -134,18 +134,25 @@ void main() {
   setUpAll(loadInterFont);
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
-  test('rooms are read concurrently, bounded, in listed order', () async {
+  // Replaces «rooms are read concurrently, bounded, in listed order»: the
+  // room list is groups.list alone, as Desktop, so no room read (slow or
+  // not) runs to list it, and a held room read cannot delay the list.
+  test('the room list reads no room, so slow room reads cannot hold it; it '
+      'keeps the listed order', () async {
     final ids = [for (var i = 0; i < 8; i++) 'room-$i'];
     final gateway = _SlowGateway(ids)..gate = Completer<void>();
     final repository = _repository(gateway);
-    final load = repository.load();
-    await Future<void>.delayed(Duration.zero);
-    await Future<void>.delayed(Duration.zero);
-    expect(gateway.maxInFlight, MissionControlRepository.roomReadConcurrency);
-    gateway.gate!.complete();
-    final snapshot = await load;
+    // Completes with every room read still held.
+    final snapshot = await repository.load();
+    expect(gateway.maxInFlight, 0);
+    expect(gateway.sinceCalls, isEmpty);
     expect([for (final r in snapshot.hostedGroups.rooms) r.roomId], ids);
-    expect(snapshot.hostedGroups.logs, hasLength(8));
+    expect(
+      [for (var i = 0; i < ids.length; i++) snapshot.hostedGroups.logAt(i)],
+      everyElement(isNull),
+      reason: 'no view read them: unknown, not empty',
+    );
+    gateway.gate!.complete();
     repository.close();
   });
 
@@ -154,6 +161,11 @@ void main() {
     () async {
       final gateway = _SlowGateway(['room-a', 'room-b']);
       final first = _repository(gateway);
+      final listed = await first.load();
+      // The views of both rooms read them.
+      for (final room in listed.hostedGroups.rooms) {
+        await first.readHostedGroup(room, generation: 1);
+      }
       final seen = await first.load();
       first.close();
       expect(gateway.sinceCalls, {
@@ -162,13 +174,22 @@ void main() {
       });
 
       gateway.sinceCalls.clear();
+      gateway.maxInFlight = 0;
       final reopened = _repository(gateway)..seedHostedLogs(seen.hostedGroups);
       final again = await reopened.load();
-      expect(gateway.sinceCalls, {
-        'room-a': [8],
-        'room-b': [8],
-      }, reason: 'only the delta after what the user already saw');
-      expect(again.hostedGroups.logs.first.events, hasLength(8));
+      expect(gateway.maxInFlight, 0, reason: 'the list reads no room');
+      expect(gateway.sinceCalls, isEmpty);
+      expect(again.hostedGroups.logAt(0)?.events, hasLength(8));
+      expect(again.hostedGroups.logAt(1)?.events, hasLength(8));
+
+      // A view opened again resumes after what the user already saw: its
+      // state shows nothing new, so no log page is read at all.
+      final read = await reopened.readHostedGroup(
+        again.hostedGroups.rooms.first,
+        generation: 1,
+      );
+      expect(gateway.sinceCalls, isEmpty, reason: 'never pages from 0');
+      expect(read.log?.events, hasLength(8));
       reopened.close();
     },
   );

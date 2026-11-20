@@ -119,7 +119,7 @@ void main() {
   test(
     'the recommended way is the old assistant taking back its own bridge',
     () {
-      const raw = 'https://raw.githubusercontent.com/xP3ta/hermes-setup/main';
+      const raw = 'https://raw.githubusercontent.com/xP3ta/hermes-setup/setup-v1.6.0';
       const unix =
           'curl -fsSL $raw/hermes-mobile-setup.sh | sh -s -- --retire-bridge';
       expect(bridgeRetireCommand(BridgeHost.linux), unix);

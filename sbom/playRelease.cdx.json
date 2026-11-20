@@ -3,6 +3,78 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
+      "bom-ref": "pkg:github/BinomialLLC/basis_universal@ba1c3e40f1d434ebaf9a167b44e9b11d2bf0f765",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c8035f8e3895a91e1fd516e16811211ffa6937eb2289cad9f70d0307de01f551"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0 AND BSD-3-Clause"
+        }
+      ],
+      "name": "basis-universal-transcoder",
+      "properties": [
+        {
+          "name": "hermes.dependency.source",
+          "value": "vendored"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "assets/viewers/basis-universal-LICENSE.txt"
+        },
+        {
+          "name": "hermes.vendored.paths",
+          "value": "assets/viewers/basis_transcoder.js,assets/viewers/basis_transcoder.wasm"
+        },
+        {
+          "name": "hermes.vendored.files",
+          "value": "2"
+        }
+      ],
+      "purl": "pkg:github/BinomialLLC/basis_universal@ba1c3e40f1d434ebaf9a167b44e9b11d2bf0f765",
+      "type": "library",
+      "version": "2021-04-15-ba1c3e4"
+    },
+    {
+      "bom-ref": "pkg:github/google/draco@1.5.6",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d93afa851819f716b989be100e5ef62b8f81dfa56f7ed749c5bb642705f3729f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "draco-decoder",
+      "properties": [
+        {
+          "name": "hermes.dependency.source",
+          "value": "vendored"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "assets/viewers/draco-LICENSE.txt"
+        },
+        {
+          "name": "hermes.vendored.paths",
+          "value": "assets/viewers/draco_wasm_wrapper.js,assets/viewers/draco_decoder.wasm"
+        },
+        {
+          "name": "hermes.vendored.files",
+          "value": "2"
+        }
+      ],
+      "purl": "pkg:github/google/draco@1.5.6",
+      "type": "library",
+      "version": "1.5.6"
+    },
+    {
       "bom-ref": "pkg:github/novnc/noVNC@v1.5.0",
       "hashes": [
         {
@@ -6397,7 +6469,7 @@
       "version": "2.2.0"
     },
     {
-      "bom-ref": "pkg:pub/hermes_android@1.4.1+14022",
+      "bom-ref": "pkg:pub/hermes_android@1.4.2+14023",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -6418,9 +6490,9 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.4.1+14022",
+      "purl": "pkg:pub/hermes_android@1.4.2+14023",
       "type": "application",
-      "version": "1.4.1+14022"
+      "version": "1.4.2+14023"
     },
     {
       "bom-ref": "pkg:pub/highlight@0.7.0",
@@ -7811,7 +7883,7 @@
       "properties": [
         {
           "name": "hermes.dependency.kind",
-          "value": "transitive"
+          "value": "direct"
         },
         {
           "name": "hermes.dependency.source",
@@ -10946,6 +11018,7 @@
         "pkg:pub/package_info_plus@8.3.1",
         "pkg:pub/path_provider@2.1.5",
         "pkg:pub/plugin_platform_interface@2.1.8",
+        "pkg:pub/pointycastle@4.0.0",
         "pkg:pub/qr_code_scanner_plus@2.2.0",
         "pkg:pub/record@6.2.1",
         "pkg:pub/share_plus@10.1.4",
@@ -10965,7 +11038,7 @@
         "pkg:pub/whisper_ggml_plus@1.5.2",
         "pkg:pub/xterm@4.0.0"
       ],
-      "ref": "pkg:pub/hermes_android@1.4.1+14022"
+      "ref": "pkg:pub/hermes_android@1.4.2+14023"
     },
     {
       "dependsOn": [
@@ -12172,7 +12245,7 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:pub/hermes_android@1.4.1+14022",
+      "bom-ref": "pkg:pub/hermes_android@1.4.2+14023",
       "licenses": [
         {
           "expression": "GPL-3.0-only"
@@ -12193,14 +12266,14 @@
           "value": "LICENSE"
         }
       ],
-      "purl": "pkg:pub/hermes_android@1.4.1+14022",
+      "purl": "pkg:pub/hermes_android@1.4.2+14023",
       "type": "application",
-      "version": "1.4.1+14022"
+      "version": "1.4.2+14023"
     },
     "properties": [
       {
         "name": "hermes.input.sha256",
-        "value": "889a177af0834208e08decfb16b3c36e40eec6c45d76d471da041261084b65d9"
+        "value": "5b03b5577ad211b842eae3215e4e8a8abe5a1c151e48c63ae103394ecf61db59"
       },
       {
         "name": "hermes.android.variant",
@@ -12212,7 +12285,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:62d9b0ec-cf67-456f-a9c2-317f573fe671",
+  "serialNumber": "urn:uuid:4eb1d707-199d-408f-aa8b-cedf12fc0b7d",
   "specVersion": "1.6",
   "version": 1
 }

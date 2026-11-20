@@ -783,6 +783,11 @@ class DesktopUsageStats {
   final int? contextMax;
   final double? contextPercent;
   final double? costUsd;
+
+  /// The session's prompt-cache hit rate, 0-100, as Hermes rounds it
+  /// (`cache_hit_pct`, `tui_gateway/server.py` `_get_usage`); absent until
+  /// the provider reported cache reads.
+  final int? cacheHitPercent;
   final Map<String, dynamic> raw;
 
   const DesktopUsageStats({
@@ -796,6 +801,7 @@ class DesktopUsageStats {
     this.contextMax,
     this.contextPercent,
     this.costUsd,
+    this.cacheHitPercent,
     this.raw = const {},
   });
 
@@ -812,6 +818,7 @@ class DesktopUsageStats {
       contextMax: _positiveInt(json['context_max']),
       contextPercent: _nonNegativeDouble(json['context_percent']),
       costUsd: _nonNegativeDouble(json['cost_usd']),
+      cacheHitPercent: _percentInt(json['cache_hit_pct']),
       raw: _freezeExtras(json, _usageParsedKeys),
     );
   }
@@ -830,6 +837,7 @@ class DesktopUsageStats {
           contextMax == other.contextMax &&
           contextPercent == other.contextPercent &&
           costUsd == other.costUsd &&
+          cacheHitPercent == other.cacheHitPercent &&
           _deepJsonEquals(raw, other.raw);
 
   @override
@@ -844,8 +852,17 @@ class DesktopUsageStats {
     contextMax,
     contextPercent,
     costUsd,
+    cacheHitPercent,
     _deepJsonHash(raw),
   );
+}
+
+/// A 0-100 share Hermes already rounded; null when absent or out of range.
+int? _percentInt(Object? value) {
+  if (value is! num || !value.isFinite || value < 0 || value > 100) {
+    return null;
+  }
+  return value.round();
 }
 
 String? _stringValue(Object? value) => value is String ? value : null;
@@ -1222,4 +1239,5 @@ const _usageParsedKeys = <String>{
   'context_max',
   'context_percent',
   'cost_usd',
+  'cache_hit_pct',
 };

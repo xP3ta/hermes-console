@@ -8,7 +8,7 @@ import 'package:hermes_android/core/services/pairing_link.dart';
 import 'support/onboarding_fakes.dart';
 
 const _unixSetup =
-    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/'
+    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/setup-v1.6.0/'
     'hermes-dashboard-setup.sh | sh';
 
 void main() {

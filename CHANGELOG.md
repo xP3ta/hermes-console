@@ -3,6 +3,104 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.4.2 (14023) — 2026-11-20
+
+Console 1.4.2 is a corrective release. It fixes signing in again, rooms,
+attachments and the viewers, brings several chat behaviours in line with
+Hermes Desktop, and uses less memory and less data in the background. It
+still talks only to the Dashboard.
+
+### Fixed
+
+- *Rooms, Bots and Cron stuck on «Could not load» after signing in again.*
+  When the Dashboard session had expired and you signed in again, Home kept
+  showing «Could not load» (and Bots stayed empty) until the app was
+  restarted. Every connection that had stopped on «sign in again» now
+  reconnects as soon as the sign-in is saved, also the one of the background
+  service, and also when the new sign-in uses another password or another
+  sign-in method.
+- *«The turn could not be saved».* A chat whose first read of the phone's
+  secure storage failed kept refusing to send until you left and came back.
+  The send now reads it again.
+- *One slow room no longer hides every room.* The room list is the
+  server's own list and nothing else, as in Hermes Desktop: no room's
+  conversation is read to list it. Bots reads the list again every 10 s
+  while it is on screen, when the connection comes back and after a room is
+  disbanded; a read that fails keeps the list shown. A row shows its name,
+  members and age; its preview and its working / needs-you state are what
+  the room showed the last time you opened it in this session.
+- *A room's conversation is read while the room is open.* A room not opened
+  yet in this session says it is loading until its first read, and nothing
+  in it counts as seen before it is on screen. On servers that push room
+  changes (`groups.changed`), an open room updates on the push.
+- *Files posted in a room* through the room's own store can be opened, saved
+  and shared (they only said «open it on Hermes Desktop»).
+- *An image attached through Files is an image*: it shows its thumbnail in
+  the composer and in the message, and the model sees it. Images can be up
+  to 25 MB, as the server allows.
+- *Your message no longer shows what Hermes adds for the model*: the
+  «Attached Context» block and the «Image attached at …» lines with server
+  paths are gone from the bubble, the prompt list and Copy, and are not sent
+  again when you edit or regenerate.
+- *A generated image is drawn once*, not as an empty broken box above the
+  picture.
+- *3D models.* Compressed models (Draco, Meshopt, KTX2 textures), the usual
+  «light» web exports, stayed grey for ever; they now draw, with decoders
+  packed in the app. Nothing is fetched from the network.
+- *A viewer never stays blank.* A model, diagram, page, image, PDF, audio or
+  video that cannot be shown says why and keeps Open with, Share, Save and,
+  when it can help, Retry.
+- *Approvals asked in parallel* wait in a queue instead of replacing each
+  other, and come back complete when a chat is resumed.
+- *A slow start of a turn* is no longer reported as failed after two minutes
+  while Hermes keeps running it.
+- *Deleting a chat whose turn is running* stops the turn first, also from
+  the bulk cleanup in Settings.
+- *Cron.* «Run now» no longer shows an error when the job takes more than a
+  few seconds; a run in flight shows as running and can be stopped; the
+  editor sets what a job does with the runs it missed; on a server with
+  several profiles the default profile lists only its own jobs.
+- *Webhooks and MCP servers* added or removed from a profile's page act on
+  that profile.
+- *The glow of the send and stop buttons* is no longer cut to a square.
+- *Lists that never answered* (profiles, rooms, projects, tools) stop
+  waiting at 30 s, as on Desktop, and offer Retry.
+
+### New
+
+- *Slash commands complete their arguments* (for example `/personality`),
+  and commands that only make sense in a terminal leave the palette.
+- *Tool progress*: a running MCP tool shows its percentage and message.
+- *Notices from the agent* are shown in the chat and stay until cleared when
+  Hermes marks them so; a renamed chat changes its title at once; the review
+  summary appears in the transcript; context figures update during a turn.
+- *A provider that is not set up* leads to the Models screen.
+- *Settings › Security › Messaging access*: approve or revoke the people who
+  asked to talk to your agent from a messaging platform.
+- *Settings › System*: run the server's doctor and security audit and read
+  their output.
+
+### Lighter
+
+- *Memory.* The chats kept for a fast start no longer live in the phone's
+  secure storage, which Android loads whole into memory: they are kept in
+  encrypted files, and Home, the attachment cleanup and the Cache screen no
+  longer decrypt everything stored. This is aimed at the out-of-memory
+  closes some phones had.
+- *Background data.* The background service follows the Kanban board's
+  events instead of downloading the whole board every cycle, and Home no
+  longer downloads every room's conversation once a minute.
+- *Diagnostics.* The diagnostic export says which kind of secure storage
+  operation failed (type and count only, never content).
+
+### For contributors
+
+- The pairing QR and the setup commands point at a tagged version of the
+  setup script (`setup-v1.6.0`).
+- Pull request checks run in parallel shards.
+- Room parsers are tested against a snapshot of every room shape the server
+  sends.
+
 ## 1.4.1 (14022) — 2026-11-18
 
 Console 1.4.1 fixes the problems reported on the 1.4.0 Reddit thread: rooms

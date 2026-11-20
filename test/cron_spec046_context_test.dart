@@ -124,6 +124,8 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
+      // Each detail refresh reads the job's run history, which only the
+      // detail asks for (the job itself comes from the job list).
       var detailReads = 0;
       final client = DashboardClient(
         host: 'hermes.local',
@@ -134,10 +136,10 @@ void main() {
             return http.Response(jsonEncode([_job()]), 200);
           }
           if (request.url.path == '/api/cron/jobs/nightly-report') {
-            detailReads += 1;
             return http.Response(jsonEncode(_job()), 200);
           }
           if (request.url.path == '/api/cron/jobs/nightly-report/runs') {
+            detailReads += 1;
             return http.Response(jsonEncode({'runs': []}), 200);
           }
           return http.Response('{}', 404);

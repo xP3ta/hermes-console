@@ -95,4 +95,41 @@ void main() {
     expect(AppErrorLog.recent, hasLength(AppErrorLog.capacity));
     expect(AppErrorLog.recent.last.errorType, 'String');
   });
+
+  test('secure-storage failures are counted per operation and error type, '
+      'and only the most recent kinds are kept', () {
+    SecureStorageDiagnostics.resetForTesting();
+    addTearDown(SecureStorageDiagnostics.resetForTesting);
+    final errors = <Object>[
+      StateError('private'),
+      ArgumentError('private'),
+      const FormatException('private'),
+    ];
+    final kinds = [
+      for (final operation in SecureStorageOperation.values)
+        for (final error in errors) (operation, error),
+    ];
+    expect(kinds.length, greaterThan(SecureStorageDiagnostics.capacity));
+    for (final (operation, error) in kinds) {
+      SecureStorageDiagnostics.record(operation, error);
+    }
+    final newest = kinds.skip(kinds.length - SecureStorageDiagnostics.capacity);
+
+    expect(
+      SecureStorageDiagnostics.recent.map((f) => (f.operation, f.errorType)),
+      [for (final (op, error) in newest) (op, '${error.runtimeType}')],
+    );
+
+    // The oldest kept kind fails again: one entry, counted twice, now the
+    // most recent; nothing else is dropped.
+    final (operation, error) = newest.first;
+    SecureStorageDiagnostics.record(operation, error);
+    final recent = SecureStorageDiagnostics.recent;
+    expect(recent, hasLength(SecureStorageDiagnostics.capacity));
+    expect(recent.last.operation, operation);
+    expect(recent.last.errorType, '${error.runtimeType}');
+    expect(recent.last.count, 2);
+    expect(recent.last.lastAt.isBefore(recent.last.firstAt), isFalse);
+    expect(recent.where((f) => f.count == 2), hasLength(1));
+  });
 }

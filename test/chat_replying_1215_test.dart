@@ -791,6 +791,66 @@ void main() {
       await tearDownChat(tester, gateway);
     });
 
+    testWidgets('a running tool says its live progress beside its clock, as '
+        'Desktop does, and stops saying it once it finished', (tester) async {
+      final gateway = _StreamingGateway();
+      await startTurn(tester, gateway);
+      gateway.emit('message.start');
+      await settle(tester);
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-mesh',
+        'name': 'terminal',
+        'args': {'command': 'make mesh'},
+      });
+      await settle(tester);
+      // agent/tool_progress_relay.py tool_progress_payload.
+      gateway.emit('tool.progress', const {
+        'tool_id': 'call-mesh',
+        'name': 'terminal',
+        'progress': 21.0,
+        'total': 50,
+        'percent': 42.0,
+        'message': 'refining mesh',
+      });
+      await settle(tester);
+      await openInlineDetails(tester);
+      final progress = find.byKey(
+        const ValueKey('turn-step-progress-call-mesh'),
+      );
+      expect(progress, findsOneWidget);
+      expect(tester.widget<Text>(progress).data, '42% · refining mesh');
+      expect(
+        tester.getSemantics(stepCard('call-mesh')).label,
+        contains('42% · refining mesh'),
+      );
+
+      // Without a total there is no percent: the message alone.
+      gateway.emit('tool.progress', const {
+        'tool_id': 'call-mesh',
+        'name': 'terminal',
+        'progress': 3.0,
+        'total': null,
+        'percent': null,
+        'message': 'uploading',
+      });
+      await settle(tester);
+      expect(tester.widget<Text>(progress).data, 'uploading');
+
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-mesh',
+        'name': 'terminal',
+      });
+      await settle(tester);
+      expect(stepCard('call-mesh'), findsOneWidget);
+      expect(progress, findsNothing);
+      expect(
+        find.textContaining('uploading', findRichText: true),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
     testWidgets(
       'lists the plan in flight: bar, done folded, current, pending',
       (tester) async {

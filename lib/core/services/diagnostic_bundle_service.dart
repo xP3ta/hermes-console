@@ -275,6 +275,9 @@ class DiagnosticBundleInput {
   final Map<DiagnosticCacheKind, DiagnosticCacheSnapshot> caches;
   final List<DiagnosticErrorEvent> recentErrors;
 
+  /// Local secure-storage failures ([SecureStorageDiagnostics]).
+  final List<SecureStorageFailure> secureStorage;
+
   const DiagnosticBundleInput({
     required this.appVersion,
     required this.buildNumber,
@@ -285,6 +288,7 @@ class DiagnosticBundleInput {
     this.turns = const DiagnosticTurnsSnapshot(),
     this.caches = const {},
     this.recentErrors = const [],
+    this.secureStorage = const [],
   });
 }
 
@@ -361,7 +365,26 @@ class DiagnosticBundleService {
         entry.key.name: entry.value.toJson(),
     },
     'recentErrors': errors.map((item) => item.toJson()).toList(),
+    'secureStorage': _secureStorageJson(input.secureStorage),
   };
+
+  /// Most recent first: operation, error type, how often and when.
+  static List<Map<String, dynamic>> _secureStorageJson(
+    List<SecureStorageFailure> failures,
+  ) {
+    final newestFirst = failures.toList()
+      ..sort((a, b) => b.lastAt.compareTo(a.lastAt));
+    return [
+      for (final item in newestFirst.take(SecureStorageDiagnostics.capacity))
+        {
+          'operation': item.operation.name,
+          'errorType': _safeTypeName(item.errorType),
+          'count': max(1, item.count),
+          'firstAt': item.firstAt.toUtc().toIso8601String(),
+          'lastAt': item.lastAt.toUtc().toIso8601String(),
+        },
+    ];
+  }
 
   Future<File> write(DiagnosticBundle bundle) async {
     final bytes = utf8.encode(bundle.preview);

@@ -6,7 +6,7 @@
 //   GET    /api/cron/delivery-targets
 //   GET    /api/cron/blueprints
 //   GET    /api/model/options
-//   POST   /api/cron/jobs | /pause | /resume | /trigger
+//   POST   /api/cron/jobs | /pause | /resume | /trigger | /cancel
 //   PUT    /api/cron/jobs/:id
 //   DELETE /api/cron/jobs/:id
 import 'package:hermes_android/core/design/hicons.dart';
@@ -135,6 +135,16 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   bool _foreground = true;
   bool _initialJobOpened = false;
   bool _legacyAllProfilesFallback = false;
+
+  /// Pending Stops by job id: the attempt each one targets, '' until the
+  /// cancel route names it.
+  final Map<String, String> _stops = {};
+
+  /// Jobs this screen started ("Run now" still running) or is stopping. The
+  /// list is read every [cronLiveRunPollInterval] while one of them has a
+  /// run in flight, as Desktop watches its selected job.
+  final Set<String> _watchedRuns = {};
+  Timer? _livePoll;
 
   DashboardDependencyFailure _dependencyFailure =
       DashboardDependencyFailure.other;
@@ -283,6 +293,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     if (!_started || profile != _profile) {
       _started = true;
       _profile = profile;
+      _forgetRuns();
       _repository = CronRepository(
         _client,
         profile: profile,
@@ -303,6 +314,8 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       if (state != AppLifecycleState.inactive) {
         _refreshTimer?.cancel();
         _refreshTimer = null;
+        _livePoll?.cancel();
+        _livePoll = null;
       }
       _eventReconnectTimer?.cancel();
       _eventReconnectTimer = null;
@@ -319,6 +332,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     _eventRefreshDebounce?.cancel();
     _eventReconnectTimer?.cancel();
     _eventStableTimer?.cancel();
+    _livePoll?.cancel();
     unawaited(_eventSubscription?.cancel());
     unawaited(_ownedEventClient?.close());
     _searchController.dispose();
@@ -362,6 +376,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         _error = null;
         _legacyAllProfilesFallback = listing.usedLegacyActiveFallback;
       });
+      _settleRuns(jobs);
       _openInitialJobIfAvailable(jobs);
     } catch (error) {
       if (!mounted) return;
@@ -376,8 +391,90 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       if (_refreshQueued && mounted) {
         _refreshQueued = false;
         unawaited(_loadJobs(showLoader: false));
+      } else if (mounted) {
+        _armLivePoll();
       }
     }
+  }
+
+  /// Settles the pending Stops against a fresh listing (Desktop
+  /// `useCronRunStop.settle`) and stops watching runs that have ended.
+  void _settleRuns(List<CronJob> jobs) {
+    CronJob? listed(String id) {
+      for (final job in jobs) {
+        if (job.id == id) return job;
+      }
+      return null;
+    }
+
+    final s = Strings.of(context);
+    for (final MapEntry(key: id, value: target) in [..._stops.entries]) {
+      final outcome = cronStopOutcome(listed(id), target);
+      if (outcome == CronStopOutcome.pending) continue;
+      _stops.remove(id);
+      AppFeedback.of(context).notify(
+        FeedbackKind.routine,
+        outcome == CronStopOutcome.cancelled
+            ? s.crnRunStopped
+            : s.crnRunFinishedFirst,
+      );
+    }
+    _watchedRuns.removeWhere(
+      (id) => !_stops.containsKey(id) && listed(id)?.runInFlight != true,
+    );
+  }
+
+  /// One read [cronLiveRunPollInterval] after the last one ended, while a
+  /// watched run is live or a Stop is pending; never overlapping.
+  void _armLivePoll() {
+    _livePoll?.cancel();
+    _livePoll = null;
+    if (_watchedRuns.isEmpty && _stops.isEmpty) return;
+    _livePoll = Timer(cronLiveRunPollInterval, () {
+      _livePoll = null;
+      if (_refreshAllowed) unawaited(_loadJobs(showLoader: false));
+    });
+  }
+
+  /// A Stop sent for another profile or scope is no evidence about this
+  /// listing: dropped, as Desktop drops a Stop left behind by a switch.
+  void _forgetRuns() {
+    _stops.clear();
+    _watchedRuns.clear();
+    _livePoll?.cancel();
+    _livePoll = null;
+  }
+
+  /// Stops [job]'s live run (Desktop `useCronRunStop.stop`), then reads the
+  /// list until that attempt has finished.
+  Future<void> _stopRun(CronJob job) async {
+    if (_mutationsDisabled) return _showMutationsDisabledNotice();
+    if (_stops.containsKey(job.id)) return;
+    final s = Strings.of(context);
+    final feedback = AppFeedback.of(context);
+    setState(() {
+      _stops[job.id] = '';
+      _watchedRuns.add(job.id);
+    });
+    try {
+      final result = await _repository.cancelRun(job);
+      if (!mounted) return;
+      if (!result.cancelled) {
+        setState(() => _stops.remove(job.id));
+        feedback.notify(FeedbackKind.routine, s.crnNothingToStop);
+      } else if (_stops.containsKey(job.id)) {
+        _stops[job.id] = result.executionId;
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _stops.remove(job.id));
+      _refreshIfMissing(error);
+      feedback.notify(
+        FeedbackKind.error,
+        s.crnStopFailed(localizedApiError(s, error)),
+      );
+    }
+    if (mounted) unawaited(_loadJobs(showLoader: false));
   }
 
   String get _profileOrDefault => _profile.isEmpty ? 'default' : _profile;
@@ -400,6 +497,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   void _selectProfileScope(Set<CronProfileScope> selection) {
     final scope = selection.firstOrNull;
     if (scope == null || scope == _profileScope) return;
+    _forgetRuns();
     setState(() {
       _profileScope = scope;
       _legacyAllProfilesFallback = false;
@@ -485,6 +583,14 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       AppFeedback.of(
         context,
       ).notify(FeedbackKind.routine, Strings.of(context).crnJobTriggered);
+    } on CronRunInProgress {
+      // Started and still running: the list is read until it ends.
+      if (!mounted) return;
+      AppFeedback.of(
+        context,
+      ).notify(FeedbackKind.routine, Strings.of(context).crnJobTriggered);
+      _watchedRuns.add(job.id);
+      unawaited(_loadJobs(showLoader: false));
     } catch (error) {
       _showFailure(error);
     }
@@ -644,6 +750,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
                   deliver: values.deliver,
                   model: values.model,
                   provider: values.provider,
+                  catchUp: values.catchUp ?? CronCatchUp.serverDefault,
                 )
               : await _repository.update(
                   job,
@@ -653,6 +760,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
                   deliver: values.deliver,
                   model: values.model,
                   provider: values.provider,
+                  catchUp: values.catchUp,
                 );
         case _BlueprintCronResult(:final blueprint, :final values):
           updated = await _repository.instantiateBlueprint(blueprint, values);
@@ -755,16 +863,27 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
 
   Future<void> _showJobMenu(CronJob job, BuildContext anchor) async {
     final s = Strings.of(context);
+    final stopping = _stops.containsKey(job.id);
     final action = await showHermesMenu<String>(
       context: context,
       originRect: hermesOriginOf(anchor),
       surfaceKey: ValueKey('cron-job-menu-surface-${job.id}'),
       actions: [
-        HermesAction(
-          value: 'trigger',
-          icon: HIcons.play_arrow_rounded,
-          label: s.crnRunNow,
-        ),
+        // A live run offers Stop instead: the server refuses a second run
+        // of a job that is running.
+        if (job.runInFlight || stopping)
+          HermesAction(
+            key: ValueKey('cron-job-stop-${job.id}'),
+            value: 'stop',
+            icon: HIcons.stop_rounded,
+            label: stopping ? s.crnStopping : s.crnStop,
+          )
+        else
+          HermesAction(
+            value: 'trigger',
+            icon: HIcons.play_arrow_rounded,
+            label: s.crnRunNow,
+          ),
         HermesAction(
           value: 'edit',
           icon: HIcons.edit_outlined,
@@ -786,6 +905,8 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       ],
     );
     switch (action) {
+      case 'stop':
+        await _stopRun(job);
       case 'trigger':
         await _trigger(job);
       case 'edit':
@@ -1202,6 +1323,9 @@ class _CronEditorValues {
   final String model;
   final String provider;
 
+  /// Null when the user left the missed-run choice as it was.
+  final CronCatchUp? catchUp;
+
   const _CronEditorValues({
     required this.name,
     required this.prompt,
@@ -1209,6 +1333,7 @@ class _CronEditorValues {
     required this.deliver,
     required this.model,
     required this.provider,
+    this.catchUp,
   });
 }
 
@@ -1254,6 +1379,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
   late String _schedule;
   late String _deliver;
   late HermesModelChoice _model;
+  late CronCatchUp _catchUp;
   late CronNotifyPolicy _policy;
   String? _error;
   late final String _initialName;
@@ -1261,6 +1387,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
   late final String _initialSchedule;
   late final String _initialDeliver;
   late final HermesModelChoice _initialModel;
+  late final CronCatchUp _initialCatchUp;
 
   bool get _editing => widget.job != null;
   bool get _scriptOnly => widget.job?.isScriptOnly == true;
@@ -1287,6 +1414,7 @@ class _CronEditorPageState extends State<_CronEditorPage> {
       _schedule != _initialSchedule ||
       _deliver != _initialDeliver ||
       _model != _initialModel ||
+      _catchUp != _initialCatchUp ||
       _policy != widget.initialPolicy;
 
   void _onTextChanged() {
@@ -1314,6 +1442,8 @@ class _CronEditorPageState extends State<_CronEditorPage> {
     _model = job?.model.isNotEmpty == true
         ? HermesModelChoice(job!.provider, job.model)
         : _defaultModel;
+    _catchUp = job?.catchUp ?? CronCatchUp.serverDefault;
+    _initialCatchUp = _catchUp;
     _policy = widget.initialPolicy;
     _initialName = _nameController.text;
     _initialPrompt = _promptController.text;
@@ -1494,10 +1624,38 @@ class _CronEditorPageState extends State<_CronEditorPage> {
           deliver: _deliver,
           model: _model.isDefault ? '' : _model.model,
           provider: _model.isDefault ? '' : _model.provider,
+          catchUp: _catchUp == _initialCatchUp ? null : _catchUp,
         ),
         _policy,
       ),
     );
+  }
+
+  String _catchUpLabel(Strings s, CronCatchUp choice) => switch (choice) {
+    CronCatchUp.serverDefault => s.crnCatchUpDefault,
+    CronCatchUp.run => s.crnCatchUpRun,
+    CronCatchUp.skip => s.crnCatchUpSkip,
+  };
+
+  /// Desktop `CatchUpField` (apps/desktop/src/app/cron/catch-up-field.tsx).
+  Future<void> _pickCatchUp(BuildContext anchor) async {
+    final s = Strings.of(context);
+    final picked = await showHermesOptions<CronCatchUp>(
+      context: context,
+      surfaceKey: const ValueKey('cron-catch-up-surface'),
+      originRect: hermesOriginOf(anchor),
+      title: s.crnCatchUpLabel,
+      selected: _catchUp,
+      options: [
+        for (final choice in CronCatchUp.values)
+          HermesOption(
+            key: ValueKey('cron-catch-up-${choice.name}'),
+            value: choice,
+            label: _catchUpLabel(s, choice),
+          ),
+      ],
+    );
+    if (picked != null && mounted) setState(() => _catchUp = picked);
   }
 
   Future<void> _save(_CronEditorResult result) async {
@@ -1682,6 +1840,16 @@ class _CronEditorPageState extends State<_CronEditorPage> {
                 onTap: () => _pickModel(anchor),
               ),
             ),
+          Builder(
+            builder: (anchor) => HermesSelectRow(
+              key: const ValueKey('cron-catch-up-row'),
+              icon: HIcons.history_rounded,
+              title: s.crnCatchUpLabel,
+              value: _catchUpLabel(s, _catchUp),
+              subtitle: s.crnCatchUpHint,
+              onTap: () => _pickCatchUp(anchor),
+            ),
+          ),
         ],
       ),
     ];

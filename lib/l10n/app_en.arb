@@ -1155,6 +1155,7 @@
   "chaVoiceModeTooltip": "Start voice conversation",
   "chaErrViewDetails": "view details",
   "chaErrHideDetails": "hide details",
+  "chaErrSetUpProvider": "Set up a provider",
   "chaModelServer": "Server model",
   "chaApproveAlways": "Always allow this agent action",
   "chaApproveOnce": "Approve an agent action",
@@ -2310,6 +2311,33 @@
   "crnStatusCompleted": "completed",
   "crnOpenFromConversation": "Open linked schedule",
   "crnRunNow": "Run now",
+  "crnStop": "Stop",
+  "crnStopping": "Stopping…",
+  "crnRunStopped": "Run cancelled",
+  "crnRunFinishedFirst": "Run finished before it could stop",
+  "crnNothingToStop": "No run in flight",
+  "crnStopFailed": "Could not stop the run: {error}",
+  "@crnStopFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "crnLastCancelled": "Last run cancelled",
+  "crnLastCancelledReason": "Last run cancelled: {reason}",
+  "@crnLastCancelledReason": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "crnCatchUpLabel": "Missed runs",
+  "crnCatchUpHint": "What to do with runs missed while Hermes was not running.",
+  "crnCatchUpDefault": "Use the default",
+  "crnCatchUpRun": "Run once when back",
+  "crnCatchUpSkip": "Skip them",
   "crnResume": "Resume",
   "crnPause": "Pause",
   "crnNoRuns": "No runs recorded.",
@@ -6433,6 +6461,32 @@
   "embedSvgLabel": "SVG image",
   "vwDiagramLabel": "Diagram",
   "vwModelLabel": "3D model",
+  "vwModelFailed": "This 3D model could not be drawn.",
+  "vwPreviewFailed": "This preview could not be drawn.",
+  "vwPreviewTimedOut": "It took too long to draw.",
+  "vwModelExternal": "This model needs files that did not come with it: {files}.",
+  "@vwModelExternal": {
+    "placeholders": {
+      "files": {
+        "type": "String"
+      }
+    }
+  },
+  "vwModelNotGltf": "This file is not a glTF model.",
+  "vwModelTooLarge": "This model is larger than {size}, too large to draw here. You can open it with another app or share it.",
+  "@vwModelTooLarge": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "vwPlaybackFailed": "This could not be played here. You can open it with another app or share it.",
+  "vwUnsupportedHere": "This file type can't be viewed inside the app.",
+  "vwModelNeedsWasm": "This model is compressed, and this phone's WebView cannot run its decoder. Updating Android System WebView fixes it.",
+  "vwModelNeedsWebGl": "This phone's WebView cannot draw 3D (WebGL 2 is off or missing).",
+  "vwPdfFailed": "This PDF could not be opened. It may be damaged or protected.",
+  "embedLoadFailed": "{service} could not be loaded.",
   "reactAdd": "React",
   "reactFailed": "Couldn't save the reaction",
   "reactSettingsTitle": "Reactions",
@@ -12593,5 +12647,102 @@
   "pb1215UnlistedChatsBody": "Hermes counts them in this folder, but they aren't regular chats of this profile: automated runs (in Conversations › Automation), sub-agent sessions or empty ones.",
   "subagentUiStatusNotActive": "{count, plural, other{Not active}}",
   "subagentUiResultUnavailable": "Final result unavailable",
-  "kluUsagePeriodDay": "24 h"
+  "kluUsagePeriodDay": "24 h",
+  "msgPairTitle": "Messaging access",
+  "msgPairSubtitle": "Approve or revoke who can message the bot",
+  "msgPairIntro": "Someone who messages a bot for the first time waits here until you approve them. Approval takes effect on their next message.",
+  "msgPairPending": "Pending requests ({count})",
+  "@msgPairPending": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApproved": "Approved users ({count})",
+  "@msgPairApproved": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApprove": "Approve",
+  "msgPairRevoke": "Revoke",
+  "msgPairRevokeTitle": "Revoke access",
+  "msgPairRevokeBody": "{name} will lose access and stop being recognized on their next message.",
+  "@msgPairRevokeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairJustNow": "just now",
+  "msgPairMinutesAgo": "{minutes} min ago",
+  "@msgPairMinutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairEmpty": "No one is waiting for approval and no one has been approved yet.",
+  "msgPairUnavailable": "This server does not offer messaging access management.",
+  "msgPairLoadFailed": "Could not load messaging access.",
+  "msgPairApprovedDone": "{name} approved. They are recognized automatically on their next message.",
+  "@msgPairApprovedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokedDone": "{name} revoked",
+  "@msgPairRevokedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairApproveFailed": "Failed to approve {name}",
+  "@msgPairApproveFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokeFailed": "Failed to revoke {name}",
+  "@msgPairRevokeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairLockedOut": "Too many failed approvals: this platform is locked out. Try again later.",
+  "msgPairVerifyApprove": "Verify to approve access",
+  "msgPairVerifyRevoke": "Verify to revoke access",
+  "srvCheckDoctor": "Run doctor",
+  "srvCheckDoctorSub": "Health-check the install, config, and providers",
+  "srvCheckAudit": "Security audit",
+  "srvCheckAuditSub": "Scan config and skills for risky settings",
+  "srvCheckRun": "Run",
+  "srvCheckRunning": "Running…",
+  "srvCheckLog": "Output",
+  "srvCheckFinished": "Finished",
+  "srvCheckFinishedCode": "Finished with exit code {code}",
+  "@srvCheckFinishedCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "srvCheckStillRunning": "Still running; stopped following it",
+  "srvCheckUnavailable": "This server cannot run it.",
+  "srvCheckStartFailed": "Could not start it.",
+  "srvCheckLost": "Could not follow the run. Run it again to see its output."
 }

@@ -1897,7 +1897,17 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
 
     try {
-      await _archive!.renameSession(session, trimmed);
+      await _archive!.renameSession(
+        session,
+        trimmed,
+        liveRuntime: _activeChats
+            ?.of(
+              widget.connection.id,
+              session.id,
+              profile: Session.profileOwner(session.profile),
+            )
+            ?.liveRuntimeRename,
+      );
     } catch (_) {
       if (!mounted) return;
       AppFeedback.of(
@@ -2053,10 +2063,17 @@ class _SessionListScreenState extends State<SessionListScreen>
     LinkedCronDeletionMode cronDeletion,
   ) {
     final ownerProfile = Session.profileOwner(session.profile);
+    final chat = _activeChats?.of(
+      widget.connection.id,
+      session.id,
+      profile: ownerProfile,
+    );
     return deleteSessionWithResolvedLineage(
       session,
-      deleteSession: (sessionId) =>
-          _client.deleteSession(sessionId, profile: ownerProfile),
+      deleteSession: (sessionId) async {
+        await chat?.endRuntimeBeforeDelete();
+        return _client.deleteSession(sessionId, profile: ownerProfile);
+      },
       cronDeletion: cronDeletion,
       deleteCronJob:
           !session.isJob || cronDeletion == LinkedCronDeletionMode.keepSchedule

@@ -1754,6 +1754,9 @@ class ChatTraceEvent {
   /// The gateway's own label of an MCP or connector call, when it sent one.
   final String? title;
 
+  /// What a running call reports of its progress (`42% · refining mesh`).
+  final String? progress;
+
   /// mp1215: the write a `memory` call describes, as projected from the
   /// gateway's own args/result. Only [MemoryWrite.landed] earns a marker.
   final MemoryWrite? memory;
@@ -1773,6 +1776,7 @@ class ChatTraceEvent {
     this.startedAt,
     this.duration,
     this.title,
+    this.progress,
     this.memory,
     this.output,
   });
@@ -2698,10 +2702,12 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
               startedAt: step.startedAt,
               clock: scope?.clock,
               toolName: event.label,
+              progress: event.progress,
               semanticsLabel: [
                 title,
                 ?step.detail,
                 s.stepsBarStatusRunning,
+                ?event.progress,
               ].join(', '),
               attachment: attachmentOf(event),
             ),

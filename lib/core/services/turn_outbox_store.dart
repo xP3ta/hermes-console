@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
+import 'app_error_log.dart';
 import 'app_lock_sensitive_read_fence.dart';
 
 import 'package:crypto/crypto.dart';
@@ -133,6 +134,17 @@ class AttachmentOwnershipCoordinator {
   static int _nextPendingOwner = 0;
   static final Object _ownershipZoneKey = Object();
 
+  /// The Keystore entry naming every stored draft (`ChatDraftStore` keeps
+  /// it; it also names the legacy v2 drafts found when it was built).
+  static const String draftIndexKey = 'chat_draft_index_v1';
+
+  /// Every draft key this isolate has written. Two index updates racing can
+  /// lose a name; a draft written here is still read by its name.
+  static final Set<String> _draftKeysWritten = {};
+
+  /// Called by `ChatDraftStore` before it writes the draft under [key].
+  static void noteDraftKeyWritten(String key) => _draftKeysWritten.add(key);
+
   static int? reservePendingOwner(Iterable<AttachmentDraft> attachments) {
     final owned = attachments
         .where((item) => item.uploadState != AttachmentUploadState.removed)
@@ -237,9 +249,27 @@ class AttachmentOwnershipCoordinator {
       AppLockSensitiveReadFence.current.ensureCurrent();
       admitted.ensureCurrent();
       final values = <Object?>[];
-      final secureEntries = await secure.readAll();
+      // By name: `readAll()` decrypts every secret of the app into one
+      // platform message (chat tails are megabytes), and this runs for each
+      // state of a send with attachments. With no draft index yet, nothing
+      // proves which drafts exist: then everything is read.
+      final names = await _draftNames(secure);
       AppLockSensitiveReadFence.current.ensureCurrent();
       admitted.ensureCurrent();
+      final Map<String, String> secureEntries;
+      if (names == null) {
+        secureEntries = await secure.readAll();
+        AppLockSensitiveReadFence.current.ensureCurrent();
+        admitted.ensureCurrent();
+      } else {
+        secureEntries = {};
+        for (final key in [TurnOutboxStore._storageKey, ...names]) {
+          final raw = await secure.read(key: key);
+          AppLockSensitiveReadFence.current.ensureCurrent();
+          admitted.ensureCurrent();
+          if (raw != null) secureEntries[key] = raw;
+        }
+      }
       for (final entry in secureEntries.entries) {
         final relevant =
             entry.key == 'chat_turn_outbox_v1' ||
@@ -262,6 +292,21 @@ class AttachmentOwnershipCoordinator {
     } catch (_) {
       return null;
     }
+  }
+
+  /// The drafts named by the index and those written by this isolate, or
+  /// null when there is no readable index.
+  static Future<Set<String>?> _draftNames(FlutterSecureStorage secure) async {
+    final raw = await secure.read(key: draftIndexKey);
+    if (raw == null) return null;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } catch (_) {
+      return null;
+    }
+    if (decoded is! List) return null;
+    return {...decoded.whereType<String>(), ..._draftKeysWritten};
   }
 
   static bool durableReferencesAttachment(
@@ -292,6 +337,7 @@ class AttachmentOwnershipCoordinator {
     _producerOwners.clear();
     _deferredCleanups.clear();
     _nextPendingOwner = 0;
+    _draftKeysWritten.clear();
   }
 
   static void _drain() {
@@ -654,15 +700,27 @@ class TurnOutboxStore
         }
       }),
     );
-    return saving.whenComplete(
-      () => AttachmentOwnershipCoordinator.withdrawPendingOwner(
-        pendingOwner,
-        _cleanupUnowned,
+    return SecureStorageDiagnostics.watch(
+      SecureStorageOperation.outboxSave,
+      saving.whenComplete(
+        () => AttachmentOwnershipCoordinator.withdrawPendingOwner(
+          pendingOwner,
+          _cleanupUnowned,
+        ),
       ),
     );
   }
 
   Future<List<PreparedTurn>> loadAllForChat(
+    String connectionId,
+    String sessionId, {
+    String? profile,
+  }) => SecureStorageDiagnostics.watch(
+    SecureStorageOperation.outboxRead,
+    _loadAllForChat(connectionId, sessionId, profile: profile),
+  );
+
+  Future<List<PreparedTurn>> _loadAllForChat(
     String connectionId,
     String sessionId, {
     String? profile,
@@ -797,6 +855,15 @@ class TurnOutboxStore
     String connectionId,
     String sessionId, {
     String? profile,
+  }) => SecureStorageDiagnostics.watch(
+    SecureStorageOperation.outboxRead,
+    _loadForChat(connectionId, sessionId, profile: profile),
+  );
+
+  Future<PreparedTurn?> _loadForChat(
+    String connectionId,
+    String sessionId, {
+    String? profile,
   }) => _serialized(() async {
     final outboxState = await _readState();
     final turns = outboxState.turns;
@@ -900,7 +967,12 @@ class TurnOutboxStore
   });
 
   @override
-  Future<void> delete(PreparedTurn turn) {
+  Future<void> delete(PreparedTurn turn) => SecureStorageDiagnostics.watch(
+    SecureStorageOperation.outboxDelete,
+    _delete(turn),
+  );
+
+  Future<void> _delete(PreparedTurn turn) {
     final normalized = _normalizedTurn(turn);
     _advanceMutationGeneration(
       _mutationScope(
@@ -971,6 +1043,21 @@ class TurnOutboxStore
   }
 
   Future<bool> isFailedBeforeAcceptanceDiscarded({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+    required String clientTurnId,
+  }) => SecureStorageDiagnostics.watch(
+    SecureStorageOperation.outboxRead,
+    _isFailedBeforeAcceptanceDiscarded(
+      connectionId: connectionId,
+      profile: profile,
+      sessionId: sessionId,
+      clientTurnId: clientTurnId,
+    ),
+  );
+
+  Future<bool> _isFailedBeforeAcceptanceDiscarded({
     required String connectionId,
     required String profile,
     required String sessionId,

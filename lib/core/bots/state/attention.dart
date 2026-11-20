@@ -201,7 +201,7 @@ final class AttentionSummary {
     for (var i = 0; i < snapshot.rooms.length; i++) {
       final room = snapshot.rooms[i];
       if (room.disbanded) continue;
-      final log = _logFor(snapshot, i, room);
+      final log = snapshot.logAt(i);
       rooms[room.roomId] = RoomAttention.derive(
         room: room,
         driverStatus: snapshot.driverStatusFor(room.roomId),
@@ -240,22 +240,4 @@ final class AttentionSummary {
     return result;
   }
 
-  static HostedGroupLogPage? _logFor(
-    HostedGroupsSnapshot snapshot,
-    int index,
-    HostedGroupRoom room,
-  ) {
-    if (index < snapshot.logs.length) {
-      final log = snapshot.logs[index];
-      if (log.events.isEmpty || log.events.first.roomId == room.roomId) {
-        return log;
-      }
-    }
-    for (final log in snapshot.logs) {
-      if (log.events.isNotEmpty && log.events.first.roomId == room.roomId) {
-        return log;
-      }
-    }
-    return null;
-  }
 }

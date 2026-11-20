@@ -109,6 +109,16 @@ SOFTWARE.
             'assets/viewers/model-viewer-LICENSE.txt',
           ),
         );
+        yield LicenseEntryWithLineBreaks(
+          const ['Draco'],
+          await rootBundle.loadString('assets/viewers/draco-LICENSE.txt'),
+        );
+        yield LicenseEntryWithLineBreaks(
+          const ['Basis Universal'],
+          await rootBundle.loadString(
+            'assets/viewers/basis-universal-LICENSE.txt',
+          ),
+        );
       });
       _appLicensesRegistered = true;
     }

@@ -596,6 +596,11 @@ abstract class HermesDesktopSessionCloseGateway {
   Future<bool> closeSession(String runtimeSessionId);
 }
 
+/// `session.title` on a live runtime; returns the title Hermes kept.
+abstract class HermesDesktopSessionTitleGateway {
+  Future<String> setSessionTitle(String runtimeSessionId, String title);
+}
+
 /// Recovery-only resume whose runtime anchor is committed by the caller only
 /// after its turn generation is still current.
 abstract class HermesDesktopRecoverySessionLifecycleGateway {
@@ -1658,6 +1663,7 @@ class TuiGatewayClient
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopSessionHistoryGateway,
         HermesDesktopSessionCloseGateway,
+        HermesDesktopSessionTitleGateway,
         SubagentWatchGateway,
         HermesDesktopRecoverySessionLifecycleGateway,
         HermesDesktopRosterBoundRecoveryGateway,
@@ -1740,6 +1746,42 @@ class TuiGatewayClient
   /// returns the typed `pending` branch. Keep a small transport margin so a
   /// valid server reply is not abandoned first by Console.
   static const sessionCompressRpcTimeout = Duration(seconds: 690);
+
+  /// Deadline of `approval.respond`, as in Hermes Desktop
+  /// (apps/desktop/src/store/prompts.ts
+  /// `APPROVAL_RESPOND_REQUEST_TIMEOUT_MS`): during a long model stream the
+  /// gateway's writes can stall while the approval is still pending, and it
+  /// waits 300 s for an answer. The generic deadline gave up first and told
+  /// the user the answer had failed when the server could still apply it.
+  static const approvalRespondRpcTimeout = Duration(seconds: 330);
+
+  /// Tests shorten [approvalRespondRpcTimeout].
+  static Duration? approvalRespondRpcTimeoutForTesting;
+
+  /// Deadline of the `prompt.submit` reply, as in Hermes Desktop
+  /// (`api/client.ts` `PROMPT_SUBMIT_REQUEST_TIMEOUT_MS`): the turn is
+  /// followed through its events, not through this reply, and a busy
+  /// gateway can take minutes to send it. Hermes' own turn ceiling
+  /// (`agent.gateway_timeout`, 1800 s) is the only point where it means the
+  /// turn was given up. A dropped socket still fails the request at once.
+  static const promptSubmitRpcTimeout = Duration(minutes: 30);
+
+  /// `approval.respond` with Desktop's deadline and its single re-send when
+  /// that deadline passes (`answerApproval`): the server pops the approval
+  /// before applying it, so a second resolve of one already applied is a
+  /// harmless `resolved: 0`.
+  Future<Map<String, dynamic>> _approvalRespond(
+    Map<String, dynamic> params,
+  ) async {
+    final timeout =
+        approvalRespondRpcTimeoutForTesting ?? approvalRespondRpcTimeout;
+    try {
+      return await _request('approval.respond', params, timeout: timeout);
+    } on TuiGatewayRpcError catch (error) {
+      if (error.failureKind != TuiGatewayRpcFailureKind.timeout) rethrow;
+      return _request('approval.respond', params, timeout: timeout);
+    }
+  }
 
   final SavedConnection _connection;
 
@@ -2056,7 +2098,66 @@ class TuiGatewayClient
            (heartbeatInterval > Duration.zero
                ? heartbeatInterval
                : const Duration(seconds: 15)),
-       _now = now ?? DateTime.now;
+       _now = now ?? DateTime.now {
+    _watchSignIns(this);
+  }
+
+  /// Live clients per connection, weakly held: a screen that drops its own
+  /// client without closing it must not be kept alive by this.
+  static final Map<String, Set<WeakReference<TuiGatewayClient>>> _live = {};
+  static bool _signInHooked = false;
+
+  static void _watchSignIns(TuiGatewayClient client) {
+    if (!_signInHooked) {
+      _signInHooked = true;
+      DashboardClient.addSignInStoredListener(_onSignInStored);
+    }
+    final refs = _live[client._connection.id] ??= {};
+    refs
+      ..removeWhere((ref) => ref.target?._closed ?? true)
+      ..add(WeakReference(client));
+  }
+
+  static void _onSignInStored(String connectionId) {
+    final refs = _live[connectionId];
+    if (refs == null) return;
+    for (final ref in refs.toList()) {
+      final client = ref.target;
+      if (client == null || client._closed) {
+        refs.remove(ref);
+        continue;
+      }
+      client._signedInAgain();
+    }
+    if (refs.isEmpty) _live.remove(connectionId);
+  }
+
+  /// Leases the shared pool holds on this socket ([SharedGatewayPool]): each
+  /// is an owner that wants it up.
+  int poolLeases = 0;
+
+  /// A sign-in of this connection was stored. Desktop disposes and redials
+  /// every socket of a connection whose credentials changed
+  /// (`use-gateway-boot.ts` `connections.onChanged` →
+  /// `disposeSecondariesForConnection` with `redial`), and the re-arm
+  /// forgets the rejected session (`store/gateway.ts` `rearmSecondary`
+  /// clears `reauthFailures`). Here a live socket stays (its ticket was
+  /// accepted); one stopped on the old credential forgets the refusal, the
+  /// status repaints, and the ones with an owner dial now. Without an owner
+  /// the next [connect] dials, since the latch is gone.
+  void _signedInAgain() {
+    if (_closed) return;
+    _dashboard.forgetRejectedAccess();
+    if (_connected) return;
+    final refused = _authRejected || _authLatchEpoch != null;
+    _authLatchEpoch = null;
+    _authRejected = false;
+    if (refused) _link.notify();
+    if (_backgroundParked || _parked) return;
+    if (redialWhenIdle || _redialGate != null || poolLeases > 0) {
+      unawaited(connectForeground().catchError((Object _) {}));
+    }
+  }
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -2395,6 +2496,9 @@ class TuiGatewayClient
     _heartbeatAwaitingReply = false;
     _resetLegacyEventRuntimeAnchor();
     late DashboardWebSocketAuth auth;
+    // The credential this dial is about to use. A login that lands while
+    // the request is on the wire must not be latched as refused.
+    final dialEpoch = _dashboard.credentialEpoch;
     try {
       auth = await _dashboard.webSocketAuth();
     } catch (error, stackTrace) {
@@ -2418,7 +2522,7 @@ class TuiGatewayClient
       _serverStarting =
           _dashboard.simpleConnect && isServerStartingError(error);
       _authLatchEpoch = _authRejected && _dashboard.simpleConnect
-          ? _dashboard.credentialEpoch
+          ? dialEpoch
           : null;
       if (generation == _socketGeneration) _noteTransportLoss(generation);
       Error.throwWithStackTrace(error, stackTrace);
@@ -3896,6 +4000,13 @@ class TuiGatewayClient
     _answeredApprovalServerRequestIds.clear();
   }
 
+  /// Desktop's deadline for an ordinary call
+  /// (`apps/desktop/src/api/client.ts` `DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS`),
+  /// given to the plain list reads a screen waits on with its spinner: a
+  /// read that hangs ends in that screen's error and Retry after 30 s, not
+  /// 120 s. Creates, disk and git work, uploads and turns keep their own.
+  static const listReadTimeout = Duration(seconds: 30);
+
   Future<Map<String, dynamic>> _request(
     String method,
     Map<String, dynamic> params, {
@@ -4573,6 +4684,7 @@ class TuiGatewayClient
           if (stagedImages.isNotEmpty) 'attachments': stagedImages,
         },
       ),
+      timeout: promptSubmitRpcTimeout,
     );
     if (result['voice_stopped'] == true) {
       throw _canonicalUnsupported(method, 'voice stop is not a turn');
@@ -4638,6 +4750,7 @@ class TuiGatewayClient
     final result = await _requestExclusiveSessionMutation(
       'prompt.submit',
       params,
+      timeout: promptSubmitRpcTimeout,
     );
     // Only a reply that started a turn releases: Hermes answers `streaming`
     // (methods_prompt.py:886); `redirected`/`steered`/`queued` (busy submit,
@@ -4753,6 +4866,7 @@ class TuiGatewayClient
     String method,
     Map<String, dynamic> params, {
     bool connectedOnly = false,
+    Duration timeout = const Duration(seconds: 120),
   }) async {
     if (!_capabilityCache.canAttempt(capability)) {
       throw TuiGatewayRpcError(
@@ -4767,9 +4881,9 @@ class TuiGatewayClient
         // Checked and sent in the same synchronous step: a socket that
         // dropped after the caller's own check is never redialled.
         _requireConnectedWithoutDialing(method);
-        result = await _requestConnected(method, params);
+        result = await _requestConnected(method, params, timeout: timeout);
       } else {
-        result = await _request(method, params);
+        result = await _request(method, params, timeout: timeout);
       }
       _capabilityCache.mark(
         capability,
@@ -5139,11 +5253,16 @@ class TuiGatewayClient
     try {
       for (var pageNumber = 0; pageNumber < _maxGroupListPages; pageNumber++) {
         final requestedOffset = nextOffset;
-        final result = await _requestGroupOnLease(proof.lease, 'groups.list', {
-          'limit': limit,
-          'offset': requestedOffset,
-          'include_disbanded': false,
-        });
+        final result = await _requestGroupOnLease(
+          proof.lease,
+          'groups.list',
+          {
+            'limit': limit,
+            'offset': requestedOffset,
+            'include_disbanded': false,
+          },
+          timeout: listReadTimeout,
+        );
         final page = HostedGroupListPage.fromJson(result);
         for (final room in page.rooms) {
           if (!roomIds.add(room.roomId)) {
@@ -5196,6 +5315,26 @@ class TuiGatewayClient
     );
   }
 
+  /// [groupStateWithDriver] plus `change_events`: the backend broadcasts
+  /// `groups.changed` when this room moves (Hermes Agent
+  /// `gateway/hosted_room_context.py`). Backends that predate it omit the
+  /// field: false.
+  Future<
+    ({HostedGroupRoom room, RoomDriverStatus? driverStatus, bool changeEvents})
+  >
+  groupStateWithEvents(String roomId, {int? generation}) async {
+    final proof = await _requireGroupMethod(
+      GroupMethod.state,
+      generation: generation,
+    );
+    final result = await _groupStateResultOnLease(roomId, lease: proof.lease);
+    return (
+      room: _parseGroupState(roomId, result),
+      driverStatus: RoomDriverStatus.tryParse(result['driver_status']),
+      changeEvents: result['change_events'] == true,
+    );
+  }
+
   /// `groups.state` including the server driver evidence
   /// (`driver_status`: running/working/blocked/counts/pending_actions).
   /// `driverStatus` is `null` when the gateway omits or malforms it.
@@ -5221,7 +5360,7 @@ class TuiGatewayClient
     return _requestGroupOnLease(lease, 'groups.state', {
       'room_id': room,
       'include_disbanded': includeDisbanded,
-    });
+    }, timeout: listReadTimeout);
   }
 
   Future<HostedGroupRoom> _groupStateOnLease(
@@ -5314,7 +5453,7 @@ class TuiGatewayClient
       'since_seq': sinceSeq,
       'limit': limit,
       'include_disbanded': false,
-    });
+    }, timeout: listReadTimeout);
     try {
       return HostedGroupLogPage.fromJson(
         result,
@@ -5415,6 +5554,55 @@ class TuiGatewayClient
       );
     }
     return page;
+  }
+
+  /// `groups.attachment.download`: the bytes of one file of the room's own
+  /// store, read as Hermes Desktop reads them
+  /// (`canonical-group-attachments.tsx::fetchCanonicalGroupAttachment`:
+  /// `room_id`, `event_id`, `attachment_id`). [eventId] is the durable id of
+  /// the message whose manifest lists [attachment]. The answer is that
+  /// manifest entry plus `data_base64` (`tui_gateway/contracts/canonical.py`
+  /// `RoomAttachmentBytes`); the decoded bytes must be exactly the
+  /// manifest's size and never more than [HostedGroupAttachment.maxBytes]
+  /// (`gateway/hosted_room_attachments.py` `MAX_ATTACHMENT_BYTES`).
+  Future<Uint8List> downloadGroupAttachment({
+    required String roomId,
+    required String eventId,
+    required HostedGroupAttachment attachment,
+    int? generation,
+  }) async {
+    const method = 'groups.attachment.download';
+    final proof = await _requireGroupMethod(
+      GroupMethod.attachmentDownload,
+      generation: generation,
+    );
+    final room = _groupIdentifier(roomId, 'room id');
+    final event = _groupIdentifier(eventId, 'event id');
+    final result = await _requestGroupOnLease(proof.lease, method, {
+      'room_id': room,
+      'event_id': event,
+      'attachment_id': attachment.attachmentId,
+    });
+    final encoded = result['data_base64'];
+    Uint8List? bytes;
+    if (result['attachment_id'] == attachment.attachmentId &&
+        encoded is String &&
+        encoded.length <= (HostedGroupAttachment.maxBytes + 2) ~/ 3 * 4) {
+      try {
+        bytes = base64.decode(encoded);
+      } on FormatException {
+        bytes = null;
+      }
+    }
+    if (bytes == null ||
+        bytes.length != attachment.size ||
+        bytes.length > HostedGroupAttachment.maxBytes) {
+      throw const GroupInvalidResponseError(
+        method,
+        'Hermes returned a file that does not match its manifest',
+      );
+    }
+    return bytes;
   }
 
   Future<HostedGroupRoom> createGroup({
@@ -5639,7 +5827,7 @@ class TuiGatewayClient
       'include_sessions': includeSessions,
       if (safePreferredSessionIds.isNotEmpty)
         'preferred_session_ids': safePreferredSessionIds,
-    });
+    }, timeout: listReadTimeout);
     final rawProfiles = result['profiles'];
     if (rawProfiles is! List) {
       throw const TuiGatewayRpcError(
@@ -7207,6 +7395,25 @@ class TuiGatewayClient
   }
 
   @override
+  Future<String> setSessionTitle(String runtimeSessionId, String title) async {
+    const method = 'session.title';
+    final runtime = _validatedRuntimeId(method, runtimeSessionId);
+    final result = await _request(method, {
+      'session_id': runtime,
+      'title': title,
+    });
+    final kept = result['title'];
+    if (kept is! String) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid title response',
+        origin: CompressionFailureOrigin.malformed,
+      );
+    }
+    return kept;
+  }
+
+  @override
   Future<bool> closeSession(String runtimeSessionId) async {
     const method = 'session.close';
     final runtime = _validatedRuntimeId(method, runtimeSessionId);
@@ -7236,6 +7443,7 @@ class TuiGatewayClient
       DesktopGatewayCapability.sessionActiveList,
       method,
       {if (current.isNotEmpty) 'current_session_id': current},
+      timeout: listReadTimeout,
     );
     try {
       return DesktopActiveSessionList.fromJson(result);
@@ -7955,18 +8163,27 @@ class TuiGatewayClient
   }) async {
     final runtime = runtimeSessionId.trim();
     final results = await Future.wait([
-      _controlRequest('plugins.manage', const {
-        'action': 'list',
-      }, capability: DesktopGatewayCapability.extensionsCenter),
-      _controlRequest('tools.list', {
-        if (runtime.isNotEmpty)
-          'session_id': _validatedControlValue(runtime, maxLength: 512),
-      }, capability: DesktopGatewayCapability.extensionsCenter),
+      _controlRequest(
+        'plugins.manage',
+        const {'action': 'list'},
+        timeout: listReadTimeout,
+        capability: DesktopGatewayCapability.extensionsCenter,
+      ),
+      _controlRequest(
+        'tools.list',
+        {
+          if (runtime.isNotEmpty)
+            'session_id': _validatedControlValue(runtime, maxLength: 512),
+        },
+        timeout: listReadTimeout,
+        capability: DesktopGatewayCapability.extensionsCenter,
+      ),
       // Optional classification data: old gateways can still publish built-in
       // groups even when they do not implement the MCP inventory contract.
       _controlRequest(
         'mcp.servers.list',
         const {},
+        timeout: listReadTimeout,
       ).catchError((_) => <String, dynamic>{}),
     ]);
     try {
@@ -8273,8 +8490,31 @@ class TuiGatewayClient
     });
   }
 
+  // MCP servers live in a profile's config. Desktop names the profile on
+  // every MCP call (apps/desktop/src/api/mcp.ts, `capabilityScoped`); an
+  // unnamed call acts on the profile the server was started as
+  // (hermes_cli/web_routers/mcp.py, `_profile_scope(None)`).
+  // [mcpProvisioningOf] is that named surface for adding a server and its
+  // sign-in; the unscoped methods keep acting on the server's own profile.
+
+  /// Adding MCP servers to [profile] ("default" when empty), named on every
+  /// call that takes it.
+  HermesMcpProvisioningGateway mcpProvisioningOf(String profile) {
+    final named = profile.trim();
+    return _ProfileMcpProvisioning(this, named.isEmpty ? 'default' : named);
+  }
+
   @override
-  Future<DesktopMcpServerEntry> addMcpServer(McpServerDraft draft) {
+  Future<DesktopMcpServerEntry> addMcpServer(McpServerDraft draft) =>
+      _addMcpServer(draft, null);
+
+  @override
+  Future<McpOAuthFlow> startMcpOAuth(String name) => _startMcpOAuth(name, null);
+
+  Future<DesktopMcpServerEntry> _addMcpServer(
+    McpServerDraft draft,
+    String? profile,
+  ) {
     _requireWritableControlConnection();
     if (draft.url case final uri?) {
       try {
@@ -8285,7 +8525,7 @@ class TuiGatewayClient
     }
     return _dashboardExtensionRequest(() async {
       final result = await _dashboard.apiPost(
-        'mcp/servers',
+        _profileScoped('mcp/servers', profile),
         body: draft.toRequestJson(),
         timeout: const Duration(minutes: 1),
       );
@@ -8299,13 +8539,15 @@ class TuiGatewayClient
     });
   }
 
-  @override
-  Future<McpOAuthFlow> startMcpOAuth(String name) {
+  Future<McpOAuthFlow> _startMcpOAuth(String name, String? profile) {
     _requireWritableControlConnection();
     final safeName = _validatedControlValue(name, maxLength: 160);
     return _dashboardExtensionRequest(() async {
       final result = await _dashboard.apiPost(
-        'mcp/servers/${Uri.encodeComponent(safeName)}/auth',
+        _profileScoped(
+          'mcp/servers/${Uri.encodeComponent(safeName)}/auth',
+          profile,
+        ),
         timeout: const Duration(seconds: 45),
       );
       return McpOAuthFlow.fromJson(result);
@@ -8323,20 +8565,54 @@ class TuiGatewayClient
     });
   }
 
+  // Webhooks belong to a profile. Desktop names it on every call
+  // (apps/desktop/src/api/messaging.ts `getWebhooks` … `setWebhookEnabled`,
+  // `profileScoped(profile)`), and a backend that serves several profiles
+  // refuses an unnamed delete (hermes_cli/web_routers/_common.py
+  // `destructive_profile`, 400). [webhooksOf] is that scoped surface; the
+  // unscoped methods keep acting on the server's own profile.
+  static String _profileScoped(String endpoint, String? profile) =>
+      profile == null
+      ? endpoint
+      : '$endpoint?profile=${Uri.encodeQueryComponent(profile)}';
+
+  /// The webhooks of [profile] ("default" when empty), named on every call.
+  HermesWebhookManagementGateway webhooksOf(String profile) {
+    final named = profile.trim();
+    return _ProfileWebhooks(this, named.isEmpty ? 'default' : named);
+  }
+
   @override
-  Future<WebhookSnapshot> webhookSnapshot() {
+  Future<WebhookSnapshot> webhookSnapshot() => _webhookSnapshot(null);
+
+  @override
+  Future<WebhookEnableResult> enableWebhooks() => _enableWebhooks(null);
+
+  @override
+  Future<WebhookCreateReceipt> createWebhook(WebhookDraft draft) =>
+      _createWebhook(draft, null);
+
+  @override
+  Future<void> setWebhookEnabled(String name, bool enabled) =>
+      _setWebhookEnabled(name, enabled, null);
+
+  @override
+  Future<void> removeWebhook(String name) => _removeWebhook(name, null);
+
+  Future<WebhookSnapshot> _webhookSnapshot(String? profile) {
     return _dashboardExtensionRequest(() async {
-      final result = await _dashboard.apiGet('webhooks');
+      final result = await _dashboard.apiGet(
+        _profileScoped('webhooks', profile),
+      );
       return WebhookSnapshot.fromJson(result);
     });
   }
 
-  @override
-  Future<WebhookEnableResult> enableWebhooks() {
+  Future<WebhookEnableResult> _enableWebhooks(String? profile) {
     _requireWritableControlConnection();
     return _dashboardExtensionRequest(() async {
       final result = await _dashboard.apiPost(
-        'webhooks/enable',
+        _profileScoped('webhooks/enable', profile),
         timeout: const Duration(minutes: 1),
       );
       final parsed = WebhookEnableResult.fromJson(result);
@@ -8347,25 +8623,29 @@ class TuiGatewayClient
     });
   }
 
-  @override
-  Future<WebhookCreateReceipt> createWebhook(WebhookDraft draft) {
+  Future<WebhookCreateReceipt> _createWebhook(
+    WebhookDraft draft,
+    String? profile,
+  ) {
     _requireWritableControlConnection();
     return _dashboardExtensionRequest(() async {
       final result = await _dashboard.apiPost(
-        'webhooks',
+        _profileScoped('webhooks', profile),
         body: draft.toRequestJson(),
       );
       return WebhookCreateReceipt.fromJson(result);
     });
   }
 
-  @override
-  Future<void> setWebhookEnabled(String name, bool enabled) {
+  Future<void> _setWebhookEnabled(String name, bool enabled, String? profile) {
     _requireWritableControlConnection();
     final safeName = _validatedWebhookName(name);
     return _dashboardExtensionRequest(() async {
       final result = await _dashboard.apiPut(
-        'webhooks/${Uri.encodeComponent(safeName)}/enabled',
+        _profileScoped(
+          'webhooks/${Uri.encodeComponent(safeName)}/enabled',
+          profile,
+        ),
         body: {'enabled': enabled},
       );
       if (result['ok'] != true) {
@@ -8376,12 +8656,13 @@ class TuiGatewayClient
     });
   }
 
-  @override
-  Future<void> removeWebhook(String name) {
+  Future<void> _removeWebhook(String name, String? profile) {
     _requireWritableControlConnection();
     final safeName = _validatedWebhookName(name);
     return _dashboardExtensionRequest(
-      () => _dashboard.apiDelete('webhooks/${Uri.encodeComponent(safeName)}'),
+      () => _dashboard.apiDelete(
+        _profileScoped('webhooks/${Uri.encodeComponent(safeName)}', profile),
+      ),
     );
   }
 
@@ -8409,16 +8690,24 @@ class TuiGatewayClient
     final safeRuntime = runtime.isEmpty
         ? ''
         : _validatedControlValue(runtime, maxLength: 512);
-    final snapshotsFuture = _controlRequest('spawn_tree.list', {
-      if (safeRuntime.isNotEmpty) 'session_id': safeRuntime,
-      'cross_session': safeRuntime.isEmpty,
-      'limit': 50,
-    }, capability: DesktopGatewayCapability.agentCenter);
+    final snapshotsFuture = _controlRequest(
+      'spawn_tree.list',
+      {
+        if (safeRuntime.isNotEmpty) 'session_id': safeRuntime,
+        'cross_session': safeRuntime.isEmpty,
+        'limit': 50,
+      },
+      timeout: listReadTimeout,
+      capability: DesktopGatewayCapability.agentCenter,
+    );
     final processesFuture = safeRuntime.isEmpty
         ? Future<Map<String, dynamic>>.value(const {'processes': <Object>[]})
-        : _controlRequest('process.list', {
-            'session_id': safeRuntime,
-          }, capability: DesktopGatewayCapability.agentCenter);
+        : _controlRequest(
+            'process.list',
+            {'session_id': safeRuntime},
+            timeout: listReadTimeout,
+            capability: DesktopGatewayCapability.agentCenter,
+          );
     final results = await Future.wait([snapshotsFuture, processesFuture]);
     try {
       if (results[0]['entries'] is! List || results[1]['processes'] is! List) {
@@ -8454,7 +8743,7 @@ class TuiGatewayClient
     String text,
   ) async {
     _requireWritableControlConnection();
-    final task = _validatedControlValue(text, maxLength: 2000);
+    final task = _validatedControlValue(text, maxLength: sidePromptMaxLength);
     final result = await _controlRequest(
       'prompt.background',
       {
@@ -8489,7 +8778,7 @@ class TuiGatewayClient
       method,
       {
         'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
-        'text': _validatedControlValue(text, maxLength: 2000),
+        'text': _validatedControlValue(text, maxLength: sidePromptMaxLength),
       },
       timeout: const Duration(seconds: 30),
       capability: DesktopGatewayCapability.turnSide,
@@ -8503,6 +8792,13 @@ class TuiGatewayClient
 
   /// The `task_id` of a `prompt.btw` / `prompt.background` result, or null
   /// when the result does not carry a usable one.
+  /// A side question or a background task is a prompt like any other: the
+  /// server puts no length limit on it (tui_gateway/methods_prompt.py
+  /// `prompt.btw`, `prompt.background`) and neither does Desktop. The limit
+  /// here was 2000 characters, which refused a pasted task of a few
+  /// paragraphs with a generic error; this one only bounds the frame.
+  static const int sidePromptMaxLength = 1000000;
+
   static String? parseSideAgentTaskId(Map<String, dynamic> result) {
     final taskId = result['task_id'];
     if (taskId is! String || taskId.trim().isEmpty || taskId.length > 512) {
@@ -8674,6 +8970,7 @@ class TuiGatewayClient
     final result = await _controlRequest(
       'projects.tree',
       _projectParams(const {'preview_limit': 3}, profile: profile),
+      timeout: listReadTimeout,
       capability: DesktopGatewayCapability.projectsCenter,
     );
     try {
@@ -8693,6 +8990,7 @@ class TuiGatewayClient
       _projectParams({
         'project_id': _validatedControlValue(projectId, maxLength: 2048),
       }),
+      timeout: listReadTimeout,
       capability: DesktopGatewayCapability.projectsCenter,
     );
     final rawProject = result['project'];
@@ -10946,7 +11244,7 @@ class TuiGatewayClient
       }
     }
     if (resolveAll || requestId == null) {
-      await _request('approval.respond', {
+      await _approvalRespond({
         'session_id': _validatedRuntimeId('approval.respond', runtimeSessionId),
         'choice': choice,
         if (resolveAll) 'all': true,
@@ -11005,7 +11303,7 @@ class TuiGatewayClient
         deliveryAcknowledged: false,
       );
     }
-    final result = await _request(method, {
+    final result = await _approvalRespond({
       'session_id': _validatedRuntimeId(method, runtimeSessionId),
       'choice': choice,
       'request_id': request,
@@ -11340,4 +11638,53 @@ final class _PinnedProjects implements HermesPinnedProjects {
   @override
   Future<void> switchBranch(String repoPath, String branch) =>
       _client.switchBranch(repoPath, branch);
+}
+
+/// [TuiGatewayClient.mcpProvisioningOf]: the same calls, for one named
+/// profile. A sign-in flow is read by its id alone, as the server keys it.
+final class _ProfileMcpProvisioning implements HermesMcpProvisioningGateway {
+  final TuiGatewayClient _client;
+  final String _profile;
+
+  const _ProfileMcpProvisioning(this._client, this._profile);
+
+  @override
+  Future<DesktopMcpServerEntry> addMcpServer(McpServerDraft draft) =>
+      _client._addMcpServer(draft, _profile);
+
+  @override
+  Future<McpOAuthFlow> startMcpOAuth(String name) =>
+      _client._startMcpOAuth(name, _profile);
+
+  @override
+  Future<McpOAuthFlow> mcpOAuthFlow(String flowId) =>
+      _client.mcpOAuthFlow(flowId);
+}
+
+/// [TuiGatewayClient.webhooksOf]: the same calls, for one named profile.
+final class _ProfileWebhooks implements HermesWebhookManagementGateway {
+  final TuiGatewayClient _client;
+  final String _profile;
+
+  const _ProfileWebhooks(this._client, this._profile);
+
+  @override
+  Future<WebhookSnapshot> webhookSnapshot() =>
+      _client._webhookSnapshot(_profile);
+
+  @override
+  Future<WebhookEnableResult> enableWebhooks() =>
+      _client._enableWebhooks(_profile);
+
+  @override
+  Future<WebhookCreateReceipt> createWebhook(WebhookDraft draft) =>
+      _client._createWebhook(draft, _profile);
+
+  @override
+  Future<void> setWebhookEnabled(String name, bool enabled) =>
+      _client._setWebhookEnabled(name, enabled, _profile);
+
+  @override
+  Future<void> removeWebhook(String name) =>
+      _client._removeWebhook(name, _profile);
 }

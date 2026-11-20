@@ -1,12 +1,16 @@
 // CHAT-FLUIDO 7: cold-start tails (up to 1 MB each, read while the app
 // starts) are decoded off the main isolate above 64 KB, like the Dashboard
 // reads (N10g); small ones stay inline. The restored rows are the same.
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/cold_start_store.dart';
 import 'package:hermes_android/core/services/transcript_rehydrate_cost.dart';
 
 class _MemoryStorage implements ColdStartStorage {
   final Map<String, String> values = {};
+  final Map<String, Uint8List> files = {};
 
   @override
   Future<String?> read(String key) async => values[key];
@@ -19,6 +23,19 @@ class _MemoryStorage implements ColdStartStorage {
 
   @override
   Future<Iterable<String>> keys() async => values.keys.toList();
+
+  @override
+  Future<Uint8List?> readFile(String name) async => files[name];
+
+  @override
+  Future<void> writeFile(String name, Uint8List bytes) async =>
+      files[name] = bytes;
+
+  @override
+  Future<void> deleteFile(String name) async => files.remove(name);
+
+  @override
+  Future<List<String>> fileNames() async => files.keys.toList();
 }
 
 List<Map<String, dynamic>> _rows(String tag, int count, int size) => [
@@ -73,12 +90,10 @@ void main() {
   test('a corrupt tail is still dropped', () async {
     final storage = _MemoryStorage();
     await _save(ColdStartStore(storage: storage), 'bad', 10);
-    final key = storage.values.keys.firstWhere(
-      (key) => key.startsWith('cold_start_tail_v1.'),
-    );
-    storage.values[key] = '{"v": 2}';
+    final name = storage.files.keys.single;
+    storage.files[name] = Uint8List.fromList(utf8.encode('{"v": 2}'));
     final tails = await ColdStartStore(storage: storage).loadTails();
     expect(tails, isEmpty);
-    expect(storage.values.containsKey(key), isFalse);
+    expect(storage.files.containsKey(name), isFalse);
   });
 }

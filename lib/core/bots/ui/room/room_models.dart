@@ -41,26 +41,68 @@ const Set<String> _imageExtensions = {
   '.bmp',
 };
 
-/// One staged file referenced from a room message: `name → @file:/abs/path`.
+/// One file of the room's own attachment store: the durable id of the
+/// message whose `attachments` manifest lists it, and that manifest entry.
+final class RoomStoredFile {
+  final String eventId;
+  final HostedGroupAttachment attachment;
+
+  const RoomStoredFile({required this.eventId, required this.attachment});
+}
+
+/// One staged file referenced from a room message: `name → @file:/abs/path`,
+/// or ([stored]) a file of the room's own attachment store.
 final class RoomAttachmentRef {
   final String name;
 
-  /// Absolute path on the room's gateway host (Dashboard managed fs).
+  /// Absolute path on the room's gateway host (Dashboard managed fs). For a
+  /// [stored] file only its identity on screen (`room-store:<event>/<id>`),
+  /// never a path.
   final String path;
 
-  const RoomAttachmentRef({required this.name, required this.path});
+  /// Set for a file of the room's own store, read by its ids
+  /// (`groups.attachment.download`), never by [path].
+  final RoomStoredFile? stored;
+
+  const RoomAttachmentRef({
+    required this.name,
+    required this.path,
+    this.stored,
+  });
+
+  /// [file] of the stored message [eventId] (its durable id).
+  factory RoomAttachmentRef.stored(
+    String eventId,
+    HostedGroupAttachment file,
+  ) => RoomAttachmentRef(
+    name: file.displayName,
+    path: 'room-store:$eventId/${file.attachmentId}',
+    stored: RoomStoredFile(eventId: eventId, attachment: file),
+  );
 
   bool get isImage {
+    // A stored file is what its manifest kind says, whatever its name.
+    final file = stored;
+    if (file != null) return file.attachment.kind == 'image';
     final lower = name.toLowerCase();
     return _imageExtensions.any(lower.endsWith);
   }
 
   @override
   bool operator ==(Object other) =>
-      other is RoomAttachmentRef && other.name == name && other.path == path;
+      other is RoomAttachmentRef &&
+      other.name == name &&
+      other.path == path &&
+      other.stored?.eventId == stored?.eventId &&
+      other.stored?.attachment.attachmentId == stored?.attachment.attachmentId;
 
   @override
-  int get hashCode => Object.hash(name, path);
+  int get hashCode => Object.hash(
+    name,
+    path,
+    stored?.eventId,
+    stored?.attachment.attachmentId,
+  );
 }
 
 /// A room message split into its Markdown body and trailing attachments.

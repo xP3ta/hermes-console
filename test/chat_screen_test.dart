@@ -212,6 +212,8 @@ import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/core/widgets/attachment_history_preview.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_approval_dock.dart';
+import 'package:hermes_android/core/widgets/chat/chat_markdown_body.dart'
+    show ChatGatedImage;
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
 import 'package:hermes_android/core/widgets/chat/tool_steps_summary.dart';
 import 'package:hermes_android/core/widgets/chat/turn_changes_sheet.dart';
@@ -3450,6 +3452,13 @@ void main() {
     foregroundServiceRunning = false;
     hapticCalls = 0;
     TurnOutboxStore.resetSerializationForTesting();
+    // Process-wide media state: a download an earlier test left hanging on
+    // a fake Dashboard that never answers must not keep the two auto-load
+    // slots, a queued prefetch or a ready memo for the tests after it.
+    GeneratedMediaService.resetAutoLoadsForTesting();
+    MediaPrefetcher.instance.resetForTesting();
+    GeneratedMediaAttachmentCard.clearReadyMemoForTesting();
+    MediaDimensionsCache.clearForTesting();
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
           switch (call.method) {
@@ -13139,6 +13148,44 @@ void main() {
   );
 
   testWidgets(
+    'a generated image the reply also shows as markdown is drawn once',
+    (tester) async {
+      // tools/image_generation_tool.py image_generate_tool returns
+      // {"success": true, "image": <url>}; tool.complete carries it as
+      // `result` (tui_gateway/tool_progress.py _on_tool_complete), and the
+      // desktop hint (agent/prompt_builder.py PLATFORM_HINTS) has the model
+      // show a remote image as `![alt](url)`.
+      const source = 'https://127.0.0.1:1/files/gato.png';
+      await pumpChat(
+        tester,
+        messages: const [
+          {
+            'role': 'assistant',
+            'content': 'Aquí tienes:\n\n![Gato]($source)\n\n¿Otra?',
+            '_generatedImages': [
+              {
+                'kind': 'https',
+                'source': source,
+                'tool_call_id': 'call-image-markdown',
+                'echo_sources': [source],
+              },
+            ],
+          },
+          {'role': 'user', 'content': 'Genera un gato'},
+        ],
+      );
+
+      expect(find.byType(GeneratedImageCard), findsOneWidget);
+      // No second, empty image above the card.
+      expect(find.byType(ChatGatedImage), findsNothing);
+      expect(find.textContaining('!['), findsNothing);
+      expect(find.textContaining('Aquí tienes:'), findsOneWidget);
+      expect(find.textContaining('¿Otra?'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'MEDIA de documento inicia la carga y oculta la ruta del servidor',
     (tester) async {
       const source = '/workspace/private/qa_documento.txt';
@@ -17847,6 +17894,130 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('an image picked through Files shows as an image', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final temp = Directory.systemTemp.createTempSync('chat-file-image-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    final photo = File('${temp.path}/3f2a9c.jpg')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+          'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      );
+    FilePicker.platform = _FakeFilePicker(
+      FilePickerResult([
+        PlatformFile(
+          name: '3f2a9c.jpg',
+          path: photo.path,
+          size: photo.lengthSync(),
+        ),
+      ]),
+    );
+    addTearDown(() => FilePicker.platform = _FakeFilePicker(null));
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+
+    await pumpChat(tester);
+    await tester.tap(find.byKey(const ValueKey('composer-add')));
+    await tester.pump();
+    tester
+        .widget<MenuItemButton>(find.byType(MenuItemButton).at(2))
+        .onPressed!();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await _pumpUntilRealWork(
+      tester,
+      () => find.byType(AttachmentCard).evaluate().isNotEmpty,
+    );
+
+    final card = tester.widget<AttachmentCard>(find.byType(AttachmentCard));
+    expect(card.name, '3f2a9c.jpg');
+    expect(card.mimeType, 'image/jpeg');
+    // A thumbnail, not a file chip.
+    expect(card.thumbnailFile, isNotNull);
+    MenuController.maybeOf(
+      tester.element(find.byType(MenuItemButton).first),
+    )!.close();
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  });
+
+  testWidgets('an image over the file limit is taken up to the image one', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final temp = Directory.systemTemp.createTempSync('chat-big-image-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    // 10 MB: over the 8 MB file limit, under the server's 25 MiB for images
+    // (tui_gateway/prompt_attachments.py _ATTACH_BYTES_MAX_BYTES).
+    final photo = File('${temp.path}/grande.png');
+    final handle = photo.openSync(mode: FileMode.write)
+      ..writeFromSync(const [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+      ..setPositionSync(10 * 1024 * 1024)
+      ..writeByteSync(0);
+    handle.closeSync();
+    FilePicker.platform = _FakeFilePicker(
+      FilePickerResult([
+        PlatformFile(
+          name: 'grande.png',
+          path: photo.path,
+          size: photo.lengthSync(),
+        ),
+      ]),
+    );
+    addTearDown(() => FilePicker.platform = _FakeFilePicker(null));
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+
+    await pumpChat(tester);
+    await tester.tap(find.byKey(const ValueKey('composer-add')));
+    await tester.pump();
+    tester
+        .widget<MenuItemButton>(find.byType(MenuItemButton).at(2))
+        .onPressed!();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 200)),
+    );
+    await _pumpUntilRealWork(
+      tester,
+      () => find.byType(AttachmentCard).evaluate().isNotEmpty,
+    );
+
+    expect(find.byType(AttachmentCard), findsOneWidget);
+    expect(find.textContaining('8 MB'), findsNothing);
+    MenuController.maybeOf(
+      tester.element(find.byType(MenuItemButton).first),
+    )!.close();
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  });
 
   testWidgets('el límite total de adjuntos usa copy de lote, no de archivo', (
     tester,
@@ -30961,6 +31132,154 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
     expect(chat.isStreaming, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  // agent/context_references.py: the stored user row keeps what the user
+  // wrote and appends the attached context for the model.
+  const attachedContextTurn =
+      'Resume @file:notas.md por favor\n\n'
+      '--- Attached Context ---\n\n'
+      '📄 @file:notas.md (12 tokens)\n'
+      '```\ncontenido privado del archivo\n```';
+
+  Future<void> regenerateLatest(WidgetTester tester) async {
+    await tester.tap(find.byIcon(HIcons.refresh_rounded));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Regenerar respuesta'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  testWidgets('regenerar no reenvía el contexto que Hermes adjuntó', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-regenerate-attached-context'),
+      messages: [
+        {'role': 'assistant', 'content': 'Resumen hecho'},
+        {'role': 'user', 'content': attachedContextTurn},
+      ],
+    );
+
+    await regenerateLatest(tester);
+
+    expect(gateway.rewinds, hasLength(1));
+    expect(gateway.rewinds.single.text, 'Resume @file:notas.md por favor');
+    gateway.emit('message.complete', {'text': 'Resumen regenerado'});
+    for (var frame = 0; frame < 20 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'regenerar una imagen la vuelve a nombrar sin las marcas de Hermes',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-regenerate-image-hints'),
+        messages: [
+          {'role': 'assistant', 'content': 'Un cuaderno'},
+          {
+            // agent/image_routing.py build_native_content_parts, then the
+            // session store's `[screenshot]` per image part.
+            'role': 'user',
+            'content':
+                '[📎 IMG_20261120.jpg · 1.2 MB]\n'
+                'Qué ves en la imagen\n\n'
+                '[Image attached at: /home/u/.hermes/images/upload_x.jpg]\n'
+                '[screenshot]',
+          },
+        ],
+      );
+
+      await regenerateLatest(tester);
+
+      expect(gateway.rewinds, hasLength(1));
+      final text = gateway.rewinds.single.text;
+      expect(text, contains('Qué ves en la imagen'));
+      expect(text, contains('@image:/home/u/.hermes/images/upload_x.jpg'));
+      expect(text, isNot(contains('Image attached')));
+      expect(text, isNot(contains('[screenshot]')));
+      gateway.emit('message.complete', {'text': 'Otra vez un cuaderno'});
+      for (var frame = 0; frame < 20 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('editar abre lo escrito sin el contexto adjunto y no lo '
+      'reenvía', (tester) async {
+    // The edit waits on real work, long enough for the app to ask where
+    // its files live.
+    final temp = Directory.systemTemp.createTempSync('edit-attached-context-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (_) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+    final gateway = _UiRewindGateway();
+    final chat = await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-edit-attached-context'),
+      messages: [
+        {'role': 'assistant', 'content': 'Resumen hecho'},
+        {
+          'role': 'user',
+          'content': attachedContextTurn,
+          'id': 'attached-context-turn',
+          'timestamp': 1712345678,
+          '_desktopRowId': 73,
+        },
+      ],
+    );
+
+    final edit = find.byIcon(HIcons.edit_outlined).hitTestable();
+    expect(edit, findsOneWidget);
+    await tester.tap(edit);
+    await tester.pumpAndSettle();
+    final field = find.byKey(const ValueKey('inline-message-editor-field'));
+    final editable = find.descendant(
+      of: field,
+      matching: find.byType(EditableText),
+      matchRoot: true,
+    );
+    expect(
+      tester.widget<EditableText>(editable).controller.text,
+      'Resume @file:notas.md por favor',
+    );
+
+    // Saving what was already there sends nothing.
+    final save = find.byKey(const ValueKey('inline-message-editor-save'));
+    await tester.tap(save);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(gateway.rewinds, isEmpty);
+
+    await tester.enterText(field, 'Resume @file:notas.md en una línea');
+    await tester.pump();
+    await tester.tap(save);
+    await _pumpUntilRealWork(tester, () => gateway.rewinds.isNotEmpty);
+
+    expect(gateway.rewinds, hasLength(1));
+    expect(gateway.rewinds.single.text, 'Resume @file:notas.md en una línea');
+    // End the turn the edit started, so it leaves no watchdog behind.
+    gateway.emit('message.complete', {'text': 'Resumen en una línea'});
+    for (var frame = 0; frame < 20 && chat.isStreaming; frame++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
     expect(tester.takeException(), isNull);
   });
 

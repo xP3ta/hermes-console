@@ -10,6 +10,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../design/gel_surface.dart' show HermesGlowRoom;
 import '../../design/liquid_glass.dart';
 import '../../models/agent_profile.dart' show kMainProfileFallbackName;
 import '../../models/attachment_draft.dart';
@@ -422,9 +423,14 @@ class ConsoleComposer extends StatelessWidget {
       duration: reduceMotion
           ? Duration.zero
           : const Duration(milliseconds: 220),
+      // The fade's layer is as large as its box: the glow room keeps the
+      // send and stop gel's glow inside it, at rest and mid-swap.
       transitionBuilder: (child, animation) => AnimatedBuilder(
         animation: animation,
-        child: FadeTransition(opacity: animation, child: child),
+        child: HermesGlowRoom(
+          wrap: (room) => FadeTransition(opacity: animation, child: room),
+          child: child,
+        ),
         builder: (context, child) => Transform.scale(
           scale: animation.value,
           transformHitTests: false,
@@ -1997,10 +2003,15 @@ class _ComposerSwap extends StatelessWidget {
   final Duration duration;
   final Widget child;
 
+  // The fade's layer is the input row's box: the glow room keeps the glow
+  // of the send gel at the row's end (and below it) inside it.
   @override
-  Widget build(BuildContext context) => AnimatedOpacity(
-    opacity: shown ? 1 : 0,
-    duration: duration,
+  Widget build(BuildContext context) => HermesGlowRoom(
+    wrap: (room) => AnimatedOpacity(
+      opacity: shown ? 1 : 0,
+      duration: duration,
+      child: room,
+    ),
     child: IgnorePointer(
       ignoring: !shown,
       child: ExcludeSemantics(excluding: !shown, child: child),

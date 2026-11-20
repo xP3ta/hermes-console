@@ -364,6 +364,7 @@ class _DotsHomeViewState extends State<DotsHomeView> {
           (room) => _RoomCard(
             entry: room,
             avatarCache: widget.avatarCache,
+            now: widget.now,
             onTap: () => widget.onOpenRoom(room),
             onLongPress: widget.onRoomActions == null
                 ? null
@@ -845,6 +846,7 @@ class _ScreenBadge extends StatelessWidget {
 class _RoomCard extends StatelessWidget {
   final RoomRosterEntry entry;
   final MissionProfileAvatarCache? avatarCache;
+  final DateTime? now;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
 
@@ -853,6 +855,7 @@ class _RoomCard extends StatelessWidget {
   const _RoomCard({
     required this.entry,
     required this.avatarCache,
+    this.now,
     required this.onTap,
     this.onLongPress,
   });
@@ -982,16 +985,40 @@ class _RoomCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Text(
-                entry.title,
-                key: ValueKey('roster-room-title-$id'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
+              // Name and age on one line, as a Desktop room row
+              // (`canonical-group-row.tsx`).
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      entry.title,
+                      key: ValueKey('roster-room-title-$id'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (entry.at case final at?) ...[
+                    const SizedBox(width: 6),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        rosterTime(context, at, now: now),
+                        key: ValueKey('roster-room-age-$id'),
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: HermesType.captionSize,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
               const SizedBox(height: 2),
               Text(

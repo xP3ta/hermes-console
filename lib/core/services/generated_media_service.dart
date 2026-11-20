@@ -6,11 +6,25 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../models/hosted_groups.dart' show HostedGroupAttachment;
 import 'transcript_directive_parser.dart';
 
 enum GeneratedMediaKind { image, video, audio, file }
 
-enum GeneratedMediaSourceKind { serverPath, https }
+/// What [GeneratedMediaService.ensureDownloaded] throws for a file with no
+/// bytes: it is empty, not too large.
+const generatedMediaEmptyMessage = 'generated media is empty';
+
+enum GeneratedMediaSourceKind {
+  serverPath,
+  https,
+
+  /// A file of a hosted room's own attachment store, read whole with
+  /// `groups.attachment.download`. Its source is an identity (room, message
+  /// and attachment ids), never a path or a URL, and its manifest gives the
+  /// exact size the bytes must have.
+  roomAttachment,
+}
 
 typedef GeneratedMediaProgress = void Function(int received, int? total);
 typedef GeneratedMediaStreamingFetcher =
@@ -994,6 +1008,7 @@ class GeneratedMediaService {
     Future<Uint8List> Function(String path)? fetchServerPath,
     Future<void> Function(String path, File destination)? fetchServerPathToFile,
     GeneratedMediaStreamingFetcher? fetchServerPathToFileWithProgress,
+    Future<Uint8List> Function(String source)? fetchRoomAttachment,
     GeneratedMediaProgress? onProgress,
     bool Function()? isCancelled,
     Directory? baseDir,
@@ -1006,6 +1021,10 @@ class GeneratedMediaService {
         fetchServerPathToFileWithProgress == null) {
       throw ArgumentError('A server-path fetcher is required');
     }
+    if (reference.sourceKind == GeneratedMediaSourceKind.roomAttachment &&
+        fetchRoomAttachment == null) {
+      throw ArgumentError('A room attachment fetcher is required');
+    }
     final key =
         '${baseDir?.path ?? 'app'}\u0000$connectionId\u0000${reference.source}';
     final existing = _inFlight[key];
@@ -1016,6 +1035,7 @@ class GeneratedMediaService {
       fetchServerPath: fetchServerPath,
       fetchServerPathToFile: fetchServerPathToFile,
       fetchServerPathToFileWithProgress: fetchServerPathToFileWithProgress,
+      fetchRoomAttachment: fetchRoomAttachment,
       onProgress: onProgress,
       isCancelled: isCancelled,
       baseDir: baseDir,
@@ -1042,6 +1062,7 @@ class GeneratedMediaService {
     Future<Uint8List> Function(String path)? fetchServerPath,
     Future<void> Function(String path, File destination)? fetchServerPathToFile,
     GeneratedMediaStreamingFetcher? fetchServerPathToFileWithProgress,
+    Future<Uint8List> Function(String source)? fetchRoomAttachment,
     GeneratedMediaProgress? onProgress,
     bool Function()? isCancelled,
     Directory? baseDir,
@@ -1096,8 +1117,28 @@ class GeneratedMediaService {
         await fetchServerPathToFile(reference.source, temporary);
       } else if (reference.sourceKind == GeneratedMediaSourceKind.serverPath) {
         final bytes = await fetchServerPath!(reference.source);
-        if (bytes.isEmpty || bytes.length > _maxBytes(reference.kind)) {
+        if (bytes.isEmpty) {
+          throw const FormatException(generatedMediaEmptyMessage);
+        }
+        if (bytes.length > _maxBytes(reference.kind)) {
           throw const FormatException('generated media exceeds its size limit');
+        }
+        if (isCancelled?.call() ?? false) {
+          throw const GeneratedMediaDownloadCancelled();
+        }
+        await temporary.writeAsBytes(bytes, flush: true);
+        onProgress?.call(bytes.length, bytes.length);
+      } else if (reference.sourceKind ==
+          GeneratedMediaSourceKind.roomAttachment) {
+        // The whole file arrives in one answer: it must be exactly the size
+        // its manifest states, within the room store's per-file cap
+        // (`gateway/hosted_room_attachments.py` `MAX_ATTACHMENT_BYTES`).
+        final bytes = await fetchRoomAttachment!(reference.source);
+        if (bytes.length != reference.sizeBytes ||
+            bytes.length > HostedGroupAttachment.maxBytes) {
+          throw const FormatException(
+            'room attachment does not match its manifest',
+          );
         }
         if (isCancelled?.call() ?? false) {
           throw const GeneratedMediaDownloadCancelled();
@@ -1120,7 +1161,10 @@ class GeneratedMediaService {
         throw const GeneratedMediaDownloadCancelled();
       }
       final length = await temporary.length();
-      if (length <= 0 || length > _maxBytes(reference.kind)) {
+      if (length <= 0) {
+        throw const FormatException(generatedMediaEmptyMessage);
+      }
+      if (length > _maxBytes(reference.kind)) {
         throw const FormatException('generated media exceeds its size limit');
       }
       final probe = await _readPrefix(temporary, 32);

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../models/cron_job.dart';
 import 'connection_manager.dart';
 
@@ -15,13 +17,52 @@ class CronJobListing {
   });
 }
 
+/// "Run now" was accepted and the job is still running.
+///
+/// The trigger route answers only when the whole job has finished
+/// (hermes_cli/web_routers/cron.py `_trigger_cron_job_sync` fires the job,
+/// then re-reads it), which for an agent job is minutes. Desktop holds that
+/// one request open for up to a day (apps/desktop/src/api/cron.ts
+/// `CRON_TRIGGER_REQUEST_TIMEOUT_MS`); a phone does not, so no answer
+/// within [CronRepository.triggerWait] means the run is going, not that it
+/// failed. The job list shows how it ends.
+class CronRunInProgress implements Exception {
+  final String jobId;
+
+  const CronRunInProgress(this.jobId);
+
+  @override
+  String toString() => 'CronRunInProgress($jobId)';
+}
+
+/// Reply of the cancel route (hermes_cli/web_routers/cron.py
+/// `_cancel_cron_job_sync`).
+class CronCancelResult {
+  /// False when the job had no run in flight: nothing was stopped.
+  final bool cancelled;
+
+  /// The attempt the cancel reached; '' when the server did not name it.
+  final String executionId;
+
+  const CronCancelResult({required this.cancelled, this.executionId = ''});
+}
+
 /// Contrato móvil de Cron, construido sobre los mismos endpoints que Desktop.
 class CronRepository {
   final DashboardClient client;
   final String profile;
   final bool botRoutines;
 
-  const CronRepository(this.client, {this.profile = '', this.botRoutines = false});
+  /// How long "run now" waits for the job to finish before reporting it as
+  /// still running ([CronRunInProgress]).
+  final Duration triggerWait;
+
+  const CronRepository(
+    this.client, {
+    this.profile = '',
+    this.botRoutines = false,
+    this.triggerWait = const Duration(seconds: 10),
+  });
 
   String _query({bool hasQuery = false}) {
     if (profile.isEmpty) return '';
@@ -31,13 +72,20 @@ class CronRepository {
   Future<List<CronJob>> listJobs() async =>
       (await listJobsForScope(CronProfileScope.active)).jobs;
 
+  /// The profile a "this profile" read names. An unscoped
+  /// `GET /api/cron/jobs` means `all` on the server (`profile: str = "all"`
+  /// in `hermes_cli/web_routers/cron.py`), so the default profile is asked
+  /// for by name, as Desktop does (`api/cron.ts` `getCronJobs(profile)` with
+  /// the scope's profile, `app/cron/index.tsx` `cronProfileForScope`).
+  String get _ownProfile => profile.isEmpty ? 'default' : profile;
+
   /// Amplía la consulta a todos los perfiles sin cambiar [profile], que sigue
   /// siendo el perfil operativo usado por CRUD. Dashboards anteriores a
   /// `profile=all` degradan a la lectura del perfil activo.
   Future<CronJobListing> listJobsForScope(CronProfileScope scope) async {
     if (scope == CronProfileScope.active) {
       return CronJobListing(
-        jobs: await _listJobsWithProfile(profile),
+        jobs: await _listJobsWithProfile(_ownProfile),
         requestedScope: scope,
       );
     }
@@ -49,7 +97,7 @@ class CronRepository {
     } on DashboardHttpException catch (error) {
       if (!_isUnsupportedAllProfiles(error.statusCode)) rethrow;
       return CronJobListing(
-        jobs: await _listJobsWithProfile(profile),
+        jobs: await _listJobsWithProfile(_ownProfile),
         requestedScope: scope,
         usedLegacyActiveFallback: true,
       );
@@ -147,6 +195,24 @@ class CronRepository {
     }
   }
 
+  /// Job [id] as the job list of this repository's profile shows it, with
+  /// the execution ledger that a single-job read lacks (Desktop reads the
+  /// job it shows from the list). Falls back to [getJob] when the list
+  /// does not hold it or the server cannot list; null when neither has it.
+  Future<CronJob?> listedJob(String id) async {
+    try {
+      final jobs = await _listJobsWithProfile(
+        profile.isEmpty ? 'default' : profile,
+      );
+      for (final job in jobs) {
+        if (job.id == id) return job;
+      }
+    } on DashboardHttpException catch (error) {
+      if (error.statusCode != 404 && error.statusCode != 405) rethrow;
+    }
+    return getJob(id);
+  }
+
   Future<CronRuns> listRuns(String id, {int limit = 20}) async {
     try {
       final data = await client.apiGet(
@@ -166,9 +232,14 @@ class CronRepository {
     }
   }
 
+  /// The delivery targets of [profile]'s gateways: the server reads them
+  /// inside the profile it is told (hermes_cli/web_routers/cron.py
+  /// `get_cron_delivery_targets`), and Desktop names it
+  /// (apps/desktop/src/api/cron.ts `getCronDeliveryTargets`). Without it the
+  /// form offered the platforms of the profile the server was started as.
   Future<List<CronDeliveryTarget>> deliveryTargets() async {
     try {
-      final data = await client.apiGet('cron/delivery-targets');
+      final data = await client.apiGet('cron/delivery-targets${_query()}');
       final targets = (data['targets'] as List? ?? const [])
           .whereType<Map>()
           .map(
@@ -186,9 +257,15 @@ class CronRepository {
     }
   }
 
+  /// The catalog is per profile (built-ins plus that profile's plugin
+  /// blueprints), so it is read for the profile [instantiateBlueprint]
+  /// creates into, as Desktop does (`getAutomationBlueprints(profile)`).
   Future<List<AutomationBlueprint>> blueprints() async {
     try {
-      final data = await client.apiGet('cron/blueprints');
+      final targetProfile = profile.isEmpty ? 'default' : profile;
+      final data = await client.apiGet(
+        'cron/blueprints?profile=${Uri.encodeQueryComponent(targetProfile)}',
+      );
       return (data['blueprints'] as List? ?? const [])
           .whereType<Map>()
           .map(
@@ -252,6 +329,8 @@ class CronRepository {
     );
   }
 
+  /// [catchUp] is sent only when it is not the server default, as Desktop
+  /// does (apps/desktop/src/app/cron/index.tsx `createCronJob` call).
   Future<CronJob> create({
     required String name,
     required String prompt,
@@ -259,6 +338,7 @@ class CronRepository {
     required String deliver,
     required String model,
     required String provider,
+    CronCatchUp catchUp = CronCatchUp.serverDefault,
   }) async {
     final data = await client.apiPost(
       'cron/jobs${_query()}',
@@ -270,6 +350,7 @@ class CronRepository {
         'deliver': deliver.isEmpty ? 'local' : deliver,
         if (model.isNotEmpty) 'model': model,
         if (model.isNotEmpty && provider.isNotEmpty) 'provider': provider,
+        if (catchUp.wire != null) 'catch_up': catchUp.wire,
       },
     );
     // Created in this repository's profile.
@@ -278,6 +359,9 @@ class CronRepository {
     ).withSourceProfile(profile.isEmpty ? 'default' : profile);
   }
 
+  /// [catchUp] is sent only when given (the user changed it), so an edit
+  /// never rewrites a policy it did not touch: Desktop
+  /// `buildCronJobUpdates` (apps/desktop/src/app/cron/cron-job-model.ts).
   Future<CronJob> update(
     CronJob job, {
     required String name,
@@ -286,6 +370,7 @@ class CronRepository {
     required String deliver,
     required String model,
     required String provider,
+    CronCatchUp? catchUp,
   }) async {
     final owner = ownerProfileOf(job);
     final updates = <String, dynamic>{
@@ -295,6 +380,7 @@ class CronRepository {
       if (!job.isScriptOnly || prompt.isNotEmpty) 'prompt': prompt,
       if (!job.isScriptOnly) 'model': model.isEmpty ? null : model,
       if (!job.isScriptOnly) 'provider': provider.isEmpty ? null : provider,
+      if (catchUp != null) 'catch_up': catchUp.wire,
     };
     return _onOwner(
       job,
@@ -316,18 +402,55 @@ class CronRepository {
   }
 
   /// Runs job [id] now (notification "Retry"); same endpoint as [trigger].
+  /// A run still going when the wait ends was started: it is not an error.
   Future<void> triggerById(String id) async {
-    await client.apiPost(
-      'cron/jobs/${Uri.encodeComponent(id)}/trigger${_query()}',
-    );
+    try {
+      await client.apiPost(
+        'cron/jobs/${Uri.encodeComponent(id)}/trigger${_query()}',
+        timeout: triggerWait,
+      );
+    } on TimeoutException {
+      return;
+    }
   }
 
-  Future<CronJob> trigger(CronJob job) => _onOwner(
-    job,
-    (query) => client.apiPost(
-      'cron/jobs/${Uri.encodeComponent(job.id)}/trigger$query',
-    ),
-  );
+  /// Runs [job] now. Returns the job as the server left it when the run
+  /// ended within [triggerWait]; throws [CronRunInProgress] when it is
+  /// still running by then.
+  Future<CronJob> trigger(CronJob job) async {
+    try {
+      return await _onOwner(
+        job,
+        (query) => client.apiPost(
+          'cron/jobs/${Uri.encodeComponent(job.id)}/trigger$query',
+          timeout: triggerWait,
+        ),
+      );
+    } on TimeoutException {
+      throw CronRunInProgress(job.id);
+    }
+  }
+
+  /// Asks [job]'s live run to stop (Desktop `cancelCronJobRun`). The run
+  /// books its cancelled attempt at its next cancel check, a second or two
+  /// later, so callers read the job list until [cronStopOutcome] settles.
+  /// The schedule is untouched. A 404 in the owner profile is a job that
+  /// is gone.
+  Future<CronCancelResult> cancelRun(CronJob job) async {
+    final owner = ownerProfileOf(job);
+    try {
+      final data = await client.apiPost(
+        'cron/jobs/${Uri.encodeComponent(job.id)}/cancel${_ownerQuery(job)}',
+      );
+      return CronCancelResult(
+        cancelled: data['cancelled'] == true,
+        executionId: data['execution_id']?.toString().trim() ?? '',
+      );
+    } on DashboardHttpException catch (error) {
+      if (error.statusCode == 404) throw CronJobNotFoundException(owner);
+      rethrow;
+    }
+  }
 
   Future<CronJob> instantiateBlueprint(
     AutomationBlueprint blueprint,

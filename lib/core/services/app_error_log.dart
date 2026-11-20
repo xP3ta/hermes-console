@@ -76,3 +76,85 @@ abstract final class AppErrorLog {
     _recent.clear();
   }
 }
+
+/// What the app was doing in its encrypted storage (Android Keystore) when
+/// a read or write failed or was refused. A fixed list, never free text.
+enum SecureStorageOperation {
+  draftLoad,
+  draftSave,
+  draftClear,
+  draftList,
+  outboxRead,
+  outboxSave,
+  outboxDelete,
+  coldStartIndex,
+  coldStartTail,
+  coldStartKey,
+}
+
+/// One kind of secure-storage failure: the operation, the error's runtime
+/// type, how many times it happened and when. Never its message, the key,
+/// a text, a session or a connection.
+@immutable
+final class SecureStorageFailure {
+  final SecureStorageOperation operation;
+  final String errorType;
+  final int count;
+  final DateTime firstAt;
+  final DateTime lastAt;
+
+  const SecureStorageFailure({
+    required this.operation,
+    required this.errorType,
+    required this.count,
+    required this.firstAt,
+    required this.lastAt,
+  });
+}
+
+typedef _FailureKind = (SecureStorageOperation, String);
+
+/// Local-only record of secure-storage failures, for the diagnostic export.
+/// A failure that repeats (a draft list every few seconds) is counted in
+/// one entry instead of pushing others out; at most [capacity] kinds, the
+/// least recent dropped first. Nothing is uploaded.
+abstract final class SecureStorageDiagnostics {
+  static const int capacity = 16;
+  static final Map<_FailureKind, SecureStorageFailure> _byKind = {};
+
+  /// Least recently failed first.
+  static List<SecureStorageFailure> get recent =>
+      List.unmodifiable(_byKind.values);
+
+  static void record(SecureStorageOperation operation, Object error) {
+    final errorType = error.runtimeType.toString();
+    final previous = _byKind.remove((operation, errorType));
+    final now = DateTime.now();
+    _byKind[(operation, errorType)] = SecureStorageFailure(
+      operation: operation,
+      errorType: errorType,
+      count: (previous?.count ?? 0) + 1,
+      firstAt: previous?.firstAt ?? now,
+      lastAt: now,
+    );
+    while (_byKind.length > capacity) {
+      _byKind.remove(_byKind.keys.first);
+    }
+  }
+
+  /// Returns [future] itself (same result, same timing) and records its
+  /// failure as one of [operation].
+  static Future<T> watch<T>(
+    SecureStorageOperation operation,
+    Future<T> future,
+  ) {
+    future.then<void>(
+      (_) {},
+      onError: (Object error) => record(operation, error),
+    );
+    return future;
+  }
+
+  @visibleForTesting
+  static void resetForTesting() => _byKind.clear();
+}

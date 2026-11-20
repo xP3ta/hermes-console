@@ -43,6 +43,93 @@ Future<void> _openDetails(WidgetTester tester) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('no provider can serve the chat: the card leads to provider setup, '
+      'as on Desktop', () {
+    // tui_gateway/session_registry.py: agent init's ProviderNotConfiguredError,
+    // as the chat stores it.
+    const failure =
+        'No se pudo completar la respuesta: No LLM provider configured. Run '
+        '`hermes model` to select a provider.';
+
+    testWidgets('the card opens where providers are set up', (tester) async {
+      var opened = 0;
+      var retries = 0;
+      await tester.pumpWidget(
+        _host(
+          ChatErrorBubble(
+            error: failure,
+            prompt: 'hola',
+            onRetry: () => retries++,
+            onSetUpProvider: () => opened++,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final action = find.byKey(const ValueKey('chat-error-provider-setup'));
+      expect(action, findsOneWidget);
+      expect(
+        find.descendant(
+          of: action,
+          matching: find.text('Configurar un proveedor'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(action);
+      await tester.pump();
+      expect(opened, 1);
+      expect(retries, 0);
+    });
+
+    testWidgets('the instruction Console shows in its place leads there too', (
+      tester,
+    ) async {
+      var opened = 0;
+      await tester.pumpWidget(
+        _host(
+          ChatErrorBubble(
+            error:
+                'No se pudo completar la respuesta: Hermes has no AI provider '
+                'ready for this chat. Choose one with /model, or run `hermes '
+                'setup` on the server.',
+            prompt: 'hola',
+            onRetry: () {},
+            onSetUpProvider: () => opened++,
+          ),
+          locale: const Locale('en'),
+        ),
+      );
+      await tester.pump();
+
+      final action = find.byKey(const ValueKey('chat-error-provider-setup'));
+      expect(
+        find.descendant(of: action, matching: find.text('Set up a provider')),
+        findsOneWidget,
+      );
+      await tester.tap(action);
+      expect(opened, 1);
+    });
+
+    testWidgets('any other failure does not offer it', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          ChatErrorBubble(
+            error: 'No se pudo completar la respuesta: upstream timed out',
+            prompt: 'hola',
+            onRetry: () {},
+            onSetUpProvider: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('chat-error-provider-setup')),
+        findsNothing,
+      );
+    });
+  });
+
   group('a turn that was missing something says what, with what fixes it', () {
     testWidgets('no Dashboard sign-in: one sentence and one action', (
       tester,

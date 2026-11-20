@@ -12,6 +12,8 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/gel_glow.dart';
+
 Widget _host(Widget child) => MaterialApp(
   locale: const Locale('en'),
   theme: AppTheme.fromId('dark'),
@@ -75,6 +77,15 @@ void main() {
     }
     expect(find.byKey(const ValueKey('studio-customize')), findsOneWidget);
     expect(find.byType(StudioCharacterFace), findsWidgets);
+  });
+
+  testWidgets('the Customize pill keeps its whole accent glow', (tester) async {
+    await open(tester);
+    expectGlowsUncut(
+      tester,
+      find.byKey(const ValueKey('studio-customize')),
+      expected: 1,
+    );
   });
 
   testWidgets('a preset becomes the profile character', (tester) async {

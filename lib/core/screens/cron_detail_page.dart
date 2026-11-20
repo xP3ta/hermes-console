@@ -25,13 +25,20 @@ import '../feedback/feedback_policy.dart';
 @visibleForTesting
 const cronDetailRefreshInterval = Duration(seconds: 60);
 
+/// While a run is live or being stopped the job is read this often, so
+/// Stop and the status settle without a manual refresh: Desktop
+/// `LIVE_RUN_POLL_MS` (apps/desktop/src/app/cron/use-cron-run-stop.ts).
+const cronLiveRunPollInterval = Duration(milliseconds: 1500);
+
 bool _isCronRefreshEvent(TuiGatewayEvent event) =>
     event.type == 'cron.changed' || event.type == 'sessions.changed';
 
 /// Human status of a job: label + tone. Normal scheduling stays neutral.
+/// A run in flight shows as running whatever the saved state is, as the
+/// Desktop job pill does (`runLive ? 'running' : jobState(job)`).
 ({String label, HermesStatusTone tone}) cronStatusOf(Strings s, CronJob job) {
   String cap(String v) => v.isEmpty ? v : v[0].toUpperCase() + v.substring(1);
-  return switch (job.state) {
+  return switch (job.runInFlight ? CronJobState.running : job.state) {
     CronJobState.enabled || CronJobState.scheduled => (
       label: cap(s.crnStatusActive),
       tone: HermesStatusTone.ok,
@@ -234,10 +241,15 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
   CronRuns? _runs;
   Timer? _timer;
   Timer? _debounce;
+  Timer? _livePoll;
   StreamSubscription<TuiGatewayEvent>? _events;
   bool _loading = true;
   bool _fetching = false;
   bool _busy = false;
+
+  /// The attempt a Stop is waiting on ('' until the cancel route names it),
+  /// or null when no Stop is pending.
+  String? _stopping;
   final GlobalKey _moreKey = GlobalKey(debugLabel: 'cron-detail-more');
 
   bool get _refreshAllowed =>
@@ -267,6 +279,8 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
       case AppLifecycleState.detached:
         _timer?.cancel();
         _timer = null;
+        _livePoll?.cancel();
+        _livePoll = null;
       case AppLifecycleState.inactive:
         break;
     }
@@ -292,29 +306,99 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _debounce?.cancel();
+    _livePoll?.cancel();
     unawaited(_events?.cancel());
     super.dispose();
   }
 
-  Future<void> _refresh() async {
+  /// Reads the job (from the job list, which carries the execution ledger)
+  /// and, unless [runs] is false, its run history.
+  Future<void> _refresh({bool runs = true}) async {
     if (_fetching) return;
     _fetching = true;
+    final wasLive = _job.runInFlight;
+    var runEnded = false;
     try {
       final results = await Future.wait<Object?>([
-        widget.repository.getJob(_job.id),
-        widget.repository.listRuns(_job.id),
+        widget.repository.listedJob(_job.id),
+        if (runs) widget.repository.listRuns(_job.id),
       ]);
       if (!mounted) return;
+      final read = results[0] as CronJob?;
       setState(() {
-        _job = (results[0] as CronJob?) ?? _job;
-        _runs = results[1] as CronRuns;
-        _loading = false;
+        _job = read ?? _job;
+        if (runs) {
+          _runs = results[1] as CronRuns;
+          _loading = false;
+        }
       });
+      _settleStop(read);
+      runEnded = !runs && wasLive && !_job.runInFlight;
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && runs) setState(() => _loading = false);
     } finally {
       _fetching = false;
+      if (mounted) _armLivePoll();
     }
+    // The run that just ended is now in the history.
+    if (runEnded) unawaited(_refresh());
+  }
+
+  /// One read [cronLiveRunPollInterval] after the last one ended, while a
+  /// run is live or a Stop is pending; never overlapping.
+  void _armLivePoll() {
+    _livePoll?.cancel();
+    _livePoll = null;
+    if (!_job.runInFlight && _stopping == null) return;
+    _livePoll = Timer(cronLiveRunPollInterval, () {
+      _livePoll = null;
+      if (_refreshAllowed) unawaited(_refresh(runs: false));
+    });
+  }
+
+  /// Desktop `useCronRunStop`: a Stop holds "Stopping…" until a read of the
+  /// job shows the targeted attempt finished. [read] is null when the job
+  /// is gone, which stops its run.
+  void _settleStop(CronJob? read) {
+    final target = _stopping;
+    if (target == null || !mounted) return;
+    final outcome = cronStopOutcome(read, target);
+    if (outcome == CronStopOutcome.pending) return;
+    setState(() => _stopping = null);
+    final s = Strings.of(context);
+    AppFeedback.of(context).notify(
+      FeedbackKind.routine,
+      outcome == CronStopOutcome.cancelled
+          ? s.crnRunStopped
+          : s.crnRunFinishedFirst,
+    );
+  }
+
+  /// Stops the live run (Desktop `useCronRunStop.stop`). Not gated on
+  /// [_busy], which this page's own "Run now" holds while it waits.
+  Future<void> _stop() async {
+    if (_stopping != null) return;
+    final s = Strings.of(context);
+    final feedback = AppFeedback.of(context);
+    setState(() => _stopping = '');
+    try {
+      final result = await widget.repository.cancelRun(_job);
+      if (!mounted) return;
+      if (!result.cancelled) {
+        setState(() => _stopping = null);
+        feedback.notify(FeedbackKind.routine, s.crnNothingToStop);
+      } else if (_stopping != null) {
+        _stopping = result.executionId;
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _stopping = null);
+      feedback.notify(
+        FeedbackKind.error,
+        s.crnStopFailed(localizedApiError(s, error)),
+      );
+    }
+    if (mounted) unawaited(_refresh(runs: false));
   }
 
   void _apply(CronJob updated) {
@@ -345,8 +429,11 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
   }
 
   Future<void> _trigger() => _run(() async {
-    final updated = await widget.repository.trigger(_job);
-    _apply(updated);
+    try {
+      _apply(await widget.repository.trigger(_job));
+    } on CronRunInProgress {
+      // Started and still running: the refresh below shows how it ends.
+    }
     if (mounted) {
       AppFeedback.of(
         context,
@@ -474,6 +561,8 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
 
     final owner = _job.ownerBot;
     final jobProfile = _job.profile.isNotEmpty ? _job.profile : widget.profile;
+    final runLive = _job.runInFlight || _stopping != null;
+    final cancelReason = runLive ? null : _job.lastCancelReason;
     return HermesDetailScaffold(
       listKey: const ValueKey('cron-job-detail'),
       title: _job.title,
@@ -492,15 +581,25 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
         tone: status.tone,
         meta: meta,
       ),
-      primaryAction: canMutate
+      // A live run puts Stop where "Run now" was: the server refuses a
+      // second run of a job that is running.
+      primaryAction: !canMutate
+          ? null
+          : runLive
           ? HermesActionButton(
+              key: const ValueKey('cron-detail-stop'),
+              primary: true,
+              icon: HIcons.stop_rounded,
+              label: _stopping == null ? s.crnStop : s.crnStopping,
+              onPressed: _stopping == null ? _stop : null,
+            )
+          : HermesActionButton(
               key: const ValueKey('cron-detail-run'),
               primary: true,
               icon: HIcons.play_arrow_rounded,
               label: s.crnRunNow,
               onPressed: _busy ? null : _trigger,
-            )
-          : null,
+            ),
       secondaryAction: canMutate
           ? HermesActionButton(
               key: const ValueKey('cron-detail-pause'),
@@ -518,6 +617,16 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
           ),
       ],
       sections: [
+        if (cancelReason != null) ...[
+          const SizedBox(height: HermesSpace.x3),
+          HermesInlineNotice(
+            key: const ValueKey('cron-detail-last-cancelled'),
+            icon: HIcons.stop_circle_outlined,
+            message: cancelReason.isEmpty
+                ? s.crnLastCancelled
+                : s.crnLastCancelledReason(cancelReason),
+          ),
+        ],
         if (_job.lastError != null) ...[
           const SizedBox(height: HermesSpace.x3),
           HermesInlineNotice(

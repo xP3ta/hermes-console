@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
@@ -236,8 +238,12 @@ void main() {
     },
   );
 
+  // The rooms list is groups.list alone, as Desktop lists it
+  // (`canonical-group-registry.tsx`): no room's groups.state or groups.log is
+  // read to list it. A room's conversation is what a view of that room read
+  // in this session; before that it is unknown, never empty.
   test(
-    'repository loads official list state and log under capability generation',
+    'rooms list is groups.list alone, as Desktop; a room log comes from its view read',
     () async {
       final calls = <String>[];
       final caps = GroupsCapabilities.tryParse(
@@ -295,15 +301,48 @@ void main() {
 
       final snapshot = await repository.load();
 
-      expect(calls, ['capabilities', 'list:7', 'state:7', 'log:7']);
+      // Listing reads no room.
+      expect(calls, ['capabilities', 'list:7']);
       expect(snapshot.hostedGroupsCapability, MissionCapabilityState.available);
       expect(snapshot.hostedGroups.capabilities, same(caps));
-      expect(snapshot.hostedGroups.rooms.single.name, 'Authoritative');
+      expect(snapshot.hostedGroups.rooms.single.name, 'Listed');
+      // No view read the room yet: its log is unknown (null), not empty.
+      expect(snapshot.hostedGroups.logs, hasLength(1));
+      expect(snapshot.hostedGroups.logAt(0), isNull);
+      expect(snapshot.hostedGroups.logFor('room-private'), isNull);
+      expect(snapshot.hostedGroups.driverStatuses, isEmpty);
+      expect(snapshot.hostedGroups.driverReadAt, isEmpty);
+      expect(snapshot.failures, isNot(contains('hostedGroups')));
+
+      // The room's own view reads its state and log (RoomScreen's poll).
+      calls.clear();
+      final read = await repository.readHostedGroup(listed, generation: 7);
+      expect(calls, ['capabilities', 'state:7', 'log:7']);
+      expect(read.room.name, 'Authoritative');
+      expect(read.log, same(log));
+
+      // The next list read still reads no room, and the row carries what
+      // the view read. The row itself is the list's, as in Desktop.
+      calls.clear();
+      final again = await repository.load();
+      expect(calls, ['capabilities', 'list:7']);
+      expect(again.hostedGroups.rooms.single.name, 'Listed');
       expect(
-        snapshot.hostedGroups.logs.single.events.single.publicText,
+        again.hostedGroups.logFor('room-private')!.events.single.publicText,
         'Safe public message',
       );
-      expect(snapshot.failures, isNot(contains('hostedGroups')));
+
+      // The periodic list refresh is the same two reads.
+      calls.clear();
+      final refreshed = await repository.refreshHostedGroups(
+        again.hostedGroups,
+      );
+      expect(calls, ['capabilities', 'list:7']);
+      expect(refreshed.rooms.single.name, 'Listed');
+      expect(
+        refreshed.logAt(0)!.events.single.publicText,
+        'Safe public message',
+      );
     },
   );
 
@@ -689,6 +728,67 @@ void main() {
       semantics.dispose();
     },
   );
+
+  group('stored room files follow groups.attachment.download', () {
+    const base = [
+      GroupMethod.capabilities,
+      GroupMethod.list,
+      GroupMethod.state,
+      GroupMethod.log,
+      GroupMethod.send,
+    ];
+    const open = ValueKey(
+      'room-attachment-open-room-store:event-private/$_fileId',
+    );
+
+    Future<_FilesHostedSource> openRoom(
+      WidgetTester tester,
+      List<GroupMethod> methods,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final manager = await ConnectionManager.create(
+        await SharedPreferences.getInstance(),
+      );
+      final source = _FilesHostedSource(
+        _workspaceSource(methods: methods, log: _filesLog()).snapshot,
+      );
+      await _pumpHostedScreen(tester, manager, source);
+      await _tapRoom(tester);
+      await tester.pumpAndSettle();
+      return source;
+    }
+
+    RoomAttachmentActions? roomActions(WidgetTester tester) =>
+        tester.widget<RoomScreen>(find.byType(RoomScreen)).attachmentActions;
+
+    testWidgets('[RED] listed: the file is a card whose reads go to this room '
+        'by message and attachment id', (tester) async {
+      final source = await openRoom(tester, [
+        ...base,
+        GroupMethod.attachmentDownload,
+      ]);
+
+      expect(find.text('Open it on Hermes Desktop'), findsNothing);
+      expect(find.byKey(open), findsOneWidget);
+      final actions = roomActions(tester);
+      expect(actions, isA<StoreRoomAttachmentActions>());
+      await (actions! as StoreRoomAttachmentActions).download(
+        'event-private',
+        HostedGroupAttachment.fromJson(_fileManifest),
+      );
+      expect(source.downloads, ['room-private:event-private:$_fileId']);
+    });
+
+    testWidgets('[CONTROL] not listed: the file stays the «on Desktop» chip '
+        'and nothing is read', (tester) async {
+      final source = await openRoom(tester, base);
+
+      expect(find.text('Open it on Hermes Desktop'), findsOneWidget);
+      expect(find.byKey(open), findsNothing);
+      expect(roomActions(tester), isNot(isA<RoomStoredAttachmentActions>()));
+      expect(source.downloads, isEmpty);
+    });
+  });
 
   testWidgets('retired retry never reaches the owning hosted workspace', (
     tester,
@@ -1309,6 +1409,109 @@ void main() {
     expect(source.calls, contains('send:3:hello there'));
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  // The rooms list is groups.list alone, as Desktop: a room listed but not
+  // yet read by any view opens loading (never "empty") and shows its
+  // conversation from its own first read; the list is read again every 10 s
+  // without reading any room.
+  testWidgets(
+    'a listed room opens loading and shows its messages after its first read',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final manager = await ConnectionManager.create(
+        await SharedPreferences.getInstance(),
+      );
+      addTearDown(manager.dispose);
+      final calls = <String>[];
+      final gate = Completer<void>();
+      final room = _room(name: 'Shared', revision: 2);
+      final caps = _capabilities([
+        GroupMethod.capabilities,
+        GroupMethod.list,
+        GroupMethod.state,
+        GroupMethod.log,
+        GroupMethod.send,
+      ]);
+      final repository = MissionControlRepository(
+        profilesLoader: () async => const <AgentProfile>[],
+        sessionsLoader: () async => const [],
+        boardLoader: () async => const KanbanBoard(columns: []),
+        hostedGroupsGateway: MissionHostedGroupsGateway.callbacks(
+          capabilities: () async {
+            calls.add('capabilities');
+            return caps;
+          },
+          list: ({required generation}) async {
+            calls.add('list');
+            return [room];
+          },
+          state: (_, {required generation}) async {
+            calls.add('state');
+            await gate.future;
+            return room;
+          },
+          log: (_, {required generation}) async {
+            calls.add('log');
+            return _log(text: 'Before');
+          },
+        ),
+      );
+      addTearDown(repository.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          theme: AppTheme.fromId('dark'),
+          home: MissionControlScreen(
+            connection: _connection,
+            connManager: manager,
+            dataSource: repository,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_roomRow(), findsOneWidget);
+      expect(calls, contains('list'));
+      expect(calls, isNot(contains('state')));
+      expect(calls, isNot(contains('log')));
+      // No view read the room: its row has no preview to show.
+      expect(find.textContaining('Before'), findsNothing);
+
+      // On screen, the list is read again every 10 s: groups.list only.
+      calls.clear();
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pump();
+      expect(calls.where((call) => call == 'list'), hasLength(1));
+      expect(calls, isNot(contains('state')));
+      expect(calls, isNot(contains('log')));
+
+      calls.clear();
+      await _tapRoom(tester);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(RoomScreen), findsOneWidget);
+      // The first read is on the wire and has not answered yet.
+      expect(calls, contains('state'));
+      expect(find.byKey(const ValueKey('room-loading')), findsOneWidget);
+      expect(find.byKey(const ValueKey('room-empty')), findsNothing);
+      expect(find.text('Before'), findsNothing);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(calls, containsAllInOrder(['state', 'log']));
+      expect(find.byKey(const ValueKey('room-loading')), findsNothing);
+      expect(find.text('Before'), findsOneWidget);
+
+      // Back on the list, the row shows what the room's view read.
+      Navigator.of(tester.element(find.byType(RoomScreen))).pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(RoomScreen), findsNothing);
+      expect(find.textContaining('Before'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('room draft survives immediate back and reopen', (tester) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -2011,6 +2214,57 @@ class _HostedScreenSource
       log: _log(text: 'Before'),
       capabilityGeneration: generation,
     );
+  }
+}
+
+const _fileId = 'att_0123456789abcdef0123456789abcdef';
+
+/// A file of the room's own store, as the `attachments` manifest lists it.
+const Map<String, Object?> _fileManifest = {
+  'attachment_id': _fileId,
+  'kind': 'pdf',
+  'name': 'plan.pdf',
+  'size': 2048,
+  'mime': 'application/pdf',
+};
+
+/// One user message carrying [_fileManifest].
+HostedGroupLogPage _filesLog() => HostedGroupLogPage.fromJson(
+  {
+    'events': [
+      {
+        ..._event(text: 'Plan attached'),
+        'payload': {
+          'text': 'Plan attached',
+          'thread_id': 'thread-event-private',
+          'attachments': [_fileManifest],
+        },
+      },
+    ],
+    'cursor': 1,
+    'latest_seq': 1,
+    'has_more': false,
+    'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+  },
+  expectedRoomId: 'room-private',
+  sinceSeq: 0,
+);
+
+/// A source that also reads the files of a room's own store.
+final class _FilesHostedSource extends _HostedScreenSource
+    implements MissionHostedGroupsAttachmentDataSource {
+  _FilesHostedSource(super.snapshot);
+
+  final List<String> downloads = [];
+
+  @override
+  Future<Uint8List> downloadHostedGroupAttachment(
+    HostedGroupRoom room, {
+    required String eventId,
+    required HostedGroupAttachment attachment,
+  }) async {
+    downloads.add('${room.roomId}:$eventId:${attachment.attachmentId}');
+    return Uint8List(attachment.size);
   }
 }
 

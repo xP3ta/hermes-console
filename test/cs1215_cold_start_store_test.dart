@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/cold_start_store.dart';
+import 'package:hermes_android/core/services/cold_start_tail_cipher.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -13,9 +15,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
 
-/// In-memory stand-in for the Keystore-backed storage.
+/// In-memory stand-in for the Keystore-backed storage and the tail files.
 class MemoryColdStartStorage implements ColdStartStorage {
   final Map<String, String> values = {};
+  final Map<String, Uint8List> files = {};
   int writes = 0;
 
   @override
@@ -32,10 +35,25 @@ class MemoryColdStartStorage implements ColdStartStorage {
 
   @override
   Future<Iterable<String>> keys() async => values.keys.toList();
+
+  @override
+  Future<Uint8List?> readFile(String name) async => files[name];
+
+  @override
+  Future<void> writeFile(String name, Uint8List bytes) async {
+    writes += 1;
+    files[name] = Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<void> deleteFile(String name) async => files.remove(name);
+
+  @override
+  Future<List<String>> fileNames() async => files.keys.toList();
 }
 
-/// Simulated process death: the first write whose key matches [crashOn]
-/// throws and nothing after it in that operation runs.
+/// Simulated process death: the first write whose key (or file name)
+/// matches [crashOn] throws and nothing after it in that operation runs.
 class CrashingColdStartStorage extends MemoryColdStartStorage {
   CrashingColdStartStorage(this.crashOn);
 
@@ -50,7 +68,20 @@ class CrashingColdStartStorage extends MemoryColdStartStorage {
     }
     await super.write(key, value);
   }
+
+  @override
+  Future<void> writeFile(String name, Uint8List bytes) async {
+    final crash = crashOn;
+    if (crash != null && crash(name)) {
+      crashOn = null;
+      throw StateError('process killed');
+    }
+    await super.writeFile(name, bytes);
+  }
 }
+
+/// A tail file name (secure-storage keys all start with `cold_start_`).
+bool _isFile(String key) => !key.startsWith('cold_start_');
 
 /// Holds every tail read until [releaseTailReads] (and every delete until
 /// [releaseDeletes]), so a test can act while a restore or a cleanup is
@@ -81,34 +112,68 @@ class BlockingColdStartStorage extends MemoryColdStartStorage {
   }
 
   @override
-  Future<String?> read(String key) async {
+  Future<void> deleteFile(String name) async {
+    final gate = _deleteGate;
+    if (gate != null) {
+      if (!deleteStarted.isCompleted) deleteStarted.complete();
+      await gate.future;
+    }
+    await super.deleteFile(name);
+  }
+
+  @override
+  Future<Uint8List?> readFile(String name) async {
     final gate = _gate;
-    if (gate != null && key.startsWith(_tailKeyPrefix)) {
+    if (gate != null) {
       if (!tailReadStarted.isCompleted) tailReadStarted.complete();
       await gate.future;
     }
-    return super.read(key);
+    return super.readFile(name);
   }
 }
 
-const _tailKeyPrefix = 'cold_start_tail_v1.';
+/// The cipher of the tail files [storage] holds.
+ColdStartTailCipher _cipherOf(MemoryColdStartStorage storage) =>
+    ColdStartTailCipher(
+      base64Decode(storage.values[ColdStartStore.fileKeyKey]!),
+    );
 
-/// Tail blobs on disk that the persisted index does not reference: they are
+/// The file of one tail.
+String _fileOf(
+  MemoryColdStartStorage storage,
+  String connectionId,
+  String profile,
+  String id,
+) => _cipherOf(storage).fileName(
+  connectionId,
+  profile,
+  ColdStartStore.tailKey(connectionId, profile, id),
+);
+
+/// Tail files on disk that the persisted index does not reference: they are
 /// invisible to [ColdStartStore.loadTails] and must never exist.
 Set<String> _unindexedTails(MemoryColdStartStorage storage) {
   final raw = storage.values[ColdStartStore.indexKey];
   final indexed = <String>{};
-  if (raw != null) {
+  if (raw != null && storage.values[ColdStartStore.fileKeyKey] != null) {
+    final cipher = _cipherOf(storage);
     try {
       final data = jsonDecode(raw);
       for (final item in (data['tails'] as List? ?? const [])) {
-        indexed.add((item as Map)['k'] as String);
+        final tail = item as Map;
+        indexed.add(
+          cipher.fileName(
+            tail['c'] as String,
+            tail['p'] as String,
+            tail['k'] as String,
+          ),
+        );
       }
     } catch (_) {}
   }
   return {
-    for (final key in storage.values.keys)
-      if (key.startsWith(_tailKeyPrefix) && !indexed.contains(key)) key,
+    for (final name in storage.files.keys)
+      if (!indexed.contains(name)) name,
   };
 }
 
@@ -162,10 +227,7 @@ void main() {
           startsWith('s${saved - 1}-200'),
         );
         // Evicted tails are deleted from storage, not just unindexed.
-        expect(
-          storage.values.keys.where((k) => k.startsWith('cold_start_tail_v1.')),
-          hasLength(ColdStartStore.maxTails),
-        );
+        expect(storage.files, hasLength(ColdStartStore.maxTails));
       },
     );
 
@@ -183,9 +245,10 @@ void main() {
           newestFirst: _rows('big$i', 120, size: 12000),
         );
       }
-      final total = storage.values.entries
-          .where((e) => e.key.startsWith('cold_start_tail_v1.'))
-          .fold<int>(0, (sum, e) => sum + utf8.encode(e.value).length);
+      final total = storage.files.values.fold<int>(
+        0,
+        (sum, file) => sum + file.length,
+      );
       expect(total, lessThanOrEqualTo(ColdStartStore.maxTotalBytes));
       final tails = await ColdStartStore(storage: storage).loadTails();
       expect(tails.first.storedSessionId, 'big${ColdStartStore.maxTails - 1}');
@@ -289,10 +352,7 @@ void main() {
       final fresh = ColdStartStore(storage: storage);
       expect((await fresh.loadTails()).map((t) => t.connectionId), ['c2']);
       expect(await fresh.routeFor('c1'), isNull);
-      expect(
-        storage.values.keys.where((k) => k.startsWith('cold_start_tail_v1.')),
-        hasLength(1),
-      );
+      expect(storage.files, hasLength(1));
     });
 
     test('clearing a profile keeps the other profiles', () async {
@@ -312,6 +372,7 @@ void main() {
       final store = await seeded(storage);
       await store.clearAll();
       expect(storage.values, isEmpty);
+      expect(storage.files, isEmpty);
     });
   });
 
@@ -336,10 +397,7 @@ void main() {
         throwsStateError,
       );
       expect(_unindexedTails(storage), isEmpty);
-      expect(
-        storage.values.keys.where((k) => k.startsWith(_tailKeyPrefix)),
-        isEmpty,
-      );
+      expect(storage.files, isEmpty);
     });
 
     test('a normal save leaves every blob indexed and discoverable', () async {
@@ -358,9 +416,7 @@ void main() {
 
     test('a crash after the index but before the tail heals on load and '
         'cleanup leaves nothing', () async {
-      final storage = CrashingColdStartStorage(
-        (key) => key.startsWith(_tailKeyPrefix),
-      );
+      final storage = CrashingColdStartStorage(_isFile);
       await expectLater(
         save(ColdStartStore(storage: storage), 's1'),
         throwsStateError,
@@ -369,6 +425,7 @@ void main() {
       expect(await restarted.loadTails(), isEmpty);
       await restarted.clearAll();
       expect(storage.values, isEmpty);
+      expect(storage.files, isEmpty);
     });
 
     group('a corrupt index never strands encrypted tails', () {
@@ -385,17 +442,18 @@ void main() {
         final storage = await corrupted();
         await ColdStartStore(storage: storage).clearAll();
         expect(storage.values, isEmpty);
+        expect(storage.files, isEmpty);
       });
 
-      // Tail keys encode connection and profile, so with the index gone the
-      // sweep still knows which blobs belong to the forgotten scope. Another
-      // connection's (or profile's) private tails must survive it.
+      // File names start with keyed hashes of connection and profile, so
+      // with the index gone the sweep still knows which files belong to the
+      // forgotten scope. Another connection's (or profile's) private tails
+      // must survive it.
       Set<String> tailsOf(MemoryColdStartStorage storage, String conn) {
-        final probe = ColdStartStore.tailKey(conn, 'default', 'x');
-        final scope = probe.substring(0, probe.lastIndexOf('.') + 1);
+        final scope = _cipherOf(storage).connectionPrefix(conn);
         return {
-          for (final key in storage.values.keys)
-            if (key.startsWith(scope)) key,
+          for (final name in storage.files.keys)
+            if (name.startsWith(scope)) name,
         };
       }
 
@@ -404,7 +462,7 @@ void main() {
         await ColdStartStore(storage: storage).forgetScope('c1');
         expect(tailsOf(storage, 'c1'), isEmpty);
         expect(tailsOf(storage, 'c2'), {
-          ColdStartStore.tailKey('c2', 'default', 'b'),
+          _fileOf(storage, 'c2', 'default', 'b'),
         });
       });
 
@@ -425,13 +483,11 @@ void main() {
           storage: storage,
         ).forgetScope('c1', profile: 'default');
         expect(
-          storage.values.containsKey(
-            ColdStartStore.tailKey('c1', 'default', 'a'),
-          ),
+          storage.files.containsKey(_fileOf(storage, 'c1', 'default', 'a')),
           isFalse,
         );
         expect(
-          storage.values.containsKey(ColdStartStore.tailKey('c1', 'work', 'w')),
+          storage.files.containsKey(_fileOf(storage, 'c1', 'work', 'w')),
           isTrue,
         );
       });
@@ -445,14 +501,14 @@ void main() {
         );
         expect(tailsOf(storage, 'c1'), isEmpty);
         expect(tailsOf(storage, 'c2'), {
-          ColdStartStore.tailKey('c2', 'default', 'b'),
+          _fileOf(storage, 'c2', 'default', 'b'),
         });
       });
     });
   });
 
   group('encryption at rest', () {
-    test('chat content goes only through flutter_secure_storage, never to '
+    test('chat content is only ever stored sealed, never in clear nor in '
         'SharedPreferences', () async {
       SharedPreferences.setMockInitialValues({});
       final secure = <String, String>{};
@@ -472,7 +528,11 @@ void main() {
               return null;
             },
           );
-      final store = ColdStartStore();
+      final dir = Directory.systemTemp.createTempSync('cold-start-at-rest');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final store = ColdStartStore(
+        storage: SecureColdStartStorage(directory: () async => dir),
+      );
       await store.saveTail(
         connectionId: 'c',
         profile: 'default',
@@ -483,7 +543,19 @@ void main() {
           {'id': 1, 'role': 'assistant', 'content': 'secreto-del-chat'},
         ],
       );
-      expect(secure.values.any((v) => v.contains('secreto-del-chat')), isTrue);
+      expect(secure.values.any((v) => v.contains('secreto-del-chat')), isFalse);
+      final file = dir.listSync().whereType<File>().single;
+      expect(
+        latin1.decode(file.readAsBytesSync()),
+        isNot(contains('secreto-del-chat')),
+      );
+      final reopened = ColdStartStore(
+        storage: SecureColdStartStorage(directory: () async => dir),
+      );
+      expect(
+        (await reopened.loadTails()).single.newestFirst.single['content'],
+        'secreto-del-chat',
+      );
       final prefs = await SharedPreferences.getInstance();
       for (final key in prefs.getKeys()) {
         expect('${prefs.get(key)}', isNot(contains('secreto-del-chat')));
@@ -699,10 +771,7 @@ void main() {
         expect(painted(service, 'gone'), isEmpty);
         expect(painted(service, 'kept'), isEmpty);
         expect(await ColdStartStore(storage: storage).loadTails(), isEmpty);
-        expect(
-          storage.values.keys.where((k) => k.startsWith(_tailKeyPrefix)),
-          isEmpty,
-        );
+        expect(storage.files, isEmpty);
       });
     });
 

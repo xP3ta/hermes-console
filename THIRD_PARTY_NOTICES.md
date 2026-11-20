@@ -104,6 +104,7 @@ de los paquetes empaquetados).
 | file_picker | MIT |
 | local_auth | BSD-3-Clause |
 | crypto | BSD-3-Clause |
+| pointycastle | MIT |
 | speech_to_text | BSD-3-Clause |
 | flutter_tts | MIT |
 | audioplayers | MIT |
@@ -260,7 +261,7 @@ de → Licencias open source**.
 ## Visores de diagramas y de modelos 3D
 
 Los diagramas Mermaid y los modelos 3D (`.glb`, `.gltf`) se dibujan en el
-dispositivo con dos librerías empaquetadas sin modificar en `assets/viewers/`;
+dispositivo con librerías empaquetadas sin modificar en `assets/viewers/`;
 no se descarga nada en runtime y la página que las usa no puede hacer ninguna
 petición de red.
 
@@ -271,6 +272,18 @@ petición de red.
 - **model-viewer 4.4.0** de Google (`model-viewer-umd.min.js`), licencia
   Apache 2.0, texto en `assets/viewers/model-viewer-LICENSE.txt`. Incluye
   three.js (MIT), lit (BSD-3-Clause), fflate (MIT) y gainmap-js (MIT).
+- **Draco 1.5.6** de Google (`draco_wasm_wrapper.js`, `draco_decoder.wasm`),
+  el decodificador de mallas comprimidas con Draco que model-viewer 4.4.0
+  carga por defecto de
+  `https://www.gstatic.com/draco/versioned/decoders/1.5.6/`; aquí se copia
+  sin modificar y la página lo lee de sí misma. Licencia Apache 2.0, texto en
+  `assets/viewers/draco-LICENSE.txt`.
+- **Basis Universal** de Binomial (`basis_transcoder.js`,
+  `basis_transcoder.wasm`, commit `ba1c3e4`, 2021-04-15), el transcodificador
+  de texturas KTX2 que model-viewer 4.4.0 carga por defecto de
+  `https://www.gstatic.com/basis-universal/versioned/2021-04-15-ba1c3e4/`;
+  copiado sin modificar. Licencia Apache 2.0 (con Zstandard, BSD-3-Clause),
+  texto en `assets/viewers/basis-universal-LICENSE.txt`.
 
 ## Iconos
 

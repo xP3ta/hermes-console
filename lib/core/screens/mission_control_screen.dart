@@ -383,6 +383,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     )..addListener(_onActiveProfileChanged);
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
+    _scheduleRoomsRefresh();
+    _watchRoomsLink();
     _watchLiveChanges();
     final roster = _roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
     roster.hydrate(widget.connection);
@@ -496,6 +498,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _disposed = true;
     _live.remove(this);
     _rosterTimer?.cancel();
+    _roomsTimer?.cancel();
+    _roomsLink?.removeListener(_onRoomsLink);
     _eventRefreshTimer?.cancel();
     unawaited(_liveChangeSubscription?.cancel());
     _liveChangeSubscription = null;
@@ -526,6 +530,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         // The roster tick sleeps in background; the resume load below is the
         // refresh, so the next tick comes a full interval later.
         if (_rosterTimer == null) _scheduleRosterRefresh();
+        if (_roomsTimer == null) _scheduleRoomsRefresh();
         if (!_lifecyclePaused) return;
         _lifecyclePaused = false;
         _kanbanReconnectDelay = const Duration(seconds: 3);
@@ -537,6 +542,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         if (state != AppLifecycleState.inactive) {
           _rosterTimer?.cancel();
           _rosterTimer = null;
+          _roomsTimer?.cancel();
+          _roomsTimer = null;
         }
         _lifecyclePaused = true;
         _kanbanRefreshDebounce?.cancel();
@@ -568,6 +575,191 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// at once; later ones coalesce into one trailing refresh.
   static const liveEventRefreshGap = Duration(seconds: 30);
   Timer? _rosterTimer;
+
+  /// The room list is read again this often while it is on screen, as
+  /// Hermes Desktop re-reads it (`canonical-group-registry.tsx`
+  /// `useGatewayGroupRooms`: `refetchInterval: 10_000`, `retry: false`):
+  /// `groups.list` only, never a room's state or log.
+  static const roomsRefreshInterval = Duration(seconds: 10);
+  Timer? _roomsTimer;
+  bool _roomsInFlight = false;
+
+  /// Moves whenever a room action starts or ends: a list read that started
+  /// before it may predate what the action changed, so it is not shown.
+  int _roomsEpoch = 0;
+  int _hostedMutations = 0;
+
+  /// Rooms disbanded from this screen. A list read that started before the
+  /// disband never shows them again; each is forgotten once a list read no
+  /// longer has it (`canonical-group-registry.tsx`
+  /// `$disbandedGatewayRooms`).
+  final Set<String> _disbandedRooms = {};
+
+  MissionHostedRoomsLinkSource? _roomsLinkSource;
+  Listenable? _roomsLink;
+  bool _roomsLinkWasUp = false;
+
+  void _scheduleRoomsRefresh() {
+    _roomsTimer?.cancel();
+    _roomsTimer = Timer.periodic(roomsRefreshInterval, (_) {
+      if (_refreshAllowed) unawaited(_refreshRooms());
+    });
+  }
+
+  /// The socket coming back up reads the list at once, as Desktop's rooms
+  /// query does when its gateway reopens (always stale, enabled only while
+  /// the gateway is open).
+  void _watchRoomsLink() {
+    final source = _dataSource;
+    if (source is! MissionHostedRoomsLinkSource) return;
+    final link = source as MissionHostedRoomsLinkSource;
+    _roomsLinkSource = link;
+    _roomsLinkWasUp = link.roomsLinkUp;
+    _roomsLink = link.roomsLink..addListener(_onRoomsLink);
+  }
+
+  void _onRoomsLink() {
+    final up = _roomsLinkSource?.roomsLinkUp ?? false;
+    final cameUp = up && !_roomsLinkWasUp;
+    _roomsLinkWasUp = up;
+    if (cameUp && _refreshAllowed) unawaited(_refreshRooms());
+  }
+
+  /// `groups.capabilities` + `groups.list` again, shown in place of the
+  /// rooms on screen. A failed read keeps the last good list and says
+  /// nothing: «the roster shows rooms, never a transport error»
+  /// (`canonical-group-registry.tsx`). A read that started before a full
+  /// load or a room action is dropped; the next one shows what it missed.
+  Future<void> _refreshRooms() async {
+    final source = _liveSource;
+    final previous = _snapshot;
+    if (!mounted ||
+        _disposed ||
+        source == null ||
+        previous == null ||
+        previous.hostedGroups.capabilities == null ||
+        previous.hostedGroupsCapability == MissionCapabilityState.unsupported ||
+        _roomsInFlight ||
+        _loading ||
+        _refreshing ||
+        _partialInFlight ||
+        _hostedMutations > 0) {
+      return;
+    }
+    _roomsInFlight = true;
+    final generation = _loadGeneration;
+    final epoch = _roomsEpoch;
+    try {
+      final rooms = await source.refreshHostedGroups(previous.hostedGroups);
+      final current = _snapshot;
+      if (!mounted ||
+          _disposed ||
+          current == null ||
+          generation != _loadGeneration ||
+          epoch != _roomsEpoch ||
+          _hostedMutations > 0) {
+        return;
+      }
+      final next = _withHostedGroups(
+        current,
+        _hidingDisbanded(rooms),
+        listed: true,
+      );
+      setState(() => _snapshot = next);
+      _snapshotCache?.write(widget.connection, next);
+      _statusRevision.value++;
+    } catch (_) {
+      // Kept as shown; the next tick reads again.
+    } finally {
+      _roomsInFlight = false;
+    }
+  }
+
+  /// [snapshot] with [hosted] as its rooms. [listed]: [hosted] is a list
+  /// read that answered, so the rooms are available again.
+  MissionBackendSnapshot _withHostedGroups(
+    MissionBackendSnapshot snapshot,
+    HostedGroupsSnapshot hosted, {
+    bool listed = false,
+  }) => MissionBackendSnapshot(
+    profiles: snapshot.profiles,
+    sessions: snapshot.sessions,
+    board: snapshot.board,
+    profilesCapability: snapshot.profilesCapability,
+    sessionsCapability: snapshot.sessionsCapability,
+    kanbanCapability: snapshot.kanbanCapability,
+    hostedGroups: hosted,
+    hostedGroupsCapability: listed
+        ? MissionCapabilityState.available
+        : snapshot.hostedGroupsCapability,
+    failures: listed
+        ? ({...snapshot.failures}..remove('hostedGroups'))
+        : snapshot.failures,
+    loadedAt: snapshot.loadedAt,
+    activeSessions: snapshot.activeSessions,
+    activeSessionsObservedAt: snapshot.activeSessionsObservedAt,
+    activeSessionsAuthoritative: snapshot.activeSessionsAuthoritative,
+  );
+
+  /// [listed] (a list read that answered) without the rooms disbanded from
+  /// this screen; a room the list no longer has is forgotten here.
+  HostedGroupsSnapshot _hidingDisbanded(HostedGroupsSnapshot listed) {
+    if (_disbandedRooms.isEmpty) return listed;
+    final ids = {for (final room in listed.rooms) room.roomId};
+    _disbandedRooms.removeWhere((id) => !ids.contains(id));
+    if (_disbandedRooms.isEmpty) return listed;
+    final rooms = <HostedGroupRoom>[];
+    final logs = <HostedGroupLogPage?>[];
+    for (var i = 0; i < listed.rooms.length; i++) {
+      final room = listed.rooms[i];
+      if (_disbandedRooms.contains(room.roomId)) continue;
+      rooms.add(room);
+      logs.add(listed.logAt(i));
+    }
+    return HostedGroupsSnapshot(
+      capabilities: listed.capabilities,
+      rooms: List.unmodifiable(rooms),
+      logs: List.unmodifiable(logs),
+      driverStatuses: Map.unmodifiable({
+        for (final entry in listed.driverStatuses.entries)
+          if (!_disbandedRooms.contains(entry.key)) entry.key: entry.value,
+      }),
+      driverReadAt: Map.unmodifiable({
+        for (final entry in listed.driverReadAt.entries)
+          if (!_disbandedRooms.contains(entry.key)) entry.key: entry.value,
+      }),
+      unreadableRooms: listed.unreadableRooms,
+    );
+  }
+
+  /// The connection's global events for an open room (`groups.changed`),
+  /// or null without a live channel.
+  Stream<TuiGatewayEvent>? _roomPushes() {
+    try {
+      return _liveSource?.watchLiveChanges();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Back on the room list from a room: its row shows what the room's view
+  /// read meanwhile (see [MissionControlRepository.withPublishedReads]).
+  void _showPublishedRoomReads() {
+    final source = _dataSource;
+    final current = _snapshot;
+    if (source is! MissionControlRepository ||
+        current == null ||
+        !mounted ||
+        _disposed) {
+      return;
+    }
+    final hosted = source.withPublishedReads(current.hostedGroups);
+    if (identical(hosted, current.hostedGroups)) return;
+    final next = _withHostedGroups(current, hosted);
+    setState(() => _snapshot = next);
+    _snapshotCache?.write(widget.connection, next);
+    _statusRevision.value++;
+  }
 
   StreamSubscription<TuiGatewayEvent>? _liveChangeSubscription;
 
@@ -798,6 +990,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (profiles != null) {
       _screenAccess?.refresh([for (final p in profiles) botScreenProfile(p)]);
     }
+    final source = _dataSource;
+    if (source is MissionControlRepository) source.retryConnection();
     final inFlight = _inFlightLoad;
     if (inFlight == null) return _load(refresh: true);
     if (_quietRefresh && mounted) setState(() => _quietRefresh = false);
@@ -1011,16 +1205,22 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                       capabilities != null
                   ? _roomReads.read
                   : null,
-              log: index < snapshot.hostedGroups.logs.length
-                  ? snapshot.hostedGroups.logs[index]
-                  : null,
+              // Null for a room no view read in this session: the room shows
+              // it loading until its first read, never as empty.
+              log: snapshot.hostedGroups.logAt(index),
               copy: MissionControlCopy.of(context),
               avatarCache: _profileAvatarCache,
+              changes: _roomPushes(),
+              pushesLive: () => _liveSource?.liveChangesHealthy ?? false,
               localProfiles: {
                 for (final profile in snapshot.profiles) profile.name: profile,
               },
               onOpenMember: _openRoomMember,
               onOpenMemberSession: _openRoomMemberSession,
+              onDownloadAttachment: _roomAttachmentDownload(
+                rooms[index],
+                capabilities,
+              ),
               canSend:
                   enabled &&
                   (capabilities?.supports(GroupMethod.send) ?? false),
@@ -1065,6 +1265,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             ),
           ),
         );
+        // Back on the room list: the room's row shows what its view read,
+        // and the list itself is read again now that it is on screen.
+        _showPublishedRoomReads();
+        unawaited(_refreshRooms());
         return;
     }
   }
@@ -1096,7 +1300,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       kanbanCapability: incoming.kanbanCapability,
       hostedGroups: hostedGroupsFailed
           ? previous.hostedGroups
-          : incoming.hostedGroups,
+          : _hidingDisbanded(incoming.hostedGroups),
       hostedGroupsCapability: incoming.hostedGroupsCapability,
       failures: incoming.failures,
       loadedAt: incoming.loadedAt,
@@ -2610,6 +2814,27 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     return mounted && confirmed == true;
   }
 
+  /// `groups.attachment.download` for [room] when the server lists it, as
+  /// Desktop gates it (`offersGroupMethod(methods,
+  /// 'groups.attachment.download')`). Null keeps the room's stored files as
+  /// named chips, opened on Desktop, and nothing is ever requested.
+  RoomStoredFileDownload? _roomAttachmentDownload(
+    HostedGroupRoom room,
+    GroupsCapabilities? capabilities,
+  ) {
+    final source = _dataSource;
+    if (source is! MissionHostedGroupsAttachmentDataSource ||
+        !(capabilities?.supports(GroupMethod.attachmentDownload) ?? false)) {
+      return null;
+    }
+    final files = source as MissionHostedGroupsAttachmentDataSource;
+    return (eventId, attachment) => files.downloadHostedGroupAttachment(
+      room,
+      eventId: eventId,
+      attachment: attachment,
+    );
+  }
+
   MissionHostedGroupsDataSource? get _hostedGroupsDataSource {
     final source = _dataSource;
     return source is MissionHostedGroupsDataSource
@@ -2663,13 +2888,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         profilesCapability: snapshot.profilesCapability,
         sessionsCapability: snapshot.sessionsCapability,
         kanbanCapability: snapshot.kanbanCapability,
-        hostedGroups: HostedGroupsSnapshot(
-          capabilities: proven,
-          rooms: hosted.rooms,
-          logs: hosted.logs,
-          driverStatuses: hosted.driverStatuses,
-          unreadableRooms: hosted.unreadableRooms,
-        ),
+        hostedGroups: hosted.withCapabilities(proven),
         hostedGroupsCapability: snapshot.hostedGroupsCapability,
         failures: snapshot.failures,
         loadedAt: snapshot.loadedAt,
@@ -2900,6 +3119,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         _roomReads.supersedes(capabilities.generation)) {
       throw StateError('hosted room authority unavailable');
     }
+    _hostedMutations++;
+    _roomsEpoch++;
+    var disbanded = false;
     try {
       final result = await action(
         source,
@@ -2915,25 +3137,17 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           result.room.revision < snapshot.hostedGroups.rooms[index].revision) {
         throw StateError('hosted room authority changed');
       }
-      final rooms = [...snapshot.hostedGroups.rooms];
-      final logs = [...snapshot.hostedGroups.logs];
-      // Only the mutated room's driver evidence may change: every other
-      // room keeps its approvals and working state until the next load.
-      final driverStatuses = {...snapshot.hostedGroups.driverStatuses};
-      final roomId = result.room.roomId;
-      if (result.room.disbanded) {
-        rooms.removeAt(index);
-        if (index < logs.length) logs.removeAt(index);
-        driverStatuses.remove(roomId);
-      } else {
-        rooms[index] = result.room;
-        if (result.log != null && index < logs.length) {
-          logs[index] = result.log!;
-        }
-        if (result.driverStatus case final status?) {
-          driverStatuses[roomId] = status;
-        }
-      }
+      disbanded = result.room.disbanded;
+      if (disbanded) _disbandedRooms.add(result.room.roomId);
+      // Only the mutated room's log and driver evidence may change: every
+      // other room keeps its approvals and working state.
+      final hosted = snapshot.hostedGroups.withRoomRead(
+        index,
+        room: result.room,
+        log: result.log,
+        driverStatus: result.driverStatus,
+        readAt: result.driverStatus == null ? null : DateTime.now(),
+      );
       setState(() {
         _snapshot = MissionBackendSnapshot(
           profiles: snapshot.profiles,
@@ -2942,13 +3156,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           profilesCapability: snapshot.profilesCapability,
           sessionsCapability: snapshot.sessionsCapability,
           kanbanCapability: snapshot.kanbanCapability,
-          hostedGroups: HostedGroupsSnapshot(
-            capabilities: capabilities,
-            rooms: List.unmodifiable(rooms),
-            logs: List.unmodifiable(logs),
-            driverStatuses: Map.unmodifiable(driverStatuses),
-            unreadableRooms: snapshot.hostedGroups.unreadableRooms,
-          ),
+          hostedGroups: hosted,
           hostedGroupsCapability: snapshot.hostedGroupsCapability,
           failures: snapshot.failures,
           loadedAt: snapshot.loadedAt,
@@ -2976,6 +3184,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         );
       }
       rethrow;
+    } finally {
+      _hostedMutations--;
+      _roomsEpoch++;
+      // A disband reads the list again, as Desktop's does
+      // (`canonical-group-registry.tsx` `forgetCanonicalGroup`).
+      if (disbanded) unawaited(_refreshRooms());
     }
   }
 
@@ -4343,6 +4557,10 @@ class _HostedRoomWorkspace extends StatefulWidget {
   final MissionControlCopy copy;
   final MissionProfileAvatarCache? avatarCache;
 
+  /// See [RoomScreen.changes] and [RoomScreen.pushesLive].
+  final Stream<TuiGatewayEvent>? changes;
+  final bool Function()? pushesLive;
+
   /// Local profiles of this connection by name: a member owned by the
   /// room's authority that matches one is one of your own Bots (real face,
   /// profile link). Federated members never resolve here.
@@ -4368,6 +4586,10 @@ class _HostedRoomWorkspace extends StatefulWidget {
   final Future<HostedGroupWorkspaceReadback> Function() onStop;
   final Future<HostedGroupWorkspaceReadback> Function() onDisband;
 
+  /// Reads a file of the room's own store; null when the server does not
+  /// list `groups.attachment.download`.
+  final RoomStoredFileDownload? onDownloadAttachment;
+
   const _HostedRoomWorkspace({
     required this.identityFor,
     required this.draftScope,
@@ -4379,9 +4601,12 @@ class _HostedRoomWorkspace extends StatefulWidget {
     required this.log,
     required this.copy,
     required this.avatarCache,
+    this.changes,
+    this.pushesLive,
     required this.localProfiles,
     required this.onOpenMember,
     this.onOpenMemberSession,
+    this.onDownloadAttachment,
     required this.canSend,
     required this.canRename,
     required this.canStop,
@@ -4435,6 +4660,28 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
     super.dispose();
   }
 
+  /// Path attachments through the Dashboard; with
+  /// `groups.attachment.download`, the room's stored files as well.
+  RoomAttachmentActions? _attachmentActions(
+    SavedConnection? connection,
+    _RoomDraftScope scope,
+  ) {
+    final files = connection == null
+        ? null
+        : DashboardRoomAttachmentActions(
+            connection: connection,
+            profile: scope.profile,
+          );
+    final download = widget.onDownloadAttachment;
+    if (download == null) return files;
+    return StoreRoomAttachmentActions(
+      files: files,
+      scope: '${scope.connectionId}\u0000${scope.profile}',
+      roomId: widget.room.roomId,
+      download: download,
+    );
+  }
+
   AgentProfile? _profileFor(HostedGroupMember member) =>
       member.owner.connectionId == widget.room.authorityGatewayId
       ? widget.localProfiles[member.owner.profile]
@@ -4451,6 +4698,8 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
       key: const ValueKey('mission-hosted-room-workspace'),
       room: widget.room,
       log: widget.log,
+      changes: widget.changes,
+      pushesLive: widget.pushesLive,
       gateway: CallbackRoomGateway(
         onRead:
             read ?? (_) => Future.error(StateError('room refresh unavailable')),
@@ -4523,12 +4772,7 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
             'mob-room-${base64Url.encode(utf8.encode(jsonEncode([widget.room.authorityGatewayId, widget.room.roomId])))}',
       ),
       uploader: writable ? DashboardRoomAttachmentUploader(connection) : null,
-      attachmentActions: connection == null
-          ? null
-          : DashboardRoomAttachmentActions(
-              connection: connection,
-              profile: scope.profile,
-            ),
+      attachmentActions: _attachmentActions(connection, scope),
       dictation: _dictation,
       displayName: identity?.name,
       roomAvatar: identity?.image == null
@@ -4801,19 +5045,30 @@ class _UnreadableRoomsNotice extends StatelessWidget {
   final List<HostedGroupUnreadableRoom> rooms;
   final Future<void> Function() onRetry;
 
-  /// Rooms shown from their last good read (their latest read failed).
-  final int staleCount;
-
-  /// The rooms read itself failed (the list, or the connection while
-  /// reading): what is shown, if anything, is the last good read.
+  /// The room list read itself failed: what is shown, if anything, is the
+  /// last good list.
   final bool loadFailed;
 
   const _UnreadableRoomsNotice({
     required this.rooms,
     required this.onRetry,
-    this.staleCount = 0,
     this.loadFailed = false,
+    this.detail,
   });
+
+  /// Which read failed, by method and code or kind, never its text:
+  /// `groups.list · timeout`, `groups.list · 5113`. Hermes Desktop shows
+  /// the read error next to its room list (`canonical-group-registry.tsx`);
+  /// here it is what a user can quote when rooms do not load.
+  final String? detail;
+
+  static String failureLabel(Object error) => switch (error) {
+    TuiGatewayRpcError(:final method, :final failureKind?) =>
+      '$method · ${failureKind.name}',
+    TuiGatewayRpcError(:final method, :final code?) => '$method · $code',
+    TuiGatewayRpcError(:final method) => method,
+    _ => '${error.runtimeType}',
+  };
 
   /// The notice [snapshot] calls for, or null when every room loaded.
   static _UnreadableRoomsNotice? of(
@@ -4824,15 +5079,15 @@ class _UnreadableRoomsNotice extends StatelessWidget {
     final loadFailed =
         snapshot.failures.containsKey('hostedGroups') &&
         snapshot.hostedGroupsCapability == MissionCapabilityState.unavailable;
-    final stale = hosted.staleRoomIds.length;
-    if (!loadFailed && stale == 0 && hosted.unreadableRooms.isEmpty) {
-      return null;
-    }
+    if (!loadFailed && hosted.unreadableRooms.isEmpty) return null;
     return _UnreadableRoomsNotice(
       rooms: hosted.unreadableRooms,
       onRetry: onRetry,
-      staleCount: stale,
       loadFailed: loadFailed,
+      detail: switch (loadFailed ? snapshot.failures['hostedGroups'] : null) {
+        final error? => failureLabel(error),
+        null => null,
+      },
     );
   }
 
@@ -4899,12 +5154,20 @@ class _UnreadableRoomsNotice extends StatelessWidget {
                           style: caption,
                         ),
                       const SizedBox(height: 2),
-                      Text(s.roomsUnreadableBody, style: caption),
+                      Text(
+                        s.roomsUnreadableBody,
+                        key: const ValueKey('mission-rooms-unreadable-body'),
+                        style: caption,
+                      ),
                     ],
-                    if (staleCount > 0) ...[
-                      Text(s.roomsStaleTitle(staleCount), style: heading),
-                      Text(s.roomsStaleBody, style: caption),
-                    ],
+                    if (detail case final detail?)
+                      Text(
+                        detail,
+                        key: const ValueKey('mission-rooms-read-detail'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: caption,
+                      ),
                   ],
                 ),
               ),

@@ -1,0 +1,7 @@
+What's new in 1.4.2:
+• Rooms, Bots and Cron load after signing in again, without restarting the app.
+• One slow room no longer hides the room list.
+• Images attached as files show their thumbnail; no server text in your messages.
+• Compressed 3D models now draw; viewers say why when something cannot be shown.
+• Parallel approvals wait in a queue.
+• Less memory and less background data.

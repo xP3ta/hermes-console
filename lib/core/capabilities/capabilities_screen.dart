@@ -553,6 +553,8 @@ class _CapabilitiesHubState extends State<_CapabilitiesHubBody> {
     ),
     serverBuilder: (context) => AdminIntegrationsScreen(
       gateway: _gatewayLease.client,
+      webhookGateway: _gatewayLease.client.webhooksOf(widget.profile),
+      mcpGateway: _gatewayLease.client.mcpProvisioningOf(widget.profile),
       readOnly: widget.connection.readOnly,
       initialSection: AdminIntegrationsSection.webhooks,
       title: Strings.of(context).exuMoreServer,

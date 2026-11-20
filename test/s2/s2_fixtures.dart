@@ -36,6 +36,10 @@ class S2Dashboard {
   final writes = <String>[]; // access of every POST /api/echo that arrived
   int tickets = 0; // POST /api/auth/ws-ticket that arrived
 
+  /// Holds a refresh that reached the server until it completes; the answer
+  /// is the one [refreshMode] called for when the request arrived.
+  Future<void> Function()? beforeRefreshAnswer;
+
   /// Runs when a write reaches the server (before it answers).
   void Function()? onWrite;
 
@@ -69,7 +73,9 @@ class S2Dashboard {
     await utf8.decoder.bind(r).join();
     if (r.uri.path == '/auth/native/refresh' && r.method == 'POST') {
       refreshCalls += 1;
-      switch (refreshMode) {
+      final mode = refreshMode;
+      await beforeRefreshAnswer?.call();
+      switch (mode) {
         case RefreshMode.expired:
           return _json(r, 401, {'error': 'session_expired'});
         case RefreshMode.unavailable:

@@ -61,7 +61,8 @@ class GeneratedImageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = _content(context);
+    // Not part of the reply's selectable text (see the media card).
+    final content = SelectionContainer.disabled(child: _content(context));
     // F5: the placeholder keeps the
     // image's box, and what changes (the box once the real size is known,
     // the placeholder giving way to the picture) eases instead of jumping
@@ -220,6 +221,8 @@ class GeneratedImageCard extends StatelessWidget {
                             curve: Curves.easeOut,
                             child: child,
                           ),
+                    // The file is here; its bytes are what cannot be
+                    // read (MediaViewer says the same).
                     errorBuilder: (ctx, _, _) => _statusCard(
                       ctx,
                       Theme.of(ctx).hermes,
@@ -228,7 +231,7 @@ class GeneratedImageCard extends StatelessWidget {
                         size: 17,
                         color: Theme.of(ctx).hermes.warning,
                       ),
-                      text: Strings.of(ctx).genImgError,
+                      text: Strings.of(ctx).artThumbUndecodable,
                     ),
                   ),
                   if (stack == null)

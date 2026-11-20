@@ -153,6 +153,7 @@ void main() {
         storage.values.keys.where((k) => k.startsWith('cold_start_tail_v1.')),
         isEmpty,
       );
+      expect(storage.files, isEmpty);
       expect(await store.usedBytes(), 0);
     });
   });
@@ -313,6 +314,7 @@ void main() {
         storage.values.keys.where((k) => k.startsWith('cold_start_tail_v1.')),
         isEmpty,
       );
+      expect(storage.files, isEmpty);
       // The limit cannot be picked while nothing is kept.
       final chip = tester.widget<ChoiceChip>(
         find.byKey(const ValueKey('cache-limit-10')),

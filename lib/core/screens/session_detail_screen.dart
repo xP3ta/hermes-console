@@ -413,11 +413,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         ? DashboardClient.lazy(widget.connection)
         : null;
     final ownerProfile = Session.profileOwner(_session.profile);
+    final chat = app?.activeChats.of(
+      widget.connection.id,
+      _session.id,
+      profile: ownerProfile,
+    );
     try {
       final result = await deleteSessionWithResolvedLineage(
         _session,
-        deleteSession: (sessionId) =>
-            _client.deleteSession(sessionId, profile: ownerProfile),
+        deleteSession: (sessionId) async {
+          await chat?.endRuntimeBeforeDelete();
+          return _client.deleteSession(sessionId, profile: ownerProfile);
+        },
         cronDeletion: cronDeletion,
         deleteCronJob:
             !_session.isJob ||

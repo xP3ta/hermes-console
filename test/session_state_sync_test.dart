@@ -410,6 +410,60 @@ void main() {
       expect(archive.titleForSession(row), 'Old');
     });
 
+    test('a live chat is renamed through its runtime first', () async {
+      final server = _Server();
+      final archive = await _open(server);
+      final row = _row('s1', title: 'Old');
+      final asked = <String>[];
+
+      await archive.renameSession(
+        row,
+        ' Lisbon trip ',
+        liveRuntime: (title) async {
+          asked.add(title);
+          return 'Lisbon trip';
+        },
+      );
+
+      expect(asked, ['Lisbon trip']);
+      expect(server.calls, isEmpty);
+      expect(archive.titleForSession(row), 'Lisbon trip');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getStringList('session_titles_$_conn') ?? [], isEmpty);
+    });
+
+    test('with no Dashboard the live runtime still renames on the '
+        'server', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final archive = await SessionArchive.load(prefs, _conn);
+      final row = _row('s1', title: 'Old');
+
+      await archive.renameSession(
+        row,
+        'Lisbon trip',
+        liveRuntime: (title) async => title,
+      );
+
+      expect(archive.titleForSession(row), 'Lisbon trip');
+      // Not a phone-only title: Hermes has it.
+      expect(prefs.getStringList('session_titles_$_conn') ?? [], isEmpty);
+    });
+
+    test('when the runtime refuses, the Dashboard renames it', () async {
+      final server = _Server();
+      final archive = await _open(server);
+      final row = _row('s1', title: 'Old');
+
+      await archive.renameSession(
+        row,
+        'Lisbon trip',
+        liveRuntime: (_) async => throw StateError('socket down'),
+      );
+
+      expect(server.calls.single.fields, {'title': 'Lisbon trip'});
+      expect(archive.titleForSession(row), 'Lisbon trip');
+    });
+
     test('without a writable server the rename stays local', () async {
       final prefs = await SharedPreferences.getInstance();
       final archive = await SessionArchive.load(prefs, _conn);

@@ -1436,6 +1436,7 @@
   "chaVoiceModeTooltip": "Iniciar conversación por voz",
   "chaErrViewDetails": "ver detalles",
   "chaErrHideDetails": "ocultar detalles",
+  "chaErrSetUpProvider": "Configurar un proveedor",
   "chaModelServer": "Modelo del servidor",
   "chaApproveAlways": "Permitir siempre esta acción del agente",
   "chaApproveOnce": "Aprobar una acción del agente",
@@ -2857,6 +2858,33 @@
   "crnStatusCompleted": "completada",
   "crnOpenFromConversation": "Abrir programación asociada",
   "crnRunNow": "Ejecutar ahora",
+  "crnStop": "Detener",
+  "crnStopping": "Deteniendo…",
+  "crnRunStopped": "Ejecución cancelada",
+  "crnRunFinishedFirst": "La ejecución terminó antes de detenerse",
+  "crnNothingToStop": "No hay ninguna ejecución en curso",
+  "crnStopFailed": "No se pudo detener la ejecución: {error}",
+  "@crnStopFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "crnLastCancelled": "Última ejecución cancelada",
+  "crnLastCancelledReason": "Última ejecución cancelada: {reason}",
+  "@crnLastCancelledReason": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "crnCatchUpLabel": "Ejecuciones perdidas",
+  "crnCatchUpHint": "Qué hacer con las ejecuciones perdidas mientras Hermes no estaba en marcha.",
+  "crnCatchUpDefault": "Usar el valor predeterminado",
+  "crnCatchUpRun": "Ejecutar una vez al volver",
+  "crnCatchUpSkip": "Omitirlas",
   "crnResume": "Reanudar",
   "crnPause": "Pausar",
   "crnNoRuns": "Sin ejecuciones registradas.",
@@ -7884,6 +7912,39 @@
   "embedSvgLabel": "Imagen SVG",
   "vwDiagramLabel": "Diagrama",
   "vwModelLabel": "Modelo 3D",
+  "vwModelFailed": "No se ha podido dibujar este modelo 3D.",
+  "vwPreviewFailed": "No se ha podido dibujar esta vista previa.",
+  "vwPreviewTimedOut": "Ha tardado demasiado en dibujarse.",
+  "vwModelExternal": "Este modelo necesita archivos que no han llegado con él: {files}.",
+  "@vwModelExternal": {
+    "placeholders": {
+      "files": {
+        "type": "String"
+      }
+    }
+  },
+  "vwModelNotGltf": "Este archivo no es un modelo glTF.",
+  "vwModelTooLarge": "Este modelo pasa de {size}: es demasiado grande para dibujarlo aquí. Puedes abrirlo con otra app o compartirlo.",
+  "@vwModelTooLarge": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "vwPlaybackFailed": "No se ha podido reproducir aquí. Puedes abrirlo con otra app o compartirlo.",
+  "vwUnsupportedHere": "Este tipo de archivo no se puede ver dentro de la app.",
+  "vwModelNeedsWasm": "Este modelo está comprimido y el WebView de este teléfono no puede ejecutar su descompresor. Actualizar «Android System WebView» lo arregla.",
+  "vwModelNeedsWebGl": "El WebView de este teléfono no puede dibujar 3D (WebGL 2 está desactivado o no existe).",
+  "vwPdfFailed": "No se ha podido abrir este PDF: puede estar dañado o protegido.",
+  "embedLoadFailed": "No se ha podido cargar {service}.",
+  "@embedLoadFailed": {
+    "placeholders": {
+      "service": {
+        "type": "String"
+      }
+    }
+  },
   "reactAdd": "Reaccionar",
   "reactFailed": "No se pudo guardar la reacción",
   "reactSettingsTitle": "Reacciones",
@@ -15794,5 +15855,102 @@
   "@subagentUiResultUnavailable": {
     "description": "The final result of those subagents is not available. Never means completed."
   },
-  "kluUsagePeriodDay": "24 h"
+  "kluUsagePeriodDay": "24 h",
+  "msgPairTitle": "Acceso por mensajería",
+  "msgPairSubtitle": "Aprueba o revoca quién puede escribir al bot",
+  "msgPairIntro": "Quien escribe a un bot por primera vez espera aquí hasta que lo apruebes. La aprobación vale desde su siguiente mensaje.",
+  "msgPairPending": "Solicitudes pendientes ({count})",
+  "@msgPairPending": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApproved": "Usuarios aprobados ({count})",
+  "@msgPairApproved": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApprove": "Aprobar",
+  "msgPairRevoke": "Revocar",
+  "msgPairRevokeTitle": "Revocar acceso",
+  "msgPairRevokeBody": "{name} perderá el acceso y dejará de ser reconocido en su próximo mensaje.",
+  "@msgPairRevokeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairJustNow": "ahora mismo",
+  "msgPairMinutesAgo": "hace {minutes} min",
+  "@msgPairMinutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairEmpty": "Nadie espera aprobación y aún no hay usuarios aprobados.",
+  "msgPairUnavailable": "Este servidor no permite gestionar el acceso por mensajería.",
+  "msgPairLoadFailed": "No se pudo cargar el acceso por mensajería.",
+  "msgPairApprovedDone": "{name} aprobado. Se le reconoce automáticamente en su próximo mensaje.",
+  "@msgPairApprovedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokedDone": "{name} revocado",
+  "@msgPairRevokedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairApproveFailed": "No se pudo aprobar a {name}",
+  "@msgPairApproveFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokeFailed": "No se pudo revocar a {name}",
+  "@msgPairRevokeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairLockedOut": "Demasiados intentos fallidos: esta plataforma está bloqueada. Inténtalo más tarde.",
+  "msgPairVerifyApprove": "Verifica para aprobar el acceso",
+  "msgPairVerifyRevoke": "Verifica para revocar el acceso",
+  "srvCheckDoctor": "Ejecutar doctor",
+  "srvCheckDoctorSub": "Revisa la instalación, la configuración y los proveedores",
+  "srvCheckAudit": "Auditoría de seguridad",
+  "srvCheckAuditSub": "Busca ajustes de riesgo en la configuración y las skills",
+  "srvCheckRun": "Ejecutar",
+  "srvCheckRunning": "En ejecución…",
+  "srvCheckLog": "Salida",
+  "srvCheckFinished": "Terminado",
+  "srvCheckFinishedCode": "Terminó con código de salida {code}",
+  "@srvCheckFinishedCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "srvCheckStillRunning": "Sigue en marcha; se dejó de seguir",
+  "srvCheckUnavailable": "Este servidor no puede ejecutarlo.",
+  "srvCheckStartFailed": "No se pudo iniciar.",
+  "srvCheckLost": "No se pudo seguir la ejecución. Vuelve a ejecutarla para ver su salida."
 }

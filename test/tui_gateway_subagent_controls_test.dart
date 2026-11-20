@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
 import 'support/rpc_frame_helpers.dart';
@@ -33,8 +34,11 @@ TuiGatewayClient _clientFor(HttpServer server) => TuiGatewayClient(
 
 Future<HttpServer> _server(
   Map<String, dynamic> Function(Map<String, dynamic>) respond,
-  List<Map<String, dynamic>> requests,
-) async {
+  List<Map<String, dynamic>> requests, {
+  int unanswered = 0,
+}) async {
+  // The first [unanswered] requests are received and never answered.
+  var silent = unanswered;
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   server.listen((request) async {
     final socket = await WebSocketTransformer.upgrade(request);
@@ -52,6 +56,10 @@ Future<HttpServer> _server(
         continue;
       }
       requests.add(frame);
+      if (silent > 0) {
+        silent--;
+        continue;
+      }
       socket.add(
         jsonEncode({
           'jsonrpc': '2.0',
@@ -312,6 +320,132 @@ void main() {
       });
     },
   );
+
+  group('approval.respond deadline', () {
+    setUp(() {
+      TuiGatewayClient.approvalRespondRpcTimeoutForTesting = const Duration(
+        milliseconds: 250,
+      );
+    });
+    tearDown(() => TuiGatewayClient.approvalRespondRpcTimeoutForTesting = null);
+
+    test('the production deadline is the one Desktop uses, not the '
+        'generic one', () {
+      expect(
+        TuiGatewayClient.approvalRespondRpcTimeout,
+        const Duration(seconds: 330),
+      );
+    });
+
+    test('an answer the server does not acknowledge in time is sent once '
+        'more, and that reply is the result', () async {
+      final requests = <Map<String, dynamic>>[];
+      // The first frame is swallowed (a write stalled behind a long stream);
+      // the server had applied it, so the re-send resolves nothing.
+      final server = await _server(
+        (_) => {'resolved': 0},
+        requests,
+        unanswered: 1,
+      );
+      addTearDown(server.close);
+      final client = _clientFor(server);
+      addTearDown(client.close);
+
+      final result = await client.resolveApprovalChecked(
+        'runtime-parent',
+        'once',
+        requestId: 'approval-stalled',
+      );
+
+      expect(result.resolved, 0);
+      expect(requests.map((frame) => frame['method']), [
+        'approval.respond',
+        'approval.respond',
+      ]);
+      expect(requests[0]['params'], requests[1]['params']);
+      expect(requests[0]['id'], isNot(requests[1]['id']));
+    });
+
+    test('it is sent once more only: a server that never answers ends in '
+        'a timeout after two frames', () async {
+      final requests = <Map<String, dynamic>>[];
+      final server = await _server(
+        (_) => {'resolved': 1},
+        requests,
+        unanswered: 99,
+      );
+      addTearDown(server.close);
+      final client = _clientFor(server);
+      addTearDown(client.close);
+
+      await expectLater(
+        client.resolveApproval('runtime-parent', 'deny', resolveAll: true),
+        throwsA(
+          isA<TuiGatewayRpcError>().having(
+            (error) => error.failureKind,
+            'kind',
+            TuiGatewayRpcFailureKind.timeout,
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(requests, hasLength(2));
+    });
+
+    test('a refusal is not a timeout: it is not sent again', () async {
+      final requests = <Map<String, dynamic>>[];
+      final server = await _server((_) => {'ok': true}, requests);
+      addTearDown(server.close);
+      final client = _clientFor(server);
+      addTearDown(client.close);
+
+      await expectLater(
+        client.resolveApprovalChecked(
+          'runtime-parent',
+          'once',
+          requestId: 'approval-restored',
+        ),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      expect(requests, hasLength(1));
+    });
+  });
+
+  test('a side question and a background task of several thousand '
+      'characters are sent whole, not refused', () async {
+    final requests = <Map<String, dynamic>>[];
+    final server = await _server((_) => {'task_id': 'side-1'}, requests);
+    addTearDown(server.close);
+    final client = _clientFor(server);
+    addTearDown(client.close);
+    final long = List.filled(700, 'palabra larga').join(' ');
+    expect(long.length, greaterThan(9000));
+
+    expect(await client.askSideQuestion('runtime-parent', long), 'side-1');
+    expect(
+      await client.startBackgroundPrompt('runtime-parent', long),
+      'side-1',
+    );
+    expect(await client.startBackgroundTask('runtime-parent', long), 'side-1');
+
+    expect(requests.map((frame) => frame['method']), [
+      'prompt.btw',
+      'prompt.background',
+      'prompt.background',
+    ]);
+    for (final frame in requests) {
+      expect((frame['params'] as Map)['text'], long);
+    }
+    // Still bounded, and still refused before the network.
+    await expectLater(
+      client.askSideQuestion(
+        'runtime-parent',
+        'x' * (TuiGatewayClient.sidePromptMaxLength + 1),
+      ),
+      throwsA(isA<DesktopControlFailure>()),
+    );
+    expect(requests, hasLength(3));
+  });
 
   test('approval.respond rejects ambiguous result', () async {
     final requests = <Map<String, dynamic>>[];

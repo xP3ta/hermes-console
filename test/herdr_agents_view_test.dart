@@ -15,6 +15,7 @@ import 'package:hermes_android/core/widgets/herdr_agents_widgets.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/fake_folder_source.dart';
+import 'support/gel_glow.dart';
 import 'support/fake_herdr_server.dart';
 import 'package:hermes_android/core/design/hicons.dart';
 
@@ -1314,5 +1315,76 @@ void main() {
     expect(hdaDurationText(s, const Duration(minutes: 5)), '5m');
     expect(hdaDurationText(s, const Duration(hours: 3)), '3h');
     expect(hdaDurationText(s, const Duration(days: 2)), '2d');
+  });
+
+  // The accent gels of the Herdr screens cast a glow outside their box; no
+  // layer or clip above one may cut it to a straight edge.
+  group('the accent gels keep their whole glow', () {
+    void expectUncut(WidgetTester tester, String key) => expectGlowsUncut(
+      tester,
+      find.byKey(ValueKey(key)),
+      expected: 1,
+      reason: key,
+    );
+
+    testWidgets('the new-agent button of the list', (tester) async {
+      await _open(tester);
+      expectUncut(tester, 'hda-new');
+    });
+
+    testWidgets('the send button of an open agent', (tester) async {
+      await _open(tester);
+      await tester.tap(find.byKey(const ValueKey('hda-row-w1:p1')));
+      await tester.pump();
+      await tester.pump();
+      expectUncut(tester, 'hda-send');
+    });
+
+    testWidgets('the accept button of a blocked agent', (tester) async {
+      final server = _fake()
+        ..screens['w1:p2'] = 'Waiting for your decision\nPress a key';
+      await _open(tester, server: server);
+      await tester.tap(find.byKey(const ValueKey('hda-row-w1:p2')));
+      await tester.pump();
+      await tester.pump();
+      expectUncut(tester, 'hda-accept');
+    });
+
+    testWidgets('the start button of the create form', (tester) async {
+      await _open(tester);
+      await tester.tap(find.byKey(const ValueKey('hda-new')));
+      await tester.pumpAndSettle();
+      expectUncut(tester, 'hda-create-start');
+    });
+
+    testWidgets('the use and create buttons of the folder picker', (
+      tester,
+    ) async {
+      await _open(tester, server: _fake()..harnesses = {'claude'});
+      await tester.tap(find.byKey(const ValueKey('hda-new')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('hda-create-folder-pick')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('hda-folder-home')));
+      await tester.pumpAndSettle();
+      expectUncut(tester, 'hda-folder-use');
+      await tester.tap(find.byKey(const ValueKey('hda-folder-new')));
+      await tester.pumpAndSettle();
+      expectUncut(tester, 'hda-folder-new-go');
+    });
+
+    testWidgets('the retry button of a start that failed', (tester) async {
+      final server = _fake()
+        ..startError = 'agent_start_timeout_0_9_5.json'
+        ..agentAppearsAfter = null;
+      final rig = await _open(tester, server: server);
+      await rig.controller.createAgent(folder: '/srv', kind: 'pi');
+      await tester.pump();
+      for (var i = 0; i < 32; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      await tester.pump();
+      expectUncut(tester, 'hda-start-retry');
+    });
   });
 }

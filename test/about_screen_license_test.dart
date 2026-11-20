@@ -54,6 +54,22 @@ void main() {
       entries.any((entry) => entry.packages.contains('Thinking Orbs 0.3.1')),
       isFalse,
     );
+
+    // The 3D viewer's packed decoders ship their licence texts.
+    for (final (package, phrase) in [
+      ('Draco', 'Apache License'),
+      ('Basis Universal', 'Apache License'),
+      ('Basis Universal', 'Zstandard'),
+    ]) {
+      final entry = entries.singleWhere(
+        (entry) => entry.packages.contains(package),
+      );
+      expect(
+        entry.paragraphs.map((paragraph) => paragraph.text).join('\n'),
+        contains(phrase),
+        reason: package,
+      );
+    }
   });
 
   testWidgets('Acerca de muestra el icono de Console', (tester) async {

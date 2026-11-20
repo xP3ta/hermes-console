@@ -42,6 +42,13 @@ final class ScriptedGatewayChannel implements WebSocketChannel {
   @override
   late final WebSocketSink sink = _ScriptedSink(this);
 
+  /// Answers request [id] now: a reply [respond] held back by returning
+  /// `null`.
+  void reply(int id, Map<String, dynamic> result) {
+    if (_incoming.isClosed) return;
+    _incoming.add(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': result}));
+  }
+
   /// Ends the stream without a close frame, like a dropped network path.
   void drop() {
     if (!_incoming.isClosed) unawaited(_incoming.close());

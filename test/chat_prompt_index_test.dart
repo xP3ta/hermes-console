@@ -150,6 +150,23 @@ void main() {
     test('empty transcript has no entries', () {
       expect(deriveChatPromptEntries(const []), isEmpty);
     });
+
+    test('the preview is the text the caller says the bubble shows', () {
+      final stored =
+          'Mira esto\n\n--- Attached Context ---\n'
+          'foto.jpg (image/jpeg, 67.6 KB) — binary file, not inlined as text. '
+          'It is available on disk at /home/u/.hermes/attachments/foto.jpg.';
+      final entries = deriveChatPromptEntries(
+        [_msg('user', stored)],
+        visibleText: (content) => content.split('\n\n--- Attached').first,
+      );
+      expect(entries.single.preview, 'Mira esto');
+      // Without a projection the stored text is used, as before.
+      expect(
+        deriveChatPromptEntries([_msg('user', stored)]).single.preview,
+        contains('Attached Context'),
+      );
+    });
   });
 
   group('activeChatPromptIndex', () {

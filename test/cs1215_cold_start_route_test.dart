@@ -31,11 +31,12 @@ import 'support/in_memory_compression_restore_storage.dart';
 import 'support/design_shots.dart' show loadDesignFonts;
 import 'support/test_api_client.dart';
 
-/// Records every tail blob read (each one is a Keystore decryption in
-/// production) and optionally charges [readLatency] per read.
+/// Records every tail file read (each one a decryption in production) and
+/// optionally charges [readLatency] per read.
 class _RecordingColdStartStorage extends MemoryColdStartStorage {
   _RecordingColdStartStorage(MemoryColdStartStorage from, {this.readLatency}) {
     values.addAll(from.values);
+    files.addAll(from.files);
   }
 
   final Duration? readLatency;
@@ -43,10 +44,17 @@ class _RecordingColdStartStorage extends MemoryColdStartStorage {
 
   @override
   Future<String?> read(String key) async {
-    if (key.startsWith('cold_start_tail_v1.')) tailReads.add(key);
     final latency = readLatency;
     if (latency != null) await Future<void>.delayed(latency);
     return super.read(key);
+  }
+
+  @override
+  Future<Uint8List?> readFile(String name) async {
+    tailReads.add(name);
+    final latency = readLatency;
+    if (latency != null) await Future<void>.delayed(latency);
+    return super.readFile(name);
   }
 }
 

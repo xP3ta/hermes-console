@@ -269,7 +269,15 @@ void main() {
     // After: only the 120 s backstop (2 full reloads at 120 s and 240 s).
     expect(gateway.count('profiles/sessions'), 1 + 2);
     expect(gateway.count('kanban.board'), 1 + 2);
-    expect(requests, lessThanOrEqualTo(12));
+    // The room list is read every 10 s while it is on screen, as Hermes
+    // Desktop does (`canonical-group-registry.tsx` `refetchInterval:
+    // 10_000`): `groups.list` alone (30 reads in 5 min, plus the two of
+    // the backstop's full reloads), never a room's state or log.
+    final listReads = gateway.count('groups.list') - 1;
+    expect(listReads, 30 + 2);
+    expect(gateway.count('groups.state'), 0);
+    expect(gateway.count('groups.log'), 0);
+    expect(requests - listReads, lessThanOrEqualTo(12));
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -305,7 +313,7 @@ void main() {
     expect(gateway.count('profiles.list'), 1);
     expect(gateway.count('profiles/sessions'), 1);
     expect(gateway.count('groups.list'), 1);
-    // Unchanged quiet room: groups.list proves it, no state/log read.
+    // The room list alone: no room is read to list it.
     expect(gateway.count('groups.state'), 0);
     expect(gateway.count('groups.log'), 0);
     expect(gateway.count('kanban.board'), 0, reason: 'no full reload');
@@ -323,9 +331,10 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('a room that moved is re-read on the change event', (
-    tester,
-  ) async {
+  // The list used to read a room whose `latest_seq` moved; as in Hermes
+  // Desktop, only an open room reads its state and log now.
+  testWidgets('a room that moved is listed again, never read, on the '
+      'change event', (tester) async {
     final manager = await _manager();
     final gateway = _MeteredGateway();
     final feed = FakeChangeFeed();
@@ -340,14 +349,17 @@ void main() {
     feed.sessionsChanged();
     await tester.pump();
     await tester.pump();
-    expect(gateway.count('groups.state'), 1);
-    expect(gateway.count('groups.log'), 1);
+    expect(gateway.count('groups.list'), 1);
+    expect(gateway.count('groups.state'), 0);
+    expect(gateway.count('groups.log'), 0);
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('a working room keeps refreshing until it is idle', (
-    tester,
-  ) async {
+  // The list used to poll a working room's state from Bots; as in Hermes
+  // Desktop, a room's state is read only while that room is open, and the
+  // list is `groups.list` every 10 s.
+  testWidgets('a working room is never read from the list: only '
+      'groups.list, every 10 s', (tester) async {
     final manager = await _manager();
     final gateway = _MeteredGateway()..roomWorking = true;
     final feed = FakeChangeFeed();
@@ -355,18 +367,15 @@ void main() {
     await tester.pumpWidget(_host(manager, gateway.repository(feed: feed)));
     await tester.pump();
     await tester.pump();
+    expect(gateway.count('groups.state'), 0);
     gateway.calls.clear();
 
-    // No event at all: the 30 s tick still re-reads the working room.
-    gateway.roomWorking = false;
     await _idle(tester, const Duration(seconds: 30));
-    expect(gateway.count('groups.state'), 1);
+    expect(gateway.count('groups.list'), 3);
+    expect(gateway.count('groups.state'), 0);
+    expect(gateway.count('groups.log'), 0);
     expect(gateway.count('kanban.board'), 0);
-
-    // Once idle evidence is shown, quiet ticks stop reading.
-    gateway.calls.clear();
-    await _idle(tester, const Duration(seconds: 60));
-    expect(gateway.calls, isEmpty);
+    expect(gateway.calls.where((call) => call != 'groups.list'), isEmpty);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -388,7 +397,9 @@ void main() {
     expect(gateway.count('kanban.board'), 0);
     gateway.calls.clear();
     await _idle(tester, const Duration(seconds: 60));
-    expect(gateway.calls, isEmpty);
+    // Nothing but the room list, every 10 s while it is on screen.
+    expect(gateway.calls.where((call) => call != 'groups.list'), isEmpty);
+    expect(gateway.count('groups.list'), 6);
     await tester.pumpWidget(const SizedBox());
   });
 

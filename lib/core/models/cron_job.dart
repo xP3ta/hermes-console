@@ -175,6 +175,37 @@ class CronJob {
 
   bool get isScriptOnly => noAgent && script.isNotEmpty;
 
+  /// The job's missed-run policy (`catch_up`): true runs one catch-up,
+  /// false skips the missed runs, null follows the server default.
+  CronCatchUp get catchUp => switch (raw['catch_up']) {
+    true => CronCatchUp.run,
+    false => CronCatchUp.skip,
+    _ => CronCatchUp.serverDefault,
+  };
+
+  /// The job's newest attempt (`latest_execution`). Only the job list
+  /// carries the execution ledger (cron/jobs.py `list_jobs`); a job read
+  /// alone, or from a server without the ledger, has none.
+  CronJobExecution? get latestExecution =>
+      CronJobExecution.tryParse(raw['latest_execution']);
+
+  /// The newest attempt still running under a live owner, even when a
+  /// refused "Run now" booked a newer row (`live_execution`).
+  CronJobExecution? get liveExecution =>
+      CronJobExecution.tryParse(raw['live_execution']);
+
+  /// Whether the job has a run that Stop can reach: Desktop `jobRunInFlight`
+  /// (apps/desktop/src/app/cron/run-control.ts).
+  bool get runInFlight =>
+      latestExecution?.inFlight == true || liveExecution != null;
+
+  /// Why the newest attempt was stopped, or null when it was not cancelled:
+  /// Desktop `jobLastCancelReason`.
+  String? get lastCancelReason {
+    final execution = latestExecution;
+    return execution?.status == 'cancelled' ? execution!.error : null;
+  }
+
   /// Desktop treats the legacy `enabled: false` fallback (`disabled`) as a
   /// resumable job, just like the explicit modern `paused` state.
   bool get isPaused =>
@@ -206,6 +237,79 @@ class CronJob {
 
   static String _clip(String value) =>
       value.length > 60 ? '${value.substring(0, 60)}…' : value;
+}
+
+/// What a job does with the runs it missed while the server was down:
+/// Desktop `CatchUpChoice` (apps/desktop/src/app/cron/run-control.ts).
+/// [serverDefault] stores nothing, so the job follows
+/// `cron.catch_up_missed` (recurring) or skips (one-shot).
+enum CronCatchUp {
+  serverDefault,
+  run,
+  skip;
+
+  /// The `catch_up` value on the wire: Desktop `catchUpValue`.
+  bool? get wire => switch (this) {
+    CronCatchUp.run => true,
+    CronCatchUp.skip => false,
+    CronCatchUp.serverDefault => null,
+  };
+}
+
+/// One attempt in the server's execution ledger (cron/executions.py), as
+/// the job list carries it.
+class CronJobExecution {
+  final String id;
+  final String status;
+  final String error;
+
+  const CronJobExecution({
+    required this.id,
+    required this.status,
+    required this.error,
+  });
+
+  static CronJobExecution? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    return CronJobExecution(
+      id: _text(raw['id']) ?? '',
+      status: _text(raw['status']) ?? '',
+      error: _text(raw['error']) ?? '',
+    );
+  }
+
+  /// Not finished yet: Desktop `IN_FLIGHT_STATUSES`.
+  bool get inFlight => status == 'claimed' || status == 'running';
+}
+
+/// How a Stop ended, read from the job list.
+enum CronStopOutcome { cancelled, finished, pending }
+
+/// Desktop `stopOutcome` (apps/desktop/src/app/cron/run-control.ts): how a
+/// Stop aimed at [executionId] ('' until the cancel route names it) ended,
+/// from a fresh read of [job]. A null [job] was removed, which stops its
+/// run. A newer run started after the stopped one does not keep the Stop
+/// pending.
+CronStopOutcome cronStopOutcome(CronJob? job, String executionId) {
+  if (job == null) return CronStopOutcome.cancelled;
+  if (executionId.isNotEmpty) {
+    CronJobExecution? target;
+    for (final execution in [job.liveExecution, job.latestExecution]) {
+      if (execution?.id == executionId) {
+        target = execution;
+        break;
+      }
+    }
+    if (target == null) return CronStopOutcome.cancelled;
+    if (target.inFlight) return CronStopOutcome.pending;
+    return target.status == 'cancelled'
+        ? CronStopOutcome.cancelled
+        : CronStopOutcome.finished;
+  }
+  if (job.runInFlight) return CronStopOutcome.pending;
+  return job.latestExecution?.status == 'cancelled'
+      ? CronStopOutcome.cancelled
+      : CronStopOutcome.finished;
 }
 
 /// The job's owning profile is unknown, so no action is sent: guessing a

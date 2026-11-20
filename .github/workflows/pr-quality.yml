@@ -15,8 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: Analyze & Test
+  # Everything but the Dart tests: policy gates, secret scans and analysis.
+  checks:
+    name: Policy and static analysis
     runs-on: ubuntu-latest
 
     steps:
@@ -98,82 +99,95 @@ jobs:
       - name: Run Python security and SBOM tests
         run: python3 -m unittest discover -s test -p '*_test.py'
 
-      # ── Step 1: Static analysis ──────────────────────────
       - name: Static analysis
-        id: analyze
-        continue-on-error: true
-        run: |
-          flutter analyze --fatal-infos 2>&1 | tee analyze_output.txt
-          exit "${PIPESTATUS[0]}"
+        run: flutter analyze --fatal-infos
 
-      # ── Step 2: Run tests ────────────────────────────────
+  # The Dart tests, split so no job runs for hours. Each job runs its own
+  # share one file at a time, exactly as the single job did; the files are
+  # dealt by tool/ci/test_shard.sh and test/ci_test_shards_test.py (run by
+  # the checks job) proves no file is left out.
+  tests:
+    name: Tests (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.1'
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get --enforce-lockfile
+
       - name: Run tests
-        id: test
-        continue-on-error: true
         run: |
-          flutter test --concurrency=1 -x opt-in --reporter=expanded 2>&1 | tee test_output.txt
-          exit "${PIPESTATUS[0]}"
+          set -Eeuo pipefail
+          mapfile -t files < <(tool/ci/test_shard.sh "${{ matrix.shard }}" 6)
+          echo "shard ${{ matrix.shard }}: ${#files[@]} files"
+          test "${#files[@]}" -gt 0
+          flutter test --concurrency=1 -x opt-in --reporter=expanded "${files[@]}"
 
-      # ── Step 3: Summary & failure report ─────────────────
-      - name: Failure summary
-        if: steps.analyze.outcome != 'success' || steps.test.outcome != 'success'
-        env:
-          ANALYZE_OUTCOME: ${{ steps.analyze.outcome }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
+  # test/chat_screen_test.dart alone is about a quarter of the suite: it is
+  # split by test instead of by file.
+  chat_screen_tests:
+    name: Tests (chat screen ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.1'
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Run tests
         run: |
-          {
-            echo "## Quality checks failed"
-            echo ""
+          flutter test --concurrency=1 -x opt-in --reporter=expanded \
+            --total-shards 3 --shard-index "${{ matrix.shard }}" \
+            test/chat_screen_test.dart
 
-            if [ "$ANALYZE_OUTCOME" != "success" ]; then
-              echo "### Static analysis failed"
-              echo '```'
-              cat analyze_output.txt
-              echo '```'
-              echo ""
-            else
-              echo "### Static analysis passed"
-              echo ""
-            fi
-
-            if [ "$TEST_OUTCOME" != "success" ]; then
-              echo "### Tests failed"
-              echo '```'
-              cat test_output.txt
-              echo '```'
-            else
-              echo "### All tests passed"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # ── Step 4: Pass/fail enforcement ────────────────────
+  # The one check branch protection asks for. It keeps the name the single
+  # job had and passes only when every job above succeeded.
+  quality:
+    name: Analyze & Test
+    runs-on: ubuntu-latest
+    needs: [checks, tests, chat_screen_tests]
+    if: always()
+    steps:
       - name: Enforce checks
-        if: steps.analyze.outcome != 'success' || steps.test.outcome != 'success'
         env:
-          ANALYZE_OUTCOME: ${{ steps.analyze.outcome }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
-        run: |
-          echo "──────────────────────────────────────────────"
-          echo "Quality gate blocked - see summary above."
-          echo ""
-          if [ "$ANALYZE_OUTCOME" != "success" ]; then
-            echo "   FAILED: flutter analyze"
-          else
-            echo "   PASSED:  flutter analyze"
-          fi
-          if [ "$TEST_OUTCOME" != "success" ]; then
-            echo "   FAILED: flutter test"
-          else
-            echo "   PASSED:  flutter test"
-          fi
-          echo "──────────────────────────────────────────────"
-          exit 1
-
-      - name: All checks passed
-        if: steps.analyze.outcome == 'success' && steps.test.outcome == 'success'
+          CHECKS: ${{ needs.checks.result }}
+          TESTS: ${{ needs.tests.result }}
+          CHAT_SCREEN_TESTS: ${{ needs.chat_screen_tests.result }}
         run: |
           {
-            echo "## All quality checks passed"
-            echo "- Static analysis: clean"
-            echo "- All tests: passing"
+            echo "## Quality checks"
+            echo "- Policy and static analysis: $CHECKS"
+            echo "- Tests: $TESTS"
+            echo "- Chat screen tests: $CHAT_SCREEN_TESTS"
           } >> "$GITHUB_STEP_SUMMARY"
+          test "$CHECKS" = success
+          test "$TESTS" = success
+          test "$CHAT_SCREEN_TESTS" = success

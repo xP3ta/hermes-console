@@ -14,7 +14,8 @@ import '../../../../l10n/app_localizations.dart';
 import '../../../models/attachment_draft.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../services/attachment_uploader.dart';
-import '../../../services/tui_gateway_client.dart' show TuiGatewayRpcError;
+import '../../../services/tui_gateway_client.dart'
+    show TuiGatewayEvent, TuiGatewayRpcError;
 import '../../../theme/app_theme.dart';
 import '../../../utils/plain_preview.dart';
 import '../../../utils/unread_rules.dart';
@@ -29,6 +30,7 @@ import '../../../widgets/hermes_app_bar.dart';
 import '../../../feedback/feedback_policy.dart';
 import '../../../widgets/hermes_notice.dart';
 import '../../../widgets/chat/mention_chips.dart';
+import '../../../theme/motion.dart';
 import '../../../widgets/hermes_premium_ui.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../../data/room_log_cursor.dart';
@@ -174,6 +176,15 @@ class RoomScreen extends StatefulWidget {
   final RoomPollTimerFactory? pollTimer;
   final DateTime Function()? clock;
 
+  /// The connection's global events: `groups.changed` naming this room
+  /// reads it at once. Null: the room only polls.
+  final Stream<TuiGatewayEvent>? changes;
+
+  /// Whether [changes] is live now (the socket is up and announced change
+  /// events). Only then may a room whose `groups.state` says
+  /// `change_events` poll as a backstop.
+  final bool Function()? pushesLive;
+
   const RoomScreen({
     super.key,
     required this.room,
@@ -197,6 +208,8 @@ class RoomScreen extends StatefulWidget {
     this.onOpenMemberChat,
     this.pollTimer,
     this.clock,
+    this.changes,
+    this.pushesLive,
   });
 
   @override
@@ -364,6 +377,18 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _sentWhileHeld = false;
   bool _settlingHeld = false;
 
+  /// `groups.changed` of the connection, while the room is open.
+  StreamSubscription<TuiGatewayEvent>? _changes;
+
+  /// The last read's `groups.state` said the backend pushes this room's
+  /// changes (`change_events`).
+  bool _pushes = false;
+
+  /// Broadcasts already read for: the same `groups.changed` reaches the
+  /// app once per socket open to its backend (Hermes Desktop keeps the last
+  /// 64 ids, `canonical-group-workspace.tsx` `seenBroadcasts`).
+  final Set<String> _seenBroadcasts = {};
+
   String get _roomKey => roomPrefsKey(_room);
   DateTime get _now => (widget.clock ?? DateTime.now)();
   List<HostedGroupEvent> get _events => _log?.events ?? const [];
@@ -392,8 +417,14 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       tick: _tick,
       onDelta: (_) {},
       onError: (error) => _refreshFailed(error, via: 'poll'),
+      // Pushes move the room between reads: polls are only a backstop.
+      backstop: () => _pushes && (widget.pushesLive?.call() ?? false),
       timer: widget.pollTimer,
       backoff: RoomPollBackoff(clock: () => _now),
+    );
+    _changes = widget.changes?.listen(
+      _onGroupsChanged,
+      onError: (Object _) {},
     );
     // Text, focus and dictation rebuild only the composer area (a
     // ListenableBuilder in build), never the whole screen.
@@ -606,15 +637,41 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     ];
   }
 
+  /// Marks as seen what the transcript has shown: the log head, but never
+  /// past the newest sequence a built transcript held. A room opened
+  /// without a log (no view read it in this session) marks nothing until
+  /// its first read is on screen.
   void _markSeen() {
     final latest = _log?.latestSeq;
-    if (latest != null && latest > 0) {
-      unawaited(widget.prefs.setLastSeenSeq(_roomKey, latest));
+    if (latest == null) return;
+    final shown = latest < _builtThroughSeq ? latest : _builtThroughSeq;
+    if (shown > 0) {
+      unawaited(widget.prefs.setLastSeenSeq(_roomKey, shown));
     }
+  }
+
+  /// `groups.changed`: one naming this room, or naming none (something
+  /// process-wide moved), reads the room now, as Hermes Desktop's open room
+  /// does (`canonical-group-workspace.tsx`). A `broadcast_id` already read
+  /// for is a copy of the same push and reads nothing; a push without one
+  /// (an older backend) always reads.
+  void _onGroupsChanged(TuiGatewayEvent event) {
+    if (event.type != 'groups.changed' || !mounted) return;
+    final rooms = event.payload['room_ids'];
+    if (rooms is List && !rooms.contains(_room.roomId)) return;
+    final id = event.payload['broadcast_id'];
+    if (id is String && id.isNotEmpty) {
+      if (!_seenBroadcasts.add(id)) return;
+      if (_seenBroadcasts.length > 64) {
+        _seenBroadcasts.remove(_seenBroadcasts.first);
+      }
+    }
+    _poller.readNow();
   }
 
   Future<({RoomLogDelta delta, bool working})> _tick() async {
     final previous = _room;
+    final firstRead = _log == null;
     final previousLatest = _log?.latestSeq ?? 0;
     final result = await widget.gateway.read(previous);
     final log = result.log;
@@ -626,6 +683,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         result.room.revision < previous.revision) {
       throw const FormatException('room refresh authority changed');
     }
+    _pushes = result.changeEvents;
     final added = [
       for (final e in log.events)
         if (e.sequence > previousLatest) e,
@@ -637,7 +695,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
     final driverChanged = !_sameDriver(_driver, result.driverStatus);
     _freshAt = _now;
-    if (added.isNotEmpty ||
+    if (firstRead ||
+        added.isNotEmpty ||
         reset ||
         driverChanged ||
         result.room.revision != previous.revision ||
@@ -645,6 +704,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       setState(() {
         _room = result.room;
         _log = log;
+        // Opened without a log: what this first read holds is what was
+        // there when the reader arrived, as the log handed in at open.
+        if (firstRead) _arrivedThroughSeq ??= log.latestSeq;
         _driver = result.driverStatus ?? _driver;
         _stale = false;
         _answering.removeWhere(
@@ -965,6 +1027,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _liveTimer?.cancel();
     _stoppedTimer?.cancel();
     _poller.dispose();
+    unawaited(_changes?.cancel());
     if (_heldDraft != null && _draftDirty) {
       _typedWhileHeld = _composer.text;
       // Settles in the background so the typed text is written.
@@ -2861,7 +2924,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       p
           .animateTo(
             p.minScrollExtent,
-            duration: const Duration(milliseconds: 260),
+            duration: HermesMotion.page,
             curve: Curves.easeOutCubic,
           )
           .then((_) {
@@ -3185,12 +3248,21 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         ? Center(
             child: Padding(
               padding: const EdgeInsets.all(32),
-              child: Text(
-                s.roomEmpty,
-                key: const ValueKey('room-empty'),
-                textAlign: TextAlign.center,
-                style: TextStyle(color: colors.textSecondary),
-              ),
+              // No log yet (no view read this room in this session): its
+              // conversation is unknown until the first read, not empty.
+              child: _log == null
+                  ? Text(
+                      s.commonLoading,
+                      key: const ValueKey('room-loading'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: colors.textSecondary),
+                    )
+                  : Text(
+                      s.roomEmpty,
+                      key: const ValueKey('room-empty'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: colors.textSecondary),
+                    ),
             ),
           )
         : NotificationListener<ScrollNotification>(

@@ -31,6 +31,7 @@ import '../../utils/session_title.dart';
 import '../../utils/transport_privacy.dart';
 import 'bot_mode_background.dart';
 import 'cron_notice_policy.dart';
+import 'kanban_events_follower.dart';
 import 'notification_delivery_store.dart';
 import 'notification_mute_store.dart';
 import 'notification_service.dart';
@@ -1260,6 +1261,35 @@ class BackgroundKanbanWatch {
   }
 }
 
+/// Sign-ins stored in the UI, as the foreground-service isolate hears them.
+/// That isolate has its own sockets and its own credential epoch
+/// (`NativeSessionCoordinator` and [DashboardClient.noteSignInStored] are
+/// per isolate), so a sign-in made in the UI never reached them: a socket
+/// stopped on "sign in again" stayed stopped until the service restarted.
+/// The UI counts each stored sign-in in SharedPreferences
+/// ([ConnectionManager.dashboardSignInsKey]); a count that moved since the
+/// last tick is that same signal here. The first look only records.
+@visibleForTesting
+class BackgroundSignInWatch {
+  BackgroundSignInWatch({void Function(String connectionId)? onSignIn})
+    : _onSignIn = onSignIn ?? DashboardClient.noteSignInStored;
+
+  final void Function(String connectionId) _onSignIn;
+  final Map<String, int> _seen = {};
+
+  void observe(SharedPreferences prefs, Iterable<SavedConnection> targets) {
+    final ids = {for (final target in targets) target.id};
+    _seen.removeWhere((id, _) => !ids.contains(id));
+    for (final id in ids) {
+      final count =
+          prefs.getInt(ConnectionManager.dashboardSignInsKey(id)) ?? 0;
+      final seen = _seen[id];
+      _seen[id] = count;
+      if (seen != null && seen != count) _onSignIn(id);
+    }
+  }
+}
+
 /// Listener cadence without watched runs (spec 028 + 070 P1-6): 30 s only
 /// while a watched room works or waits for an approval, 60 s while Cron or
 /// Kanban are watched, otherwise the 180 s base. Configured connections
@@ -1525,6 +1555,7 @@ class _HermesTaskHandler extends TaskHandler {
         discoveryBackoff: _discoveryBackoff,
       );
   int _targetRevision = -1;
+  final BackgroundSignInWatch _signIns = BackgroundSignInWatch();
   final ForegroundTaskStopFence _stopFence = ForegroundTaskStopFence();
 
   /// Rooms, Bot Chat actions and the Bot Mode widgets (spec 070 T607).
@@ -1686,6 +1717,12 @@ class _HermesTaskHandler extends TaskHandler {
       }
       _dashboardClients.retainConnections(cronTargets);
       _discoveryBackoff.retainConnections(cronTargets);
+      // Before anything dials this tick: the mode a sign-in in the app may
+      // have switched, then that sign-in.
+      for (final target in cronTargets) {
+        DashboardClient.noteAuthMode(target.id, target.dashboardAuthMode);
+      }
+      _signIns.observe(prefs, cronTargets);
       if (cronTargets.isEmpty) {
         if (!_stopFence.allowsUpdate) return;
         if (!audioCardActive) {
@@ -1905,6 +1942,7 @@ class _HermesTaskHandler extends TaskHandler {
     _notif = null;
     await _botMode.close();
     await SharedGatewayPool.instance.closeAll();
+    _discovery.close();
     _dashboardClients.close();
   }
 }
@@ -1917,13 +1955,26 @@ class BackgroundAutomationDiscovery {
     required this.dashboardClients,
     required this.discoveryBackoff,
     void Function(Object data)? sendToMain,
-  }) : _sendToMain = sendToMain ?? FlutterForegroundTask.sendDataToMain;
+    KanbanEventsFollower? kanbanEvents,
+  }) : _sendToMain = sendToMain ?? FlutterForegroundTask.sendDataToMain,
+       _kanbanEvents = kanbanEvents ?? KanbanEventsFollower();
 
   final BackgroundDashboardClientCache dashboardClients;
   final BackgroundDiscoveryBackoff discoveryBackoff;
   BackgroundDashboardClientCache get _dashboardClients => dashboardClients;
   BackgroundDiscoveryBackoff get _discoveryBackoff => discoveryBackoff;
   final void Function(Object data) _sendToMain;
+
+  /// The `task_events` of each watched board: the whole board is read again
+  /// only when it moved (Desktop's Kanban plugin, `plugins/kanban/api.ts`).
+  final KanbanEventsFollower _kanbanEvents;
+
+  /// What the last read of each watched board showed, for the cadence of
+  /// the ticks that skip the read.
+  final Map<String, ({String signature, bool inFlight})> _kanbanSeen = {};
+
+  /// The service is going away: no socket outlives it.
+  void close() => _kanbanEvents.close();
 
   /// Last observed Cron/Kanban state per connection, used only to decide the
   /// listener cadence (never delivery).
@@ -2391,19 +2442,38 @@ class BackgroundAutomationDiscovery {
     SharedPreferences prefs,
     List<SavedConnection> targets,
   ) async {
-    if (targets.isEmpty || !notif.notifyKanbanResults) return false;
+    if (targets.isEmpty || !notif.notifyKanbanResults) {
+      _kanbanEvents.close();
+      return false;
+    }
     final uiForeground =
         prefs.getBool(BackgroundListener.uiForegroundKey) == true;
     final mutes = NotificationMuteStore(prefs);
+    final followed = <String>{};
     for (final connection in targets) {
+      final boardSlug = KanbanWatchBoard.read(prefs, connection.id);
+      final followKey = '${connection.id}|${boardSlug ?? ''}';
+      followed.add(followKey);
       if (!_discoveryBackoff.allowsBackgroundAttempt(
         connection.id,
         BackgroundDiscoveryCapability.kanban,
       )) {
         continue;
       }
+      if (!_kanbanEvents.needsRead(followKey)) {
+        // No event past the last read: the board, its notices and the
+        // Tareas widget are what that read saw. The cadence keeps it too.
+        final seen = _kanbanSeen[followKey];
+        if (seen != null) {
+          _noteActivity(
+            '${connection.id}/kanban',
+            seen.signature,
+            inFlight: seen.inFlight,
+          );
+        }
+        continue;
+      }
       final dashboard = _dashboardClients.clientFor(connection);
-      final boardSlug = KanbanWatchBoard.read(prefs, connection.id);
       KanbanBoard? board;
       try {
         board = await BackgroundKanbanWatch.loadBoard(
@@ -2444,6 +2514,14 @@ class BackgroundAutomationDiscovery {
         connection.id,
         BackgroundDiscoveryCapability.kanban,
       );
+      // From here on an event past this read is what makes the board stale.
+      _kanbanEvents.boardRead(
+        followKey,
+        connection: connection,
+        dashboard: dashboard,
+        board: boardSlug,
+        latestEventId: board.latestEventId,
+      );
       try {
         final t = NotifL10n.of(prefs);
         final entries = BackgroundKanbanWatch.discoveryEntriesForTest(
@@ -2456,12 +2534,17 @@ class BackgroundAutomationDiscovery {
           boardSlug,
           board,
         );
-        _noteActivity(
-          '${connection.id}/kanban',
-          ([
+        final seen = (
+          signature: ([
             for (final e in entries) '${e.taskId}:${e.state}',
           ]..sort()).join('|'),
           inFlight: entries.any((e) => e.state == 'running'),
+        );
+        _kanbanSeen[followKey] = seen;
+        _noteActivity(
+          '${connection.id}/kanban',
+          seen.signature,
+          inFlight: seen.inFlight,
         );
         for (final entry in entries) {
           final status = entry.state;
@@ -2554,6 +2637,8 @@ class BackgroundAutomationDiscovery {
         }
       }
     }
+    _kanbanEvents.retain(followed);
+    _kanbanSeen.removeWhere((key, _) => !followed.contains(key));
     return true;
   }
 }

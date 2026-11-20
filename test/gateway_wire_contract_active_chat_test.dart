@@ -143,6 +143,9 @@ final class _Effect {
 
 bool _nonEmpty(Object? value) => value is String && value.trim().isNotEmpty;
 
+/// The glyph Hermes puts before a `review.summary` line.
+final _leadingGlyphs = RegExp(r'^[^\p{L}\p{N}]+', unicode: true);
+
 bool _emits(
   List<ActiveChatEvent> emitted,
   ActiveChatEvent expected,
@@ -329,6 +332,56 @@ final Map<String, _Effect> _handled = {
     );
     return _emits(emitted, ActiveChatEvent.backgroundTaskComplete, label);
   }),
+  // Desktop `gateway-event/session-info.ts`: a live tick moves the context
+  // figures.
+  'session.usage': _Effect((chat, payload, emitted, label) {
+    if (payload['usage'] is! Map) return false;
+    expect(chat.desktopRuntimeInfo.usage, isNotNull, reason: label);
+    return _emits(emitted, ActiveChatEvent.responseMetrics, label);
+  }),
+  'session.title': _Effect((chat, payload, emitted, label) {
+    final title = payload['title'];
+    if (!_nonEmpty(payload['session_id']) || !_nonEmpty(title)) return false;
+    expect(chat.sessionTitle, (title as String).trim(), reason: label);
+    return _emits(emitted, ActiveChatEvent.sessionInfo, label);
+  }),
+  // Desktop `gateway-event/status.ts`: a row of the transcript.
+  'review.summary': _Effect((chat, payload, emitted, label) {
+    final text = payload['text'];
+    if (text is! String ||
+        text.trim().replaceFirst(_leadingGlyphs, '').isEmpty) {
+      return false;
+    }
+    expect(
+      chat.messages.any(
+        (message) =>
+            message['display_kind'] == 'side_answer' &&
+            (message['display_metadata'] as Map)['kind'] == 'review',
+      ),
+      isTrue,
+      reason: label,
+    );
+    return _emits(emitted, ActiveChatEvent.backgroundTaskComplete, label);
+  }),
+  // Desktop `store/agent-notices.ts`: a keyed notice, and its clear.
+  'notification.show': _Effect((chat, payload, emitted, label) {
+    if (!_nonEmpty(payload['text'])) return false;
+    expect(chat.takeTerminalWarning(), isNotNull, reason: label);
+    expect(
+      chat.takeAgentNotice()?.sticky,
+      payload['kind'] != 'ttl',
+      reason: label,
+    );
+    return _emits(emitted, ActiveChatEvent.warning, label);
+  }),
+  'notification.clear': _Effect((chat, payload, emitted, label) {
+    final key = payload['key'];
+    if (!_nonEmpty(key)) return false;
+    expect(chat.takeClearedAgentNoticeKeys(), [
+      (key as String).trim(),
+    ], reason: label);
+    return _emits(emitted, ActiveChatEvent.warning, label);
+  }),
   'message.reaction': _Effect((chat, payload, emitted, label) {
     final row = payload['row_id'];
     if (row is! int) return false;
@@ -362,8 +415,6 @@ const Map<String, String> _ignored = {
       'the transport re-emits it as the matching *.expire '
       '(_translateRequestCancel); raw, it only confirms an interrupt the '
       'user started (covered by the stop tests)',
-  'session.title': 'titles are read from the session list, not the live chat',
-  'session.usage': 'usage is read by session.info / context breakdown',
   'cron.changed': 'consumed by the cron screens, not the chat',
   'pet.changed': 'consumed by ProfilePetService, not the chat',
   'projects.changed': 'no projects view in the chat',
@@ -371,7 +422,6 @@ const Map<String, String> _ignored = {
   'pairing.changed': 'no pairing view in the chat',
   'bot_relay.outbox.pending': 'bot relay is a gateway-side queue',
   'reaction': 'legacy spelling of message.reaction; Console reads the new one',
-  'review.summary': 'review panes are Desktop-only',
   'tool.output_risk': 'risk banner is Desktop-only',
   'notice': _desktopOnly,
   'tip.show': _desktopOnly,
@@ -379,8 +429,6 @@ const Map<String, String> _ignored = {
   'setup.ready': _desktopOnly,
   'layout.apply': _desktopOnly,
   'pane.reveal': _desktopOnly,
-  'notification.show': _desktopOnly,
-  'notification.clear': _desktopOnly,
   'billing.step_up.verification': _desktopOnly,
   'browser.controller.cancel': _desktopOnly,
   'browser.controller.command': _desktopOnly,

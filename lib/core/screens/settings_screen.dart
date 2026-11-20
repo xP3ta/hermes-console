@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 
 import '../app_header_title.dart';
 import 'cache_settings_screen.dart';
+import '../services/active_chat_service.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
 import '../services/active_profile_scope.dart';
@@ -50,7 +51,9 @@ import 'lock_screen.dart';
 import 'gateway_manager_screen.dart';
 import 'instance_edit_screen.dart';
 import 'models_screen.dart';
+import 'messaging_pairing_screen.dart';
 import 'permissions_screen.dart';
+import 'server_check_screen.dart';
 import 'vault_screen.dart';
 import 'security_info_screen.dart';
 import 'look_feel_screen.dart';
@@ -606,6 +609,26 @@ List<Widget> settingsSectionRows(
               ),
             ),
           ),
+          // Desktop's Messaging page, pending and approved users of each
+          // platform: who may message the bot of the profile these Settings
+          // show.
+          HermesNavRow(
+            key: const ValueKey('settings-messaging-pairing'),
+            icon: HIcons.group_add_outlined,
+            title: Strings.of(context).msgPairTitle,
+            subtitle: Strings.of(context).msgPairSubtitle,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MessagingPairingScreen(
+                  connection: conn,
+                  profile: Session.profileOwner(
+                    connManager.activeProfileFor(conn.id),
+                  ),
+                ),
+              ),
+            ),
+          ),
           // Hermes Desktop's Settings → Passwords & Logins: the server's
           // vault of the profile these Settings show.
           HermesNavRow(
@@ -641,6 +664,38 @@ List<Widget> settingsSectionRows(
             connection: conn,
             connManager: connManager,
           ),
+          // Desktop's Maintenance panel: `hermes doctor` and `hermes security
+          // audit` spawn processes on the server, so a read-only instance
+          // does not offer them.
+          if (!conn.readOnly) ...[
+            const SizedBox(height: 12),
+            HermesGroup(
+              children: [
+                for (final check in ServerCheck.values)
+                  HermesNavRow(
+                    key: ValueKey('settings-check-${check.actionName}'),
+                    icon: switch (check) {
+                      ServerCheck.doctor => HIcons.monitor_heart_outlined,
+                      ServerCheck.securityAudit => HIcons.security_outlined,
+                    },
+                    title: check.title(Strings.of(context)),
+                    subtitle: check.subtitle(Strings.of(context)),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ServerCheckScreen(
+                          check: check,
+                          connection: conn,
+                          profile: Session.profileOwner(
+                            connManager.activeProfileFor(conn.id),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     ),
@@ -1869,6 +1924,26 @@ final class RemoteConversationClearSummary {
 /// está en vuelo termina (no se puede deshacer a medias), pero no se empieza
 /// ninguno nuevo. Sin este gancho un lote de 200 conversaciones era un viaje
 /// sin retorno en cuanto se confirmaba el ámbito.
+/// The DELETE of one row of the cleanup. A chat of that conversation whose
+/// turn runs is stopped and its runtime closed first, as the chat, the
+/// session list and the session detail do before theirs
+/// ([ActiveChat.endRuntimeBeforeDelete]; Desktop `use-session-actions`
+/// delete). When the turn cannot be stopped this throws, so the row is not
+/// deleted and counts as failed.
+@visibleForTesting
+Future<bool> deleteSessionEndingItsChat(
+  String sessionId, {
+  required ActiveChatService? activeChats,
+  required String connectionId,
+  required String profile,
+  required Future<bool> Function(String sessionId) delete,
+}) async {
+  await activeChats
+      ?.of(connectionId, sessionId, profile: profile)
+      ?.endRuntimeBeforeDelete();
+  return delete(sessionId);
+}
+
 @visibleForTesting
 Future<RemoteConversationClearSummary> clearRemoteConversations({
   required List<String> deleteOrder,
@@ -2053,11 +2128,16 @@ class HistoryCleanupSection extends StatefulWidget {
   /// limpieza a partir de la instancia activa.
   final ApiClient? remoteClientOverride;
 
+  /// The open chats, whose running turns are stopped before their DELETE.
+  /// Only tests inject it; otherwise it is the app's.
+  final ActiveChatService? activeChatsOverride;
+
   const HistoryCleanupSection({
     required this.connection,
     required this.connManager,
     this.verifyHistoryCleanupForTesting,
     @visibleForTesting this.remoteClientOverride,
+    @visibleForTesting this.activeChatsOverride,
     super.key,
   });
 
@@ -2210,10 +2290,19 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
         _remoteTotal = order.length;
       });
     }
+    final activeChats =
+        widget.activeChatsOverride ??
+        context.findAncestorStateOfType<HermesAppState>()?.activeChats;
+    final connectionId = widget.connection.id;
     return await clearRemoteConversations(
       deleteOrder: order,
-      deleteSession: (sessionId) =>
-          client.deleteSession(sessionId, profile: targetProfile),
+      deleteSession: (sessionId) => deleteSessionEndingItsChat(
+        sessionId,
+        activeChats: activeChats,
+        connectionId: connectionId,
+        profile: targetProfile,
+        delete: (id) => client.deleteSession(id, profile: targetProfile),
+      ),
       onProgress: (done, total) {
         if (!mounted) return;
         setState(() {
