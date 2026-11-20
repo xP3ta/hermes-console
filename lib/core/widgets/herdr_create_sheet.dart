@@ -255,11 +255,13 @@ class _CreateFormState extends State<_CreateForm> {
               ),
             ),
             Padding(
+              // The glow of «Start» reaches [HermesGel.glowExtent] past the
+              // button and the dialog clips at its own edge.
               padding: const EdgeInsets.fromLTRB(
                 HermesSpace.x5,
                 HermesSpace.x2,
                 HermesSpace.x5,
-                HermesSpace.x4,
+                HermesGel.glowExtent,
               ),
               // Wraps at large text instead of overflowing.
               child: Wrap(
@@ -1001,11 +1003,13 @@ class _HerdrFolderPickerState extends State<HerdrFolderPicker> {
     final strings = Strings.of(context);
     final pinned = _favorites.contains(path);
     return Padding(
+      // «Use» and «New folder» glow [HermesGel.glowExtent] past their box and
+      // the dialog clips at its own edge.
       padding: const EdgeInsets.fromLTRB(
-        HermesSpace.x4,
+        HermesGel.glowExtent,
         HermesSpace.x1,
-        HermesSpace.x4,
-        HermesSpace.x3,
+        HermesGel.glowExtent,
+        HermesGel.glowExtent,
       ),
       child: Wrap(
         alignment: WrapAlignment.end,

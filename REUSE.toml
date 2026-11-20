@@ -108,6 +108,28 @@ precedence = "override"
 SPDX-FileCopyrightText = "Copyright Google LLC and the model-viewer contributors"
 SPDX-License-Identifier = "Apache-2.0"
 
+# Decoders model-viewer loads for compressed models, copied unchanged; see
+# THIRD_PARTY_NOTICES.md.
+[[annotations]]
+path = [
+  "assets/viewers/draco_wasm_wrapper.js",
+  "assets/viewers/draco_decoder.wasm",
+  "assets/viewers/draco-LICENSE.txt",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright The Draco Authors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+  "assets/viewers/basis_transcoder.js",
+  "assets/viewers/basis_transcoder.wasm",
+  "assets/viewers/basis-universal-LICENSE.txt",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright Binomial LLC and the Basis Universal contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
 # Project-owned companion manifests and sprites were dedicated under CC0.
 [[annotations]]
 path = "assets/companions/**"
@@ -133,6 +155,16 @@ SPDX-License-Identifier = "GPL-3.0-only"
 # (tool/contract/update_contract.sh; upstream commit in SOURCE). Never packaged.
 [[annotations]]
 path = "test/fixtures/contract/gateway-contract.openrpc.json"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2025 Nous Research"
+SPDX-License-Identifier = "MIT"
+
+# Test-only snapshot of Hermes Agent's hosted-room wire shapes: the groups.*
+# result schemas of its gateway contract plus the field names, enum values and
+# limits of its room validators (tool/contract/extract_room_contract.py;
+# upstream commit inside). Never packaged.
+[[annotations]]
+path = "test/fixtures/contract/hosted-rooms.json"
 precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) 2025 Nous Research"
 SPDX-License-Identifier = "MIT"

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/attachment_draft.dart';
 import '../models/session.dart';
+import 'app_error_log.dart';
 import 'attachment_uploader.dart';
 import 'app_lock_sensitive_read_fence.dart';
 import 'session_deletion.dart';
@@ -144,14 +145,103 @@ class ChatDraftStore {
     return result;
   }
 
-  Future<void> _delete({required String key}) {
-    AppLockSensitiveReadFence.current.ensureCurrent();
-    return _secure.delete(key: key);
+  Future<void> _delete({required String key}) async {
+    final ticket = AppLockSensitiveReadFence.current;
+    ticket.ensureCurrent();
+    await _secure.delete(key: key);
+    // The app lock closed during the delete: nothing else is read. The
+    // name stays in the index and reads as absent.
+    if (!ticket.isCurrent) return;
+    await _noteIndexed(key, present: false);
   }
 
-  Future<void> _write({required String key, required String value}) {
-    AppLockSensitiveReadFence.current.ensureCurrent();
-    return _secure.write(key: key, value: value);
+  Future<void> _write({required String key, required String value}) async {
+    final ticket = AppLockSensitiveReadFence.current;
+    ticket.ensureCurrent();
+    AttachmentOwnershipCoordinator.noteDraftKeyWritten(key);
+    // Named before it exists: the index may name a draft that is not there
+    // (it reads as absent), never miss one that is.
+    final indexed = await _noteIndexed(key, present: true);
+    ticket.ensureCurrent();
+    await _secure.write(key: key, value: value);
+    // No index yet: a list may have built it while this draft was on its
+    // way, without it. Not with the app lock closed meanwhile: a revoked
+    // write reads nothing more, and the draft's next save names it.
+    if (!indexed && ticket.isCurrent) await _noteIndexed(key, present: true);
+  }
+
+  // The names of the stored drafts, in one Keystore entry of their own, so
+  // a draft list can read each draft by name. Absent until the first list
+  // builds it from what an older version stored.
+  //
+  // Its updates are deliberately not queued behind one another: a queue
+  // shared by every draft would let one storage call that never answers
+  // hold all later saves. Two drafts saved in the same instant can lose
+  // one name; every save of a draft names it again, and a draft is always
+  // loaded by its own key, so only a list can miss it, until its next save.
+  // The attachment cleanup also reads the drafts by these names, together
+  // with every draft this isolate wrote, so a copy a draft still uses is
+  // never taken for unowned (`AttachmentOwnershipCoordinator`). The legacy
+  // v2 drafts are named too: nothing writes them any more, so the names
+  // found when the index is built are all of them.
+  static const String _indexKey = AttachmentOwnershipCoordinator.draftIndexKey;
+
+  Future<Set<String>?> _readIndex() async {
+    final raw = await _secure.read(key: _indexKey);
+    if (raw == null) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) return decoded.whereType<String>().toSet();
+    } catch (_) {
+      // Unreadable: the next list builds it again.
+    }
+    return null;
+  }
+
+  /// False when there is no index yet (the first list builds it).
+  Future<bool> _noteIndexed(String key, {required bool present}) async {
+    final index = await _readIndex();
+    if (index == null) return false;
+    if (present ? !index.add(key) : !index.remove(key)) return true;
+    await _secure.write(key: _indexKey, value: jsonEncode(index.toList()));
+    return true;
+  }
+
+  /// The stored drafts whose key starts with [prefix], for the lists Home
+  /// and Chats repaint every few seconds.
+  ///
+  /// It reads each draft by its name. `readAll()` decrypts and ships every
+  /// secret of the app in one platform message (chat tails are megabytes),
+  /// and is for cleanup, not for a path that repeats (see `ColdStartStore`).
+  /// It runs here once, to index the drafts an older version stored.
+  Future<Map<String, String>> _draftsWithPrefix(String prefix) async {
+    final ticket = AppLockSensitiveReadFence.current;
+    ticket.ensureCurrent();
+    await _prefs.reload();
+    ticket.ensureCurrent();
+    var names = await _readIndex();
+    ticket.ensureCurrent();
+    if (names == null) {
+      final all = await _secure.readAll();
+      ticket.ensureCurrent();
+      names = {
+        for (final key in all.keys)
+          if (key.startsWith('chat_draft_v3.') ||
+              key.startsWith('chat_draft_v2_'))
+            key,
+      };
+      await _secure.write(key: _indexKey, value: jsonEncode(names.toList()));
+      ticket.ensureCurrent();
+    }
+    final drafts = <String, String>{};
+    for (final key in names) {
+      if (!key.startsWith(prefix)) continue;
+      final raw = await _secure.read(key: key);
+      ticket.ensureCurrent();
+      // Absent: a write that never landed. Its name is harmless.
+      if (raw != null) drafts[key] = raw;
+    }
+    return drafts;
   }
 
   SensitiveReadTicket captureDisclosure() =>
@@ -280,13 +370,16 @@ class ChatDraftStore {
     String profile = 'default',
     // Conservado para compatibilidad; V1/V2 no tienen ownership demostrable.
     bool claimUnscopedLegacy = false,
-  }) => AppLockSensitiveReadFence.run(
-    _prefs,
-    () => _privacyLoad(
-      connectionId,
-      sessionId,
-      profile: profile,
-      claimUnscopedLegacy: claimUnscopedLegacy,
+  }) => SecureStorageDiagnostics.watch(
+    SecureStorageOperation.draftLoad,
+    AppLockSensitiveReadFence.run(
+      _prefs,
+      () => _privacyLoad(
+        connectionId,
+        sessionId,
+        profile: profile,
+        claimUnscopedLegacy: claimUnscopedLegacy,
+      ),
     ),
   );
 
@@ -325,9 +418,12 @@ class ChatDraftStore {
   /// Lista borradores vivos de una conexión para que Inicio/Conversaciones
   /// puedan reabrir chats aún no materializados en Hermes.
   Future<List<ChatDraftEntry>> listForConnection(String connectionId) =>
-      AppLockSensitiveReadFence.run(
-        _prefs,
-        () => _privacyListForConnection(connectionId),
+      SecureStorageDiagnostics.watch(
+        SecureStorageOperation.draftList,
+        AppLockSensitiveReadFence.run(
+          _prefs,
+          () => _privacyListForConnection(connectionId),
+        ),
       );
 
   Future<List<ChatDraftEntry>> _privacyListForConnection(
@@ -335,7 +431,7 @@ class ChatDraftStore {
   ) async {
     final prefix = 'chat_draft_v3.${_scope(connectionId)}.';
     final entries = <ChatDraftEntry>[];
-    final secureEntries = await _readAll();
+    final secureEntries = await _draftsWithPrefix(prefix);
     for (final item in secureEntries.entries) {
       if (!item.key.startsWith(prefix)) continue;
       final suffix = item.key.substring(prefix.length).split('.');
@@ -390,21 +486,24 @@ class ChatDraftStore {
     String? rescueActionUid,
     LocalConversationLifecycle? lifecycle,
     Future<bool>? afterSave,
-  }) => AppLockSensitiveReadFence.run(
-    _prefs,
-    () => _privacySave(
-      connectionId,
-      sessionId,
-      text,
-      attachments,
-      profile: profile,
-      preparedTurnClientTurnId: preparedTurnClientTurnId,
-      preparedTurnText: preparedTurnText,
-      replyThreadId: replyThreadId,
-      submittedTurnClientTurnId: submittedTurnClientTurnId,
-      rescueActionUid: rescueActionUid,
-      lifecycle: lifecycle,
-      afterSave: afterSave,
+  }) => SecureStorageDiagnostics.watch(
+    SecureStorageOperation.draftSave,
+    AppLockSensitiveReadFence.run(
+      _prefs,
+      () => _privacySave(
+        connectionId,
+        sessionId,
+        text,
+        attachments,
+        profile: profile,
+        preparedTurnClientTurnId: preparedTurnClientTurnId,
+        preparedTurnText: preparedTurnText,
+        replyThreadId: replyThreadId,
+        submittedTurnClientTurnId: submittedTurnClientTurnId,
+        rescueActionUid: rescueActionUid,
+        lifecycle: lifecycle,
+        afterSave: afterSave,
+      ),
     ),
   );
 
@@ -687,15 +786,18 @@ class ChatDraftStore {
     // persistido. No depende de ninguna pantalla viva y nunca invalida una
     // escritura concurrente con contenido nuevo.
     String? onlySubmittedTurnClientTurnId,
-  }) => AppLockSensitiveReadFence.run(
-    _prefs,
-    () => _privacyClear(
-      connectionId,
-      sessionId,
-      profile: profile,
-      includeUnscoped: includeUnscoped,
-      onlyPreparedTurnClientTurnId: onlyPreparedTurnClientTurnId,
-      onlySubmittedTurnClientTurnId: onlySubmittedTurnClientTurnId,
+  }) => SecureStorageDiagnostics.watch(
+    SecureStorageOperation.draftClear,
+    AppLockSensitiveReadFence.run(
+      _prefs,
+      () => _privacyClear(
+        connectionId,
+        sessionId,
+        profile: profile,
+        includeUnscoped: includeUnscoped,
+        onlyPreparedTurnClientTurnId: onlyPreparedTurnClientTurnId,
+        onlySubmittedTurnClientTurnId: onlySubmittedTurnClientTurnId,
+      ),
     ),
   );
 

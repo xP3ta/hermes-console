@@ -1,0 +1,1320 @@
+{
+ "source": {
+  "repository": "https://github.com/NousResearch/hermes-agent",
+  "checkout_commit": "caafe5389ae585ef77387a962aee05b1bcf17029",
+  "files": {
+   "apps/shared/src/gateway-contract.openrpc.json": "6190457161ead7c0db74ddfdbe4e0ad708c30b21",
+   "gateway/hosted_room_discussion.py": "e09f4b7c47f10de996b0437113793f4f2c933a5e",
+   "gateway/hosted_room_lead.py": "0923b450be42e9de77676404ca8305f0211b0b0c",
+   "gateway/hosted_room_router.py": "caab69a83a4e7699725c38bcc35b443e5f3138bd",
+   "gateway/hosted_rooms.py": "e09f4b7c47f10de996b0437113793f4f2c933a5e",
+   "session_rules/hosted_attachments.py": "5bf7658044cb48e2cf966694483f389a0b7978ac"
+  },
+  "license": "MIT (Copyright (c) 2025 Nous Research)",
+  "generator": "tool/contract/extract_room_contract.py"
+ },
+ "methods": {
+  "groups.capabilities": {
+   "$ref": "#/components/schemas/GroupsCapabilitiesResult"
+  },
+  "groups.create": {
+   "$ref": "#/components/schemas/GroupsCreateResult"
+  },
+  "groups.list": {
+   "$ref": "#/components/schemas/GroupsListResult"
+  },
+  "groups.log": {
+   "$ref": "#/components/schemas/GroupsLogResult"
+  },
+  "groups.send": {
+   "$ref": "#/components/schemas/GroupsSendResult"
+  },
+  "groups.state": {
+   "$ref": "#/components/schemas/GroupsStateResult"
+  }
+ },
+ "schemas": {
+  "GroupsCapabilitiesResult": {
+   "additionalProperties": false,
+   "properties": {
+    "protocol_version": {
+     "title": "Protocol Version",
+     "type": "integer"
+    },
+    "driver": {
+     "title": "Driver",
+     "type": "boolean"
+    },
+    "persistent_process": {
+     "title": "Persistent Process",
+     "type": "boolean"
+    },
+    "authority_gateway_id": {
+     "title": "Authority Gateway Id",
+     "type": "string"
+    },
+    "room_link": {
+     "$ref": "#/components/schemas/RoomLinkStatus"
+    },
+    "features": {
+     "items": {
+      "type": "string"
+     },
+     "title": "Features",
+     "type": "array"
+    },
+    "methods": {
+     "items": {
+      "type": "string"
+     },
+     "title": "Methods",
+     "type": "array"
+    },
+    "max_log_limit": {
+     "title": "Max Log Limit",
+     "type": "integer"
+    },
+    "seatable_profiles": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Seatable Profiles"
+    }
+   },
+   "required": [
+    "protocol_version",
+    "driver",
+    "persistent_process",
+    "authority_gateway_id",
+    "room_link",
+    "features",
+    "methods",
+    "max_log_limit"
+   ],
+   "title": "GroupsCapabilitiesResult",
+   "type": "object"
+  },
+  "GroupsCreateResult": {
+   "additionalProperties": false,
+   "properties": {
+    "room": {
+     "$ref": "#/components/schemas/Room"
+    }
+   },
+   "required": [
+    "room"
+   ],
+   "title": "GroupsCreateResult",
+   "type": "object"
+  },
+  "GroupsListResult": {
+   "additionalProperties": false,
+   "properties": {
+    "rooms": {
+     "items": {
+      "$ref": "#/components/schemas/Room"
+     },
+     "title": "Rooms",
+     "type": "array"
+    },
+    "next_offset": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Next Offset"
+    }
+   },
+   "required": [
+    "rooms"
+   ],
+   "title": "GroupsListResult",
+   "type": "object"
+  },
+  "GroupsLogResult": {
+   "additionalProperties": false,
+   "description": "``gateway/hosted_rooms.py::read_events`` page \u2014 also the ``page`` ``groups.replicate`` ingests.",
+   "properties": {
+    "events": {
+     "items": {
+      "$ref": "#/components/schemas/RoomEvent"
+     },
+     "title": "Events",
+     "type": "array"
+    },
+    "cursor": {
+     "title": "Cursor",
+     "type": "integer"
+    },
+    "latest_seq": {
+     "title": "Latest Seq",
+     "type": "integer"
+    },
+    "has_more": {
+     "title": "Has More",
+     "type": "boolean"
+    },
+    "authority": {
+     "$ref": "#/components/schemas/RoomAuthority"
+    }
+   },
+   "required": [
+    "events",
+    "cursor",
+    "latest_seq",
+    "has_more",
+    "authority"
+   ],
+   "title": "GroupsLogResult",
+   "type": "object"
+  },
+  "GroupsSendResult": {
+   "additionalProperties": false,
+   "properties": {
+    "event": {
+     "$ref": "#/components/schemas/RoomEvent"
+    },
+    "client_event_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Client Event Id"
+    },
+    "accepted": {
+     "default": true,
+     "title": "Accepted",
+     "type": "boolean"
+    },
+    "driver_started": {
+     "default": true,
+     "title": "Driver Started",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "event"
+   ],
+   "title": "GroupsSendResult",
+   "type": "object"
+  },
+  "GroupsStateResult": {
+   "additionalProperties": false,
+   "description": "``change_events``: this backend broadcasts ``groups.changed`` when the room moves, so a client's poll is\nonly a backstop (absent on older backends: keep polling at the old rate).",
+   "properties": {
+    "room": {
+     "$ref": "#/components/schemas/Room"
+    },
+    "driver_status": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/RoomDriverStatus"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "context": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/RoomContext"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "change_events": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Change Events"
+    }
+   },
+   "required": [
+    "room"
+   ],
+   "title": "GroupsStateResult",
+   "type": "object"
+  },
+  "PeerRouteStatus": {
+   "additionalProperties": false,
+   "properties": {
+    "room_id": {
+     "title": "Room Id",
+     "type": "string"
+    },
+    "member_id": {
+     "title": "Member Id",
+     "type": "string"
+    },
+    "status": {
+     "title": "Status",
+     "type": "string"
+    }
+   },
+   "required": [
+    "room_id",
+    "member_id",
+    "status"
+   ],
+   "title": "PeerRouteStatus",
+   "type": "object"
+  },
+  "Room": {
+   "additionalProperties": false,
+   "description": "``gateway/hosted_rooms.py::_room_from_row`` plus the branch-only keys ``create`` (legacy\nadoption), ``state`` (``authority_claim``) and ``rename`` (``event``) add.",
+   "properties": {
+    "room_id": {
+     "title": "Room Id",
+     "type": "string"
+    },
+    "name": {
+     "title": "Name",
+     "type": "string"
+    },
+    "members": {
+     "items": {
+      "$ref": "#/components/schemas/RoomMember"
+     },
+     "title": "Members",
+     "type": "array"
+    },
+    "authority_gateway_id": {
+     "title": "Authority Gateway Id",
+     "type": "string"
+    },
+    "authority_epoch": {
+     "title": "Authority Epoch",
+     "type": "integer"
+    },
+    "revision": {
+     "title": "Revision",
+     "type": "integer"
+    },
+    "created_at": {
+     "title": "Created At",
+     "type": "number"
+    },
+    "updated_at": {
+     "title": "Updated At",
+     "type": "number"
+    },
+    "idempotent": {
+     "default": false,
+     "title": "Idempotent",
+     "type": "boolean"
+    },
+    "disbanded_at": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Disbanded At"
+    },
+    "latest_seq": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Latest Seq"
+    },
+    "adopted": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Adopted"
+    },
+    "claim_event": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/RoomEvent"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "authority_claim": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/RoomEvent"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "event": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/RoomEvent"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    }
+   },
+   "required": [
+    "room_id",
+    "name",
+    "members",
+    "authority_gateway_id",
+    "authority_epoch",
+    "revision",
+    "created_at",
+    "updated_at"
+   ],
+   "title": "Room",
+   "type": "object"
+  },
+  "RoomActor": {
+   "additionalProperties": false,
+   "description": "``hosted_rooms._ACTOR_FIELDS``; member replies carry ``profile`` plus, when known,\n``display_name`` and the peer ``connection_id`` (``hosted_room_discussion._member_actor``).",
+   "properties": {
+    "kind": {
+     "title": "Kind",
+     "type": "string"
+    },
+    "id": {
+     "title": "Id",
+     "type": "string"
+    },
+    "profile": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Profile"
+    },
+    "display_name": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Display Name"
+    },
+    "connection_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Connection Id"
+    }
+   },
+   "required": [
+    "kind",
+    "id"
+   ],
+   "title": "RoomActor",
+   "type": "object"
+  },
+  "RoomAuthority": {
+   "additionalProperties": false,
+   "properties": {
+    "gateway_id": {
+     "title": "Gateway Id",
+     "type": "string"
+    },
+    "epoch": {
+     "title": "Epoch",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "gateway_id",
+    "epoch"
+   ],
+   "title": "RoomAuthority",
+   "type": "object"
+  },
+  "RoomContext": {
+   "additionalProperties": false,
+   "description": "``gateway/hosted_room_context.py::room_context``: the purpose and shared notes every member's turn\nprompt carries (inside the user-role message).",
+   "properties": {
+    "purpose": {
+     "title": "Purpose",
+     "type": "string"
+    },
+    "notes": {
+     "title": "Notes",
+     "type": "string"
+    },
+    "routing": {
+     "default": "everyone",
+     "enum": [
+      "everyone",
+      "lead",
+      "auto"
+     ],
+     "title": "Routing",
+     "type": "string"
+    },
+    "lead_member_id": {
+     "default": "",
+     "title": "Lead Member Id",
+     "type": "string"
+    }
+   },
+   "required": [
+    "purpose",
+    "notes"
+   ],
+   "title": "RoomContext",
+   "type": "object"
+  },
+  "RoomDriverStatus": {
+   "additionalProperties": false,
+   "description": "``HostedRoomService.status(room_id)``; ``pending_actions`` rows are the exact attempt\n(``hosted_room_service.attempt_action``: ``kind`` + ``member_id``/``task_id``/``execution_generation``)\nor the driver's approval action (``kind: approval`` + run/session/approval context), or a stalled\nroom preparation's Retry (``task_id`` ``prepare:<room_id>``, ``member_id`` the members not woken).\n``member_activity`` lists live tasks in admission order (absent from older gateways).\n``last_error`` is this room's last preparation failure, null once one succeeds.",
+   "properties": {
+    "running": {
+     "title": "Running",
+     "type": "boolean"
+    },
+    "working": {
+     "title": "Working",
+     "type": "boolean"
+    },
+    "blocked": {
+     "title": "Blocked",
+     "type": "boolean"
+    },
+    "counts": {
+     "additionalProperties": {
+      "type": "integer"
+     },
+     "title": "Counts",
+     "type": "object"
+    },
+    "pending_actions": {
+     "items": {
+      "additionalProperties": true,
+      "type": "object"
+     },
+     "title": "Pending Actions",
+     "type": "array"
+    },
+    "member_activity": {
+     "items": {
+      "$ref": "#/components/schemas/RoomMemberActivity"
+     },
+     "title": "Member Activity",
+     "type": "array"
+    },
+    "last_error": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Last Error"
+    },
+    "max_rounds": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Max Rounds"
+    },
+    "max_continues": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Max Continues"
+    },
+    "routing_modes": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Routing Modes"
+    },
+    "peer_routes": {
+     "items": {
+      "$ref": "#/components/schemas/PeerRouteStatus"
+     },
+     "title": "Peer Routes",
+     "type": "array"
+    }
+   },
+   "required": [
+    "running",
+    "working",
+    "blocked",
+    "counts",
+    "pending_actions",
+    "peer_routes"
+   ],
+   "title": "RoomDriverStatus",
+   "type": "object"
+  },
+  "RoomEvent": {
+   "additionalProperties": false,
+   "description": "``gateway/hosted_rooms.py::_event_from_row``.",
+   "properties": {
+    "room_id": {
+     "title": "Room Id",
+     "type": "string"
+    },
+    "seq": {
+     "title": "Seq",
+     "type": "integer"
+    },
+    "event_id": {
+     "title": "Event Id",
+     "type": "string"
+    },
+    "kind": {
+     "title": "Kind",
+     "type": "string"
+    },
+    "actor": {
+     "$ref": "#/components/schemas/RoomActor"
+    },
+    "authority_epoch": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Authority Epoch"
+    },
+    "payload": {
+     "additionalProperties": true,
+     "title": "Payload",
+     "type": "object"
+    },
+    "created_at": {
+     "title": "Created At",
+     "type": "number"
+    },
+    "idempotent": {
+     "default": false,
+     "title": "Idempotent",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "room_id",
+    "seq",
+    "event_id",
+    "kind",
+    "actor",
+    "payload",
+    "created_at"
+   ],
+   "title": "RoomEvent",
+   "type": "object"
+  },
+  "RoomExecutionPolicy": {
+   "additionalProperties": false,
+   "description": "``gateway/hosted_room_execution_policy.py::execution_policy_mapping``.",
+   "properties": {
+    "version": {
+     "title": "Version",
+     "type": "integer"
+    },
+    "target_profile": {
+     "title": "Target Profile",
+     "type": "string"
+    },
+    "enabled_toolsets": {
+     "items": {
+      "type": "string"
+     },
+     "title": "Enabled Toolsets",
+     "type": "array"
+    },
+    "approval_mode": {
+     "title": "Approval Mode",
+     "type": "string"
+    },
+    "max_iterations": {
+     "title": "Max Iterations",
+     "type": "integer"
+    },
+    "policy_digest": {
+     "title": "Policy Digest",
+     "type": "string"
+    }
+   },
+   "required": [
+    "version",
+    "target_profile",
+    "enabled_toolsets",
+    "approval_mode",
+    "max_iterations",
+    "policy_digest"
+   ],
+   "title": "RoomExecutionPolicy",
+   "type": "object"
+  },
+  "RoomLinkCatalog": {
+   "additionalProperties": false,
+   "description": "``gateway/hosted_room_peer.py::GatewayRoomCatalog.as_mapping``.",
+   "properties": {
+    "installation_id": {
+     "title": "Installation Id",
+     "type": "string"
+    },
+    "protocol_versions": {
+     "items": {
+      "type": "integer"
+     },
+     "title": "Protocol Versions",
+     "type": "array"
+    },
+    "link_modes": {
+     "items": {
+      "type": "string"
+     },
+     "title": "Link Modes",
+     "type": "array"
+    },
+    "persistent_process": {
+     "title": "Persistent Process",
+     "type": "boolean"
+    },
+    "text": {
+     "title": "Text",
+     "type": "boolean"
+    },
+    "attachments": {
+     "title": "Attachments",
+     "type": "boolean"
+    },
+    "execution_policy": {
+     "$ref": "#/components/schemas/RoomExecutionPolicy"
+    },
+    "catalog_digest": {
+     "title": "Catalog Digest",
+     "type": "string"
+    },
+    "endpoint": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/RoomLinkEndpoint"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    }
+   },
+   "required": [
+    "installation_id",
+    "protocol_versions",
+    "link_modes",
+    "persistent_process",
+    "text",
+    "attachments",
+    "execution_policy",
+    "catalog_digest"
+   ],
+   "title": "RoomLinkCatalog",
+   "type": "object"
+  },
+  "RoomLinkEndpoint": {
+   "additionalProperties": false,
+   "description": "``GatewayRoomCatalog.endpoint_mapping``: ``url``/``transport_security`` when available,\n``reason`` when not.",
+   "properties": {
+    "available": {
+     "title": "Available",
+     "type": "boolean"
+    },
+    "url": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Url"
+    },
+    "transport_security": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Transport Security"
+    },
+    "reason": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Reason"
+    }
+   },
+   "required": [
+    "available"
+   ],
+   "title": "RoomLinkEndpoint",
+   "type": "object"
+  },
+  "RoomLinkStatus": {
+   "additionalProperties": false,
+   "description": "``enabled`` with ``profile``/``catalog``/``endpoint``, or disabled with a ``reason``.",
+   "properties": {
+    "enabled": {
+     "title": "Enabled",
+     "type": "boolean"
+    },
+    "profile": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Profile"
+    },
+    "catalog": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/RoomLinkCatalog"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "endpoint": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/RoomLinkEndpoint"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null
+    },
+    "reason": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Reason"
+    }
+   },
+   "required": [
+    "enabled"
+   ],
+   "title": "RoomLinkStatus",
+   "type": "object"
+  },
+  "RoomMember": {
+   "additionalProperties": true,
+   "description": "One roster row (``hosted_room_discussion.validate_roster``); legacy rooms may carry\npre-normalisation rows, so the set stays open.",
+   "properties": {
+    "member_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Member Id"
+    },
+    "profile": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Profile"
+    },
+    "handle": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Handle"
+    },
+    "display_name": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Display Name"
+    },
+    "target": {
+     "anyOf": [
+      {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Target"
+    }
+   },
+   "title": "RoomMember",
+   "type": "object"
+  },
+  "RoomMemberActivity": {
+   "additionalProperties": false,
+   "description": "One live room task: ``status`` is ``queued``, ``running`` or ``stopping``. ``thread_id`` and\n``round_index`` name the thread and 0-based round it works in; ``started_at`` is when it began running;\n``tool`` (the tool it is in now) and ``progress_at`` (its last frame) come only from the process running\nthe turn.",
+   "properties": {
+    "member_id": {
+     "title": "Member Id",
+     "type": "string"
+    },
+    "status": {
+     "title": "Status",
+     "type": "string"
+    },
+    "thread_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Thread Id"
+    },
+    "round_index": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Round Index"
+    },
+    "started_at": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Started At"
+    },
+    "tool": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Tool"
+    },
+    "progress_at": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Progress At"
+    }
+   },
+   "required": [
+    "member_id",
+    "status"
+   ],
+   "title": "RoomMemberActivity",
+   "type": "object"
+  }
+ },
+ "events": {
+  "actor_fields": [
+   "connection_id",
+   "display_name",
+   "id",
+   "kind",
+   "profile"
+  ],
+  "kinds_by_actor": {
+   "gateway": [
+    "member.unavailable",
+    "room.activity",
+    "room.assignment",
+    "room.continued",
+    "room.routed",
+    "room.stop_requested",
+    "turn.cancelled",
+    "turn.deferred",
+    "turn.failed",
+    "turn.reassigned",
+    "turn.settled",
+    "turn.started"
+   ],
+   "member": [
+    "message.member"
+   ],
+   "system": [
+    "authority.claimed",
+    "authority.lost",
+    "room.context_set",
+    "room.created",
+    "room.disbanded",
+    "room.members_changed",
+    "room.renamed"
+   ],
+   "user": [
+    "message.user"
+   ]
+  },
+  "payloads": {
+   "message.member": {
+    "required": [
+     "discussion_event_id",
+     "member_id",
+     "member_index",
+     "round_index",
+     "task_id",
+     "text",
+     "thread_id",
+     "turn_id"
+    ],
+    "optional": [
+     "attachments",
+     "recipient_member_ids"
+    ]
+   },
+   "message.user": {
+    "required": [
+     "text",
+     "thread_id"
+    ],
+    "optional": [
+     "attachments"
+    ]
+   },
+   "room.activity": {
+    "required": [
+     "discussion_event_id",
+     "reason_code",
+     "status",
+     "thread_id"
+    ],
+    "optional": [],
+    "enums": {
+     "status": [
+      "bounded",
+      "settled"
+     ]
+    }
+   },
+   "room.assignment": {
+    "required": [
+     "discussion_event_id",
+     "fallback",
+     "lead_member_id",
+     "member_ids",
+     "task_id",
+     "thread_id"
+    ],
+    "optional": []
+   },
+   "room.continued": {
+    "required": [
+     "discussion_event_id",
+     "grant",
+     "thread_id"
+    ],
+    "optional": []
+   },
+   "room.routed": {
+    "required": [
+     "discussion_event_id",
+     "everyone",
+     "fallback",
+     "member_ids",
+     "thread_id"
+    ],
+    "optional": []
+   },
+   "room.stop_requested": {
+    "required": [
+     "cancel_id"
+    ],
+    "optional": []
+   },
+   "turn.cancelled": {
+    "required": [
+     "discussion_event_id",
+     "member_id",
+     "member_index",
+     "reason",
+     "round_index",
+     "seen_through_seq",
+     "task_id",
+     "thread_id",
+     "turn_id"
+    ],
+    "optional": []
+   },
+   "turn.deferred": {
+    "required": [
+     "discussion_event_id",
+     "execution_generation",
+     "member_id",
+     "member_index",
+     "reason",
+     "round_index",
+     "seen_through_seq",
+     "task_id",
+     "thread_id",
+     "turn_id"
+    ],
+    "optional": []
+   },
+   "turn.failed": {
+    "required": [
+     "discussion_event_id",
+     "error",
+     "member_id",
+     "member_index",
+     "round_index",
+     "seen_through_seq",
+     "task_id",
+     "thread_id",
+     "turn_id"
+    ],
+    "optional": [
+     "reason_code"
+    ]
+   },
+   "turn.settled": {
+    "required": [
+     "discussion_event_id",
+     "member_id",
+     "member_index",
+     "message_event_id",
+     "passed",
+     "round_index",
+     "seen_through_seq",
+     "task_id",
+     "thread_id",
+     "turn_id"
+    ],
+    "optional": []
+   },
+   "authority.claimed": {},
+   "authority.lost": {},
+   "member.unavailable": {},
+   "room.context_set": {},
+   "room.created": {},
+   "room.disbanded": {},
+   "room.members_changed": {},
+   "room.renamed": {},
+   "turn.reassigned": {},
+   "turn.started": {}
+  }
+ },
+ "member": {
+  "required": [
+   "handle",
+   "member_id",
+   "profile"
+  ],
+  "optional": [
+   "display_name",
+   "target"
+  ],
+  "targets": {
+   "local": [
+    "kind",
+    "profile"
+   ],
+   "peer": [
+    "capability_digest",
+    "installation_id",
+    "kind",
+    "peer_id",
+    "profile"
+   ]
+  },
+  "remote_fields": [
+   "connectionId",
+   "connectionKind",
+   "connectionLabel",
+   "connection_id",
+   "connection_kind",
+   "connection_label",
+   "remoteSource",
+   "route",
+   "sourceMissing",
+   "sourceReachable",
+   "sourceScoped",
+   "targetProfile",
+   "target_profile"
+  ]
+ },
+ "attachment": {
+  "fields": [
+   "attachment_id",
+   "kind",
+   "mime",
+   "name",
+   "size"
+  ],
+  "kinds": [
+   "file",
+   "image",
+   "pdf"
+  ]
+ },
+ "limits": {
+  "actor_id_chars": 128,
+  "actor_label_chars": 200,
+  "attachment_bytes": 15000000,
+  "attachment_mime_chars": 127,
+  "attachment_name_chars": 255,
+  "attachments_per_message": 8,
+  "message_attachment_bytes": 25000000,
+  "user_text_bytes": 65536
+ }
+}

@@ -253,6 +253,15 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
   String _decode(Uint8List bytes) =>
       _decoded ??= utf8.decode(bytes, allowMalformed: true);
 
+  /// The fallback's sentence: it offers another app or a share only when
+  /// the caller gave those actions.
+  String _unsupported(Strings strings) =>
+      widget.onOpenExternal == null &&
+          widget.onShare == null &&
+          widget.onSave == null
+      ? strings.vwUnsupportedHere
+      : strings.vw1215Unsupported;
+
   /// Phones get the thumb-reachable bottom bar instead of app-bar actions.
   bool get _compact =>
       MediaQuery.sizeOf(context).width < CodeViewPrefs.phoneMaxWidth;
@@ -419,7 +428,18 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
           totalBytes: bytes.length,
         );
       case ArtifactViewerKind.image:
-        return _ImageArtifactView(bytes: bytes);
+        return _ImageArtifactView(
+          bytes: bytes,
+          fallback: _FallbackCard(
+            name: widget.name,
+            mimeType: widget.mimeType,
+            sizeBytes: widget.sizeBytes ?? bytes.length,
+            message: Strings.of(context).artThumbUndecodable,
+            onOpenExternal: widget.onOpenExternal,
+            onShare: widget.onShare,
+            onSave: widget.onSave,
+          ),
+        );
       case ArtifactViewerKind.mermaid:
         final colors = Theme.of(context).hermes;
         final dark = Theme.of(context).brightness == Brightness.dark;
@@ -427,6 +447,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
         return WebDocumentView(
           key: ValueKey('artifact-viewer-diagram-$dark'),
           settingsFor: widget.webViewSettingsFor,
+          readyScript: kMermaidReadyScript,
           document: () => buildMermaidDocument(
             source,
             dark: dark,
@@ -441,19 +462,31 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
             name: widget.name,
             mimeType: widget.mimeType,
             sizeBytes: widget.sizeBytes ?? bytes.length,
-            message: Strings.of(context).vw1215Unsupported,
+            message: Strings.of(
+              context,
+            ).vwModelTooLarge(formatArtifactViewerBytes(kModelMaxBytes)),
             onOpenExternal: widget.onOpenExternal,
             onShare: widget.onShare,
             onSave: widget.onSave,
           );
         }
-        return WebDocumentView(
-          key: const ValueKey('artifact-viewer-model'),
+        return _ModelArtifactView(
           settingsFor: widget.webViewSettingsFor,
           document: () => buildModelDocument(
             bytes,
             mimeType: modelMimeFor(widget.name) ?? 'model/gltf-binary',
             background: background,
+          ),
+          failed: (message, detail, onRetry) => _FallbackCard(
+            name: widget.name,
+            mimeType: widget.mimeType,
+            sizeBytes: widget.sizeBytes ?? bytes.length,
+            message: message,
+            detail: detail,
+            onRetry: onRetry,
+            onOpenExternal: widget.onOpenExternal,
+            onShare: widget.onShare,
+            onSave: widget.onSave,
           ),
         );
       case ArtifactViewerKind.pdf:
@@ -463,7 +496,11 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
             name: widget.name,
             mimeType: widget.mimeType,
             sizeBytes: widget.sizeBytes ?? bytes.length,
-            message: Strings.of(context).vw1215Unsupported,
+            // A PDF is a type the viewer reads: one it cannot draw is
+            // damaged or protected, except one over the renderer's limit.
+            message: bytes.length > PdfDocumentView.maxBytes
+                ? _unsupported(Strings.of(context))
+                : Strings.of(context).vwPdfFailed,
             onOpenExternal: widget.onOpenExternal,
             onShare: widget.onShare,
             onSave: widget.onSave,
@@ -475,7 +512,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
           name: widget.name,
           mimeType: widget.mimeType,
           sizeBytes: widget.sizeBytes ?? bytes.length,
-          message: Strings.of(context).vw1215Unsupported,
+          message: _unsupported(Strings.of(context)),
           onOpenExternal: widget.onOpenExternal,
           onShare: widget.onShare,
           onSave: widget.onSave,
@@ -698,32 +735,104 @@ class _MarkdownArtifactViewState extends State<_MarkdownArtifactView> {
 
 // ── Images ────────────────────────────────────────────────────────────────
 
-class _ImageArtifactView extends StatelessWidget {
-  const _ImageArtifactView({required this.bytes});
+/// An image that zooms and pans; one the decoder cannot read gives way to
+/// [fallback], which says so and keeps the file's actions.
+class _ImageArtifactView extends StatefulWidget {
+  const _ImageArtifactView({required this.bytes, required this.fallback});
 
   final Uint8List bytes;
+  final Widget fallback;
 
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Colors.black,
-    child: InteractiveViewer(
-      key: const ValueKey('artifact-viewer-image'),
-      minScale: 1,
-      maxScale: 8,
-      child: Center(
-        child: Image.memory(
-          bytes,
-          fit: BoxFit.contain,
-          gaplessPlayback: true,
-          errorBuilder: (context, _, _) => Icon(
-            HIcons.broken_image_outlined,
-            size: 48,
-            color: Theme.of(context).hermes.textSecondary,
+  State<_ImageArtifactView> createState() => _ImageArtifactViewState();
+}
+
+class _ImageArtifactViewState extends State<_ImageArtifactView> {
+  bool _broken = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_broken) return widget.fallback;
+    return ColoredBox(
+      color: Colors.black,
+      child: InteractiveViewer(
+        key: const ValueKey('artifact-viewer-image'),
+        minScale: 1,
+        maxScale: 8,
+        child: Center(
+          child: Image.memory(
+            widget.bytes,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            errorBuilder: (context, _, _) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && !_broken) setState(() => _broken = true);
+              });
+              return Icon(
+                HIcons.broken_image_outlined,
+                size: 48,
+                color: Theme.of(context).hermes.textSecondary,
+              );
+            },
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
+}
+
+// ── 3D model ──────────────────────────────────────────────────────────────
+
+/// A 3D model full screen. One that does not draw says why ([failed]),
+/// with the file's actions and a way to try again.
+class _ModelArtifactView extends StatefulWidget {
+  const _ModelArtifactView({
+    required this.document,
+    required this.settingsFor,
+    required this.failed,
+  });
+
+  final Future<String> Function() document;
+  final ArtifactWebViewSettingsFactory settingsFor;
+  final Widget Function(String message, String? detail, VoidCallback retry)
+  failed;
+
+  @override
+  State<_ModelArtifactView> createState() => _ModelArtifactViewState();
+}
+
+class _ModelArtifactViewState extends State<_ModelArtifactView> {
+  WebPageFailure? _failure;
+  int _attempt = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final failure = _failure;
+    if (failure != null) {
+      final text = describeWebPageFailure(
+        Strings.of(context),
+        failure,
+        model: true,
+      );
+      return widget.failed(
+        text.title,
+        text.detail,
+        () => setState(() {
+          _failure = null;
+          _attempt++;
+        }),
+      );
+    }
+    return WebDocumentView(
+      key: ValueKey('artifact-viewer-model-$_attempt'),
+      settingsFor: widget.settingsFor,
+      document: widget.document,
+      readyScript: kModelReadyScript,
+      deadline: kModelPageDeadline,
+      model: true,
+      onFailed: (failed) => setState(() => _failure = failed),
+    );
+  }
 }
 
 // ── Fallback (PDF / unknown) ──────────────────────────────────────────────
@@ -737,12 +846,18 @@ class _FallbackCard extends StatelessWidget {
     this.onOpenExternal,
     this.onShare,
     this.onSave,
+    this.detail,
+    this.onRetry,
   });
 
   final String name;
   final String mimeType;
   final int? sizeBytes;
   final String message;
+
+  /// What the viewer itself said, under [message].
+  final String? detail;
+  final VoidCallback? onRetry;
   final VoidCallback? onOpenExternal;
   final VoidCallback? onShare;
   final VoidCallback? onSave;
@@ -752,6 +867,7 @@ class _FallbackCard extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
     final size = sizeBytes;
+    final detail = this.detail;
     return Center(
       key: const ValueKey('artifact-viewer-fallback'),
       child: SingleChildScrollView(
@@ -786,9 +902,21 @@ class _FallbackCard extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               message,
+              key: const ValueKey('artifact-viewer-fallback-message'),
               textAlign: TextAlign.center,
               style: TextStyle(color: colors.textSecondary, fontSize: 13),
             ),
+            if (detail != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                detail,
+                key: const ValueKey('artifact-viewer-fallback-detail'),
+                textAlign: TextAlign.center,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: colors.textTertiary, fontSize: 12),
+              ),
+            ],
             const SizedBox(height: 20),
             if (onOpenExternal != null)
               FilledButton.icon(
@@ -802,6 +930,13 @@ class _FallbackCard extends StatelessWidget {
               spacing: 8,
               alignment: WrapAlignment.center,
               children: [
+                if (onRetry != null)
+                  TextButton.icon(
+                    key: const ValueKey('artifact-viewer-retry'),
+                    onPressed: onRetry,
+                    icon: const Icon(HIcons.refresh_rounded),
+                    label: Text(strings.commonRetry),
+                  ),
                 if (onShare != null)
                   TextButton.icon(
                     onPressed: onShare,

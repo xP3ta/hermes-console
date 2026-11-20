@@ -3,6 +3,7 @@
 // required" (H1: it used to show "Reconnecting" forever) and the socket stops
 // dialling until a login (new credential epoch) or an explicit retry. Copy of
 // Desktop's latched reauth error (backend-health.ts:213-241).
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -137,6 +138,67 @@ void main() {
     );
     await expectLater(r.client.connect(), throwsA(anything)); // no WS server
     expect(r.d.tickets, greaterThan(tickets), reason: 'epoch moved: dials');
+  });
+
+  // Seen on a device: the session expired, the user signed in again and the
+  // socket still never dialled until the app was restarted. A login moves
+  // the epoch before its new session is written
+  // (ConnectionManager.setDashboardSecrets fences first, writes after); a
+  // dial in that gap read the old session, was refused without a request
+  // and stopped again at the new epoch.
+  test('a dial between the start of a login and its write does not stop '
+      'the socket for good: it dials again once the sign-in is stored', () async {
+    final r = await _rig('s2-gap', mode: RefreshMode.expired);
+    await expectLater(r.client.connectForeground(), throwsA(anything));
+    expect(_kind(r.client), ConnectionStatusKind.authRequired);
+
+    // The login starts: the epoch moves, the store still holds the old
+    // session. Something dials right then.
+    NativeSessionCoordinator.instance.invalidate(r.id);
+    await expectLater(r.client.connect(), throwsA(anything));
+    final tickets = r.d.tickets;
+    await expectLater(r.client.connect(), throwsA(anything));
+    expect(r.d.tickets, tickets, reason: 'stopped again: no dial');
+
+    // The login lands: new session stored, and the manager says so.
+    r.d.refreshMode = RefreshMode.ok;
+    r.d.rejectCurrent = false;
+    r.secure.storage['dash_token_${r.id}'] = r.d.envelope(r.id);
+    DashboardClient.noteSignInStored(r.id);
+    await expectLater(r.client.connect(), throwsA(anything)); // no WS server
+    expect(r.d.tickets, greaterThan(tickets), reason: 'stored: dials');
+    expect(r.client.linkAuthRejected, isFalse, reason: 'ticket was accepted');
+  });
+
+  // The refusal of a dial belongs to the credential that dial used. A
+  // sign-in stored while the request was on the wire is a newer credential:
+  // the socket must not stop on it.
+  test('a sign-in stored while a dial is on the wire is not latched as '
+      'refused: the next connect dials', () async {
+    final r = await _rig('s2-wire', mode: RefreshMode.expired);
+    // The login starts (the epoch moves, the old session is still stored)…
+    NativeSessionCoordinator.instance.invalidate(r.id);
+    final hold = Completer<void>();
+    r.d.beforeRefreshAnswer = () => hold.future;
+    // …something dials and its renewal reaches the server…
+    final dial = r.client.connect();
+    unawaited(dial.then<void>((_) {}, onError: (Object _) {}));
+    while (r.d.refreshCalls == 0) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    // …the login lands meanwhile…
+    r.secure.storage['dash_token_${r.id}'] = r.d.envelope(r.id);
+    DashboardClient.noteSignInStored(r.id);
+    // …and the server refuses the old session.
+    hold.complete();
+    await expectLater(dial, throwsA(anything));
+
+    r.d.beforeRefreshAnswer = null;
+    r.d.refreshMode = RefreshMode.ok;
+    r.d.rejectCurrent = false;
+    final tickets = r.d.tickets;
+    await expectLater(r.client.connect(), throwsA(anything)); // no WS server
+    expect(r.d.tickets, greaterThan(tickets), reason: 'not latched: dials');
   });
 
   test('Retry (connectForeground) asks the server again after the server '

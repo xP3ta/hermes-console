@@ -206,8 +206,10 @@ final class RoomRosterEntry extends RosterEntry {
     for (final room in hosted.rooms) {
       if (room.disbanded) continue;
       final identity = identityFor?.call(room);
+      // Only a room a view read in this session has a preview; for any
+      // other room the conversation is unknown, never invented.
       HostedGroupEvent? last;
-      for (final log in hosted.logs) {
+      for (final log in hosted.logs.nonNulls) {
         for (final event in log.events) {
           if (event.roomId != room.roomId) continue;
           if (event.kind != 'message.user' && event.kind != 'message.member') {
@@ -255,7 +257,9 @@ final class RoomRosterEntry extends RosterEntry {
           previewFromUser: last?.kind == 'message.user',
           previewAuthor: author,
           preview: _roomPreview(last),
-          at: last == null ? null : _eventTime(last.createdAt),
+          // Age and recency from the room's own `updated_at`, as Desktop
+          // orders and dates its room rows (`canonical-group-row.tsx`).
+          at: room.updatedAt,
           attentionCount: attention.room(room.roomId)?.count ?? 0,
           working: driver?.working ?? false,
         ),
@@ -267,12 +271,6 @@ final class RoomRosterEntry extends RosterEntry {
   static String? _nonEmpty(String? value) {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
-  }
-
-  static DateTime _eventTime(num raw) {
-    // Gateway timestamps are epoch seconds; tolerate milliseconds.
-    final ms = raw > 1e12 ? raw.toDouble() : raw * 1000;
-    return DateTime.fromMillisecondsSinceEpoch(ms.round());
   }
 }
 

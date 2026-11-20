@@ -755,7 +755,13 @@ class KanbanClient {
   /// Suscripción en vivo a los eventos del board (WebSocket). Emite un
   /// [KanbanEvent] por cada cambio; la pantalla refresca el board al recibirlo.
   /// Si el socket falla o se cierra, el stream termina (la UI puede reconectar).
-  Stream<KanbanEvent> events({int since = 0, String? board}) async* {
+  /// [onOpen] runs once the socket is up: from then on, no event means
+  /// nothing moved on the board.
+  Stream<KanbanEvent> events({
+    int since = 0,
+    String? board,
+    void Function()? onOpen,
+  }) async* {
     // Dashboards con login por cookie: el WS se autentica con un ticket de un
     // solo uso (?ticket=), no con la cookie (los sockets no pueden mandarla en
     // el upgrade). Si no hay ticket (modo token/loopback), se cae a ?token=.
@@ -775,6 +781,7 @@ class KanbanClient {
     // zombi: el board deja de actualizarse SIN error y la reconexión de la
     // pantalla nunca se entera. Con ping, el onDone llega y se reconecta solo.
     ws.pingInterval = const Duration(seconds: 30);
+    onOpen?.call();
     try {
       await for (final msg in ws) {
         if (msg is! String) continue;

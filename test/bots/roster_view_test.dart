@@ -143,6 +143,32 @@ void main() {
       expect(hostedEntry.needsYou, isTrue);
       expect(hostedEntry.working, isTrue);
       expect(hostedEntry.members.map((m) => m.handle), ['astra', 'radar']);
+      // A row's age and order come from the room's `updated_at`, as in
+      // Desktop, not from its newest message.
+      expect(hostedEntry.at, room.updatedAt);
+      expect(
+        hostedEntry.at,
+        DateTime.fromMillisecondsSinceEpoch(1790000500 * 1000),
+      );
+    });
+
+    test('a room no view read keeps its updated_at but has no preview, no '
+        'activity and no invented conversation', () {
+      final room = spec070Room();
+      final hosted = HostedGroupsSnapshot(
+        capabilities: spec070Capabilities(),
+        rooms: [room],
+        logs: const [null],
+      );
+      final entry = RoomRosterEntry.build(
+        hosted: hosted,
+        attention: AttentionSummary.fromSnapshot(hosted),
+        localProfiles: {for (final p in spec070Profiles()) p.name: p},
+      ).single;
+      expect(entry.at, room.updatedAt);
+      expect(entry.preview, isEmpty);
+      expect(entry.working, isFalse);
+      expect(entry.needsYou, isFalse);
     });
   });
 }

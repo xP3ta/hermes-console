@@ -1453,7 +1453,32 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       widget.connManager,
       conn,
     );
-    if (signedIn && mounted) unawaited(_refreshStatus());
+    if (signedIn && mounted) {
+      // What the refused login left as «Could not load» is read again now:
+      // those reads are otherwise held back for a minute after a failure.
+      _retryBoardReads();
+      unawaited(_refreshStatus());
+    }
+  }
+
+  /// A widget's Retry, or a sign-in that just succeeded: reads again, now,
+  /// what the board's widgets paint from.
+  void _retryBoardReads() {
+    final conn = _active;
+    if (conn == null) return;
+    unawaited(_refreshCron(conn, force: true));
+    if (_boardNeedsMission && !_locked) {
+      // Rooms, Bots and Bot paint from the Bot Mode read: ask for it now
+      // instead of waiting for the once-a-minute cadence.
+      _missionPrewarm.refreshForHome(
+        connection: conn,
+        minAge: Duration.zero,
+        userRetry: true,
+      );
+    }
+    if (_boardLayout?.contains(HomeWidgetKind.tasks) ?? false) {
+      unawaited(_refreshTasks(conn, force: true));
+    }
   }
 
   Future<void> _refreshStatus() =>
@@ -2344,13 +2369,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       acks: roomPrefs.acksFor,
     );
     if (snapshot != null &&
-        now.difference(snapshot.loadedAt) <= _roomApprovalMaxAge) {
+        homeRoomApprovalsCurrent(snapshot, now, _roomApprovalMaxAge)) {
       approvals.addAll(
         homeRoomApprovals(
           groups,
           attention,
           titleOf: roomTitle,
           readOnly: readOnly,
+          // The room list is read every few seconds, its rooms' driver
+          // status only while a room is open: each room's approvals must
+          // be as recent as the snapshot's used to be.
+          readSince: now.subtract(_roomApprovalMaxAge),
         ).where((item) => !_answeredRoomApprovals.contains(item.key)),
       );
     }
@@ -2448,14 +2477,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _ => null,
       },
     ),
-    retry: () {
-      final conn = _active;
-      if (conn == null) return;
-      unawaited(_refreshCron(conn, force: true));
-      if (_boardLayout?.contains(HomeWidgetKind.tasks) ?? false) {
-        unawaited(_refreshTasks(conn, force: true));
-      }
-    },
+    retry: _retryBoardReads,
     openChat: (chat) {
       if (chat.ref case final Session session) _openChat(session);
     },

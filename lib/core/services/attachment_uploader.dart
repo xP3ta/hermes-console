@@ -130,7 +130,10 @@ class AttachmentHistoryReference {
           storageKey != sha256Hex ||
           sizeBytes == null ||
           sizeBytes <= 0 ||
-          sizeBytes > AttachmentUploader.maxBytes ||
+          sizeBytes >
+              (rawType == AttachmentType.image.name
+                  ? AttachmentUploader.maxImageBytes
+                  : AttachmentUploader.maxBytes) ||
           mimeType.length > 160 ||
           mimeType.contains(RegExp(r'[\u0000-\u001f\u007f]'))) {
         return null;
@@ -170,6 +173,20 @@ class AttachmentUploader {
   /// Límite conservador para no llenar el disco del agente ni reventar el
   /// timeout HTTP con base64 enorme.
   static const int maxBytes = 8 * 1024 * 1024;
+
+  /// An image goes to `image.attach_bytes`, which takes up to 25 MiB
+  /// (`tui_gateway/prompt_attachments.py` `_ATTACH_BYTES_MAX_BYTES`, the
+  /// same in the 2026-11-09 server); Desktop sends it there unshrunk.
+  static const int maxImageBytes = 25 * 1024 * 1024;
+
+  /// Largest [attachment] that may be sent: text is embedded, an image goes
+  /// to `image.attach_bytes`, any other file to `file.attach`.
+  static int itemLimitFor(AttachmentDraft attachment) =>
+      isTextEmbeddable(attachment)
+      ? maxTextBytes
+      : attachment.isImage
+      ? maxImageBytes
+      : maxBytes;
   static const int maxBatchBytes = 24 * 1024 * 1024;
   static const int maxSentImageCacheBytes = 100 * 1024 * 1024;
   static const Duration maxSentImageCacheAge = Duration(days: 30);
@@ -212,8 +229,7 @@ class AttachmentUploader {
     if (!await source.exists()) return null;
     try {
       final length = await source.length();
-      final limit =
-          itemLimit ?? (isTextEmbeddable(attachment) ? maxTextBytes : maxBytes);
+      final limit = itemLimit ?? itemLimitFor(attachment);
       if (length <= 0 || length > limit) return null;
       final base = baseDir ?? await getApplicationSupportDirectory();
       final dir = Directory('${base.path}/attachment_drafts');
@@ -336,7 +352,7 @@ class AttachmentUploader {
       } catch (_) {
         return false;
       }
-      final limit = isTextEmbeddable(attachment) ? maxTextBytes : maxBytes;
+      final limit = itemLimitFor(attachment);
       if (length <= 0 || length > limit) return false;
       total += length;
       if (total > maxBatchBytes) return false;
@@ -557,7 +573,7 @@ class AttachmentUploader {
     if (!await source.exists()) return null;
     try {
       final length = await source.length();
-      final limit = isTextEmbeddable(attachment) ? maxTextBytes : maxBytes;
+      final limit = itemLimitFor(attachment);
       if (length <= 0 || length > limit) return null;
       if (attachment.isImage && !await _hasSupportedImageMagic(source)) {
         return null;
@@ -773,7 +789,7 @@ class AttachmentUploader {
       );
     }
     final len = await file.length();
-    if (len > maxBytes) {
+    if (len > itemLimitFor(attachment)) {
       return const AttachmentUploadResult.failure(AttachmentErrorKind.tooLarge);
     }
     DashboardClient? dash;

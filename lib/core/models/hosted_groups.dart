@@ -19,7 +19,13 @@ enum GroupMethod {
   stop('groups.stop'),
   retry('groups.retry'),
   approve('groups.approve'),
-  promote('groups.promote');
+  promote('groups.promote'),
+
+  /// The room's own file store (`tui_gateway/methods_groups.py`
+  /// `groups.attachment.upload` / `groups.attachment.download`, both handled
+  /// by `gateway/session_hosted_attachments.py`).
+  attachmentUpload('groups.attachment.upload'),
+  attachmentDownload('groups.attachment.download');
 
   final String wire;
   const GroupMethod(this.wire);
@@ -105,6 +111,11 @@ final class GroupsCapabilities {
           method == GroupMethod.list ||
           method == GroupMethod.state ||
           method == GroupMethod.log ||
+          // A read of a committed file: the server needs its room service,
+          // not a running driver (`groups.attachment.download` has no
+          // driver check), and Desktop offers it on the method list alone
+          // (`canonical-group-capabilities.ts::offersGroupMethod`).
+          method == GroupMethod.attachmentDownload ||
           driverReady);
 
   bool get hasSharedRoomSurface =>
@@ -389,6 +400,11 @@ final class HostedGroupRoom {
   /// [latestSeq] then reads 0 without proving the log is empty.
   final bool latestSeqKnown;
   final bool disbanded;
+
+  /// The room's last change (`updated_at`): its age and recency in the
+  /// room list, as in Hermes Desktop (`canonical-group-registry.tsx`
+  /// `GatewayGroupRoom.updatedAt`).
+  final DateTime updatedAt;
   final Map<String, dynamic> _testJson;
 
   const HostedGroupRoom._({
@@ -401,6 +417,7 @@ final class HostedGroupRoom {
     required this.latestSeq,
     required this.latestSeqKnown,
     required this.disbanded,
+    required this.updatedAt,
     required this._testJson,
   });
 
@@ -423,7 +440,7 @@ final class HostedGroupRoom {
     }
 
     _number(raw['created_at'], 'room creation');
-    _number(raw['updated_at'], 'room update');
+    final updated = _number(raw['updated_at'], 'room update');
     if (raw.containsKey('disbanded_at')) {
       _number(raw['disbanded_at'], 'room disband');
     }
@@ -444,6 +461,10 @@ final class HostedGroupRoom {
       latestSeq: latest,
       latestSeqKnown: raw['latest_seq'] != null,
       disbanded: raw['disbanded_at'] != null,
+      // Epoch seconds; milliseconds tolerated, as for event times.
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(
+        (updated > 1e12 ? updated : updated * 1000).round(),
+      ),
       testJson: Map.unmodifiable(raw),
     );
   }
@@ -562,11 +583,17 @@ final class HostedGroupWorkspaceReadback {
   /// Server driver evidence read with [room]; `null` on older gateways.
   final RoomDriverStatus? driverStatus;
 
+  /// `groups.state.change_events`: the backend pushes `groups.changed`
+  /// when this room moves, so an open view may poll only as a backstop.
+  /// False on backends that do not say so.
+  final bool changeEvents;
+
   const HostedGroupWorkspaceReadback({
     required this.room,
     required this.log,
     required this.capabilityGeneration,
     this.driverStatus,
+    this.changeEvents = false,
   });
 }
 
@@ -1377,33 +1404,110 @@ final class HostedGroupLogPage {
 
 /// One generation-coherent projection of the official shared-room surface.
 /// Opaque identifiers are transport state, never presentation identity.
+///
+/// [rooms] is the server's room list (`groups.list`), as Hermes Desktop
+/// lists rooms (`canonical-group-registry.tsx` `useGatewayGroupRooms`): no
+/// room is read to be listed. A room's conversation and driver state are
+/// known only once a view of that room read them in this app session (as a
+/// Desktop row shows only what an open view of its room published,
+/// `canonical-group-details.tsx` `$canonicalRoomLive`); for any other room
+/// they are unknown, never empty.
 final class HostedGroupsSnapshot {
   final GroupsCapabilities? capabilities;
   final List<HostedGroupRoom> rooms;
-  final List<HostedGroupLogPage> logs;
 
-  /// `groups.state.driver_status` per room id, when the gateway reported it.
+  /// The log of `rooms[i]` at index `i`, as its open view last read it. A
+  /// null or missing entry is a room whose conversation Console has not
+  /// read in this session: unknown, not empty, and not seen.
+  final List<HostedGroupLogPage?> logs;
+
+  /// `groups.state.driver_status` per room id, when a view of the room read
+  /// it.
   final Map<String, RoomDriverStatus> driverStatuses;
+
+  /// When each status of [driverStatuses] was read, per room id. A room
+  /// with a status but no time here offers nothing that must be current.
+  final Map<String, DateTime> driverReadAt;
 
   /// Rooms the server listed that Console could not read. They are not in
   /// [rooms]/[logs]; the rest of the snapshot is complete without them.
   final List<HostedGroupUnreadableRoom> unreadableRooms;
-
-  /// Rooms of [rooms] shown from their last good read because the latest
-  /// one failed with a server error of their own (a transient «database is
-  /// locked»): kept on screen, announced as not updated, re-read next time.
-  final Set<String> staleRoomIds;
 
   const HostedGroupsSnapshot({
     this.capabilities,
     this.rooms = const [],
     this.logs = const [],
     this.driverStatuses = const {},
+    this.driverReadAt = const {},
     this.unreadableRooms = const [],
-    this.staleRoomIds = const {},
   });
 
   RoomDriverStatus? driverStatusFor(String roomId) => driverStatuses[roomId];
+
+  /// The log of [roomId] a view of it read, or null when none did.
+  HostedGroupLogPage? logFor(String roomId) {
+    final index = rooms.indexWhere((room) => room.roomId == roomId);
+    return logAt(index);
+  }
+
+  /// The log of `rooms[index]`, or null when no view of it read one.
+  HostedGroupLogPage? logAt(int index) =>
+      index >= 0 && index < logs.length ? logs[index] : null;
+
+  /// This snapshot with [capabilities] in place of its own.
+  HostedGroupsSnapshot withCapabilities(GroupsCapabilities capabilities) =>
+      HostedGroupsSnapshot(
+        capabilities: capabilities,
+        rooms: rooms,
+        logs: logs,
+        driverStatuses: driverStatuses,
+        driverReadAt: driverReadAt,
+        unreadableRooms: unreadableRooms,
+      );
+
+  /// This snapshot with what a view of `rooms[index]` just read: [room] in
+  /// its place, [log] when the read brought one and [driverStatus] (read at
+  /// [readAt]) when it brought one. Every other room keeps what it had. A
+  /// disbanded [room] leaves the list.
+  HostedGroupsSnapshot withRoomRead(
+    int index, {
+    required HostedGroupRoom room,
+    HostedGroupLogPage? log,
+    RoomDriverStatus? driverStatus,
+    DateTime? readAt,
+  }) {
+    final nextRooms = [...rooms];
+    final nextLogs = [
+      for (var i = 0; i < rooms.length; i++) logAt(i),
+    ];
+    final nextDrivers = {...driverStatuses};
+    final nextReadAt = {...driverReadAt};
+    if (room.disbanded) {
+      nextRooms.removeAt(index);
+      nextLogs.removeAt(index);
+      nextDrivers.remove(room.roomId);
+      nextReadAt.remove(room.roomId);
+    } else {
+      nextRooms[index] = room;
+      if (log != null) nextLogs[index] = log;
+      if (driverStatus != null) {
+        nextDrivers[room.roomId] = driverStatus;
+        if (readAt != null) {
+          nextReadAt[room.roomId] = readAt;
+        } else {
+          nextReadAt.remove(room.roomId);
+        }
+      }
+    }
+    return HostedGroupsSnapshot(
+      capabilities: capabilities,
+      rooms: List.unmodifiable(nextRooms),
+      logs: List.unmodifiable(nextLogs),
+      driverStatuses: Map.unmodifiable(nextDrivers),
+      driverReadAt: Map.unmodifiable(nextReadAt),
+      unreadableRooms: unreadableRooms,
+    );
+  }
 
   static const empty = HostedGroupsSnapshot();
 }

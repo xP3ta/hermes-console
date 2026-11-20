@@ -186,17 +186,51 @@ MissionControlRepository _repository(MissionHostedGroupsGateway gateway) =>
       hostedGroupsGateway: gateway,
     );
 
+/// The listed room with its log cursor opened by a first read of its view
+/// (the room list reads no room, as in Hermes Desktop). The reads it made
+/// are cleared, so a test sees only what comes after.
+Future<HostedGroupRoom> _openedRoom(
+  MissionControlRepository repository,
+  _IncrementalGateway gateway,
+) async {
+  final snapshot = await repository.load();
+  final room = snapshot.hostedGroups.rooms.single;
+  await repository.readHostedGroup(room, generation: 1);
+  gateway.sinceCalls.clear();
+  gateway.stateReads.clear();
+  return room;
+}
+
 void main() {
-  test('snapshot carries driver status and reads logs incrementally', () async {
+  // The room list is groups.list alone, as Desktop: it carries a room's
+  // driver status and log only once the room's view read them, and that
+  // view reads its log incrementally.
+  test('the list carries the driver status and log its view read; the view '
+      'reads the log incrementally', () async {
     final gateway = _IncrementalGateway();
     final repository = _repository(gateway);
     final first = await repository.load();
-    expect(first.hostedGroups.driverStatusFor('room-devs')?.working, isTrue);
-    expect(first.hostedGroups.logs.single.events, hasLength(8));
+    expect(first.hostedGroups.driverStatusFor('room-devs'), isNull);
+    expect(first.hostedGroups.logAt(0), isNull);
+    expect(gateway.stateReads, isEmpty, reason: 'the list reads no room');
+    expect(gateway.sinceCalls, isEmpty);
+
+    final room = first.hostedGroups.rooms.single;
+    final read = await repository.readHostedGroup(room, generation: 1);
+    expect(read.log?.events, hasLength(8));
     expect(gateway.sinceCalls, [0, 4]);
 
     gateway.sinceCalls.clear();
-    await repository.load();
+    gateway.stateReads.clear();
+    final second = await repository.load();
+    expect(second.hostedGroups.driverStatusFor('room-devs')?.working, isTrue);
+    expect(second.hostedGroups.driverReadAt['room-devs'], isNotNull);
+    expect(second.hostedGroups.logAt(0)?.events, hasLength(8));
+    expect(gateway.stateReads, isEmpty);
+    expect(gateway.sinceCalls, isEmpty);
+
+    gateway.stateRoom = () => _roomWith(latestSeq: 9);
+    await repository.readHostedGroup(room, generation: 1);
     expect(gateway.sinceCalls, [8], reason: 'only the delta after the cursor');
     expect(gateway.fullLogReads, 0);
     repository.close();
@@ -205,10 +239,8 @@ void main() {
   test('room refresh reuses the cursor and opens no socket (T209)', () async {
     final gateway = _IncrementalGateway();
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
+    final room = await _openedRoom(repository, gateway);
     GatewaySocketMeter.instance.reset();
-    gateway.sinceCalls.clear();
     for (var i = 0; i < 10; i++) {
       final read = await repository.readHostedGroup(room, generation: 1);
       expect(read.log?.events, hasLength(8));
@@ -224,9 +256,7 @@ void main() {
   test('sending reads only the delta, never the full log again', () async {
     final gateway = _IncrementalGateway();
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
+    final room = await _openedRoom(repository, gateway);
     final sent = await repository.sendHostedGroupText(
       room,
       text: 'hola',
@@ -249,10 +279,7 @@ void main() {
     () async {
       final gateway = _IncrementalGateway()..sendTail = _sendTail;
       final repository = _repository(gateway);
-      final snapshot = await repository.load();
-      final room = snapshot.hostedGroups.rooms.single;
-      gateway.sinceCalls.clear();
-      gateway.stateReads.clear();
+      final room = await _openedRoom(repository, gateway);
       final sent = await repository.sendHostedGroupText(
         room,
         text: 'hola',
@@ -285,10 +312,7 @@ void main() {
       final gateway = _IncrementalGateway()
         ..sendTail = () => _sendTail(ackSeq: 10, latestSeq: 10);
       final repository = _repository(gateway);
-      final snapshot = await repository.load();
-      final room = snapshot.hostedGroups.rooms.single;
-      gateway.sinceCalls.clear();
-      gateway.stateReads.clear();
+      final room = await _openedRoom(repository, gateway);
       await repository.sendHostedGroupText(
         room,
         text: 'hola',
@@ -305,10 +329,7 @@ void main() {
     // The tail continues the cursor but carries another attempt's event.
     final gateway = _IncrementalGateway()..sendTail = _sendTail;
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
-    gateway.stateReads.clear();
+    final room = await _openedRoom(repository, gateway);
     await repository.sendHostedGroupText(
       room,
       text: 'hola',
@@ -324,10 +345,7 @@ void main() {
     final gateway = _IncrementalGateway()
       ..sendTail = () => _sendTail(latestSeq: 12);
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
-    gateway.stateReads.clear();
+    final room = await _openedRoom(repository, gateway);
     await repository.sendHostedGroupText(
       room,
       text: 'hola',
@@ -344,9 +362,7 @@ void main() {
   test('rename and stop read only the delta after the cursor', () async {
     final gateway = _IncrementalGateway();
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
+    final room = await _openedRoom(repository, gateway);
 
     final renamed = await repository.renameHostedGroup(
       room,
@@ -387,10 +403,7 @@ void main() {
   test('a refresh skips the log when state shows nothing new', () async {
     final gateway = _IncrementalGateway();
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
-    gateway.stateReads.clear();
+    final room = await _openedRoom(repository, gateway);
     for (var i = 0; i < 10; i++) {
       final read = await repository.readHostedGroup(room, generation: 1);
       expect(read.log?.events, hasLength(8));
@@ -405,9 +418,7 @@ void main() {
   test('a refresh reads the delta once latest_seq advances', () async {
     final gateway = _IncrementalGateway();
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
+    final room = await _openedRoom(repository, gateway);
     gateway.stateRoom = () => _roomWith(latestSeq: 9);
     await repository.readHostedGroup(room, generation: 1);
     expect(gateway.sinceCalls, [8]);
@@ -446,9 +457,7 @@ void main() {
   test('a refresh reads the log when state omits latest_seq', () async {
     final gateway = _IncrementalGateway();
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
+    final room = await _openedRoom(repository, gateway);
     gateway.stateRoom = () => _roomWith(latestSeq: null);
     await repository.readHostedGroup(room, generation: 1);
     expect(gateway.sinceCalls, [8], reason: 'older gateways: no proof');
@@ -462,9 +471,8 @@ void main() {
       ..emptyRoom = true
       ..stateRoom = () => _roomWith(latestSeq: null);
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
+    // The cursor holds the empty log its first read returned.
+    final room = await _openedRoom(repository, gateway);
     await repository.readHostedGroup(room, generation: 1);
     expect(gateway.sinceCalls, [0]);
     repository.close();
@@ -473,9 +481,7 @@ void main() {
   test('a refresh reads the log when the authority changed', () async {
     final gateway = _IncrementalGateway();
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
+    final room = await _openedRoom(repository, gateway);
     gateway.stateRoom = () => _roomWith(latestSeq: 8, epoch: 3);
     await expectLater(
       repository.readHostedGroup(room, generation: 1),
@@ -488,10 +494,7 @@ void main() {
   test('a tail under another authority is never merged', () async {
     final gateway = _IncrementalGateway()..sendTail = () => _sendTail(epoch: 3);
     final repository = _repository(gateway);
-    final snapshot = await repository.load();
-    final room = snapshot.hostedGroups.rooms.single;
-    gateway.sinceCalls.clear();
-    gateway.stateReads.clear();
+    final room = await _openedRoom(repository, gateway);
     final sent = await repository.sendHostedGroupText(
       room,
       text: 'hola',

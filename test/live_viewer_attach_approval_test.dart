@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
+import 'package:hermes_android/core/screens/settings_screen.dart';
+import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/approval_response.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
@@ -11,6 +13,7 @@ import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
@@ -65,6 +68,11 @@ class _ViewerGateway
       sessionId: snapshot.runtimeSessionId,
       payload: payload,
     ),
+  );
+
+  /// A frame Hermes broadcasts to every client, with no session id.
+  void emitGlobal(String type, Map<String, dynamic> payload) => _events.add(
+    TuiGatewayEvent(type: type, sessionId: '', payload: payload),
   );
 
   @override
@@ -174,6 +182,33 @@ class _ViewerGateway
   }
 }
 
+/// Records the runtime calls a delete makes, in order, in [log].
+class _ClosingViewerGateway extends _ViewerGateway
+    implements HermesDesktopSessionCloseGateway {
+  _ClosingViewerGateway(super.snapshot);
+
+  final log = <String>[];
+  Object? interruptError;
+
+  @override
+  Future<void> interrupt(String runtimeSessionId) async {
+    log.add('interrupt $runtimeSessionId');
+    final error = interruptError;
+    if (error != null) throw error;
+    // Hermes ends the interrupted turn.
+    emit('message.complete', const {'text': '', 'status': 'interrupted'});
+  }
+
+  @override
+  Future<bool> closeSession(String runtimeSessionId) async {
+    log.add('close $runtimeSessionId');
+    return true;
+  }
+}
+
+/// An open chat of the app's registry, and its gateway.
+typedef _OpenChat = (ActiveChatService, ActiveChat, _ClosingViewerGateway);
+
 ActiveChat _chat(
   _ViewerGateway gateway, {
   required int Function() restCalls,
@@ -185,6 +220,7 @@ ActiveChat _chat(
   Future<void> Function()? beforePrivacySnapshotLoad,
   Future<bool> Function()? historyHydrationAwaiter,
   StoredSessionMessageLoader? storedMessageLoader,
+  ApprovalPolicyService? policy,
 }) {
   return ActiveChat(
     compressionRestoreStore: compressionRestoreStore ?? testCompressionRestoreStore(),
@@ -216,8 +252,30 @@ ActiveChat _chat(
     beforePrivacySnapshotLoad: beforePrivacySnapshotLoad,
     historyHydrationAwaiter: historyHydrationAwaiter,
     storedMessageLoader: storedMessageLoader,
+    policy: policy,
   );
 }
+
+DesktopSessionSnapshot _liveSnapshot() => DesktopSessionSnapshot.fromJson(
+  const {
+    'session_id': 'runtime-live',
+    'session_key': 'stored-live',
+    'messages': <Object>[],
+    'running': true,
+  },
+  requestedStoredSessionId: 'stored-live',
+  created: false,
+  method: 'session.resume',
+);
+
+_ViewerGateway _liveGateway() => _ViewerGateway(_liveSnapshot());
+
+void _emitApproval(_ViewerGateway gateway, String id) =>
+    gateway.emit('approval.request', {
+      'request_id': id,
+      'command': 'echo $id',
+      'choices': const ['once', 'deny'],
+    });
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -588,26 +646,364 @@ void main() {
 
   }
 
-  test('native approval queue keeps the latest prompt; settlement of A cannot clear B', () async {
-    final gateway = _ViewerGateway(DesktopSessionSnapshot.fromJson(
-      const {'session_id': 'runtime-live', 'session_key': 'stored-live', 'messages': <Object>[], 'running': true},
-      requestedStoredSessionId: 'stored-live', created: false, method: 'session.resume',
-    ));
+  test('parallel approvals queue behind the head', () async {
+    final gateway = _liveGateway();
     final chat = _chat(gateway, restCalls: () => 0);
-    addTearDown(() async { chat.dispose(); await gateway.close(); });
+    addTearDown(() async {
+      chat.dispose();
+      await gateway.close();
+    });
     chat.messagesLoaded = true;
     expect(await chat.attachExistingRuntimeViewer(), isTrue);
-    gateway.emit('approval.request', const {'request_id': 'A', 'command': 'echo A', 'choices': ['once', 'deny']});
+    _emitApproval(gateway, 'A');
     await Future<void>.delayed(Duration.zero);
-    final a = ApprovalSubmission(ApprovalTarget.of(chat.pendingApproval!), 'once');
-    gateway.emit('approval.request', const {'request_id': 'B', 'command': 'echo B', 'choices': ['once', 'deny']});
+    final a = ApprovalSubmission(
+      ApprovalTarget.of(chat.pendingApproval!),
+      'once',
+    );
+    _emitApproval(gateway, 'B');
+    _emitApproval(gateway, 'C');
+    await Future<void>.delayed(Duration.zero);
+    // The oldest stays on screen; B and C are not lost.
+    expect(chat.pendingApproval?['request_id'], 'A');
+    // C answered on another surface leaves the queue, not the card.
+    gateway.emit('approval_resolved', const {
+      'request_id': 'C',
+      'choice': 'deny',
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval?['request_id'], 'A');
+    gateway.emit('approval_resolved', const {
+      'request_id': 'A',
+      'choice': 'deny',
+    });
     await Future<void>.delayed(Duration.zero);
     expect(chat.pendingApproval?['request_id'], 'B');
+    expect(chat.pendingApproval?['command'], 'echo B');
     expect(await chat.submitApproval(a), ApprovalSendResult.ignored);
-    gateway.emit('approval_resolved', const {'request_id': 'A', 'choice': 'deny'});
+    expect(gateway.approvalCalls, isEmpty);
+    await chat.resolveApproval('once');
+    expect(gateway.approvalCalls, [
+      (runtimeId: 'runtime-live', choice: 'once', requestId: 'B'),
+    ]);
+    expect(chat.pendingApproval, isNull);
+  });
+
+  test('approval.cancelled takes down the cards Hermes dropped', () async {
+    final gateway = _liveGateway();
+    final chat = _chat(gateway, restCalls: () => 0);
+    addTearDown(() async {
+      chat.dispose();
+      await gateway.close();
+    });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    for (final id in const ['A', 'B', 'C']) {
+      _emitApproval(gateway, id);
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval?['request_id'], 'A');
+
+    // Another runtime's cancellation is not this chat's.
+    gateway.emitGlobal('approval.cancelled', const {
+      'session_id': 'runtime-other',
+      'request_ids': ['A'],
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval?['request_id'], 'A');
+
+    gateway.emitGlobal('approval.cancelled', const {
+      'session_id': 'runtime-live',
+      'stored_session_id': 'stored-live',
+      'reason': 'interrupt',
+      'cancelled_count': 1,
+      'request_ids': ['A'],
+    });
     await Future<void>.delayed(Duration.zero);
     expect(chat.pendingApproval?['request_id'], 'B');
+    // A replay of a cancelled approval stays down.
+    _emitApproval(gateway, 'A');
+    await Future<void>.delayed(Duration.zero);
+    gateway.emitGlobal('approval.cancelled', const {
+      'session_id': 'runtime-live',
+      'request_ids': ['B', 'C'],
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval, isNull);
+
+    // Without ids, every card of the runtime goes.
+    _emitApproval(gateway, 'D');
+    _emitApproval(gateway, 'E');
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval?['request_id'], 'D');
+    gateway.emitGlobal('approval.cancelled', const {
+      'session_id': 'runtime-live',
+      'reason': 'close',
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval, isNull);
     expect(gateway.approvalCalls, isEmpty);
+  });
+
+  test('an approval arriving while A is answered follows A', () async {
+    final gateway = _liveGateway()
+      ..approvalGate = Completer<DesktopApprovalResult>();
+    final chat = _chat(gateway, restCalls: () => 0);
+    addTearDown(() async {
+      chat.dispose();
+      await gateway.close();
+    });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    _emitApproval(gateway, 'A');
+    await Future<void>.delayed(Duration.zero);
+    final sending = chat.submitApproval(
+      ApprovalSubmission(ApprovalTarget.of(chat.pendingApproval!), 'once'),
+    );
+    _emitApproval(gateway, 'B');
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval?['request_id'], 'A');
+    gateway.approvalGate!.complete(const DesktopApprovalResult(resolved: 1));
+    expect(await sending, ApprovalSendResult.accepted);
+    expect(gateway.approvalCalls, [
+      (runtimeId: 'runtime-live', choice: 'once', requestId: 'A'),
+    ]);
+    expect(chat.pendingApproval?['request_id'], 'B');
+  });
+
+  test('the phone policy answers each queued approval', () async {
+    SharedPreferences.setMockInitialValues({});
+    final policy = ApprovalPolicyService(
+      await SharedPreferences.getInstance(),
+    );
+    final gateway = _liveGateway();
+    final chat = _chat(gateway, restCalls: () => 0, policy: policy);
+    addTearDown(() async {
+      chat.dispose();
+      await gateway.close();
+    });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    _emitApproval(gateway, 'A');
+    _emitApproval(gateway, 'B');
+    await Future<void>.delayed(Duration.zero);
+    expect(chat.pendingApproval?['request_id'], 'A');
+    policy.setSessionMode('stored-live', ApprovalMode.yolo);
+    // Arriving behind a card, C is answered at once: it does not wait on A.
+    _emitApproval(gateway, 'C');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(gateway.approvalCalls, [
+      (runtimeId: 'runtime-live', choice: 'once', requestId: 'C'),
+    ]);
+    expect(chat.pendingApproval?['request_id'], 'A');
+    // The user answers A; B comes up under the policy now in force.
+    await chat.resolveApproval('deny');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(
+      gateway.approvalCalls.map((call) => (call.requestId, call.choice)),
+      [('C', 'once'), ('A', 'deny'), ('B', 'once')],
+    );
+    expect(chat.pendingApproval, isNull);
+  });
+
+  test('a resumed session brings back its whole approval queue', () async {
+    Map<String, dynamic> open(String srq, String id) => {
+      'id': srq,
+      'method': 'approval',
+      'params': {
+        'session_id': 'runtime-live',
+        'request_id': id,
+        'command': 'echo $id',
+        'choices': const ['once', 'deny'],
+      },
+    };
+    final gateway = _ViewerGateway(
+      DesktopSessionSnapshot.fromJson(
+        {
+          'session_id': 'runtime-live',
+          'session_key': 'stored-live',
+          'messages': const <Object>[],
+          'running': true,
+          'pending_approval': const {
+            'request_id': 'A',
+            'command': 'echo A',
+            'choices': ['once', 'deny'],
+          },
+          'open_requests': [open('srq-1', 'A'), open('srq-2', 'B')],
+        },
+        requestedStoredSessionId: 'stored-live',
+        created: false,
+        method: 'session.resume',
+      ),
+    );
+    final chat = _chat(gateway, restCalls: () => 0);
+    addTearDown(() async {
+      chat.dispose();
+      await gateway.close();
+    });
+    chat.messagesLoaded = true;
+    expect(await chat.attachExistingRuntimeViewer(), isTrue);
+    expect(chat.pendingApproval?['request_id'], 'A');
+
+    await chat.resolveApproval('once');
+
+    expect(gateway.approvalCalls, [
+      (runtimeId: 'runtime-live', choice: 'once', requestId: 'A'),
+    ]);
+    expect(chat.pendingApproval?['request_id'], 'B');
+    expect(chat.pendingApproval?['command'], 'echo B');
+    expect(chat.pendingApproval, isNot(contains('session_id')));
+  });
+
+  group('deleting a chat whose turn runs', () {
+    Future<(ActiveChat, _ClosingViewerGateway)> runningChat() async {
+      final gateway = _ClosingViewerGateway(_liveSnapshot());
+      final chat = _chat(gateway, restCalls: () => 0);
+      addTearDown(() async {
+        chat.dispose();
+        await gateway.close();
+      });
+      chat.messagesLoaded = true;
+      expect(await chat.attachExistingRuntimeViewer(), isTrue);
+      gateway.emit('message.start', const {});
+      _emitApproval(gateway, 'A');
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.pendingApproval?['request_id'], 'A');
+      return (chat, gateway);
+    }
+
+    test('stops the turn and closes the runtime before the DELETE', () async {
+      final (chat, gateway) = await runningChat();
+
+      await chat.endRuntimeBeforeDelete();
+      gateway.log.add('delete');
+
+      expect(gateway.log, [
+        'interrupt runtime-live',
+        'close runtime-live',
+        'delete',
+      ]);
+      expect(chat.isStreaming, isFalse);
+      expect(chat.pendingApproval, isNull);
+      expect(chat.hasDesktopRuntime, isFalse);
+      // A second call (another id of the same lineage) does nothing more.
+      await chat.endRuntimeBeforeDelete();
+      expect(gateway.log, hasLength(3));
+    });
+
+    // Settings > history cleanup deletes many conversations at once; an
+    // open chat of one of them is ended the same way first.
+    Future<_OpenChat> runningOpenChat() async {
+      SharedPreferences.setMockInitialValues({});
+      final gateway = _ClosingViewerGateway(_liveSnapshot());
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      final chat = service.attach(
+        connection: SavedConnection(
+          id: 'live-viewer',
+          label: 'Live viewer',
+          host: 'example.invalid',
+          port: 443,
+          apiKey: 'test',
+          useHttps: true,
+          kind: InstanceKind.vps,
+        ),
+        sessionId: 'stored-live',
+        sessionTitle: 'Live',
+        api: testApiClient(
+          baseUrl: 'https://example.invalid',
+          httpClient: MockClient(
+            (_) async => http.Response('{"messages":[]}', 200),
+          ),
+        ),
+        desktopGateway: gateway,
+        attachDesktopRuntimeOnLoad: true,
+        allowUnownedDesktopSnapshotForTesting: true,
+        disableForegroundKeepAlive: true,
+      );
+      addTearDown(() async {
+        chat.dispose();
+        await gateway.close();
+      });
+      chat.messagesLoaded = true;
+      expect(await chat.attachExistingRuntimeViewer(), isTrue);
+      gateway.emit('message.start', const {});
+      await Future<void>.delayed(Duration.zero);
+      expect(chat.isStreaming, isTrue);
+      expect(
+        service.of(
+          'live-viewer',
+          'stored-live',
+          profile: Session.profileOwner(null),
+        ),
+        same(chat),
+      );
+      return (service, chat, gateway);
+    }
+
+    Future<RemoteConversationClearSummary> cleanUp(
+      ActiveChatService? activeChats,
+      _ClosingViewerGateway gateway,
+    ) => clearRemoteConversations(
+      deleteOrder: const ['stored-live'],
+      deleteSession: (sessionId) => deleteSessionEndingItsChat(
+        sessionId,
+        activeChats: activeChats,
+        connectionId: 'live-viewer',
+        profile: Session.profileOwner(null),
+        delete: (id) async {
+          gateway.log.add('delete $id');
+          return true;
+        },
+      ),
+    );
+
+    test('the settings cleanup stops it and closes it first', () async {
+      final (service, chat, gateway) = await runningOpenChat();
+
+      final summary = await cleanUp(service, gateway);
+
+      expect(gateway.log, [
+        'interrupt runtime-live',
+        'close runtime-live',
+        'delete stored-live',
+      ]);
+      expect(summary.deleted, 1);
+      expect(chat.isStreaming, isFalse);
+      expect(chat.hasDesktopRuntime, isFalse);
+    });
+
+    test('the settings cleanup leaves a turn it cannot stop', () async {
+      final (service, chat, gateway) = await runningOpenChat();
+      gateway.interruptError = const TuiGatewayRpcError(
+        'session.interrupt',
+        'refused',
+        code: 4031,
+      );
+
+      final summary = await cleanUp(service, gateway);
+
+      expect(gateway.log, ['interrupt runtime-live']);
+      expect(summary.deleted, 0);
+      expect(summary.failed, 1);
+      expect(chat.hasDesktopRuntime, isTrue);
+    });
+
+    test('a turn that cannot be stopped keeps the conversation', () async {
+      final (chat, gateway) = await runningChat();
+      gateway.interruptError = const TuiGatewayRpcError(
+        'session.interrupt',
+        'refused',
+        code: 4031,
+      );
+
+      await expectLater(chat.endRuntimeBeforeDelete(), throwsA(anything));
+
+      expect(gateway.log, ['interrupt runtime-live']);
+      expect(chat.hasDesktopRuntime, isTrue);
+    });
   });
 
   test('approval_resolved removes a pending request and suppresses replay', () async {
@@ -1131,6 +1527,11 @@ void main() {
       await loading;
 
       expect(reads, 1);
+      // B waits behind A, which is still on screen; the stale snapshot
+      // cleared neither.
+      expect(chat.pendingApproval?['request_id'], 'request-a');
+      gateway.emit('approval_resolved', const {'request_id': 'request-a'});
+      await Future<void>.delayed(Duration.zero);
       expect(chat.pendingApproval?['request_id'], 'request-b');
     },
   );

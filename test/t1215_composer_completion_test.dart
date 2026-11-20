@@ -203,6 +203,67 @@ void main() {
       expect(merged.last.description, 'Search GIFs');
     });
 
+    test('commands Hermes marks with no app surface are not offered', () {
+      // `commands.catalog` as Hermes sends it: `commands` is the per-command
+      // desktop disposition, keyed by name (command_discovery.py).
+      final catalog = DesktopCommandCatalog.fromJson({
+        'pairs': [
+          ['/usage', 'Show usage'],
+          ['/browser', 'Connect a browser'],
+          ['/model', 'Switch model'],
+          ['/skills', 'Manage skills'],
+          ['/update', 'Update Hermes'],
+          ['/mouse', 'Set mouse tracking'],
+          ['/gif-search', 'Search GIFs'],
+        ],
+        'commands': {
+          '/usage': {'argument_mode': null, 'desktop': null},
+          '/browser': {'argument_mode': 'mixed', 'desktop': 'terminal'},
+          '/model': {'argument_mode': 'mixed', 'desktop': 'hidden'},
+          '/skills': {
+            'argument_mode': 'mixed',
+            'desktop': 'advanced',
+            'desktop_subcommands': ['pending'],
+          },
+          '/update': {
+            'argument_mode': null,
+            'desktop': null,
+            'desktop_subcommands': <String>[],
+          },
+        },
+        'skills': {
+          '/gif-search': {'usage': 0, 'origin': 'local'},
+        },
+      });
+      expect(catalog.partial, isFalse);
+
+      final fromCatalog = mergeSlashSuggestions(
+        input: '/',
+        local: const [],
+        catalog: catalog,
+      );
+      expect(fromCatalog.map((command) => command.name), [
+        'usage',
+        'gif-search',
+      ]);
+
+      // complete.slash lists them all; the catalog still decides.
+      final completion = SlashCompletionBatch.fromJson({
+        'replace_from': 1,
+        'items': [
+          for (final name in const ['browser', 'usage', 'mouse', 'skills'])
+            {'text': '/$name', 'kind': 'command'},
+        ],
+      }, input: '/');
+      final fromCompletion = mergeSlashSuggestions(
+        input: '/',
+        local: const [],
+        catalog: catalog,
+        completion: completion,
+      );
+      expect(fromCompletion.map((command) => command.name), ['usage']);
+    });
+
     test('the palette is bounded', () {
       final completion = SlashCompletionBatch.fromJson({
         'replace_from': 1,

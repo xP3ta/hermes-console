@@ -4,7 +4,11 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart' show Locale;
+import 'package:hermes_android/core/screens/chat_screen.dart'
+    show generatedMediaDownloadErrorLabel;
 import 'package:hermes_android/core/services/generated_media_service.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
 
 void main() {
   group('GeneratedMediaService.parseSegments', () {
@@ -475,6 +479,63 @@ void main() {
 
     tearDown(() {
       temporary.deleteSync(recursive: true);
+    });
+
+    test('an empty file is said to be empty, not too large', () async {
+      final english = await Strings.delegate.load(const Locale('en'));
+      final spanish = await Strings.delegate.load(const Locale('es'));
+      const reference = GeneratedMediaReference(
+        source: '/workspace/out/empty.txt',
+        kind: GeneratedMediaKind.file,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: 'empty.txt',
+        mimeType: 'text/plain',
+      );
+      Future<Object> failure(Future<File> download) async {
+        try {
+          await download;
+        } catch (error) {
+          return error;
+        }
+        fail('an empty file was accepted');
+      }
+
+      // Read whole, and streamed to a file.
+      final whole = await failure(
+        GeneratedMediaService.ensureDownloaded(
+          'connection-empty-whole',
+          reference,
+          fetchServerPath: (_) async => Uint8List(0),
+          baseDir: temporary,
+        ),
+      );
+      final streamed = await failure(
+        GeneratedMediaService.ensureDownloaded(
+          'connection-empty-streamed',
+          reference,
+          fetchServerPathToFile: (_, destination) =>
+              destination.writeAsBytes(const []),
+          baseDir: temporary,
+        ),
+      );
+      for (final error in [whole, streamed]) {
+        expect(
+          generatedMediaDownloadErrorLabel(english, error),
+          'The file is empty.',
+        );
+        expect(
+          generatedMediaDownloadErrorLabel(spanish, error),
+          'El archivo está vacío.',
+        );
+      }
+      // Too large is still said as too large.
+      expect(
+        generatedMediaDownloadErrorLabel(
+          english,
+          const FormatException('generated media exceeds its size limit'),
+        ),
+        english.genMediaTooLarge,
+      );
     });
 
     test(

@@ -260,6 +260,8 @@ void main() {
     });
     await tester.pump();
     tester.takeException();
-    expect(find.text('No se pudo descargar la imagen'), findsOneWidget);
+    // The file arrived: what fails is reading it, not downloading it.
+    expect(find.text('No se pudo abrir la imagen'), findsOneWidget);
+    expect(find.text('No se pudo descargar la imagen'), findsNothing);
   });
 }

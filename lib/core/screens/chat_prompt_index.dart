@@ -90,16 +90,20 @@ int? stickyPromptIndex(
 List<ChatPromptEntry> deriveChatPromptEntries(
   List<Map<String, dynamic>> newestFirst, {
   bool Function(Map<String, dynamic> message)? isSystemRow,
+  String Function(String content)? visibleText,
 }) {
   final entries = <ChatPromptEntry>[];
   for (var i = 0; i < newestFirst.length; i++) {
     final message = newestFirst[i];
     if (!isChatPromptMessage(message, isSystemRow: isSystemRow)) continue;
+    final content = message['content'] as String;
     entries.add(
       ChatPromptEntry(
         message: message,
         messageIndex: i,
-        preview: chatPromptPreview(message['content'] as String),
+        // What the bubble shows, not what Hermes stored for the model: the
+        // attachment lines it adds carry server paths.
+        preview: chatPromptPreview(visibleText?.call(content) ?? content),
       ),
     );
   }

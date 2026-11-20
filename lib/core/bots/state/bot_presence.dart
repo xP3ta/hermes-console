@@ -250,7 +250,7 @@ final class BotRoomSeat {
     String roomId,
     String memberId,
   ) {
-    for (final log in snapshot.logs) {
+    for (final log in snapshot.logs.nonNulls) {
       String? open;
       for (final event in log.events) {
         if (event.roomId != roomId) continue;

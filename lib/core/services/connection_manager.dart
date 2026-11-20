@@ -682,6 +682,12 @@ class ConnectionManager {
 
   Future<void> _dashboardAccessTail = Future<void>.value();
 
+  /// Sign-ins stored for [connId], counted in SharedPreferences, the store
+  /// both isolates read (`BackgroundSignInWatch`).
+  static String dashboardSignInsKey(String connId) =>
+      '$_dashboardSignInsPrefix$connId';
+  static const _dashboardSignInsPrefix = 'dashboard_sign_ins_';
+
   Future<void> setDashboardSecrets(
     String connId, {
     String? sessionToken,
@@ -765,6 +771,19 @@ class ConnectionManager {
           }
         }
       }
+      // The foreground service has its own clients and epoch in another
+      // isolate: it hears the sign-in through this count on its next tick.
+      final signIns = dashboardSignInsKey(connId);
+      try {
+        await prefs.setInt(signIns, (prefs.getInt(signIns) ?? 0) + 1);
+      } catch (_) {
+        // Only the background listener reads it; the sign-in is stored.
+      }
+      // Stored: only now can a socket waiting on "sign in again" use the
+      // new credential. The epoch moved once before the write (the fence
+      // above); a dial in between read the old session, was refused from
+      // memory and stopped again at that epoch, for good.
+      DashboardClient.noteSignInStored(connId);
       _publishConnectionRevision(connId);
       connectionsRevision.value += 1;
     });
@@ -935,6 +954,7 @@ class ConnectionManager {
     'mission_control.bot_chat_pins.v1.',
     // CleartextNoticeMemory.keyPrefix (one-line plain-http note, seen once).
     'krh_http_seen_',
+    _dashboardSignInsPrefix,
   ];
   static const List<String> _connScopedDoubleColon = [
     'memory_draft_ts::',
@@ -1100,6 +1120,9 @@ class ConnectionManager {
       _key,
       list.map((c) => jsonEncode(c.toMap())).toList(),
     );
+    for (final connection in list) {
+      DashboardClient.noteAuthMode(connection.id, connection.dashboardAuthMode);
+    }
     if (changedConnectionId != null) {
       _publishConnectionRevision(changedConnectionId);
     }
@@ -2257,30 +2280,47 @@ class DashboardClient {
       httpClientOverride: httpClientOverride,
     );
     client._nativeOwner = conn.id;
-    if (conn.dashboardAuthMode == AuthMode.sessionToken ||
-        conn.dashboardAuthMode == AuthMode.basicAuth ||
-        conn.dashboardAuthMode == AuthMode.cookieSession) {
+    // The mode is read at load time, not taken from [conn]: a client made
+    // before a sign-in that switched it (password to browser sign-in, or
+    // back) loads the new mode's secrets when that sign-in is stored.
+    client._secretsLoader = (self) async {
+      final mode = _authModes[conn.id] ?? conn.dashboardAuthMode;
+      if (mode != AuthMode.sessionToken &&
+          mode != AuthMode.basicAuth &&
+          mode != AuthMode.cookieSession) {
+        return;
+      }
       final secure = SecureStorage();
-      client._secretsLoader = (self) async {
-        if (conn.dashboardAuthMode == AuthMode.sessionToken) {
-          self._manualToken = await secure.readDashboardSecret(
-            conn.id,
-            'token',
-          );
-        } else {
-          // cookieSession es el modo de descubrimiento automático. Si una
-          // migración reparó el Dashboard mediante el Bridge, reutiliza las
-          // credenciales generadas y guardadas en Keystore sin exigir que el
-          // usuario cambie manualmente el modo de la conexión.
-          self._basicUser = await secure.readDashboardSecret(conn.id, 'user');
-          self._basicPass = await secure.readDashboardSecret(conn.id, 'pass');
-        }
-      };
-    }
+      self._manualToken = null;
+      self._basicUser = null;
+      self._basicPass = null;
+      if (mode == AuthMode.sessionToken) {
+        self._manualToken = await secure.readDashboardSecret(conn.id, 'token');
+      } else {
+        // cookieSession es el modo de descubrimiento automático. Si una
+        // migración reparó el Dashboard mediante el Bridge, reutiliza las
+        // credenciales generadas y guardadas en Keystore sin exigir que el
+        // usuario cambie manualmente el modo de la conexión.
+        self._basicUser = await secure.readDashboardSecret(conn.id, 'user');
+        self._basicPass = await secure.readDashboardSecret(conn.id, 'pass');
+      }
+    };
     return client;
   }
 
+  /// The Dashboard auth mode of each connection as last saved
+  /// ([ConnectionManager] on every save; the background listener from its
+  /// snapshot of the targets). [DashboardClient.lazy] reads it on each load.
+  static final Map<String, AuthMode> _authModes = {};
+
+  static void noteAuthMode(String connectionId, AuthMode mode) =>
+      _authModes[connectionId] = mode;
+
   Future<void> _ensureSecrets() async {
+    final epoch = credentialEpoch;
+    if (_secretsLoaded && _secretsLoader != null && _secretsEpoch != epoch) {
+      _forgetLoadedSecrets();
+    }
     if (_secretsLoaded) return;
     final inFlight = _secretsFuture;
     if (inFlight != null) return inFlight;
@@ -2289,9 +2329,25 @@ class DashboardClient {
     try {
       await future;
       _secretsLoaded = true;
+      _secretsEpoch = epoch;
     } finally {
       if (identical(_secretsFuture, future)) _secretsFuture = null;
     }
+  }
+
+  /// [credentialEpoch] the secrets in memory were read from Keystore under.
+  int? _secretsEpoch;
+
+  /// A sign-in stored since then replaced them: they are read again, and
+  /// what they produced (page token, session cookies, a login in flight)
+  /// goes with them. Without this a client that outlived a new password
+  /// kept logging in with the old one and stopped on "sign in again" again.
+  void _forgetLoadedSecrets() {
+    _secretsLoaded = false;
+    _token = null;
+    _tokenFromSharedCache = false;
+    _cookies.clear();
+    _passwordLoginFuture = null;
   }
 
   Future<void> _loadSecretsOnce() async {
@@ -2356,6 +2412,7 @@ class DashboardClient {
     _token = null;
     _cookies.clear();
     _secretsLoaded = true;
+    _secretsEpoch = credentialEpoch;
     _secretsFuture = null;
     _passwordLoginFuture = null;
   }
@@ -2761,7 +2818,36 @@ class DashboardClient {
   /// Increments on every login/logout of this connection: a socket that
   /// stopped on "sign in again" resumes only when it changes.
   int get credentialEpoch =>
-      NativeSessionCoordinator.instance.epochOf(_nativeOwner);
+      NativeSessionCoordinator.instance.epochOf(_nativeOwner) +
+      (_storedSignIns[_nativeOwner] ?? 0);
+
+  /// Sign-ins whose credential finished being stored, per connection
+  /// (`ConnectionManager.setDashboardSecrets`). The coordinator's epoch
+  /// moves when a login starts, before its session is written, and not at
+  /// all for a user name and password; this one moves when the credential
+  /// can actually be read.
+  static final Map<String, int> _storedSignIns = {};
+
+  static void noteSignInStored(String connectionId) {
+    _storedSignIns[connectionId] = (_storedSignIns[connectionId] ?? 0) + 1;
+    // The sockets hear it after the listeners of the revision bump that
+    // follows the store, so a chat socket those listeners retire is closed
+    // by then and is not dialled for nothing.
+    scheduleMicrotask(() {
+      for (final listener in List.of(_signInStoredListeners)) {
+        listener(connectionId);
+      }
+    });
+  }
+
+  /// Told once per stored sign-in, with its connection id: the one
+  /// "credentials changed" signal every client of that connection acts on.
+  static final Set<void Function(String connectionId)>
+  _signInStoredListeners = {};
+
+  static void addSignInStoredListener(
+    void Function(String connectionId) listener,
+  ) => _signInStoredListeners.add(listener);
 
   /// An explicit Retry asks the server again instead of trusting what it
   /// refused a moment ago.
@@ -2770,7 +2856,24 @@ class DashboardClient {
     _deadNativeAccess.clear();
   }
 
+  /// [credentialEpoch] the refusals above were recorded under.
+  int? _refusalEpoch;
+
+  /// A login since the server refused a token makes those refusals history:
+  /// they are forgotten, like on an explicit Retry. Without this a client
+  /// that outlives the login (the shared socket, a screen's own client) kept
+  /// answering "sign in again" from memory, without a request, until the
+  /// app was restarted.
+  void _forgetRefusalsAfterLogin() {
+    final epoch = credentialEpoch;
+    if (_refusalEpoch != null && _refusalEpoch != epoch) {
+      forgetRejectedAccess();
+    }
+    _refusalEpoch = epoch;
+  }
+
   Future<NativeAccess> _nativeAccess() async {
+    _forgetRefusalsAfterLogin();
     final coordinator = NativeSessionCoordinator.instance;
     try {
       var access = await coordinator.ensureAccess(_nativeOwner, _baseUrl);
@@ -3944,12 +4047,6 @@ class DashboardClient {
     'providers/validate${_profileQuery(profile?.trim())}',
     body: {'key': key, 'value': value},
   );
-
-  /// Intenta eliminar un custom_provider del servidor vía DELETE /api/model/provider.
-  /// Lanza Exception si la API no lo soporta (404/405) para que el llamante
-  /// pueda mostrar un mensaje apropiado al usuario.
-  Future<void> deleteCustomProvider(String name) =>
-      apiDelete('model/provider', body: {'name': name});
 
   /// GET /api/model/moa → receta del Mixture of Agents (spec 029). Lanza si el
   /// Dashboard no está accesible/autenticado → la pantalla degrada a solo-lectura.

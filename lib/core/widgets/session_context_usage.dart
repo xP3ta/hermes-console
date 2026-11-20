@@ -33,6 +33,7 @@ class SessionContextMetrics {
     this.inputTokens,
     this.cacheReadTokens,
     this.cacheWriteTokens,
+    this.cacheHitPercent,
     this.observedFirstTokenLatencyMs,
   });
 
@@ -45,6 +46,11 @@ class SessionContextMetrics {
   final int? inputTokens;
   final int? cacheReadTokens;
   final int? cacheWriteTokens;
+
+  /// The prompt-cache hit rate Hermes computed for the session (0-100), when
+  /// its live usage says it; Desktop shows the same figure in its status bar
+  /// (`lib/statusbar.tsx` `cacheHitLabel`).
+  final int? cacheHitPercent;
 
   /// Tiempo observado por Android desde `ActiveChat.send()` hasta el primer
   /// contenido real. No se presenta como latencia pura del modelo.
@@ -91,6 +97,7 @@ class SessionContextMetrics {
       cacheWriteTokens: livePublishesCache
           ? usage?.cacheWriteTokens
           : sessionFallback?.cacheWriteTokens,
+      cacheHitPercent: usage?.cacheHitPercent,
       observedFirstTokenLatencyMs: observedFirstTokenLatencyMs,
     );
     if (used == null || max == null || max <= 0) {
@@ -99,6 +106,7 @@ class SessionContextMetrics {
         inputTokens: common.inputTokens,
         cacheReadTokens: common.cacheReadTokens,
         cacheWriteTokens: common.cacheWriteTokens,
+        cacheHitPercent: common.cacheHitPercent,
         observedFirstTokenLatencyMs: common.observedFirstTokenLatencyMs,
       );
     }
@@ -114,6 +122,7 @@ class SessionContextMetrics {
       inputTokens: common.inputTokens,
       cacheReadTokens: common.cacheReadTokens,
       cacheWriteTokens: common.cacheWriteTokens,
+      cacheHitPercent: common.cacheHitPercent,
       observedFirstTokenLatencyMs: common.observedFirstTokenLatencyMs,
     );
   }
@@ -149,6 +158,7 @@ class SessionContextMetrics {
       inputTokens: fallback.inputTokens,
       cacheReadTokens: fallback.cacheReadTokens,
       cacheWriteTokens: fallback.cacheWriteTokens,
+      cacheHitPercent: fallback.cacheHitPercent,
       observedFirstTokenLatencyMs: fallback.observedFirstTokenLatencyMs,
     );
   }
@@ -164,6 +174,7 @@ class SessionContextMetrics {
           inputTokens == other.inputTokens &&
           cacheReadTokens == other.cacheReadTokens &&
           cacheWriteTokens == other.cacheWriteTokens &&
+          cacheHitPercent == other.cacheHitPercent &&
           observedFirstTokenLatencyMs == other.observedFirstTokenLatencyMs;
 
   @override
@@ -175,6 +186,7 @@ class SessionContextMetrics {
     inputTokens,
     cacheReadTokens,
     cacheWriteTokens,
+    cacheHitPercent,
     observedFirstTokenLatencyMs,
   );
 }
@@ -808,6 +820,8 @@ class SessionContextPerformance extends StatelessWidget {
     final read = metrics.cacheReadTokens;
     final write = metrics.cacheWriteTokens;
     final latency = metrics.observedFirstTokenLatencyMs;
+    // Hermes' own rate when it sent one, else the share of the read tokens.
+    final cacheHit = metrics.cacheHitPercent;
     final cachePercent = metrics.cacheReadPercent;
     String ttft(int ms) =>
         ms >= 1000 ? '${(ms / 1000).toStringAsFixed(1)} s' : '$ms ms';
@@ -828,10 +842,12 @@ class SessionContextPerformance extends StatelessWidget {
         write == null ? '—' : compactSessionContextTokens(write),
         strings.chaContextCacheWrite,
       ),
-      if (cachePercent != null)
+      if (cacheHit != null || cachePercent != null)
         (
           HIcons.bar_chart_rounded,
-          '${cachePercent.toStringAsFixed(1)} %',
+          cacheHit != null
+              ? '$cacheHit %'
+              : '${cachePercent!.toStringAsFixed(1)} %',
           strings.sesMetricCachePercent,
         ),
     ];

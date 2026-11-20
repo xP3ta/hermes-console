@@ -106,10 +106,19 @@ final class MissionSnapshotPrewarm {
     required SavedConnection connection,
     Duration minAge = homeReadMinAge,
     DateTime Function()? now,
+    bool userRetry = false,
   }) {
     final key = MissionSnapshotCache.keyOf(connection);
     final clock = (now ?? _now)();
-    if (_liveFor(key)) return;
+    if (_liveFor(key)) {
+      // The read in flight may be waiting on a socket that stopped dialing:
+      // a Retry still makes it look again.
+      final source = _warm?.source;
+      if (userRetry && source is MissionControlRepository) {
+        source.retryConnection();
+      }
+      return;
+    }
     final cached = _cache.read(connection);
     if (cached != null && clock.difference(cached.loadedAt) < minAge) return;
     if (_recentlyRead(key, clock, minAge)) return;
@@ -118,7 +127,7 @@ final class MissionSnapshotPrewarm {
       _timer = null;
       _timerKey = null;
     }
-    _begin(connection, key, clock);
+    _begin(connection, key, clock, userRetry: userRetry);
   }
 
   bool _liveFor(String key) {
@@ -143,14 +152,29 @@ final class MissionSnapshotPrewarm {
     _begin(connection, key, clock);
   }
 
-  void _begin(SavedConnection connection, String key, DateTime clock) {
+  void _begin(
+    SavedConnection connection,
+    String key,
+    DateTime clock, {
+    bool userRetry = false,
+  }) {
     _readAt[key] = clock;
     final source = _sourceFactory(connection);
+    if (userRetry && source is MissionControlRepository) {
+      source.retryConnection();
+    }
+    final shown = _cache.read(connection);
+    if (shown != null && source is MissionControlRepository) {
+      // Each read uses a repository of its own: without the last snapshot
+      // it would page every room log again from the start, once a minute.
+      source.seedHostedLogs(shown.hostedGroups);
+    }
     final warm = _Warm(key, source);
     _warm = warm;
     warm.future = source
         .load()
-        .then((snapshot) {
+        .then((read) {
+          final snapshot = keepingRooms(_cache.read(connection), read);
           if (!warm.cancelled) {
             _cache.write(connection, snapshot);
             // Only a read that landed counts as "warmed": a failure or a
@@ -165,6 +189,37 @@ final class MissionSnapshotPrewarm {
         });
     // An unclaimed failure is simply dropped; Bot Mode reads again on open.
     unawaited(warm.future.then((_) {}, onError: (_) {}));
+  }
+
+  /// [read] with the rooms of [previous] when its own rooms read failed: a
+  /// failed read proves nothing about the rooms, so the ones already shown
+  /// stay (Bot Mode keeps them the same way). The failure itself stays in
+  /// [MissionBackendSnapshot.failures] and in the capability.
+  static MissionBackendSnapshot keepingRooms(
+    MissionBackendSnapshot? previous,
+    MissionBackendSnapshot read,
+  ) {
+    if (previous == null ||
+        read.hostedGroupsCapability != MissionCapabilityState.unavailable ||
+        !read.failures.containsKey('hostedGroups') ||
+        previous.hostedGroups.rooms.isEmpty) {
+      return read;
+    }
+    return MissionBackendSnapshot(
+      profiles: read.profiles,
+      sessions: read.sessions,
+      board: read.board,
+      profilesCapability: read.profilesCapability,
+      sessionsCapability: read.sessionsCapability,
+      kanbanCapability: read.kanbanCapability,
+      hostedGroups: previous.hostedGroups,
+      hostedGroupsCapability: read.hostedGroupsCapability,
+      failures: read.failures,
+      loadedAt: read.loadedAt,
+      activeSessions: read.activeSessions,
+      activeSessionsObservedAt: read.activeSessionsObservedAt,
+      activeSessionsAuthoritative: read.activeSessionsAuthoritative,
+    );
   }
 
   /// Bot Mode is opening on [connection]: stop any pending timer and hand

@@ -246,8 +246,14 @@ class _GatedApprovalSocket extends DesktopChatSocket {
       resolveAll: resolveAll,
       requestId: requestId,
     );
+    if (failOnce.remove(requestId)) {
+      throw StateError('approval answer lost');
+    }
     await gates[requestId]?.future;
   }
+
+  /// Request ids whose next answer fails after it was sent.
+  final failOnce = <String?>{};
 }
 
 class _WidgetRecordingStore implements HomeWidgetStore {
@@ -4500,12 +4506,52 @@ void main() {
           'request-a',
           'request-b',
         ]);
-        expect(chat.pendingApproval?['request_id'], 'request-b');
+        // Approvals wait in a queue (Desktop `store/prompts.ts`): A stays the
+        // head while its answer is in flight, B waits behind it.
+        expect(chat.pendingApproval?['request_id'], 'request-a');
 
         socket.gates['request-a']!.complete();
         await Future<void>.delayed(const Duration(milliseconds: 20));
-        expect(chat.pendingApproval?['request_id'], 'request-b');
+        // A settled by its own request id. B was answered by the policy the
+        // moment it arrived, so it never needs a card; its answer is still
+        // on its way and was not dropped with A.
+        expect(chat.pendingApproval, isNull);
         socket.gates['request-b']!.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(chat.pendingApproval, isNull);
+        expect(socket.approvals.map((a) => a.requestId), [
+          'request-a',
+          'request-b',
+        ]);
+      },
+    );
+
+    test(
+      'una aprobación en cola cuya respuesta automática no llega se vuelve a '
+      'responder al llegar su turno',
+      () async {
+        final policy = await policyWith(ApprovalMode.yolo);
+        final socket = _GatedApprovalSocket()..failOnce.add('request-b');
+        final chat = _socketChat(socket, policy: policy);
+
+        await chat.send(fullText: 'lista', model: 'm', history: const []);
+        socket.approval(1, requestId: 'request-a', command: 'ls a');
+        socket.approval(1, requestId: 'request-b', command: 'ls b');
+        await _waitFor(() => socket.approvals.length == 2);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        // B's answer failed while A is still being answered: B waits again.
+        expect(chat.pendingApproval?['request_id'], 'request-a');
+
+        socket.gates['request-a']!.complete();
+        socket.gates['request-b']!.complete();
+        await _waitFor(() => socket.approvals.length == 3);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(socket.approvals.map((a) => a.requestId), [
+          'request-a',
+          'request-b',
+          'request-b',
+        ], reason: 'Hermes still waits on B: it must be answered again');
+        expect(chat.pendingApproval, isNull);
       },
     );
 

@@ -38,8 +38,18 @@ class AdminIntegrationsScreen extends StatefulWidget {
   final McpExternalUriLauncher? oauthLauncher;
   final List<Duration>? oauthPollDelays;
 
+  /// The webhooks surface of the profile this page was opened for; the
+  /// [gateway]'s own (the server's profile) when null.
+  final HermesWebhookManagementGateway? webhookGateway;
+
+  /// Adding MCP servers to the profile this page was opened for; the
+  /// [gateway]'s own (the server's profile) when null.
+  final HermesMcpProvisioningGateway? mcpGateway;
+
   const AdminIntegrationsScreen({
     required this.gateway,
+    this.webhookGateway,
+    this.mcpGateway,
     this.readOnly = false,
     this.initialSection = AdminIntegrationsSection.mcp,
     this.title,
@@ -68,14 +78,16 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
   final Set<String> _busyWebhooks = {};
 
   HermesMcpProvisioningGateway? get _mcpGateway =>
-      widget.gateway is HermesMcpProvisioningGateway
-      ? widget.gateway as HermesMcpProvisioningGateway
-      : null;
+      widget.mcpGateway ??
+      (widget.gateway is HermesMcpProvisioningGateway
+          ? widget.gateway as HermesMcpProvisioningGateway
+          : null);
 
   HermesWebhookManagementGateway? get _webhookGateway =>
-      widget.gateway is HermesWebhookManagementGateway
-      ? widget.gateway as HermesWebhookManagementGateway
-      : null;
+      widget.webhookGateway ??
+      (widget.gateway is HermesWebhookManagementGateway
+          ? widget.gateway as HermesWebhookManagementGateway
+          : null);
 
   HermesServerPlatformCapabilitiesGateway? get _platformGateway =>
       widget.gateway is HermesServerPlatformCapabilitiesGateway

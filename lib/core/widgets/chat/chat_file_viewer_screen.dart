@@ -50,8 +50,10 @@ bool chatFileErrorRetryable(ChatFileErrorKind kind) => switch (kind) {
 /// lets the user pick one when several files carry the name, and shows it
 /// in the artifact viewer: Markdown rendered by the chat's own engine with
 /// a switch to the source, code and text with line numbers, images
-/// zoomable. Nothing is rendered actively (no HTML, no scripts) and nothing
-/// is kept on disk.
+/// zoomable, HTML and SVG drawn in the same locked page as a file the agent
+/// delivers (no network, no bridge, no navigation; an HTML page's own
+/// scripts run only inside it), with the source one touch away. Nothing is
+/// kept on disk.
 class ChatFileViewerScreen extends StatefulWidget {
   const ChatFileViewerScreen({
     super.key,
@@ -190,6 +192,9 @@ class _ChatFileViewerScreenState extends State<ChatFileViewerScreen> {
             sourcePath: content.path,
             initialLine: widget.line,
             endLine: widget.endLine,
+            // HTML and SVG are drawn in the locked page, as a delivered file
+            // is (the class comment above).
+            allowActiveContent: true,
             // What may hold secrets never goes out through the share sheet.
             allowShare: !content.sensitive,
             notice: content.truncated

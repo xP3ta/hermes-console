@@ -151,6 +151,10 @@ class _Gateway
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// The secure storage refuses every read while set (a Keystore that is not
+/// answering), as opposed to the app lock closing it.
+bool _secureReadsFail = false;
+
 Future<void> _flush(WidgetTester tester) async {
   for (var i = 0; i < 20; i++) {
     await tester.pump(const Duration(milliseconds: 100));
@@ -300,6 +304,7 @@ void main() {
     LocalConversationCleanupFence.resetForTesting();
     TurnOutboxStore.resetSerializationForTesting();
     SharedPreferences.setMockInitialValues({'onboarding_done': true});
+    _secureReadsFail = false;
     final secure = <String, String>{};
     final messenger = TestWidgetsFlutterBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(
@@ -308,12 +313,14 @@ void main() {
         final args = (call.arguments as Map?) ?? {};
         switch (call.method) {
           case 'read':
+            if (_secureReadsFail) throw PlatformException(code: 'keystore');
             return secure[args['key']];
           case 'write':
             secure[args['key'] as String] = args['value'] as String;
           case 'delete':
             secure.remove(args['key']);
           case 'readAll':
+            if (_secureReadsFail) throw PlatformException(code: 'keystore');
             return Map<String, String>.from(secure);
           case 'containsKey':
             return secure.containsKey(args['key']);
@@ -627,6 +634,44 @@ void main() {
     await _flush(tester);
     await _send(tester, 'Synthetic held');
     expect(gateway.submissions, ['Synthetic held']);
+    gateway.complete('Synthetic reply');
+    await _flush(tester);
+  });
+
+  testWidgets('a secure restore that failed when the chat opened is made '
+      'again by the send, in the same chat, once the storage answers', (
+    tester,
+  ) async {
+    final gateway = _Gateway();
+    // The storage does not answer while the chat opens: its restore fails.
+    await _mount(
+      tester,
+      gateway,
+      beforeOpen: (_) {
+        _secureReadsFail = true;
+      },
+    );
+
+    await _withLog((lines) async {
+      await tester.enterText(find.byType(TextField).first, 'Synthetic kept');
+      await tester.pump();
+      // Still failing: nothing is sent, the message stays, the user is told.
+      tester
+          .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+          .onSend('Synthetic kept', const []);
+      await _flush(tester);
+      expect(tester.takeException(), isNull);
+      expect(gateway.submissions, isEmpty);
+      expect(lines, contains('[composer-send] refused (restoreUnavailable)'));
+      expect(_composerText(tester), 'Synthetic kept');
+      expect(find.text(_strings(tester).chaOutboxUnavailable), findsWidgets);
+    });
+
+    // The storage answers again. The chat was not left and reopened.
+    _secureReadsFail = false;
+    await _send(tester, 'Synthetic kept');
+    expect(tester.takeException(), isNull);
+    expect(gateway.submissions, ['Synthetic kept']);
     gateway.complete('Synthetic reply');
     await _flush(tester);
   });

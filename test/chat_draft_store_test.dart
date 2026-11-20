@@ -65,11 +65,13 @@ ApiClient _restOnlyLocalApi(SavedConnection connection, List<Uri> requests) =>
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secureStore = <String, String>{};
+  var readAllCalls = 0;
 
   setUp(() {
     LocalConversationCleanupFence.resetForTesting();
     SharedPreferences.setMockInitialValues({});
     secureStore.clear();
+    readAllCalls = 0;
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -86,6 +88,7 @@ void main() {
                 secureStore.remove(args['key'] as String);
                 return null;
               case 'readAll':
+                readAllCalls++;
                 return Map<String, String>.from(secureStore);
               case 'containsKey':
                 return secureStore.containsKey(args['key'] as String);
@@ -93,6 +96,48 @@ void main() {
             return null;
           },
         );
+  });
+
+  test('listing drafts reads everything in secure storage once, to index '
+      'what an older version stored, and by name from then on', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final store = ChatDraftStore(prefs);
+    // A draft stored by a version that kept no index, next to megabytes of
+    // other secrets a draft list has no business decrypting.
+    await ChatDraftStore(
+      prefs,
+    ).save('conn-idx', 'session-old', 'old draft', const []);
+    expect(secureStore.containsKey('chat_draft_index_v1'), isFalse);
+    secureStore['cold_start_tail.unrelated'] = 'x' * 4096;
+
+    final first = await store.listForConnection('conn-idx');
+    expect(first.map((entry) => entry.sessionId), ['session-old']);
+    expect(readAllCalls, 1);
+
+    await store.save('conn-idx', 'session-new', 'new draft', const []);
+    await store.save('conn-other', 'session-else', 'elsewhere', const []);
+    readAllCalls = 0;
+    for (var i = 0; i < 5; i++) {
+      final listed = await store.listForConnection('conn-idx');
+      expect(listed.map((entry) => entry.sessionId).toSet(), {
+        'session-old',
+        'session-new',
+      });
+    }
+    // A second store object (another screen, or after a restart) too.
+    expect(
+      (await ChatDraftStore(prefs).listForConnection('conn-idx')).length,
+      2,
+    );
+    expect(readAllCalls, 0);
+
+    await store.clear('conn-idx', 'session-old');
+    final afterClear = await store.listForConnection('conn-idx');
+    expect(afterClear.map((entry) => entry.sessionId), ['session-new']);
+    expect(readAllCalls, 0);
+    // The names live in the Keystore with the drafts, not in preferences.
+    expect(prefs.getKeys().where((key) => key.contains('draft')), isEmpty);
+    expect(secureStore['chat_draft_index_v1'], isNot(contains('session-old')));
   });
 
   test('a room send acknowledged before its draft save lands leaves no '

@@ -27,9 +27,11 @@ const String kOfficialDashboardResetCommand =
     'hermes dashboard --stop\n'
     '$kOfficialDashboardCommand';
 
-/// Where the one-line Dashboard setup lives. `main` for now; the release tag
-/// goes here, and only here, once it exists.
-const String kHermesSetupRef = 'main';
+/// The release of the setup scripts these lines download: a tag of
+/// xP3ta/hermes-setup, here and only here. Never a branch: a line a user
+/// pipes into a shell must keep fetching the script this version of the app
+/// was released with, not whatever a branch holds that day.
+const String kHermesSetupRef = 'setup-v1.6.0';
 const String _setupScriptBase =
     'https://raw.githubusercontent.com/xP3ta/hermes-setup/$kHermesSetupRef/'
     'hermes-dashboard-setup';

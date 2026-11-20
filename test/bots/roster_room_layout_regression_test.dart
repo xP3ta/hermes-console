@@ -167,6 +167,12 @@ void main() {
       final paragraph = _paragraph(tester, title);
       expect(paragraph.didExceedMaxLines, isFalse);
       expect(paragraph.text.toPlainText(), contains('Design Review'));
+      // The age sits next to the title (Desktop's row), without costing it
+      // a line.
+      expect(
+        find.byKey(ValueKey('roster-room-age-${room.publicKey}')),
+        findsOneWidget,
+      );
       // The Dots room card clusters its members' faces (up to three).
       final row = find.byKey(ValueKey('roster-room-row-${room.publicKey}'));
       expect(

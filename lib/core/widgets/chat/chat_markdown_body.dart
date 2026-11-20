@@ -529,6 +529,15 @@ Uri validateRemoteChatImageRedirect(Uri current, String location) {
 /// venir de un modelo remoto. Se muestra un placeholder con el dominio y
 /// solo se pide la imagen cuando el usuario la toca. Las URIs locales
 /// (`data:`/`file:`, si las hubiera) se cargan igual que antes.
+/// Why a remote image the user asked for is not shown.
+enum _RemoteImageRefusal { tooLarge, notImage, format }
+
+class _RemoteImageRefused implements Exception {
+  const _RemoteImageRefused(this.reason);
+
+  final _RemoteImageRefusal reason;
+}
+
 class ChatGatedImage extends StatefulWidget {
   final Uri uri;
   final double? width;
@@ -599,24 +608,24 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
         }
         final type = (response.headers['content-type'] ?? '').toLowerCase();
         if (!type.startsWith('image/')) {
-          throw const FormatException('The server did not return an image');
+          throw const _RemoteImageRefused(_RemoteImageRefusal.notImage);
         }
         final declared = response.contentLength;
         if (declared != null && declared > _maxRemoteImageBytes) {
-          throw const FormatException('Imagen demasiado grande');
+          throw const _RemoteImageRefused(_RemoteImageRefusal.tooLarge);
         }
         final builder = BytesBuilder(copy: false);
         await for (final chunk in response.stream.timeout(
           const Duration(seconds: 15),
         )) {
           if (builder.length + chunk.length > _maxRemoteImageBytes) {
-            throw const FormatException('Imagen demasiado grande');
+            throw const _RemoteImageRefused(_RemoteImageRefusal.tooLarge);
           }
           builder.add(chunk);
         }
         final bytes = builder.takeBytes();
         if (!_hasSupportedImageMagic(bytes)) {
-          throw const FormatException('Formato de imagen no permitido');
+          throw const _RemoteImageRefused(_RemoteImageRefusal.format);
         }
         if (!mounted) return;
         final size = imageDimensionsFromHeader(bytes);
@@ -633,6 +642,52 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// What the card says about [error] under its retry icon (Desktop says
+  /// «Couldn't load {name}.» for a broken image: markdown-text.tsx,
+  /// MarkdownImageContent).
+  static String _reason(Strings strings, Object error) => switch (error) {
+    _RemoteImageRefused(reason: _RemoteImageRefusal.tooLarge) =>
+      strings.artThumbTooLarge,
+    _RemoteImageRefused(reason: _RemoteImageRefusal.notImage) =>
+      strings.artThumbNotImage,
+    _RemoteImageRefused(reason: _RemoteImageRefusal.format) =>
+      strings.artThumbUndecodable,
+    TimeoutException() => strings.artThumbTimedOut,
+    _ => strings.artThumbRemote,
+  };
+
+  /// The box of a picture that cannot be shown, saying why.
+  Widget _failedBox(IconData icon, String reason) {
+    final colors = widget.colors;
+    return Container(
+      key: const ValueKey('chat-gated-image-failed'),
+      width: widget.width,
+      height: widget.height ?? 80,
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: colors.textSecondary, size: 26),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              reason,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: colors.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// M6: until its first frame is decoded the picture holds the box its
@@ -737,28 +792,29 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
         ),
       );
     }
-    if (_isRemote && (_loading || _loadError != null)) {
+    final loadError = _loadError;
+    if (_isRemote && !_loading && loadError != null) {
       return GestureDetector(
-        onTap: _loading ? null : _loadRemoteImage,
-        child: Container(
-          width: widget.width,
-          height: widget.height ?? 80,
-          decoration: BoxDecoration(
-            color: colors.surfaceVariant,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
-          ),
-          child: Center(
-            child: _loading
-                ? const SizedBox.square(
-                    dimension: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(
-                    HIcons.refresh_rounded,
-                    color: colors.textSecondary,
-                    size: 28,
-                  ),
+        onTap: _loadRemoteImage,
+        child: _failedBox(
+          HIcons.refresh_rounded,
+          _reason(Strings.of(context), loadError),
+        ),
+      );
+    }
+    if (_isRemote && _loading) {
+      return Container(
+        width: widget.width,
+        height: widget.height ?? 80,
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
+        ),
+        child: const Center(
+          child: SizedBox.square(
+            dimension: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
         ),
       );
@@ -793,6 +849,10 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
                     fit: BoxFit.cover,
                     cacheWidth: 1600,
                     frameBuilder: _reserveBox,
+                    errorBuilder: (context, _, _) => _failedBox(
+                      HIcons.broken_image_outlined,
+                      Strings.of(context).artThumbUndecodable,
+                    ),
                   )
                 : Image.network(
                     widget.uri.toString(),
@@ -800,22 +860,9 @@ class _ChatGatedImageState extends State<ChatGatedImage> {
                     height: widget.height,
                     fit: BoxFit.cover,
                     cacheWidth: 1600,
-                    errorBuilder: (context, error, _) => Container(
-                      height: 80,
-                      decoration: BoxDecoration(
-                        color: colors.surfaceVariant,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: colors.divider.withValues(alpha: 0.55),
-                        ),
-                      ),
-                      child: Center(
-                        child: Icon(
-                          HIcons.broken_image_outlined,
-                          color: colors.textDisabled,
-                          size: 28,
-                        ),
-                      ),
+                    errorBuilder: (context, error, _) => _failedBox(
+                      HIcons.broken_image_outlined,
+                      Strings.of(context).artThumbUndecodable,
                     ),
                   ),
           ),

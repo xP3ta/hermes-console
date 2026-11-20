@@ -164,40 +164,29 @@ void main() {
         if (locked) 'app_lock_enabled': true,
       });
       secure['api_key_conn-a'] = 'key-a';
-      final key = ColdStartStore.tailKey('conn-a', 'default', 's');
-      secure[ColdStartStore.indexKey] = jsonEncode({
-        'v': 1,
-        'routes': {},
-        'tails': [
-          {
-            'k': key,
-            'c': 'conn-a',
-            'p': 'default',
-            's': 's',
-            'a': ['s'],
-            'b': 10,
-            't': DateTime.now().millisecondsSinceEpoch,
-          },
-        ],
-      });
-      secure[key] = jsonEncode({
-        'v': 1,
-        'c': 'conn-a',
-        'p': 'default',
-        's': 's',
-        'r': 's',
-        'a': ['s'],
-        'rows': [
+      // The previous run kept the tail of chat s: a sealed file in the app
+      // folders, its key in secure storage.
+      await ColdStartStore().saveTail(
+        connectionId: 'conn-a',
+        profile: 'default',
+        storedSessionId: 's',
+        routeSessionId: 's',
+        aliases: {'s'},
+        newestFirst: [
           {'role': 'assistant', 'content': 'privado'},
         ],
-      });
+      );
+      reads.clear();
 
       final app = await bootstrapHermesApp() as HermesApp;
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(reads.contains(key), !locked);
+      // The key of the files is what decrypts a tail.
+      expect(reads.contains(ColdStartStore.fileKeyKey), !locked);
       if (locked) {
         expect(app.appLock.locked.value, isTrue);
         expect(reads, isNot(contains(ColdStartStore.indexKey)));
+      } else {
+        expect(await app.activeChats.coldStartTailsReady, 1);
       }
     });
   }

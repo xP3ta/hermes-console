@@ -58,11 +58,11 @@ Future<Strings> _openHelp(WidgetTester tester, String language) async {
 }
 
 const _unix =
-    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/'
+    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/setup-v1.6.0/'
     'hermes-dashboard-setup.sh | sh';
 const _windows =
     '& ([scriptblock]::Create((irm '
-    'https://raw.githubusercontent.com/xP3ta/hermes-setup/main/'
+    'https://raw.githubusercontent.com/xP3ta/hermes-setup/setup-v1.6.0/'
     'hermes-dashboard-setup.ps1)))';
 
 void main() {

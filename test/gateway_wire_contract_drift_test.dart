@@ -30,6 +30,10 @@ const _knownMethodDrift = <String, String>{
   'turn.status':
       'idempotent turn probe of the exclusive-submit extension; Console '
       'treats a missing method as "unknown" and falls back',
+  'groups.attachment.download':
+      'room file read published by the newer upstream contract '
+      '(apps/shared/src/gateway-contract.openrpc.json); this snapshot '
+      'predates it. Only called when groups.capabilities lists it',
 };
 
 /// Event types Console branches on that the contract does not publish.
@@ -42,6 +46,11 @@ final _knownEventDrift = <String, String>{
       'canonical session authority frame (capability-negotiated adapter); '
       'drops or dispatches the prompt it settles (session_authority.dart)',
   'clarify.settled': 'canonical session authority frame, as approval.settled',
+  'approval.cancelled':
+      'published by the newer upstream contract '
+      '(tui_gateway/contracts/events.py `event("approval.cancelled", …)`, '
+      'sent by tui_gateway/session_lifecycle.py when an interrupt or a '
+      'teardown drops a pending prompt); this snapshot predates it',
   'sudo.request': 'transport-adapted `sudo` server request',
   'secret.request': 'transport-adapted `secret` server request',
   'terminal.read.request': 'transport-adapted `terminal.read` server request',

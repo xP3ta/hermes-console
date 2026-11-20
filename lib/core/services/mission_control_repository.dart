@@ -2,6 +2,9 @@ import '../bots/data/room_log_cursor.dart';
 import 'bot_roster_store.dart';
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show Listenable, VoidCallback;
 
 import '../models/agent_profile.dart';
 import '../models/desktop_active_session.dart';
@@ -119,10 +122,30 @@ abstract interface class MissionHostedGroupsIncrementalGateway {
   });
 }
 
+/// Optional `groups.state` that also says whether the backend pushes
+/// `groups.changed` when the room moves (`change_events`).
+abstract interface class MissionHostedGroupsChangeEventsGateway {
+  Future<
+    ({HostedGroupRoom room, RoomDriverStatus? driverStatus, bool changeEvents})
+  >
+  stateWithEvents(String roomId, {required int generation});
+}
+
 /// Optional `groups.list` surface that keeps the rows Console could not read
 /// apart instead of failing the whole list (see [HostedGroupListing]).
 abstract interface class MissionHostedGroupsListingGateway {
   Future<HostedGroupListing> listing({required int generation});
+}
+
+/// Optional `groups.attachment.download`: the verified bytes of one file of
+/// a room's own store ([TuiGatewayClient.downloadGroupAttachment]).
+abstract interface class MissionHostedGroupsAttachmentGateway {
+  Future<Uint8List> downloadAttachment(
+    String roomId, {
+    required String eventId,
+    required HostedGroupAttachment attachment,
+    required int generation,
+  });
 }
 
 final class _CallbackMissionHostedGroupsGateway
@@ -232,7 +255,9 @@ final class _TuiMissionHostedGroupsGateway
     implements
         MissionHostedGroupsGateway,
         MissionHostedGroupsIncrementalGateway,
-        MissionHostedGroupsListingGateway {
+        MissionHostedGroupsChangeEventsGateway,
+        MissionHostedGroupsListingGateway,
+        MissionHostedGroupsAttachmentGateway {
   final TuiGatewayClient client;
 
   const _TuiMissionHostedGroupsGateway(this.client);
@@ -250,10 +275,24 @@ final class _TuiMissionHostedGroupsGateway
       client.listGroups(generation: generation);
   @override
   Future<HostedGroupListing> listing({required int generation}) =>
-      client.listGroupsDetailed(generation: generation);
+      // Pages of 100, as Hermes Desktop reads it (`canonical-groups.ts`
+      // `listCanonicalRooms`).
+      client.listGroupsDetailed(limit: 100, generation: generation);
   @override
   Future<HostedGroupRoom> state(String roomId, {required int generation}) =>
       client.groupState(roomId, generation: generation);
+  @override
+  Future<Uint8List> downloadAttachment(
+    String roomId, {
+    required String eventId,
+    required HostedGroupAttachment attachment,
+    required int generation,
+  }) => client.downloadGroupAttachment(
+    roomId: roomId,
+    eventId: eventId,
+    attachment: attachment,
+    generation: generation,
+  );
   @override
   Future<HostedGroupLogPage> log(String roomId, {required int generation}) =>
       client.groupLogComplete(roomId, generation: generation);
@@ -261,6 +300,12 @@ final class _TuiMissionHostedGroupsGateway
   Future<({HostedGroupRoom room, RoomDriverStatus? driverStatus})>
   stateWithDriver(String roomId, {required int generation}) =>
       client.groupStateWithDriver(roomId, generation: generation);
+  @override
+  Future<
+    ({HostedGroupRoom room, RoomDriverStatus? driverStatus, bool changeEvents})
+  >
+  stateWithEvents(String roomId, {required int generation}) =>
+      client.groupStateWithEvents(roomId, generation: generation);
   @override
   Future<HostedGroupLogPage> logSince(
     String roomId, {
@@ -396,6 +441,11 @@ Future<List<AgentProfile>> loadSharedMissionProfiles({
 /// Desktop (`listAllProfileSessions`, apps/desktop/src/api/sessions.ts). A
 /// missing route, auth, network or malformed response fails closed so a
 /// partial default-profile list cannot masquerade as complete.
+///
+/// Like Desktop it does not ask for `full` rows: those add each session's
+/// rendered `system_prompt` and `model_config` (tens of KB per row,
+/// hermes_cli/web_server_gateway.py `_SESSION_LIST_HEAVY_FIELDS`), which a
+/// list never reads.
 Future<List<Session>> loadMissionControlSessions({
   required MissionDashboardGet dashboardGet,
 }) async {
@@ -407,7 +457,6 @@ Future<List<Session>> loadMissionControlSessions({
       'min_messages': '0',
       'archived': 'exclude',
       'order': 'recent',
-      'full': '1',
       'include_children': 'true',
     },
   ).query;
@@ -488,6 +537,16 @@ abstract interface class MissionHostedGroupsReadDataSource {
   });
 }
 
+/// Optional read of one file of a room's own store
+/// (`groups.attachment.download`).
+abstract interface class MissionHostedGroupsAttachmentDataSource {
+  Future<Uint8List> downloadHostedGroupAttachment(
+    HostedGroupRoom room, {
+    required String eventId,
+    required HostedGroupAttachment attachment,
+  });
+}
+
 /// The `groups.capabilities` live on the socket right now. An open room
 /// reads it before each read so a reconnect (a new socket generation) never
 /// leaves the room bound to the generation it was opened with.
@@ -528,8 +587,7 @@ final class MissionRosterRead {
 ///
 /// While [liveChangesHealthy] holds, Mission Control can skip its periodic
 /// full reload: `sessions.changed` refreshes only the roster
-/// ([loadRoster]) and rooms are re-read only when `groups.list` shows they
-/// moved or their last driver evidence was active ([refreshHostedGroups]).
+/// ([loadRoster]) and the room list ([refreshHostedGroups]).
 abstract interface class MissionLiveRefreshDataSource {
   /// Global Gateway events (`sessions.changed`…); errors when the socket
   /// drops. Null when this source has no live channel.
@@ -540,11 +598,25 @@ abstract interface class MissionLiveRefreshDataSource {
 
   Future<MissionRosterRead> loadRoster();
 
-  /// [previous] with only the rooms that changed (or were active) re-read.
-  /// Throws when the capability generation moved: the caller must reload.
+  /// The room list read again (`groups.capabilities` + `groups.list`),
+  /// with what views of its rooms read in this session. Throws when the
+  /// read fails or the server no longer offers rooms: the caller keeps the
+  /// list it shows, or reloads.
   Future<HostedGroupsSnapshot> refreshHostedGroups(
     HostedGroupsSnapshot previous,
   );
+}
+
+/// Optional signal of the socket the room list is read on: Mission Control
+/// reads the list again as soon as it is back up, as Hermes Desktop does
+/// when its gateway reopens (`canonical-group-registry.tsx`: the rooms
+/// query is always stale and enabled only while the gateway is open).
+abstract interface class MissionHostedRoomsLinkSource {
+  /// Notifies when the socket comes up or goes down.
+  Listenable get roomsLink;
+
+  /// Whether the socket is up now.
+  bool get roomsLinkUp;
 }
 
 /// One `session.active_list` read: its rows and whether it was an answer.
@@ -562,7 +634,9 @@ final class MissionControlRepository
         MissionHostedGroupsDataSource,
         MissionHostedGroupsReadDataSource,
         MissionHostedGroupsCapabilitySource,
-        MissionLiveRefreshDataSource {
+        MissionHostedGroupsAttachmentDataSource,
+        MissionLiveRefreshDataSource,
+        MissionHostedRoomsLinkSource {
   final MissionProfilesLoader profilesLoader;
   final MissionSessionsLoader sessionsLoader;
   final MissionBoardLoader boardLoader;
@@ -575,6 +649,10 @@ final class MissionControlRepository
   final MissionHostedGroupsGateway? hostedGroupsGateway;
   final void Function()? onClose;
 
+  /// Dials the shared socket now for a user action; null on sources without
+  /// one. See [retryConnection].
+  final Future<void> Function()? reconnect;
+
   /// Global Gateway events and their health (see
   /// [MissionLiveRefreshDataSource]); both null without a live channel.
   final Stream<TuiGatewayEvent> Function()? liveChanges;
@@ -584,9 +662,10 @@ final class MissionControlRepository
   final Map<String, HostedGroupLogPage> _logSeeds = {};
   int? _logCursorGeneration;
 
-  /// Rooms read at once: enough to hide per-room latency, few enough not to
-  /// flood the one shared Gateway socket.
-  static const roomReadConcurrency = 4;
+  /// The socket the rooms are read on (see [MissionHostedRoomsLinkSource]);
+  /// both null on sources without one.
+  final Listenable? link;
+  final bool Function()? linkUp;
 
   MissionControlRepository({
     required this.profilesLoader,
@@ -597,9 +676,30 @@ final class MissionControlRepository
     this.profileAvatarLoader,
     this.hostedGroupsGateway,
     this.onClose,
+    this.reconnect,
     this.liveChanges,
     this.liveChangesAvailable,
+    this.link,
+    this.linkUp,
   });
+
+  @override
+  Listenable get roomsLink => link ?? const _NoLink();
+
+  @override
+  bool get roomsLinkUp => !_closed && (linkUp?.call() ?? false);
+
+  /// The user asked for the read again (Retry, pull to refresh). A socket
+  /// that stopped dialing (reconnect backoff, or "sign in again" latched)
+  /// only looks again on an explicit Retry (`TuiGatewayClient
+  /// .connectForeground`); a plain read would fail without a request. The
+  /// read that follows joins this dial and reports its outcome.
+  void retryConnection() {
+    if (_closed) return;
+    final dial = reconnect;
+    if (dial == null) return;
+    unawaited(dial().then<void>((_) {}, onError: (Object _) {}));
+  }
 
   factory MissionControlRepository.forConnection(SavedConnection connection) {
     final dashboard = DashboardClient.lazy(connection);
@@ -626,9 +726,12 @@ final class MissionControlRepository
       kanbanEventsLoader: (since) => kanban.events(since: since),
       profileAvatarLoader: desktop.profileAvatar,
       hostedGroupsGateway: _TuiMissionHostedGroupsGateway(desktop),
+      reconnect: desktop.connectForeground,
       liveChanges: () => desktop.events,
       liveChangesAvailable: () =>
           desktop.isConnected && desktop.changeEventsAvailable,
+      link: desktop.linkListenable,
+      linkUp: () => desktop.isConnected,
       onClose: () {
         lease.release();
         kanban.close();
@@ -761,121 +864,57 @@ final class MissionControlRepository
     );
   }
 
-  /// A room needs `groups.state` unless the list row proves it unchanged
-  /// and its last driver evidence was quiet: an active room is always
-  /// re-read so a finished turn never keeps showing as working.
-  static bool _roomMoved(
-    HostedGroupRoom listed,
-    HostedGroupRoom? previous,
-    RoomDriverStatus? driver,
-  ) =>
-      previous == null ||
-      !listed.latestSeqKnown ||
-      !previous.latestSeqKnown ||
-      listed.latestSeq != previous.latestSeq ||
-      listed.revision != previous.revision ||
-      listed.authorityGatewayId != previous.authorityGatewayId ||
-      listed.authorityEpoch != previous.authorityEpoch ||
-      driver == null ||
-      driver.running ||
-      driver.working ||
-      driver.blocked ||
-      driver.needsUser;
-
+  /// The room list alone, as Hermes Desktop re-reads it
+  /// (`canonical-group-registry.tsx` `useGatewayGroupRooms` over
+  /// `canonical-groups.ts` `listCanonicalRooms`): `groups.capabilities` and
+  /// `groups.list`, never a room's `groups.state` or `groups.log`. A new
+  /// capability generation (a reconnect) is just the one this list was
+  /// read under. [previous] only proves the rooms were loaded once.
   @override
   Future<HostedGroupsSnapshot> refreshHostedGroups(
     HostedGroupsSnapshot previous,
   ) async {
     if (_closed) throw StateError('MissionControlRepository is closed');
     final gateway = hostedGroupsGateway;
-    final known = previous.capabilities;
-    if (gateway == null || known == null) {
+    if (gateway == null || previous.capabilities == null) {
       throw StateError('hosted groups were not loaded');
     }
     final capabilities = await gateway.capabilities();
-    if (capabilities.generation != known.generation ||
-        !capabilities.hasSharedRoomSurface ||
-        previous.rooms.length != previous.logs.length) {
+    if (!capabilities.hasSharedRoomSurface) {
       throw StateError('hosted groups capability changed');
     }
-    final listing = await _list(gateway, capabilities.generation);
-    final listed = listing.rooms;
-    final previousIndex = {
-      for (var i = 0; i < previous.rooms.length; i++)
-        previous.rooms[i].roomId: i,
-    };
-    final stale = <HostedGroupRoom>[
-      for (final room in listed)
-        // A room shown from its last good read is always read again.
-        if (previous.staleRoomIds.contains(room.roomId) ||
-            _roomMoved(room, switch (previousIndex[room.roomId]) {
-              final i? => previous.rooms[i],
-              null => null,
-            }, previous.driverStatuses[room.roomId]))
-          room,
-    ];
-    final listedIds = {for (final room in listed) room.roomId};
-    _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
-    _lastGoodRooms.removeWhere((roomId, _) => !listedIds.contains(roomId));
-    final reads = await _readRooms(
-      gateway,
-      stale,
-      generation: capabilities.generation,
-      skipLogAtTip: true,
-    );
-    final readById = {
-      for (var i = 0; i < stale.length; i++) stale[i].roomId: reads[i],
-    };
-    final out = _RoomsAssembly(listing.unreadable);
-    for (final listedRoom in listed) {
-      final roomId = listedRoom.roomId;
-      final i = previousIndex[roomId];
-      final shown = i == null
-          ? null
-          : _ReadableRoomRead(
-              previous.rooms[i],
-              previous.logs[i],
-              previous.driverStatuses[roomId],
-            );
-      if (!readById.containsKey(roomId)) {
-        out.add(shown!);
-        continue;
-      }
-      _place(out, _coherentRead(listedRoom, readById[roomId]!), shown);
-    }
-    return out.snapshot(capabilities);
+    return _listRooms(gateway, capabilities);
   }
 
-  /// The last good read of every listed room this repository has seen: a
-  /// room whose next read fails with a server error of its own (transient:
-  /// «database is locked») stays on screen from here, marked stale, on the
-  /// incremental refresh and on a full reload alike.
-  final Map<String, _ReadableRoomRead> _lastGoodRooms = {};
+  /// The last read a view of each room made in this app session: the room
+  /// screen's polls ([readHostedGroup]) and the read-backs of its sends and
+  /// other actions. It is the only source of a room's conversation and
+  /// driver state in the room list; a room no view read has neither. Hermes
+  /// Desktop's rows show the same thing, what an open view of the room
+  /// published (`canonical-group-details.tsx` `$canonicalRoomLive`, from
+  /// `canonical-group-workspace.tsx`). Desktop drops it when the room's
+  /// view closes because its list sits next to the open room; on a phone
+  /// the list is never on screen while a room is, so it is kept for the
+  /// session.
+  final Map<String, _PublishedRoomRead> _published = {};
 
-  /// Puts one room's read into [out]. A good read replaces the last good
-  /// one; a server error keeps the last good read ([fallback] when this
-  /// repository has none of its own) as stale; data Console rejects, or a
-  /// room never read, is unreadable — nothing is ever invented.
-  void _place(
-    _RoomsAssembly out,
-    _RoomReadResult read,
-    _ReadableRoomRead? fallback,
+  /// The read that knows more of the room: the later log, then the later
+  /// revision; [a] on a tie. A seed or a shown room newer than what this
+  /// repository last read (a message just sent, a later snapshot) must not
+  /// lose to it.
+  static _PublishedRoomRead? _newest(
+    _PublishedRoomRead? a,
+    _PublishedRoomRead? b,
   ) {
-    switch (read) {
-      case final _ReadableRoomRead ok:
-        _lastGoodRooms[ok.room.roomId] = ok;
-        out.add(ok);
-      case _UnreadableRoomRead(:final room):
-        final id = room.roomId;
-        final kept = id == null ? null : (_lastGoodRooms[id] ?? fallback);
-        if (room.reason == HostedGroupUnreadableReason.serverError &&
-            kept != null) {
-          out.add(kept, stale: true);
-        } else {
-          if (id != null) _lastGoodRooms.remove(id);
-          out.unreadable.add(room);
-        }
+    if (a == null || b == null) return a ?? b;
+    if (a.room.authorityGatewayId != b.room.authorityGatewayId ||
+        a.room.authorityEpoch != b.room.authorityEpoch) {
+      return a.room.authorityEpoch >= b.room.authorityEpoch ? a : b;
     }
+    if (a.log.latestSeq != b.log.latestSeq) {
+      return a.log.latestSeq > b.log.latestSeq ? a : b;
+    }
+    return a.room.revision >= b.room.revision ? a : b;
   }
 
   /// `groups.list` with unreadable rows kept apart when the gateway can
@@ -892,35 +931,124 @@ final class MissionControlRepository
     return HostedGroupListing(rooms: await gateway.list(generation: generation));
   }
 
-  /// A read is only this room's when its state names the listed room at the
-  /// listed revision or later; anything else makes the room unreadable.
-  static _RoomReadResult _coherentRead(
-    HostedGroupRoom listed,
-    _RoomReadResult read,
-  ) {
-    if (read case _ReadableRoomRead(:final room)) {
-      if (room.roomId != listed.roomId || room.revision < listed.revision) {
-        return _UnreadableRoomRead(
-          HostedGroupUnreadableRoom(
-            roomId: listed.roomId,
-            name: listed.name,
-            reason: HostedGroupUnreadableReason.invalidData,
-          ),
-        );
+  /// The listed rooms, each with what a view of it read in this session
+  /// (see [_published]); nothing else is read or invented.
+  Future<HostedGroupsSnapshot> _listRooms(
+    MissionHostedGroupsGateway gateway,
+    GroupsCapabilities capabilities,
+  ) async {
+    final listing = await _list(gateway, capabilities.generation);
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    final listed = listing.rooms;
+    final listedIds = {for (final room in listed) room.roomId};
+    _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
+    _logSeeds.removeWhere((roomId, _) => !listedIds.contains(roomId));
+    _published.removeWhere((roomId, _) => !listedIds.contains(roomId));
+    final logs = <HostedGroupLogPage?>[];
+    final drivers = <String, RoomDriverStatus>{};
+    final readAt = <String, DateTime>{};
+    for (final room in listed) {
+      final read = _publishedFor(room);
+      logs.add(read?.log);
+      if (read?.driverStatus case final status?) {
+        drivers[room.roomId] = status;
+        if (read?.driverReadAt case final at?) readAt[room.roomId] = at;
       }
     }
-    return read;
+    return HostedGroupsSnapshot(
+      capabilities: capabilities,
+      rooms: List.unmodifiable(listed),
+      logs: List.unmodifiable(logs),
+      driverStatuses: Map.unmodifiable(drivers),
+      driverReadAt: Map.unmodifiable(readAt),
+      unreadableRooms: List.unmodifiable(listing.unreadable),
+    );
   }
 
-  /// Resumes each room log from [snapshot] (the last one this client showed)
-  /// so reopening Bot Mode reads only what is new, not every transcript.
-  void seedHostedLogs(HostedGroupsSnapshot snapshot) {
-    if (snapshot.rooms.length != snapshot.logs.length) return;
-    for (var i = 0; i < snapshot.rooms.length; i++) {
-      final roomId = snapshot.rooms[i].roomId;
-      if (_logCursors.containsKey(roomId)) continue;
-      _logSeeds[roomId] = snapshot.logs[i];
+  /// What a view read of [listed], when it was read under the authority
+  /// the list names now. A room served by another authority since is a
+  /// new history: what was read under the old one is dropped with its
+  /// cursor.
+  _PublishedRoomRead? _publishedFor(HostedGroupRoom listed) {
+    final read = _published[listed.roomId];
+    if (read == null) return null;
+    if (read.room.authorityGatewayId == listed.authorityGatewayId &&
+        read.room.authorityEpoch == listed.authorityEpoch) {
+      return read;
     }
+    _published.remove(listed.roomId);
+    _logCursors.remove(listed.roomId);
+    _logSeeds.remove(listed.roomId);
+    return null;
+  }
+
+  /// Takes what views of the rooms in [snapshot] (the last one this client
+  /// showed) read as this repository's own, unless it already holds newer
+  /// reads, so the rooms opened in this session keep their conversation and
+  /// state across Bot Mode screens, and an opened room's log resumes after
+  /// what was read instead of from the start.
+  void seedHostedLogs(HostedGroupsSnapshot snapshot) {
+    for (var i = 0; i < snapshot.rooms.length; i++) {
+      final log = snapshot.logAt(i);
+      if (log == null) continue;
+      final room = snapshot.rooms[i];
+      final roomId = room.roomId;
+      final shown = _PublishedRoomRead(
+        room,
+        log,
+        snapshot.driverStatuses[roomId],
+        snapshot.driverReadAt[roomId],
+      );
+      _published[roomId] = _newest(_published[roomId], shown)!;
+      if (_logCursors.containsKey(roomId)) continue;
+      _logSeeds[roomId] = log;
+    }
+  }
+
+  /// [shown] with the last read a view made of each of its rooms in this
+  /// session, without reading anything: the row of a room just closed
+  /// shows what its view last read, as a Desktop row shows what the open
+  /// view published (`canonical-group-details.tsx`
+  /// `publishCanonicalRoomLive`). [shown] itself when there is nothing to
+  /// add.
+  HostedGroupsSnapshot withPublishedReads(HostedGroupsSnapshot shown) {
+    if (_closed || _published.isEmpty) return shown;
+    var changed = false;
+    final rooms = <HostedGroupRoom>[];
+    final logs = <HostedGroupLogPage?>[];
+    final drivers = {...shown.driverStatuses};
+    final readAt = {...shown.driverReadAt};
+    for (var i = 0; i < shown.rooms.length; i++) {
+      final room = shown.rooms[i];
+      final read = _published[room.roomId];
+      if (read == null ||
+          read.room.authorityGatewayId != room.authorityGatewayId ||
+          read.room.authorityEpoch != room.authorityEpoch) {
+        rooms.add(room);
+        logs.add(shown.logAt(i));
+        continue;
+      }
+      changed = true;
+      rooms.add(read.room.revision > room.revision ? read.room : room);
+      logs.add(read.log);
+      if (read.driverStatus case final status?) {
+        drivers[room.roomId] = status;
+        if (read.driverReadAt case final at?) {
+          readAt[room.roomId] = at;
+        } else {
+          readAt.remove(room.roomId);
+        }
+      }
+    }
+    if (!changed) return shown;
+    return HostedGroupsSnapshot(
+      capabilities: shown.capabilities,
+      rooms: List.unmodifiable(rooms),
+      logs: List.unmodifiable(logs),
+      driverStatuses: Map.unmodifiable(drivers),
+      driverReadAt: Map.unmodifiable(readAt),
+      unreadableRooms: shown.unreadableRooms,
+    );
   }
 
   Future<HostedGroupsSnapshot> _loadHostedGroups() async {
@@ -931,80 +1059,10 @@ final class MissionControlRepository
       return HostedGroupsSnapshot(capabilities: capabilities);
     }
     try {
-      final listing = await _list(gateway, capabilities.generation);
-      final listed = listing.rooms;
-      final listedIds = {for (final room in listed) room.roomId};
-      _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
-      _lastGoodRooms.removeWhere((roomId, _) => !listedIds.contains(roomId));
-      final reads = await _readRooms(
-        gateway,
-        listed,
-        generation: capabilities.generation,
-      );
-      final out = _RoomsAssembly(listing.unreadable);
-      for (var i = 0; i < listed.length; i++) {
-        _place(out, _coherentRead(listed[i], reads[i]), null);
-      }
-      return out.snapshot(capabilities);
+      return await _listRooms(gateway, capabilities);
     } catch (error) {
       throw _HostedGroupsReadFailure(capabilities, error);
     }
-  }
-
-  /// Reads every room with at most [roomReadConcurrency] in flight, keeping
-  /// the listed order. A failure that belongs to one room (its own server
-  /// error or data Console rejects) marks only that room unreadable; any
-  /// other failure (lost socket, timeout, stale generation, unsupported
-  /// method) fails the whole read, as before.
-  Future<List<_RoomReadResult>> _readRooms(
-    MissionHostedGroupsGateway gateway,
-    List<HostedGroupRoom> rooms, {
-    required int generation,
-    bool skipLogAtTip = false,
-  }) async {
-    final results = List<_RoomReadResult?>.filled(rooms.length, null);
-    var next = 0;
-    Future<void> worker() async {
-      while (next < rooms.length) {
-        final index = next++;
-        final room = rooms[index];
-        try {
-          final read = await _readRoom(
-            gateway,
-            room.roomId,
-            generation: generation,
-            skipLogAtTip: skipLogAtTip,
-          );
-          results[index] = _ReadableRoomRead(
-            read.room,
-            read.log,
-            read.driverStatus,
-          );
-        } catch (error) {
-          final reason = roomLocalReadFailure(error);
-          if (reason == null) rethrow;
-          // A cursor that failed mid-read starts again from scratch.
-          _logCursors.remove(room.roomId);
-          results[index] = _UnreadableRoomRead(
-            HostedGroupUnreadableRoom(
-              roomId: room.roomId,
-              name: room.name,
-              reason: reason,
-            ),
-            error,
-          );
-        }
-      }
-    }
-
-    await Future.wait([
-      for (var i = 0; i < roomReadConcurrency && i < rooms.length; i++)
-        worker(),
-    ]);
-    // Each room's outcome is its own, however many rooms there are: a
-    // count heuristic («all failed = the server's problem») hid every room
-    // and «New ▸ room» on a cold start (review B1).
-    return [for (final result in results) result!];
   }
 
   /// `groups.state` (+driver status) and the room log. Incremental gateways
@@ -1018,22 +1076,50 @@ final class MissionControlRepository
     if (gateway is! MissionHostedGroupsIncrementalGateway) {
       final state = await gateway.state(roomId, generation: generation);
       final log = await gateway.log(roomId, generation: generation);
-      return (room: state, log: log, driverStatus: null);
+      return (
+        room: state,
+        log: log,
+        driverStatus: null,
+        changeEvents: false,
+      );
     }
     final incremental = gateway as MissionHostedGroupsIncrementalGateway;
-    final state = await incremental.stateWithDriver(
-      roomId,
-      generation: generation,
-    );
+    final HostedGroupRoom room;
+    final RoomDriverStatus? driverStatus;
+    var changeEvents = false;
+    if (gateway is MissionHostedGroupsChangeEventsGateway) {
+      final state = await (gateway as MissionHostedGroupsChangeEventsGateway)
+          .stateWithEvents(roomId, generation: generation);
+      room = state.room;
+      driverStatus = state.driverStatus;
+      changeEvents = state.changeEvents;
+    } else {
+      final state = await incremental.stateWithDriver(
+        roomId,
+        generation: generation,
+      );
+      room = state.room;
+      driverStatus = state.driverStatus;
+    }
     final cursor = _cursorFor(incremental, roomId, generation);
     final held = cursor.log;
-    if (skipLogAtTip && held != null && _cursorAtTip(held, state.room)) {
+    if (skipLogAtTip && held != null && _cursorAtTip(held, room)) {
       // groups.state proves nothing was appended since the cursor's last
       // read under this authority: the log read would return no events.
-      return (room: state.room, log: held, driverStatus: state.driverStatus);
+      return (
+        room: room,
+        log: held,
+        driverStatus: driverStatus,
+        changeEvents: changeEvents,
+      );
     }
     final delta = await cursor.pull();
-    return (room: state.room, log: delta.log, driverStatus: state.driverStatus);
+    return (
+      room: room,
+      log: delta.log,
+      driverStatus: driverStatus,
+      changeEvents: changeEvents,
+    );
   }
 
   /// True only when [room] (read after [log]) carries an explicit
@@ -1117,6 +1203,32 @@ final class MissionControlRepository
     return gateway.capabilities();
   }
 
+  /// A read under the capabilities live on the socket now, like the open
+  /// room's own reads: a file is not bound to the socket its room was
+  /// listed on. A server that does not list the method is never asked.
+  @override
+  Future<Uint8List> downloadHostedGroupAttachment(
+    HostedGroupRoom room, {
+    required String eventId,
+    required HostedGroupAttachment attachment,
+  }) async {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    final gateway = hostedGroupsGateway;
+    if (gateway == null || gateway is! MissionHostedGroupsAttachmentGateway) {
+      throw StateError('hosted group capability unavailable');
+    }
+    final capabilities = await gateway.capabilities();
+    if (!capabilities.supports(GroupMethod.attachmentDownload)) {
+      throw StateError('hosted group capability unavailable');
+    }
+    return (gateway as MissionHostedGroupsAttachmentGateway).downloadAttachment(
+      room.roomId,
+      eventId: eventId,
+      attachment: attachment,
+      generation: capabilities.generation,
+    );
+  }
+
   @override
   Future<HostedGroupRoom> createHostedGroup({
     required String name,
@@ -1145,6 +1257,7 @@ final class MissionControlRepository
       log: read.log,
       generation: generation,
       driverStatus: read.driverStatus,
+      changeEvents: read.changeEvents,
     );
   }
 
@@ -1195,6 +1308,7 @@ final class MissionControlRepository
       log: read.log,
       generation: generation,
       driverStatus: read.driverStatus,
+      changeEvents: read.changeEvents,
     );
   }
 
@@ -1248,6 +1362,9 @@ final class MissionControlRepository
         current.authorityEpoch != room.authorityEpoch) {
       throw const FormatException('unverified hosted room disband readback');
     }
+    _published.remove(room.roomId);
+    _logCursors.remove(room.roomId);
+    _logSeeds.remove(room.roomId);
     return HostedGroupWorkspaceReadback(
       room: current,
       log: null,
@@ -1261,6 +1378,7 @@ final class MissionControlRepository
     required HostedGroupLogPage log,
     required int generation,
     RoomDriverStatus? driverStatus,
+    bool changeEvents = false,
   }) {
     if (current.roomId != previous.roomId ||
         current.revision < previous.revision ||
@@ -1270,11 +1388,30 @@ final class MissionControlRepository
         log.authority.epoch != current.authorityEpoch) {
       throw const FormatException('incoherent hosted room mutation readback');
     }
+    // What the room's view shows from now on is also what its row in the
+    // room list shows (see [_published]). A read-back without a driver
+    // status keeps the one read before, with the time it was read.
+    final kept = switch (_published[current.roomId]) {
+      final read?
+          when read.room.authorityGatewayId == current.authorityGatewayId &&
+              read.room.authorityEpoch == current.authorityEpoch =>
+        read,
+      _ => null,
+    };
+    _published[current.roomId] = driverStatus == null
+        ? _PublishedRoomRead(
+            current,
+            log,
+            kept?.driverStatus,
+            kept?.driverReadAt,
+          )
+        : _PublishedRoomRead(current, log, driverStatus, DateTime.now());
     return HostedGroupWorkspaceReadback(
       room: current,
       log: log,
       capabilityGeneration: generation,
       driverStatus: driverStatus,
+      changeEvents: changeEvents,
     );
   }
 
@@ -1310,7 +1447,7 @@ final class MissionControlRepository
     _closed = true;
     _logCursors.clear();
     _logSeeds.clear();
-    _lastGoodRooms.clear();
+    _published.clear();
     onClose?.call();
   }
 }
@@ -1319,57 +1456,34 @@ typedef _RoomRead = ({
   HostedGroupRoom room,
   HostedGroupLogPage log,
   RoomDriverStatus? driverStatus,
+  bool changeEvents,
 });
 
-/// One room of a load: read, or kept apart as unreadable.
-sealed class _RoomReadResult {
-  const _RoomReadResult();
-}
-
-final class _ReadableRoomRead extends _RoomReadResult {
+/// What a view of one room last read (see
+/// [MissionControlRepository._published]): its state, its log, and its
+/// driver status with the moment that was read (null when unknown).
+final class _PublishedRoomRead {
   final HostedGroupRoom room;
   final HostedGroupLogPage log;
   final RoomDriverStatus? driverStatus;
-  const _ReadableRoomRead(this.room, this.log, this.driverStatus);
+  final DateTime? driverReadAt;
+  const _PublishedRoomRead(
+    this.room,
+    this.log,
+    this.driverStatus,
+    this.driverReadAt,
+  );
 }
 
-final class _UnreadableRoomRead extends _RoomReadResult {
-  final HostedGroupUnreadableRoom room;
+/// [MissionHostedRoomsLinkSource.roomsLink] of a source without a socket.
+final class _NoLink implements Listenable {
+  const _NoLink();
 
-  /// What the read threw (null for an incoherent answer).
-  final Object? error;
-  const _UnreadableRoomRead(this.room, [this.error]);
-}
+  @override
+  void addListener(VoidCallback listener) {}
 
-/// [HostedGroupsSnapshot] being built in listed order.
-final class _RoomsAssembly {
-  _RoomsAssembly(List<HostedGroupUnreadableRoom> listedUnreadable)
-    : unreadable = [...listedUnreadable];
-
-  final List<HostedGroupUnreadableRoom> unreadable;
-  final List<HostedGroupRoom> _rooms = [];
-  final List<HostedGroupLogPage> _logs = [];
-  final Map<String, RoomDriverStatus> _drivers = {};
-  final Set<String> _stale = {};
-
-  void add(_ReadableRoomRead read, {bool stale = false}) {
-    _rooms.add(read.room);
-    _logs.add(read.log);
-    if (read.driverStatus case final status?) {
-      _drivers[read.room.roomId] = status;
-    }
-    if (stale) _stale.add(read.room.roomId);
-  }
-
-  HostedGroupsSnapshot snapshot(GroupsCapabilities capabilities) =>
-      HostedGroupsSnapshot(
-        capabilities: capabilities,
-        rooms: List.unmodifiable(_rooms),
-        logs: List.unmodifiable(_logs),
-        driverStatuses: Map.unmodifiable(_drivers),
-        unreadableRooms: List.unmodifiable(unreadable),
-        staleRoomIds: Set.unmodifiable(_stale),
-      );
+  @override
+  void removeListener(VoidCallback listener) {}
 }
 
 /// A rooms read that failed after `groups.capabilities` answered.

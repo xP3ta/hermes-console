@@ -916,6 +916,7 @@
   "chaVoiceModeTooltip": "音声会話を開始",
   "chaErrViewDetails": "詳細を表示",
   "chaErrHideDetails": "詳細を非表示",
+  "chaErrSetUpProvider": "プロバイダーを設定",
   "chaModelServer": "サーバーのモデル",
   "chaApproveAlways": "このエージェント操作を常に許可",
   "chaApproveOnce": "エージェント操作を1回承認",
@@ -1670,6 +1671,19 @@
   "crnStatusCompleted": "完了",
   "crnOpenFromConversation": "関連するスケジュールを開く",
   "crnRunNow": "今すぐ実行",
+  "crnStop": "停止",
+  "crnStopping": "停止中…",
+  "crnRunStopped": "実行をキャンセルしました",
+  "crnRunFinishedFirst": "停止する前に実行が終了しました",
+  "crnNothingToStop": "実行中のジョブはありません",
+  "crnStopFailed": "実行を停止できませんでした: {error}",
+  "crnLastCancelled": "前回の実行はキャンセルされました",
+  "crnLastCancelledReason": "前回の実行はキャンセルされました: {reason}",
+  "crnCatchUpLabel": "見逃した実行",
+  "crnCatchUpHint": "Hermes が動いていない間に見逃した実行の扱い。",
+  "crnCatchUpDefault": "既定の設定に従う",
+  "crnCatchUpRun": "復帰時に1回だけ実行",
+  "crnCatchUpSkip": "スキップする",
   "crnResume": "再開",
   "crnPause": "一時停止",
   "crnNoRuns": "実行記録はありません。",
@@ -4144,6 +4158,18 @@
   "embedSvgLabel": "SVG画像",
   "vwDiagramLabel": "図",
   "vwModelLabel": "3Dモデル",
+  "vwModelFailed": "この3Dモデルを表示できませんでした。",
+  "vwPreviewFailed": "このプレビューを表示できませんでした。",
+  "vwPreviewTimedOut": "表示に時間がかかりすぎました。",
+  "vwModelExternal": "このモデルには同梱されていないファイルが必要です: {files}",
+  "vwModelNotGltf": "このファイルはglTFモデルではありません。",
+  "vwModelTooLarge": "このモデルは{size}を超えるため、ここでは表示できません。別のアプリで開くか共有できます。",
+  "vwPlaybackFailed": "ここでは再生できませんでした。別のアプリで開くか共有できます。",
+  "vwUnsupportedHere": "この形式はアプリ内で表示できません。",
+  "vwModelNeedsWasm": "このモデルは圧縮されており、この端末のWebViewではデコーダーを実行できません。Android System WebViewを更新すると解決します。",
+  "vwModelNeedsWebGl": "この端末のWebViewでは3Dを表示できません（WebGL 2がオフか、ありません）。",
+  "vwPdfFailed": "このPDFを開けませんでした。破損しているか保護されている可能性があります。",
+  "embedLoadFailed": "{service}を読み込めませんでした。",
   "reactAdd": "リアクション",
   "reactFailed": "リアクションを保存できませんでした",
   "reactSettingsTitle": "リアクション",
@@ -9522,5 +9548,102 @@
   "pb1215UnlistedChatsBody": "Hermes はこのフォルダーで数えていますが、このプロフィールの通常のチャットではありません：自動実行（会話 › 自動処理）、サブエージェントのセッション、または空のセッションです。",
   "subagentUiStatusNotActive": "{count, plural, other{非アクティブ}}",
   "subagentUiResultUnavailable": "最終結果は利用できません",
-  "kluUsagePeriodDay": "24時間"
+  "kluUsagePeriodDay": "24時間",
+  "msgPairTitle": "メッセージアクセス",
+  "msgPairSubtitle": "botにメッセージを送れる人を承認または取り消します",
+  "msgPairIntro": "botに初めてメッセージを送った人は、承認されるまでここで待機します。承認は次のメッセージから有効になります。",
+  "msgPairPending": "保留中のリクエスト（{count}）",
+  "@msgPairPending": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApproved": "承認済みユーザー（{count}）",
+  "@msgPairApproved": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApprove": "承認",
+  "msgPairRevoke": "取り消し",
+  "msgPairRevokeTitle": "アクセスを取り消す",
+  "msgPairRevokeBody": "{name}のアクセスは失われ、次のメッセージから認識されなくなります。",
+  "@msgPairRevokeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairJustNow": "たった今",
+  "msgPairMinutesAgo": "{minutes}分前",
+  "@msgPairMinutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairEmpty": "承認待ちの人も、承認済みの人もまだいません。",
+  "msgPairUnavailable": "このサーバーはメッセージアクセスの管理に対応していません。",
+  "msgPairLoadFailed": "メッセージアクセスを読み込めませんでした。",
+  "msgPairApprovedDone": "{name}を承認しました。次のメッセージから自動的に認識されます。",
+  "@msgPairApprovedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokedDone": "{name}を取り消しました",
+  "@msgPairRevokedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairApproveFailed": "{name}を承認できませんでした",
+  "@msgPairApproveFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokeFailed": "{name}を取り消せませんでした",
+  "@msgPairRevokeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairLockedOut": "承認の失敗が多すぎます。このプラットフォームはロックされました。しばらくしてからもう一度お試しください。",
+  "msgPairVerifyApprove": "認証してアクセスを承認",
+  "msgPairVerifyRevoke": "認証してアクセスを取り消す",
+  "srvCheckDoctor": "doctorを実行",
+  "srvCheckDoctorSub": "インストール、設定、プロバイダーを診断します",
+  "srvCheckAudit": "セキュリティ監査",
+  "srvCheckAuditSub": "設定とスキルにリスクのある設定がないか調べます",
+  "srvCheckRun": "実行",
+  "srvCheckRunning": "実行中…",
+  "srvCheckLog": "出力",
+  "srvCheckFinished": "完了しました",
+  "srvCheckFinishedCode": "終了コード {code} で終了しました",
+  "@srvCheckFinishedCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "srvCheckStillRunning": "まだ実行中です。追跡を停止しました",
+  "srvCheckUnavailable": "このサーバーでは実行できません。",
+  "srvCheckStartFailed": "開始できませんでした。",
+  "srvCheckLost": "実行を追跡できませんでした。もう一度実行すると出力を確認できます。"
 }

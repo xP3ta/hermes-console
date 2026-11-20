@@ -162,8 +162,41 @@ class GeneratedImageService {
             .toList(growable: false)
           ..sort((a, b) => b.length.compareTo(a.length));
     var stripped = text;
+    // A markdown image of the source goes whole, as on Desktop
+    // (`lib/generated-images.ts` `stripGeneratedImageEchoes`): taking only
+    // its URL left `![alt]()`, drawn as a broken image above the card.
     for (final source in sources) {
-      stripped = stripped.replaceAll(source, '');
+      stripped = stripped.replaceAll(
+        RegExp(
+          r'!\[[^\]\n]*\]\(\s*<?' +
+              RegExp.escape(source) +
+              r'>?(?=$|[\s)\\])[^)\n]*\)',
+        ),
+        '',
+      );
+    }
+    for (final source in sources) {
+      // A `#media:` link to the source, closed right after it.
+      stripped = stripped.replaceAll(
+        RegExp(
+          r'\[[^\]\n]*\]\(\s*#media:' +
+              RegExp.escape(Uri.encodeComponent(source)) +
+              r'\s*\)',
+          caseSensitive: false,
+        ),
+        '',
+      );
+      // A bare occurrence. `(` and `)` are not boundaries, so the
+      // destination of a link (`[label](src)`) never becomes `[label]()`
+      // (Desktop `lib/generated-images.ts` `stripGeneratedImageEchoes`).
+      stripped = stripped.replaceAllMapped(
+        RegExp(
+          r'(^|[\s[{])<?' +
+              RegExp.escape(source) +
+              r'>?(?=$|[\s\]}.,!?])',
+        ),
+        (match) => match.group(1)!,
+      );
     }
     return stripped;
   }

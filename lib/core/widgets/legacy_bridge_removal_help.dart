@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../design/modal.dart';
 import '../design/tokens.dart';
+import '../services/official_dashboard_command.dart' show kHermesSetupRef;
 import '../theme/app_theme.dart';
 import 'command_block.dart';
 import 'hermes_premium_ui.dart';
@@ -12,7 +13,8 @@ import 'hermes_premium_ui.dart';
 /// The system of the computer that still runs the Mobile Bridge.
 enum BridgeHost { linux, macos, windows }
 
-const _setupRaw = 'https://raw.githubusercontent.com/xP3ta/hermes-setup/main';
+const _setupRaw =
+    'https://raw.githubusercontent.com/xP3ta/hermes-setup/$kHermesSetupRef';
 const _setupUnix = 'curl -fsSL $_setupRaw/hermes-mobile-setup.sh | sh';
 const _setupWindows =
     '& ([scriptblock]::Create((irm $_setupRaw/hermes-mobile-setup.ps1)))';

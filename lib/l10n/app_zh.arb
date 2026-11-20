@@ -916,6 +916,7 @@
   "chaVoiceModeTooltip": "开始语音对话",
   "chaErrViewDetails": "查看详情",
   "chaErrHideDetails": "隐藏详情",
+  "chaErrSetUpProvider": "设置提供商",
   "chaModelServer": "服务器模型",
   "chaApproveAlways": "始终允许此智能体操作",
   "chaApproveOnce": "批准一次智能体操作",
@@ -1670,6 +1671,19 @@
   "crnStatusCompleted": "已完成",
   "crnOpenFromConversation": "打开关联的定时任务",
   "crnRunNow": "立即运行",
+  "crnStop": "停止",
+  "crnStopping": "正在停止…",
+  "crnRunStopped": "运行已取消",
+  "crnRunFinishedFirst": "运行在停止前已结束",
+  "crnNothingToStop": "没有正在进行的运行",
+  "crnStopFailed": "无法停止运行: {error}",
+  "crnLastCancelled": "上次运行已取消",
+  "crnLastCancelledReason": "上次运行已取消: {reason}",
+  "crnCatchUpLabel": "错过的运行",
+  "crnCatchUpHint": "Hermes 未运行期间错过的运行如何处理。",
+  "crnCatchUpDefault": "使用默认设置",
+  "crnCatchUpRun": "恢复后补跑一次",
+  "crnCatchUpSkip": "跳过",
   "crnResume": "恢复",
   "crnPause": "暂停",
   "crnNoRuns": "暂无运行记录。",
@@ -4144,6 +4158,18 @@
   "embedSvgLabel": "SVG 图像",
   "vwDiagramLabel": "图表",
   "vwModelLabel": "3D 模型",
+  "vwModelFailed": "无法显示此 3D 模型。",
+  "vwPreviewFailed": "无法显示此预览。",
+  "vwPreviewTimedOut": "显示耗时过长。",
+  "vwModelExternal": "此模型需要未随附的文件：{files}",
+  "vwModelNotGltf": "此文件不是 glTF 模型。",
+  "vwModelTooLarge": "此模型超过 {size}，太大，无法在此显示。你可以用其他应用打开或分享它。",
+  "vwPlaybackFailed": "无法在此播放。你可以用其他应用打开或分享它。",
+  "vwUnsupportedHere": "无法在应用内查看此类型的文件。",
+  "vwModelNeedsWasm": "此模型经过压缩，本机的 WebView 无法运行其解码器。更新 Android System WebView 即可解决。",
+  "vwModelNeedsWebGl": "本机的 WebView 无法显示 3D（WebGL 2 已关闭或不可用）。",
+  "vwPdfFailed": "无法打开此 PDF。文件可能已损坏或受保护。",
+  "embedLoadFailed": "无法加载 {service}。",
   "reactAdd": "添加表情回应",
   "reactFailed": "无法保存表情回应",
   "reactSettingsTitle": "表情回应",
@@ -9522,5 +9548,102 @@
   "pb1215UnlistedChatsBody": "Hermes 在此文件夹中统计了它们，但它们不是此配置的普通聊天：自动运行（在“对话 › 自动化”中）、子代理会话或空会话。",
   "subagentUiStatusNotActive": "{count, plural, other{未在运行}}",
   "subagentUiResultUnavailable": "最终结果不可用",
-  "kluUsagePeriodDay": "24小时"
+  "kluUsagePeriodDay": "24小时",
+  "msgPairTitle": "消息访问权限",
+  "msgPairSubtitle": "批准或撤销可以给 bot 发消息的人",
+  "msgPairIntro": "首次给 bot 发消息的人会在这里等待，直到你批准。批准从对方的下一条消息起生效。",
+  "msgPairPending": "待处理请求（{count}）",
+  "@msgPairPending": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApproved": "已批准的用户（{count}）",
+  "@msgPairApproved": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApprove": "批准",
+  "msgPairRevoke": "撤销",
+  "msgPairRevokeTitle": "撤销访问权限",
+  "msgPairRevokeBody": "{name} 将失去访问权限，从下一条消息起不再被识别。",
+  "@msgPairRevokeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairJustNow": "刚刚",
+  "msgPairMinutesAgo": "{minutes} 分钟前",
+  "@msgPairMinutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairEmpty": "目前没有人等待批准，也还没有已批准的用户。",
+  "msgPairUnavailable": "此服务器不支持管理消息访问权限。",
+  "msgPairLoadFailed": "无法加载消息访问权限。",
+  "msgPairApprovedDone": "已批准 {name}。从对方的下一条消息起会自动识别。",
+  "@msgPairApprovedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokedDone": "已撤销 {name}",
+  "@msgPairRevokedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairApproveFailed": "批准 {name} 失败",
+  "@msgPairApproveFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokeFailed": "撤销 {name} 失败",
+  "@msgPairRevokeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairLockedOut": "批准失败次数过多：此平台已被锁定。请稍后再试。",
+  "msgPairVerifyApprove": "验证身份以批准访问",
+  "msgPairVerifyRevoke": "验证身份以撤销访问",
+  "srvCheckDoctor": "运行 doctor",
+  "srvCheckDoctorSub": "检查安装、配置和提供商",
+  "srvCheckAudit": "安全审计",
+  "srvCheckAuditSub": "扫描配置和技能中的风险设置",
+  "srvCheckRun": "运行",
+  "srvCheckRunning": "运行中…",
+  "srvCheckLog": "输出",
+  "srvCheckFinished": "已完成",
+  "srvCheckFinishedCode": "已结束，退出码 {code}",
+  "@srvCheckFinishedCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "srvCheckStillRunning": "仍在运行，已停止跟踪",
+  "srvCheckUnavailable": "此服务器无法运行它。",
+  "srvCheckStartFailed": "无法启动。",
+  "srvCheckLost": "无法跟踪运行过程。请重新运行以查看输出。"
 }

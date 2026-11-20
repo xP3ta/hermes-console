@@ -13,16 +13,25 @@ const _helper = 'lib/core/services/save_to_device.dart';
 /// `FilePicker.platform.saveFile`, however it is spaced.
 final _pluginSave = RegExp(r'FilePicker\s*\.\s*platform\s*\.\s*saveFile');
 
-/// The body of the function of [source] declared by [signature] (which
-/// ends before its body): from its `{` or `=>` to the matching end.
-String _body(String source, String signature) {
-  final start = source.indexOf(signature);
-  expect(start, isNonNegative, reason: signature);
-  expect(
-    source.indexOf(signature, start + 1),
-    -1,
-    reason: 'one declaration: $signature',
-  );
+/// The body of the one function of [source] declared by [signature]
+/// (which ends before its body): from its `{` or `=>` to the matching end.
+String _body(String source, String signature) =>
+    _bodies(source, signature, 1).single;
+
+/// The bodies of the [count] functions of [source] declared by
+/// [signature], no more and no fewer.
+List<String> _bodies(String source, String signature, int count) {
+  final bodies = <String>[];
+  var start = source.indexOf(signature);
+  while (start >= 0) {
+    bodies.add(_bodyAt(source, signature, start));
+    start = source.indexOf(signature, start + 1);
+  }
+  expect(bodies, hasLength(count), reason: 'declarations of $signature');
+  return bodies;
+}
+
+String _bodyAt(String source, String signature, int start) {
   final open = source.indexOf(RegExp(r'\{|=>'), start + signature.length);
   if (source.startsWith('=>', open)) {
     return source.substring(open, source.indexOf(';\n', open) + 1);
@@ -81,10 +90,17 @@ void main() {
         'saveBytesToDevice(',
       ),
     ]) {
-      final body = _body(File(path).readAsStringSync(), signature);
-      expect(body, isNot(contains('readAsBytes')), reason: path);
-      expect(body, isNot(contains('FilePicker')), reason: path);
-      expect(body, contains(call), reason: path);
+      // The room gateway saves in two places: files read by path, and the
+      // store-aware one that hands those to the first.
+      final declarations = path == 'lib/core/bots/ui/room/room_gateway.dart'
+          ? 2
+          : 1;
+      final source = File(path).readAsStringSync();
+      for (final body in _bodies(source, signature, declarations)) {
+        expect(body, isNot(contains('readAsBytes')), reason: path);
+        expect(body, isNot(contains('FilePicker')), reason: path);
+        expect(body, contains(call), reason: path);
+      }
     }
     // Bytes already in memory (artifacts, tasks) go straight to the
     // document, block by block: no plugin saveFile there either.

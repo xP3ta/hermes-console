@@ -75,6 +75,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secureValues = <String, String>{};
   var bulkReads = 0;
+  // Reads of a stored draft, by name. The list reads everything once (to
+  // index what is stored) and each draft by its name from then on.
+  var draftReads = 0;
   const secureChannel = MethodChannel(
     'plugins.it_nomads.com/flutter_secure_storage',
   );
@@ -83,6 +86,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     secureValues.clear();
     bulkReads = 0;
+    draftReads = 0;
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secureChannel, (call) async {
           final args = call.arguments is Map
@@ -93,6 +97,7 @@ void main() {
               secureValues[args['key'] as String] = args['value'] as String;
               return null;
             case 'read':
+              if ('${args['key']}'.startsWith('chat_draft_v3.')) draftReads++;
               return secureValues[args['key']];
             case 'readAll':
               bulkReads++;
@@ -203,11 +208,13 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
       expect(bulkReads, 0);
+      expect(draftReads, 0);
       expect(find.text('SYNTHETIC_LIST_DRAFT'), findsNothing);
       lock.unlock();
       await _pumpUntil(tester, find.text('SYNTHETIC_LIST_DRAFT'));
       expect(find.text('SYNTHETIC_LIST_DRAFT'), findsOneWidget);
       expect(bulkReads, 1);
+      expect(draftReads, 1);
       lock.lockNow();
       await tester.pump();
       expect(
@@ -216,7 +223,9 @@ void main() {
       );
       lock.unlock();
       await _pumpUntil(tester, find.text('SYNTHETIC_LIST_DRAFT'));
-      expect(bulkReads, 2);
+      // Renewed exactly once more, by name: no second read of everything.
+      expect(bulkReads, 1);
+      expect(draftReads, 2);
       expect(find.text('SYNTHETIC_LIST_DRAFT'), findsOneWidget);
       expect(jsonDecode(secureValues[key]!)['text'], 'SYNTHETIC_LIST_DRAFT');
       await tester.pumpWidget(const SizedBox.shrink());

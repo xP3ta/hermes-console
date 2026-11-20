@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -238,9 +240,14 @@ void main() {
   });
 
   testWidgets('an image opens in the image viewer', (tester) async {
+    // A real picture: bytes the decoder cannot read now give the viewer's
+    // «could not be opened» card instead.
     final files = FakeFiles(
       images: {
-        '/srv/p/a.png': Uint8List.fromList([1, 2, 3]),
+        '/srv/p/a.png': base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAY'
+          'AAjCB0C8AAAAASUVORK5CYII=',
+        ),
       },
     );
     await tester.pumpWidget(_host(_viewer(files, 'a.png')));

@@ -916,6 +916,7 @@
   "chaVoiceModeTooltip": "음성 대화 시작",
   "chaErrViewDetails": "상세 정보 보기",
   "chaErrHideDetails": "상세 정보 숨기기",
+  "chaErrSetUpProvider": "제공업체 설정",
   "chaModelServer": "서버 모델",
   "chaApproveAlways": "이 에이전트 작업 항상 허용",
   "chaApproveOnce": "에이전트 작업 한 번 승인",
@@ -1670,6 +1671,19 @@
   "crnStatusCompleted": "완료",
   "crnOpenFromConversation": "연결된 일정 열기",
   "crnRunNow": "지금 실행",
+  "crnStop": "중지",
+  "crnStopping": "중지하는 중…",
+  "crnRunStopped": "실행이 취소됨",
+  "crnRunFinishedFirst": "중지하기 전에 실행이 끝났습니다",
+  "crnNothingToStop": "진행 중인 실행이 없습니다",
+  "crnStopFailed": "실행을 중지할 수 없습니다: {error}",
+  "crnLastCancelled": "마지막 실행이 취소됨",
+  "crnLastCancelledReason": "마지막 실행이 취소됨: {reason}",
+  "crnCatchUpLabel": "놓친 실행",
+  "crnCatchUpHint": "Hermes가 실행되지 않는 동안 놓친 실행을 처리하는 방법.",
+  "crnCatchUpDefault": "기본값 사용",
+  "crnCatchUpRun": "돌아오면 한 번 실행",
+  "crnCatchUpSkip": "건너뛰기",
   "crnResume": "재개",
   "crnPause": "일시 중지",
   "crnNoRuns": "기록된 실행이 없습니다.",
@@ -4144,6 +4158,18 @@
   "embedSvgLabel": "SVG 이미지",
   "vwDiagramLabel": "다이어그램",
   "vwModelLabel": "3D 모델",
+  "vwModelFailed": "이 3D 모델을 표시할 수 없습니다.",
+  "vwPreviewFailed": "이 미리보기를 표시할 수 없습니다.",
+  "vwPreviewTimedOut": "표시하는 데 너무 오래 걸렸습니다.",
+  "vwModelExternal": "이 모델에는 함께 오지 않은 파일이 필요합니다: {files}",
+  "vwModelNotGltf": "이 파일은 glTF 모델이 아닙니다.",
+  "vwModelTooLarge": "이 모델은 {size}보다 커서 여기에서 표시할 수 없습니다. 다른 앱에서 열거나 공유할 수 있습니다.",
+  "vwPlaybackFailed": "여기에서 재생할 수 없습니다. 다른 앱에서 열거나 공유할 수 있습니다.",
+  "vwUnsupportedHere": "앱 안에서 볼 수 없는 파일 형식입니다.",
+  "vwModelNeedsWasm": "이 모델은 압축되어 있으며 이 휴대전화의 WebView에서 디코더를 실행할 수 없습니다. Android System WebView를 업데이트하면 해결됩니다.",
+  "vwModelNeedsWebGl": "이 휴대전화의 WebView에서는 3D를 표시할 수 없습니다(WebGL 2가 꺼져 있거나 없음).",
+  "vwPdfFailed": "이 PDF를 열 수 없습니다. 손상되었거나 보호되어 있을 수 있습니다.",
+  "embedLoadFailed": "{service}을(를) 불러올 수 없습니다.",
   "reactAdd": "반응 추가",
   "reactFailed": "반응을 저장하지 못했습니다",
   "reactSettingsTitle": "반응",
@@ -9522,5 +9548,102 @@
   "pb1215UnlistedChatsBody": "Hermes가 이 폴더에서 집계하지만 이 프로필의 일반 채팅이 아닙니다: 자동 실행(대화 › 자동화), 하위 에이전트 세션 또는 빈 세션입니다.",
   "subagentUiStatusNotActive": "{count, plural, other{비활성}}",
   "subagentUiResultUnavailable": "최종 결과를 사용할 수 없음",
-  "kluUsagePeriodDay": "24시간"
+  "kluUsagePeriodDay": "24시간",
+  "msgPairTitle": "메시지 접근 권한",
+  "msgPairSubtitle": "bot에게 메시지를 보낼 수 있는 사람을 승인하거나 해제해요",
+  "msgPairIntro": "bot에게 처음 메시지를 보낸 사람은 승인할 때까지 여기서 대기해요. 승인은 다음 메시지부터 적용돼요.",
+  "msgPairPending": "대기 중인 요청 ({count})",
+  "@msgPairPending": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApproved": "승인된 사용자 ({count})",
+  "@msgPairApproved": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApprove": "승인",
+  "msgPairRevoke": "해제",
+  "msgPairRevokeTitle": "접근 권한 해제",
+  "msgPairRevokeBody": "{name}님은 접근 권한을 잃고 다음 메시지부터 인식되지 않아요.",
+  "@msgPairRevokeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairJustNow": "방금",
+  "msgPairMinutesAgo": "{minutes}분 전",
+  "@msgPairMinutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairEmpty": "승인을 기다리는 사람도, 승인된 사람도 아직 없어요.",
+  "msgPairUnavailable": "이 서버는 메시지 접근 권한 관리를 지원하지 않아요.",
+  "msgPairLoadFailed": "메시지 접근 권한을 불러오지 못했어요.",
+  "msgPairApprovedDone": "{name}님을 승인했어요. 다음 메시지부터 자동으로 인식돼요.",
+  "@msgPairApprovedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokedDone": "{name}님의 권한을 해제했어요",
+  "@msgPairRevokedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairApproveFailed": "{name}님을 승인하지 못했어요",
+  "@msgPairApproveFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokeFailed": "{name}님의 권한을 해제하지 못했어요",
+  "@msgPairRevokeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairLockedOut": "승인 실패가 너무 많아 이 플랫폼이 잠겼어요. 나중에 다시 시도해 주세요.",
+  "msgPairVerifyApprove": "본인 확인 후 접근 승인",
+  "msgPairVerifyRevoke": "본인 확인 후 접근 해제",
+  "srvCheckDoctor": "doctor 실행",
+  "srvCheckDoctorSub": "설치, 설정, 제공업체 상태를 점검해요",
+  "srvCheckAudit": "보안 감사",
+  "srvCheckAuditSub": "설정과 스킬에서 위험한 설정을 찾아요",
+  "srvCheckRun": "실행",
+  "srvCheckRunning": "실행 중…",
+  "srvCheckLog": "출력",
+  "srvCheckFinished": "완료",
+  "srvCheckFinishedCode": "종료 코드 {code}(으)로 끝났어요",
+  "@srvCheckFinishedCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "srvCheckStillRunning": "아직 실행 중이에요. 추적을 중단했어요",
+  "srvCheckUnavailable": "이 서버에서는 실행할 수 없어요.",
+  "srvCheckStartFailed": "시작하지 못했어요.",
+  "srvCheckLost": "실행을 추적하지 못했어요. 다시 실행하면 출력을 볼 수 있어요."
 }

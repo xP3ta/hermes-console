@@ -24,6 +24,7 @@ import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
+import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/attachment_source_sheet.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
@@ -151,6 +152,60 @@ final class FakeActions implements RoomAttachmentActions {
     return ArtifactSaveResult.saved;
   }
 }
+
+/// Actions that also read the room's own file store, as Mission Control
+/// builds them when the server lists `groups.attachment.download`.
+final class _StoreActions extends FakeActions
+    implements RoomStoredAttachmentActions {
+  /// What the next fetches throw, in order.
+  final List<Object> failures = [];
+
+  @override
+  Future<File> fetch(RoomAttachmentRef ref) async {
+    final stored = ref.stored;
+    calls.add(
+      stored == null
+          ? 'fetch:${ref.name}'
+          : 'fetch:${stored.eventId}/${stored.attachment.attachmentId}',
+    );
+    if (failures.isNotEmpty) throw failures.removeAt(0);
+    return File('/tmp/${ref.name}');
+  }
+
+  /// The server's words, read as the real actions read them.
+  @override
+  String? failureMessage(Object error) => StoreRoomAttachmentActions(
+    files: null,
+    scope: 'scope',
+    roomId: roomId,
+    download: (_, _) async => Uint8List(0),
+  ).failureMessage(error);
+}
+
+const _storedId = 'att_0123456789abcdef0123456789abcdef';
+
+/// A user message whose `attachments` manifest lists one stored file.
+Map<String, dynamic> _withStoredFile(
+  Map<String, dynamic> event, {
+  String kind = 'pdf',
+  String name = 'plan.pdf',
+  String mime = 'application/pdf',
+  int size = 2048,
+}) => {
+  ...event,
+  'payload': {
+    ...(event['payload'] as Map<String, dynamic>),
+    'attachments': [
+      {
+        'attachment_id': _storedId,
+        'kind': kind,
+        'name': name,
+        'size': size,
+        'mime': mime,
+      },
+    ],
+  },
+};
 
 /// Actions with the private-cache capabilities of the Dashboard ones.
 final class _PrefetchActions extends FakeActions
@@ -1019,6 +1074,180 @@ void main() {
       'open:report.pdf',
       'share:report.pdf',
     ]);
+  });
+
+  group('files of the room store (groups.attachment.download)', () {
+    const path = 'room-store:evt-files/$_storedId';
+    Finder key(String name) => find.byKey(ValueKey('room-attachment-$name'));
+
+    testWidgets('[RED] open, download and share read the file by its '
+        "message's durable id and attachment id", (tester) async {
+      final seq = EventSeq();
+      final actions = _StoreActions();
+      await _pump(
+        tester,
+        events: [_withStoredFile(seq.user('Here', id: 'evt-files'))],
+        actions: actions,
+      );
+      expect(find.text('Open it on Hermes Desktop'), findsNothing);
+      expect(find.text('plan.pdf'), findsOneWidget);
+
+      await tester.tap(key('download-$path'));
+      await tester.pumpAndSettle();
+      await tester.tap(key('open-$path'));
+      await tester.pumpAndSettle();
+      await tester.tap(key('share-$path'));
+      await tester.pumpAndSettle();
+
+      expect(actions.calls, [
+        'fetch:evt-files/$_storedId',
+        'save:plan.pdf',
+        'open:plan.pdf',
+        'share:plan.pdf',
+      ]);
+    });
+
+    testWidgets("[RED] a refused download shows the server's words and "
+        'Retry; Retry reads it again and opens it', (tester) async {
+      final seq = EventSeq();
+      final actions = _StoreActions()
+        ..failures.add(
+          const TuiGatewayRpcError(
+            'groups.attachment.download',
+            'attachment has expired',
+            code: 4126,
+          ),
+        );
+      await _pump(
+        tester,
+        events: [_withStoredFile(seq.user('Here', id: 'evt-files'))],
+        actions: actions,
+      );
+
+      await tester.tap(key('open-$path'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Could not get the file: attachment has expired'),
+        findsOneWidget,
+      );
+      expect(actions.calls, ['fetch:evt-files/$_storedId']);
+
+      await tester.tap(key('retry-$path'));
+      await tester.pumpAndSettle();
+      expect(key('failed-$path'), findsNothing);
+      expect(actions.calls, [
+        'fetch:evt-files/$_storedId',
+        'fetch:evt-files/$_storedId',
+        'open:plan.pdf',
+      ]);
+    });
+
+    testWidgets('[RED] a file of another size than its manifest is not '
+        "passed off as the server's words; Retry is offered", (tester) async {
+      final seq = EventSeq();
+      final actions = _StoreActions()
+        ..failures.add(
+          const GroupInvalidResponseError(
+            'groups.attachment.download',
+            'Hermes returned a file that does not match its manifest',
+          ),
+        );
+      await _pump(
+        tester,
+        events: [_withStoredFile(seq.user('Here', id: 'evt-files'))],
+        actions: actions,
+      );
+
+      await tester.tap(key('share-$path'));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not get the file'), findsOneWidget);
+      expect(key('retry-$path'), findsOneWidget);
+      expect(actions.calls, ['fetch:evt-files/$_storedId']);
+    });
+
+    testWidgets('[RED] a stored image previews without a tap; a failed '
+        'preview shows Retry, never a blank', (tester) async {
+      final seq = EventSeq();
+      final actions = _StoreActions()
+        ..failures.add(
+          const TuiGatewayRpcError(
+            'groups.attachment.download',
+            'Group Chat is unavailable to viewers',
+            code: 4126,
+          ),
+        );
+      await _pump(
+        tester,
+        events: [
+          _withStoredFile(
+            seq.user('Look', id: 'evt-files'),
+            kind: 'image',
+            name: 'photo.png',
+            mime: 'image/png',
+          ),
+        ],
+        actions: actions,
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(actions.calls, ['fetch:evt-files/$_storedId']);
+      expect(
+        find.text(
+          'Could not get the file: Group Chat is unavailable to viewers',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(key('retry-$path'));
+      await tester.pump();
+      await tester.pump();
+      expect(actions.calls, [
+        'fetch:evt-files/$_storedId',
+        'fetch:evt-files/$_storedId',
+      ]);
+      expect(key('failed-$path'), findsNothing);
+      expect(key('media-$path'), findsOneWidget);
+    });
+
+    testWidgets('[RED] a stored image over the preview cap waits for a tap', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final actions = _StoreActions();
+      await _pump(
+        tester,
+        events: [
+          _withStoredFile(
+            seq.user('Look', id: 'evt-files'),
+            kind: 'image',
+            name: 'scan.png',
+            mime: 'image/png',
+            size: roomStoredImagePreviewMaxBytes + 1,
+          ),
+        ],
+        actions: actions,
+      );
+      await tester.pump();
+      // A card, offered to open, but nothing read until it is tapped.
+      expect(key('open-$path'), findsOneWidget);
+      expect(actions.calls, isEmpty);
+      expect(key('skeleton-$path'), findsNothing);
+    });
+
+    testWidgets('[CONTROL] without store actions the file stays the «on '
+        'Desktop» chip and nothing is fetched', (tester) async {
+      final seq = EventSeq();
+      final actions = FakeActions();
+      await _pump(
+        tester,
+        events: [_withStoredFile(seq.user('Here', id: 'evt-files'))],
+        actions: actions,
+      );
+      expect(find.text('Open it on Hermes Desktop'), findsOneWidget);
+      expect(key('open-$path'), findsNothing);
+      expect(actions.calls, isEmpty);
+    });
   });
 
   testWidgets('room images are prefetched before their rows are built', (

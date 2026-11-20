@@ -916,6 +916,7 @@
   "chaVoiceModeTooltip": "Sprachunterhaltung starten",
   "chaErrViewDetails": "Details anzeigen",
   "chaErrHideDetails": "Details verbergen",
+  "chaErrSetUpProvider": "Anbieter einrichten",
   "chaModelServer": "Servermodell",
   "chaApproveAlways": "Diese Agentenaktion immer erlauben",
   "chaApproveOnce": "Eine Agentenaktion genehmigen",
@@ -1670,6 +1671,19 @@
   "crnStatusCompleted": "abgeschlossen",
   "crnOpenFromConversation": "Verknüpften Zeitplan öffnen",
   "crnRunNow": "Jetzt ausführen",
+  "crnStop": "Stoppen",
+  "crnStopping": "Wird gestoppt…",
+  "crnRunStopped": "Lauf abgebrochen",
+  "crnRunFinishedFirst": "Lauf war vor dem Stoppen fertig",
+  "crnNothingToStop": "Kein Lauf aktiv",
+  "crnStopFailed": "Lauf konnte nicht gestoppt werden: {error}",
+  "crnLastCancelled": "Letzter Lauf abgebrochen",
+  "crnLastCancelledReason": "Letzter Lauf abgebrochen: {reason}",
+  "crnCatchUpLabel": "Verpasste Läufe",
+  "crnCatchUpHint": "Was mit Läufen geschieht, die verpasst wurden, während Hermes nicht lief.",
+  "crnCatchUpDefault": "Standard verwenden",
+  "crnCatchUpRun": "Einmal nachholen",
+  "crnCatchUpSkip": "Überspringen",
   "crnResume": "Fortsetzen",
   "crnPause": "Pausieren",
   "crnNoRuns": "Keine protokollierten Ausführungen.",
@@ -4144,6 +4158,18 @@
   "embedSvgLabel": "SVG-Bild",
   "vwDiagramLabel": "Diagramm",
   "vwModelLabel": "3D-Modell",
+  "vwModelFailed": "Dieses 3D-Modell konnte nicht dargestellt werden.",
+  "vwPreviewFailed": "Diese Vorschau konnte nicht dargestellt werden.",
+  "vwPreviewTimedOut": "Die Darstellung hat zu lange gedauert.",
+  "vwModelExternal": "Dieses Modell braucht Dateien, die nicht mitgeliefert wurden: {files}.",
+  "vwModelNotGltf": "Diese Datei ist kein glTF-Modell.",
+  "vwModelTooLarge": "Dieses Modell ist größer als {size} und zu groß, um es hier darzustellen. Du kannst es mit einer anderen App öffnen oder teilen.",
+  "vwPlaybackFailed": "Das konnte hier nicht abgespielt werden. Du kannst es mit einer anderen App öffnen oder teilen.",
+  "vwUnsupportedHere": "Dieser Dateityp kann in der App nicht angezeigt werden.",
+  "vwModelNeedsWasm": "Dieses Modell ist komprimiert, und das WebView dieses Telefons kann den Decoder nicht ausführen. Ein Update von Android System WebView behebt das.",
+  "vwModelNeedsWebGl": "Das WebView dieses Telefons kann kein 3D darstellen (WebGL 2 ist aus oder fehlt).",
+  "vwPdfFailed": "Dieses PDF konnte nicht geöffnet werden. Es ist vielleicht beschädigt oder geschützt.",
+  "embedLoadFailed": "{service} konnte nicht geladen werden.",
   "reactAdd": "Reagieren",
   "reactFailed": "Die Reaktion konnte nicht gespeichert werden",
   "reactSettingsTitle": "Reaktionen",
@@ -9522,5 +9548,102 @@
   "pb1215UnlistedChatsBody": "Hermes zählt sie in diesem Ordner, aber es sind keine normalen Chats dieses Profils: automatische Ausführungen (unter Unterhaltungen › Automatisierung), Sitzungen von Unteragenten oder leere.",
   "subagentUiStatusNotActive": "{count, plural, other{Nicht aktiv}}",
   "subagentUiResultUnavailable": "Endergebnis nicht verfügbar",
-  "kluUsagePeriodDay": "24 Std."
+  "kluUsagePeriodDay": "24 Std.",
+  "msgPairTitle": "Messaging-Zugriff",
+  "msgPairSubtitle": "Lege fest, wer dem Bot schreiben darf",
+  "msgPairIntro": "Wer einem Bot zum ersten Mal schreibt, wartet hier, bis du die Person freigibst. Die Freigabe gilt ab der nächsten Nachricht.",
+  "msgPairPending": "Offene Anfragen ({count})",
+  "@msgPairPending": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApproved": "Freigegebene Nutzer ({count})",
+  "@msgPairApproved": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApprove": "Freigeben",
+  "msgPairRevoke": "Widerrufen",
+  "msgPairRevokeTitle": "Zugriff widerrufen",
+  "msgPairRevokeBody": "{name} verliert den Zugriff und wird ab der nächsten Nachricht nicht mehr erkannt.",
+  "@msgPairRevokeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairJustNow": "gerade eben",
+  "msgPairMinutesAgo": "vor {minutes} Min.",
+  "@msgPairMinutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairEmpty": "Niemand wartet auf Freigabe und es wurde noch niemand freigegeben.",
+  "msgPairUnavailable": "Dieser Server unterstützt keine Verwaltung des Messaging-Zugriffs.",
+  "msgPairLoadFailed": "Messaging-Zugriff konnte nicht geladen werden.",
+  "msgPairApprovedDone": "{name} freigegeben. Die Person wird ab der nächsten Nachricht automatisch erkannt.",
+  "@msgPairApprovedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokedDone": "{name} widerrufen",
+  "@msgPairRevokedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairApproveFailed": "{name} konnte nicht freigegeben werden",
+  "@msgPairApproveFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokeFailed": "Zugriff von {name} konnte nicht widerrufen werden",
+  "@msgPairRevokeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairLockedOut": "Zu viele fehlgeschlagene Freigaben: Diese Plattform ist gesperrt. Versuche es später erneut.",
+  "msgPairVerifyApprove": "Bestätigen, um den Zugriff freizugeben",
+  "msgPairVerifyRevoke": "Bestätigen, um den Zugriff zu widerrufen",
+  "srvCheckDoctor": "Doctor ausführen",
+  "srvCheckDoctorSub": "Prüft Installation, Konfiguration und Anbieter",
+  "srvCheckAudit": "Sicherheitsprüfung",
+  "srvCheckAuditSub": "Sucht in Konfiguration und Skills nach riskanten Einstellungen",
+  "srvCheckRun": "Ausführen",
+  "srvCheckRunning": "Läuft…",
+  "srvCheckLog": "Ausgabe",
+  "srvCheckFinished": "Abgeschlossen",
+  "srvCheckFinishedCode": "Beendet mit Exit-Code {code}",
+  "@srvCheckFinishedCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "srvCheckStillRunning": "Läuft noch; wird nicht mehr verfolgt",
+  "srvCheckUnavailable": "Dieser Server kann das nicht ausführen.",
+  "srvCheckStartFailed": "Start nicht möglich.",
+  "srvCheckLost": "Der Lauf konnte nicht verfolgt werden. Führe ihn erneut aus, um die Ausgabe zu sehen."
 }

@@ -148,7 +148,7 @@ class SharedGatewayPool {
     }
     entry.linger?.cancel();
     entry.linger = null;
-    entry.refs++;
+    entry.client.poolLeases = ++entry.refs;
     return SharedGatewayLease._(this, key, entry);
   }
 
@@ -163,12 +163,12 @@ class SharedGatewayPool {
     }
     entry.linger?.cancel();
     entry.linger = null;
-    entry.refs++;
+    entry.client.poolLeases = ++entry.refs;
     return SharedGatewayLease._(this, key, entry);
   }
 
   void _release(String key, _PoolEntry entry) {
-    entry.refs--;
+    entry.client.poolLeases = --entry.refs;
     if (entry.refs > 0) return;
     if (!identical(_entries[key], entry)) {
       unawaited(entry.client.close());

@@ -162,17 +162,23 @@ class _SlashGateway
     String? requestId,
   }) async {}
 
+  Map<String, Object?> catalogJson = const {
+    'pairs': [
+      ['/goal', 'Run a goal'],
+    ],
+  };
+
   @override
   Future<DesktopCommandCatalog> commandsCatalog() async =>
-      DesktopCommandCatalog.fromJson(const {
-        'pairs': [
-          ['/goal', 'Run a goal'],
-        ],
-      });
+      DesktopCommandCatalog.fromJson(catalogJson);
+
+  /// Every text `complete.slash` was asked to complete.
+  final List<String> slashTexts = [];
 
   @override
   Future<SlashCompletionBatch> completeSlash(String text) async {
     slashCompletionCalls++;
+    slashTexts.add(text);
     if (slashGates[text] case final gate?) return gate.future;
     if (slashResponder case final respond?) return respond(text);
     return slashCompletion?.future ??
@@ -657,6 +663,75 @@ void main() {
     });
   });
 
+  group('slash argument stage (Desktop argument_mode)', () {
+    final catalog = DesktopCommandCatalog.fromJson(const {
+      'commands': {
+        '/personality': {'argument_mode': 'options', 'desktop': null},
+        '/goal': {'argument_mode': 'mixed', 'desktop': null},
+        '/title': {'argument_mode': 'text', 'desktop': null},
+        '/usage': {'argument_mode': null, 'desktop': null},
+      },
+      'canon': {'/persona': '/personality'},
+    });
+
+    test('reads argument_mode, aliases included', () {
+      expect(catalog.argumentModeOf('personality'), 'options');
+      expect(catalog.argumentModeOf('persona'), 'options');
+      expect(catalog.argumentModeOf('goal'), 'mixed');
+      expect(catalog.argumentModeOf('title'), 'text');
+      expect(catalog.argumentModeOf('usage'), isNull);
+    });
+
+    test('only options and mixed keep the palette past the name', () {
+      expect(slashArgumentPaletteApplies('/personality al', catalog), isTrue);
+      expect(slashArgumentPaletteApplies('/goal ', catalog), isTrue);
+      expect(slashArgumentPaletteApplies('/title Roma', catalog), isFalse);
+      expect(slashArgumentPaletteApplies('/usage x', catalog), isFalse);
+      expect(slashArgumentPaletteApplies('/personality', catalog), isFalse);
+      expect(
+        slashArgumentPaletteApplies('/personality a\nb', catalog),
+        isFalse,
+      );
+      expect(slashArgumentPaletteApplies('/personality al', null), isFalse);
+      // Console runs its own commands: the server never completes them.
+      final model = DesktopCommandCatalog.fromJson(const {
+        'commands': {
+          '/model': {'argument_mode': 'options'},
+        },
+      });
+      expect(slashArgumentPaletteApplies('/model gpt', model), isFalse);
+    });
+
+    test('an argument answer inserts the typed command and the argument', () {
+      const input = '/personality alic';
+      final rows = slashArgumentSuggestions(
+        input: input,
+        completion: SlashCompletionBatch.fromJson(const {
+          'replace_from': 13,
+          'items': [
+            {'text': 'alice', 'display': 'alice', 'meta': 'Alice persona'},
+            {'text': 'alice', 'display': 'alice', 'meta': 'Alice persona'},
+          ],
+        }, input: input),
+      );
+      expect(rows.map((row) => row.insertText), ['/personality alice']);
+      expect(rows.single.optionLabel, 'alice');
+      expect(rows.single.description, 'Alice persona');
+      expect(rows.single.takesArg, isFalse);
+      // A command-stage answer (replace_from 1) is not an argument.
+      final commands = slashArgumentSuggestions(
+        input: input,
+        completion: SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/personality'},
+          ],
+        }, input: input),
+      );
+      expect(commands, isEmpty);
+    });
+  });
+
   group('parseSlashCommand', () {
     test('comando conocido sin argumento', () {
       final p = parseSlashCommand('/new');
@@ -1106,6 +1181,76 @@ void main() {
         find.byKey(const ValueKey('chat-slash-command-goal')),
         findsOneWidget,
       );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an options command completes its argument and a text one '
+        'asks for nothing (Desktop argument_mode)', (tester) async {
+      final gateway = _SlashGateway()
+        ..catalogJson = const {
+          'pairs': [
+            ['/personality', 'Set a predefined personality'],
+            ['/title', 'Set a title for the current session'],
+          ],
+          'commands': {
+            '/personality': {'argument_mode': 'options', 'desktop': null},
+            '/title': {'argument_mode': 'text', 'desktop': null},
+          },
+        }
+        ..slashResponder = (text) => SlashCompletionBatch.fromJson(
+          text.startsWith('/personality ')
+              // tui_gateway/command_discovery.py slash_completions: an
+              // argument stage answers the argument alone.
+              ? const {
+                  'replace_from': 13,
+                  'items': [
+                    {
+                      'text': 'alice',
+                      'display': 'alice',
+                      'meta': 'Alice persona',
+                    },
+                    {'text': 'alfred', 'display': 'alfred', 'meta': 'Butler'},
+                  ],
+                }
+              : const {'replace_from': 1, 'items': <Object>[]},
+          input: text,
+        );
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/');
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, '/personality al');
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(gateway.slashTexts, contains('/personality al'));
+      final alice = find.byKey(
+        const ValueKey('chat-slash-option-/personality alice'),
+      );
+      expect(alice, findsOneWidget);
+      expect(find.text('Alice persona'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-slash-option-/personality alfred')),
+        findsOneWidget,
+      );
+
+      await tester.tap(alice);
+      await tester.pump();
+      final field = tester.widget<TextField>(composer);
+      expect(field.controller?.text, '/personality alice ');
+      expect(field.focusNode?.hasFocus, isTrue);
+      expect(gateway.slashCalls, isEmpty);
+      expect(gateway.submissions, isEmpty);
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Free text: nothing is asked for and nothing is offered.
+      final asked = gateway.slashTexts.length;
+      await tester.enterText(composer, '/title Viaje a Roma');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.slashTexts, hasLength(asked));
+      expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -2205,6 +2350,80 @@ void main() {
       final palette = find.byKey(const ValueKey('chat-slash-palette'));
       expect(palette, findsOneWidget);
       expect(tester.getSize(palette).width, lessThanOrEqualTo(320));
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('what the agent says outside the turn', () {
+    testWidgets('a notice keeps its key: the same key replaces it, and a '
+        'sticky one stays until Hermes clears that key', (tester) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+
+      // agent/credits_tracker.py, as notification.show sends it.
+      gateway.emit('notification.show', const {
+        'text': 'Access paused until you top up',
+        'level': 'error',
+        'kind': 'sticky',
+        'ttl_ms': null,
+        'key': 'credits.depleted',
+        'id': 'credits.depleted',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final paused = find.text('Access paused until you top up');
+      expect(paused, findsOneWidget);
+
+      // Sticky: still there long after a timed notice would have gone.
+      await tester.pump(const Duration(seconds: 12));
+      expect(paused, findsOneWidget);
+
+      // Another key's clear leaves it.
+      gateway.emit('notification.clear', const {'key': 'credits.usage'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(paused, findsOneWidget);
+
+      // The same key again: one notice, with the new words.
+      gateway.emit('notification.show', const {
+        'text': 'Access still paused',
+        'level': 'error',
+        'kind': 'sticky',
+        'ttl_ms': null,
+        'key': 'credits.depleted',
+        'id': 'credits.depleted',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final still = find.text('Access still paused');
+      expect(still, findsOneWidget);
+      expect(paused, findsNothing);
+
+      // Its own clear retires it.
+      gateway.emit('notification.clear', const {'key': 'credits.depleted'});
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(still, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a review.summary is a row of the chat, without its glyph', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+
+      gateway.emit('review.summary', const {
+        'text': '💾 Self-improvement review: Memory updated',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.text('Self-improvement review: Memory updated'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('💾'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   });

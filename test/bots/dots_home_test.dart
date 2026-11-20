@@ -479,6 +479,32 @@ void main() {
       );
     });
 
+    testWidgets('a room card shows its age next to the title (updated_at, as '
+        'a Desktop row); a room without a time shows none', (tester) async {
+      await _phone(tester);
+      await tester.pumpWidget(
+        _app(
+          _view(
+            _busyTeam(),
+            rooms: [_room('r1', atSeconds: 1790000000), _room('r2')],
+          ),
+        ),
+      );
+      final aged = find.byKey(
+        ValueKey('roster-room-age-${_room('r1').publicKey}'),
+        skipOffstage: false,
+      );
+      expect(aged, findsOneWidget);
+      expect(tester.widget<Text>(aged).data, isNotEmpty);
+      expect(
+        find.byKey(
+          ValueKey('roster-room-age-${_room('r2').publicKey}'),
+          skipOffstage: false,
+        ),
+        findsNothing,
+      );
+    });
+
     // Owner after QA 9493: "the pinned bots are too big, it feels dirty".
     // Pinned is one calm row on the grid's rhythm: no cards, faces only a
     // little larger than the grid's, a status line only when it matters.

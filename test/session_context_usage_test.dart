@@ -121,6 +121,63 @@ void main() {
     expect(metrics.observedFirstTokenLatencyMs, 3543);
   });
 
+  test('the cache hit rate is the one Hermes sends', () {
+    // tui_gateway/server.py _get_usage, as session.info and the live
+    // session.usage tick carry it.
+    const live = {
+      'calls': 3,
+      'input': 1200,
+      'output': 300,
+      'total': 1500,
+      'context_used': 5000,
+      'context_max': 10000,
+      'context_percent': 50,
+      'cache_hit_pct': 87,
+    };
+    final usage = DesktopUsageStats.fromJson(live);
+    expect(usage.cacheHitPercent, 87);
+    expect(usage.raw.containsKey('cache_hit_pct'), isFalse);
+    final metrics = SessionContextMetrics.fromUsage(usage);
+    expect(metrics.cacheHitPercent, 87);
+    // A tick that only moves the rate is a change the chat must repaint.
+    final before = SessionContextMetrics.fromUsage(
+      DesktopUsageStats.fromJson({...live, 'cache_hit_pct': 80}),
+    );
+    expect(metrics, isNot(before));
+    expect(
+      DesktopUsageStats.fromJson({...live, 'cache_hit_pct': 80}),
+      isNot(usage),
+    );
+    // Not a rate: absent, or out of range.
+    expect(
+      DesktopUsageStats.fromJson(const {'calls': 1}).cacheHitPercent,
+      isNull,
+    );
+    expect(
+      DesktopUsageStats.fromJson(const {'cache_hit_pct': 140}).cacheHitPercent,
+      isNull,
+    );
+  });
+
+  testWidgets('the cache tile says Hermes\' own hit rate when it has one', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const _TestApp(
+        child: SessionContextPerformance(
+          metrics: SessionContextMetrics(
+            inputTokens: 100,
+            cacheReadTokens: 25,
+            cacheHitPercent: 87,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('87 %'), findsOneWidget);
+    expect(find.text('20.0 %'), findsNothing);
+  });
+
   testWidgets('muestra TTFT local y desconocidos sin inventar ceros', (
     tester,
   ) async {

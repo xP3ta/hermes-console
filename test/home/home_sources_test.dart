@@ -1,3 +1,4 @@
+import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/state/attention.dart';
 import 'package:hermes_android/core/home/board/home_board_data.dart';
@@ -115,6 +116,85 @@ void main() {
       expect(ref.room.roomId, 'room-devs');
     });
 
+    test('with readSince a room offers an approval only when its driver '
+        'status was read since then (list alone carries none)', () {
+      final groups = _groups();
+      final since = DateTime(2026, 11, 19, 12);
+      HostedGroupsSnapshot readAt(Map<String, DateTime> at) =>
+          HostedGroupsSnapshot(
+            capabilities: groups.capabilities,
+            rooms: groups.rooms,
+            logs: groups.logs,
+            driverStatuses: groups.driverStatuses,
+            driverReadAt: at,
+          );
+      List<HomeApprovalItem> approvals(HostedGroupsSnapshot g) =>
+          homeRoomApprovals(
+            g,
+            AttentionSummary.fromSnapshot(g),
+            readSince: since,
+          );
+      // Read before the cut-off: may be answered already.
+      expect(
+        approvals(
+          readAt({'room-devs': since.subtract(const Duration(minutes: 1))}),
+        ),
+        isEmpty,
+      );
+      // Read time unknown: no approval either.
+      expect(approvals(readAt(const {})), isEmpty);
+      // Read after the cut-off (or exactly at it): offered.
+      expect(
+        approvals(
+          readAt({'room-devs': since.add(const Duration(minutes: 1))}),
+        ).single.roomKey,
+        'room-devs',
+      );
+      expect(approvals(readAt({'room-devs': since})), hasLength(1));
+      // Without readSince the read time is not consulted.
+      expect(
+        homeRoomApprovals(groups, AttentionSummary.fromSnapshot(groups)),
+        hasLength(1),
+      );
+    });
+
+    test('room approvals need a rooms read that answered and is recent', () {
+      final at = DateTime(2026, 11, 19, 12);
+      MissionBackendSnapshot snap(MissionCapabilityState rooms) =>
+          MissionBackendSnapshot(
+            hostedGroups: _groups(),
+            hostedGroupsCapability: rooms,
+            loadedAt: at,
+          );
+      const maxAge = Duration(minutes: 5);
+      final soon = at.add(const Duration(minutes: 1));
+      expect(
+        homeRoomApprovalsCurrent(
+          snap(MissionCapabilityState.available),
+          soon,
+          maxAge,
+        ),
+        isTrue,
+      );
+      // Rooms kept after a failed read: new loadedAt, old approvals.
+      expect(
+        homeRoomApprovalsCurrent(
+          snap(MissionCapabilityState.unavailable),
+          soon,
+          maxAge,
+        ),
+        isFalse,
+      );
+      expect(
+        homeRoomApprovalsCurrent(
+          snap(MissionCapabilityState.available),
+          at.add(const Duration(minutes: 6)),
+          maxAge,
+        ),
+        isFalse,
+      );
+    });
+
     test('member messages after the seen mark count as news', () {
       final news = homeRoomNews(
         _groups(),
@@ -142,7 +222,7 @@ void main() {
         ).single.count,
       );
       final texts = [
-        for (final log in groups.logs)
+        for (final log in groups.logs.nonNulls)
           for (final e in log.events)
             if ((e.kind == 'message.member' || e.kind == 'message.user') &&
                 (e.publicText?.trim().isNotEmpty ?? false))

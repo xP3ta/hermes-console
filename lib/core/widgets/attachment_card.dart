@@ -24,6 +24,7 @@ import '../theme/app_theme.dart';
 import '../theme/theme_contrast.dart';
 import '../design/tokens.dart' show HermesRadius;
 import '../theme/motion.dart' show HermesMotion;
+import 'artifact_viewer/pdf_document_view.dart' show kPdfRenderDeadline;
 import 'artifact_viewer/web_preview.dart' show kModelMaxBytes;
 import 'chat/embeds/document_previews.dart';
 import 'generated_image_card.dart';
@@ -689,6 +690,10 @@ class GeneratedFileCard extends StatelessWidget {
   final int receivedBytes;
   final int? totalBytes;
   final String? errorLabel;
+
+  /// False for a failure a second try cannot change (the file is gone, it
+  /// is refused, or it breaks a size or type rule): no Retry is offered.
+  final bool canRetry;
   final VoidCallback onDownload;
   final VoidCallback? onCancel;
   final VoidCallback? onOpen;
@@ -709,6 +714,7 @@ class GeneratedFileCard extends StatelessWidget {
     this.receivedBytes = 0,
     this.totalBytes,
     this.errorLabel,
+    this.canRetry = true,
     this.onOpen,
     this.onShare,
     this.onSave,
@@ -779,7 +785,7 @@ class GeneratedFileCard extends StatelessWidget {
               icon: const Icon(HIcons.close_rounded),
               label: Text(strings.commonCancel),
             )
-          else if (status == GeneratedFileStatus.error ||
+          else if ((status == GeneratedFileStatus.error && canRetry) ||
               status == GeneratedFileStatus.offline)
             TextButton.icon(
               onPressed: onDownload,
@@ -844,6 +850,18 @@ typedef GeneratedMediaOpenCallback =
       VoidCallback onShare,
       VoidCallback onSave,
     );
+
+/// Whether downloading the same file again can end differently. A file the
+/// server no longer has (404, 410) or refuses (403), or one that breaks a
+/// size or type rule (the download's FormatException), fails the same way
+/// every time: Desktop offers no retry for those either, only a note
+/// (markdown-text.tsx, OpenMediaFailedNote).
+bool _mayRetryGeneratedMedia(Object error) {
+  if (error is DashboardHttpException) {
+    return !const {403, 404, 410}.contains(error.statusCode);
+  }
+  return error is! FormatException;
+}
 
 bool _isTransientGeneratedMediaError(Object error) {
   if (error is SocketException ||
@@ -989,6 +1007,7 @@ class _GeneratedMediaAttachmentCardState
   int _receivedBytes = 0;
   int? _totalBytes;
   String? _errorLabel;
+  bool _canRetry = true;
   bool _cancelled = false;
   bool _autoLimitExceeded = false;
   bool _visible = false;
@@ -1211,6 +1230,7 @@ class _GeneratedMediaAttachmentCardState
       _receivedBytes = 0;
       _totalBytes = widget.reference.sizeBytes;
       _errorLabel = null;
+      _canRetry = true;
       _status = GeneratedFileStatus.downloading;
       _file = null;
       _text = null;
@@ -1292,6 +1312,7 @@ class _GeneratedMediaAttachmentCardState
         if (!mounted || generation != _generation || _cancelled) return;
         setState(() {
           _errorLabel = Strings.of(context).genMediaDenied;
+          _canRetry = false;
           _status = GeneratedFileStatus.error;
         });
         return;
@@ -1328,6 +1349,7 @@ class _GeneratedMediaAttachmentCardState
       }
       setState(() {
         _errorLabel = widget.errorLabelBuilder?.call(context, error);
+        _canRetry = _mayRetryGeneratedMedia(error);
         _status = error is SocketException
             ? GeneratedFileStatus.offline
             : GeneratedFileStatus.error;
@@ -1648,7 +1670,12 @@ class _GeneratedMediaAttachmentCardState
 
   @override
   Widget build(BuildContext context) {
-    final card = KeyedSubtree(key: _contentKey, child: _buildCard(context));
+    // The card is the file, not the words of the reply: selecting or
+    // copying the message leaves its name, size and button labels out
+    // (they showed highlighted and were copied with it).
+    final card = SelectionContainer.disabled(
+      child: KeyedSubtree(key: _contentKey, child: _buildCard(context)),
+    );
     // F5: the download card giving
     // way to the file's own card (a PDF page, a player, a text or HTML
     // preview, the actions of a finished file) eases instead of jumping.
@@ -1726,6 +1753,7 @@ class _GeneratedMediaAttachmentCardState
       receivedBytes: _receivedBytes,
       totalBytes: _totalBytes,
       errorLabel: _errorLabel,
+      canRetry: _canRetry,
       htmlPreview: widget.reference.htmlPreview,
       onDownload: () => _start(automatic: false),
       onCancel: _cancel,
@@ -2046,6 +2074,8 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
     try {
       final digest = (await sha256.bind(widget.file.openRead()).first)
           .toString();
+      // A renderer that never answers leaves the file card, with its
+      // actions, instead of a spinner for ever.
       final response = await _channel
           .invokeMapMethod<String, dynamic>('renderPdfPage', {
             'storageKey': digest,
@@ -2054,7 +2084,8 @@ class _GeneratedPdfPreviewCardState extends State<GeneratedPdfPreviewCard> {
             'expectedSha256': digest,
             'generatedConnectionKey': locator.connectionKey,
             'generatedFileKey': locator.fileKey,
-          });
+          })
+          .timeout(kPdfRenderDeadline);
       final bytes = response?['pngBytes'];
       final pageCount = (response?['pageCount'] as num?)?.toInt();
       if (bytes is! Uint8List ||
@@ -2315,6 +2346,9 @@ class _GeneratedAudioPlayerCardState extends State<GeneratedAudioPlayerCard> {
   bool _playing = false;
   bool _started = false;
 
+  /// The player refused the file (a codec it cannot read, a broken file).
+  bool _failed = false;
+
   @override
   void initState() {
     super.initState();
@@ -2350,11 +2384,20 @@ class _GeneratedAudioPlayerCardState extends State<GeneratedAudioPlayerCard> {
       await _playback.pause();
       return;
     }
-    if (_started) {
-      await _playback.resume();
-    } else {
-      _started = true;
-      await _playback.play(widget.file);
+    try {
+      if (_started) {
+        await _playback.resume();
+      } else {
+        _started = true;
+        await _playback.play(widget.file);
+      }
+      if (_failed && mounted) setState(() => _failed = false);
+    } catch (_) {
+      // Said on the card, with Share/Save still there (Desktop offers
+      // «Open audio file» when its <audio> fails: markdown-text.tsx,
+      // MediaPlaybackAttachment). The next tap starts it again.
+      _started = false;
+      if (mounted) setState(() => _failed = true);
     }
   }
 
@@ -2414,6 +2457,18 @@ class _GeneratedAudioPlayerCardState extends State<GeneratedAudioPlayerCard> {
               ],
             ),
           ),
+          if (_failed)
+            SizedBox(
+              width: 300,
+              child: Text(
+                strings.vwPlaybackFailed,
+                key: const ValueKey<String>('generated-audio-failed'),
+                style: TextStyle(
+                  color: Theme.of(context).hermes.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ),
           Wrap(
             spacing: 4,
             children: [

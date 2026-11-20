@@ -56,5 +56,29 @@
       "assets/viewers/model-viewer-umd.min.js"
     ],
     "note": "Unmodified dist/model-viewer-umd.min.js of the npm package; it bundles three.js (MIT), lit (BSD-3-Clause), fflate (MIT) and gainmap-js (MIT)."
+  },
+  {
+    "name": "draco-decoder",
+    "version": "1.5.6",
+    "purl": "pkg:github/google/draco@1.5.6",
+    "license": "Apache-2.0",
+    "licenseEvidence": "assets/viewers/draco-LICENSE.txt",
+    "paths": [
+      "assets/viewers/draco_wasm_wrapper.js",
+      "assets/viewers/draco_decoder.wasm"
+    ],
+    "note": "Unmodified decoder build model-viewer 4.4.0 loads by default from https://www.gstatic.com/draco/versioned/decoders/1.5.6/ (draco_wasm_wrapper.js sha256 e8049906ef3f8f75d3456c22a3f31bfdfe5b5b5bd09ccdec613b9e9a49d554d8, draco_decoder.wasm sha256 c55a594e8ffd18426d36b27fea9618af3df5e173640a3e56d46f09d76f0574f2); the same files ship in three.js 0.163.0 examples/jsm/libs/draco."
+  },
+  {
+    "name": "basis-universal-transcoder",
+    "version": "2021-04-15-ba1c3e4",
+    "purl": "pkg:github/BinomialLLC/basis_universal@ba1c3e40f1d434ebaf9a167b44e9b11d2bf0f765",
+    "license": "Apache-2.0 AND BSD-3-Clause",
+    "licenseEvidence": "assets/viewers/basis-universal-LICENSE.txt",
+    "paths": [
+      "assets/viewers/basis_transcoder.js",
+      "assets/viewers/basis_transcoder.wasm"
+    ],
+    "note": "Unmodified transcoder build model-viewer 4.4.0 loads by default from https://www.gstatic.com/basis-universal/versioned/2021-04-15-ba1c3e4/ (basis_transcoder.js sha256 48a0ef319a28bf0224ee88ded34f74eaf97c175bba9eb18b47fb9720510ad6c4, basis_transcoder.wasm sha256 79ae97d781e10a566659c689b7bb1de91726453f55f9f5e3bcc07a4e3904070f); the same files ship in three.js 0.163.0 examples/jsm/libs/basis. BSD-3-Clause covers the optional Zstandard decoder of the same repository."
   }
 ]

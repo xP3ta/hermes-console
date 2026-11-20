@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import '../../../l10n/app_localizations.dart';
 import '../../theme/app_theme.dart';
 import '../hermes_app_bar.dart';
 import 'artifact_html_policy.dart';
@@ -19,14 +20,24 @@ import 'artifact_html_policy.dart';
 /// inside the chat ([InlineWebPreview], which keeps a still picture of the
 /// drawn page) and a live, full screen one ([WebDocumentScreen]).
 ///
-/// Nothing here reaches the network. The two libraries are packed with the
-/// app (`assets/viewers/`, see THIRD_PARTY_NOTICES.md) and inlined into the
-/// page; the page's own Content-Security-Policy denies every request, and the
-/// WebView is configured by [configureArtifactWebView] like every other guest
-/// document (no navigation, no file access, no bridge).
+/// Nothing here reaches the network. The two libraries, and the decoders a
+/// compressed model needs, are packed with the app (`assets/viewers/`, see
+/// THIRD_PARTY_NOTICES.md) and inlined into the page; the page's own
+/// Content-Security-Policy denies every request, and the WebView is
+/// configured by [configureArtifactWebView] like every other guest document
+/// (no navigation, no file access, no bridge).
 
 const String kMermaidAsset = 'assets/viewers/mermaid.min.js';
 const String kModelViewerAsset = 'assets/viewers/model-viewer-umd.min.js';
+
+/// The decoders a compressed model needs, packed with the app next to
+/// model-viewer (the very builds model-viewer 4.4.0 loads by default from
+/// gstatic.com; see THIRD_PARTY_NOTICES.md). The page reads them from itself.
+const String kDracoWrapperAsset = 'assets/viewers/draco_wasm_wrapper.js';
+const String kDracoDecoderAsset = 'assets/viewers/draco_decoder.wasm';
+const String kBasisTranscoderAsset = 'assets/viewers/basis_transcoder.js';
+const String kBasisTranscoderWasmAsset =
+    'assets/viewers/basis_transcoder.wasm';
 
 /// Longest diagram source drawn; a longer fence stays a code block.
 const int kMermaidMaxChars = 60000;
@@ -37,6 +48,12 @@ const int kModelMaxBytes = 24 * 1024 * 1024;
 /// Largest 3D model drawn by itself inside the chat; a larger one waits for
 /// a touch and opens full screen.
 const int kModelInlineMaxBytes = 8 * 1024 * 1024;
+
+/// How long a page may take to draw before it is given up as failed.
+const Duration kWebPageDeadline = Duration(seconds: 10);
+
+/// The same for a 3D model, which is parsed and decoded on the phone.
+const Duration kModelPageDeadline = Duration(seconds: 45);
 
 String _hex(Color c) {
   String h(double v) =>
@@ -59,13 +76,21 @@ const String _lockedCsp =
     "worker-src 'none'; object-src 'none'; form-action 'none'; "
     "base-uri 'none'";
 
-// The model is read from a `data:` address and its textures from `blob:`
-// ones the page makes itself: neither leaves the device.
-const String _modelCsp =
-    "default-src 'none'; script-src 'unsafe-inline'; "
-    "style-src 'unsafe-inline'; img-src data: blob:; font-src data:; "
-    "connect-src data: blob:; frame-src 'none'; child-src 'none'; "
-    "worker-src 'none'; object-src 'none'; form-action 'none'; "
+// The model is read from a `data:` address, its textures from `blob:` ones
+// and its decoders from the page itself: nothing leaves the device. A
+// decoder is WebAssembly run in a worker the page makes from a `blob:`
+// (three.js DRACOLoader / KTX2Loader); the meshopt one, bundled inside
+// model-viewer, is switched on by a `blob:` script of the page's own. The
+// Basis transcoder (embind) builds functions from strings, so a model with
+// KTX2 textures alone also gets 'unsafe-eval'. Every other request is denied.
+const String _modelCspHead =
+    "default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'";
+const String _modelCspMeshopt = ' blob:';
+const String _modelCspBasis = " 'unsafe-eval'";
+const String _modelCspTail =
+    "; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; "
+    "connect-src data: blob:; frame-src 'none'; child-src blob:; "
+    "worker-src blob:; object-src 'none'; form-action 'none'; "
     "base-uri 'none'";
 
 String _head(String csp, String style) =>
@@ -73,6 +98,32 @@ String _head(String csp, String style) =>
     '<meta name="viewport" content="width=device-width,initial-scale=1">'
     '<meta http-equiv="Content-Security-Policy" content="$csp">'
     '<style>$style</style></head>';
+
+/// The first script of every page the app writes: it keeps the page's state
+/// in `window.__hc` (0 drawing, 1 drawn, 2 failed, with the reason). A
+/// script error or a rejected promise before the page has drawn fails it;
+/// once drawn, nothing changes it. A WebAssembly module the engine refuses
+/// to compile is not a failure by itself: model-viewer compiles its meshopt
+/// decoder up front for every model, and an engine older than
+/// 'wasm-unsafe-eval' (Chromium 97) refuses it; a model that needs a decoder
+/// still fails through the library's own error.
+const String kPageErrorChannel = r'''
+window.__hc={s:0,m:""};
+window.__hcDone=function(){if(__hc.s===0)__hc.s=1;};
+window.__hcFail=function(r){if(__hc.s!==0)return;
+var m=(r&&(r.message||r.type))||r||"error";__hc.s=2;
+__hc.m=encodeURIComponent(String(m).slice(0,300));};
+addEventListener("error",function(e){__hcFail(e.error||e.message);});
+addEventListener("unhandledrejection",function(e){var r=e.reason;
+if(typeof WebAssembly==="object"&&r instanceof WebAssembly.CompileError)
+return;__hcFail(r);});
+''';
+
+/// 1 once the page has drawn, 2 once it has failed, 0 before.
+const String kPageStateScript = '(window.__hc||{}).s||0';
+
+/// The reason the page gave for failing, URI-encoded.
+const String kPageFailureScript = '(window.__hc||{}).m||""';
 
 /// A page that draws the Mermaid diagram [source]. A diagram that does not
 /// parse shows the parser's message instead.
@@ -93,7 +144,8 @@ Future<String> buildMermaidDocument(
       '#d svg{max-width:100%;height:auto}'
       '#e{font:13px/1.4 monospace;white-space:pre-wrap;margin:0;padding:12px}';
   return '${_head(_lockedCsp, style)}<body><div id="d"></div>'
-      '<pre id="e" hidden></pre><script>$library</script><script>'
+      '<pre id="e" hidden></pre><script>$kPageErrorChannel</script>'
+      '<script>$library</script><script>'
       '(async function(){var s=${_jsString(source)};try{'
       'mermaid.initialize({startOnLoad:false,securityLevel:"strict",'
       'theme:${dark ? '"dark"' : '"default"'},'
@@ -102,15 +154,14 @@ Future<String> buildMermaidDocument(
       'document.getElementById("d").innerHTML=r.svg;'
       '}catch(x){var e=document.getElementById("e");e.hidden=false;'
       'e.textContent=String((x&&x.message)||x);}'
-      'document.title="done";})();</script></body></html>';
+      'document.title="done";__hcDone();})();</script></body></html>';
 }
 
 /// True once the diagram page has drawn (or reported its error).
 const String kMermaidReadyScript = 'document.title==="done"';
 
-/// True once the model page has loaded its model.
-const String kModelReadyScript =
-    '!!(document.querySelector("model-viewer")||{}).loaded';
+/// True once the model page has loaded its model (its `load` event).
+const String kModelReadyScript = '($kPageStateScript)===1';
 
 /// The model as it is drawn now, as a PNG data URL ('' while not loaded). A
 /// WebGL canvas is not in the WebView's own picture, so the page hands it
@@ -128,29 +179,356 @@ String? modelMimeFor(String name) {
   return null;
 }
 
+/// Why a file cannot be drawn as a model, known before any page is made.
+enum ModelFileProblemKind {
+  /// Zero bytes.
+  empty,
+
+  /// Neither a glTF binary nor glTF JSON.
+  notGltf,
+
+  /// Its buffers or images are separate files that did not come with it.
+  externalFiles,
+}
+
+class ModelFileProblem implements Exception {
+  const ModelFileProblem(this.kind, [this.files = const []]);
+
+  final ModelFileProblemKind kind;
+
+  /// The files it points to, for [ModelFileProblemKind.externalFiles].
+  final List<String> files;
+
+  @override
+  String toString() => 'ModelFileProblem(${kind.name}, $files)';
+}
+
+/// The decoders a model asks for in its glTF extensions.
+typedef ModelNeeds = ({bool draco, bool meshopt, bool basis});
+
+/// Reads what [bytes] (a GLB or a glTF JSON file) asks of the viewer. Throws
+/// a [ModelFileProblem] for a file that cannot be drawn at all; a file whose
+/// JSON cannot be read is left for the page to report.
+ModelNeeds readModelNeeds(Uint8List bytes) {
+  if (bytes.isEmpty) throw const ModelFileProblem(ModelFileProblemKind.empty);
+  final binary =
+      bytes.length >= 4 &&
+      bytes[0] == 0x67 &&
+      bytes[1] == 0x6C &&
+      bytes[2] == 0x54 &&
+      bytes[3] == 0x46;
+  Object? json;
+  try {
+    if (binary) {
+      // Header (magic, version, length), then the JSON chunk first.
+      if (bytes.length >= 20) {
+        int word(int at) =>
+            bytes[at] |
+            bytes[at + 1] << 8 |
+            bytes[at + 2] << 16 |
+            bytes[at + 3] << 24;
+        final length = word(12);
+        // 'JSON', little-endian.
+        if (word(16) == 0x4E4F534A && 20 + length <= bytes.length) {
+          json = jsonDecode(
+            utf8.decode(Uint8List.sublistView(bytes, 20, 20 + length)),
+          );
+        }
+      }
+    } else {
+      json = jsonDecode(utf8.decode(bytes));
+    }
+  } on FormatException {
+    json = null;
+  }
+  if (json is! Map<String, dynamic>) {
+    if (binary) return (draco: false, meshopt: false, basis: false);
+    throw const ModelFileProblem(ModelFileProblemKind.notGltf);
+  }
+  if (!binary && json['asset'] is! Map) {
+    throw const ModelFileProblem(ModelFileProblemKind.notGltf);
+  }
+  final outside = <String>[];
+  for (final key in const ['buffers', 'images']) {
+    final list = json[key];
+    if (list is! List) continue;
+    for (final item in list) {
+      final uri = item is Map ? item['uri'] : null;
+      if (uri is String && !uri.startsWith('data:')) outside.add(uri);
+    }
+  }
+  if (outside.isNotEmpty) {
+    throw ModelFileProblem(ModelFileProblemKind.externalFiles, outside);
+  }
+  final names = <String>{};
+  for (final key in const ['extensionsUsed', 'extensionsRequired']) {
+    final list = json[key];
+    if (list is List) names.addAll(list.whereType<String>());
+  }
+  return (
+    draco: names.contains('KHR_draco_mesh_compression'),
+    meshopt:
+        names.contains('EXT_meshopt_compression') ||
+        names.contains('KHR_meshopt_compression'),
+    basis: names.contains('KHR_texture_basisu'),
+  );
+}
+
+/// Makes the `<model-viewer>` once the library is in. Its settings are read
+/// from `window.ModelViewerElement` when the element is made (model-viewer
+/// 4.4.0, ModelViewerElementBase constructor): the decoders are served from
+/// the page itself (`hc-decoder:` is answered here and nowhere else). The
+/// model's load and error events end the page's state; a model that fails to
+/// parse is only written to `console.error` by the library
+/// (CachingGLTFLoader.preload), so an Error written there fails it too.
+/// Without WebGL 2 (three.js r163 inside model-viewer 4.4.0 needs it) the
+/// model would load and draw nothing: the page fails at once instead.
+/// A model that needs a decoder, on an engine that cannot compile
+/// WebAssembly here (one older than 'wasm-unsafe-eval', Chromium 97), fails
+/// at once ("hc:wasm") instead of waiting for a worker that never answers;
+/// "hc:webgl" names the missing WebGL 2. [describeWebPageFailure] words both.
+/// @DECODERS@, @FILES@, @MESHOPT@ and @SRC@ are filled in by
+/// [buildModelDocument].
+const String _modelBootScript = r'''
+(function(){
+var gl=document.createElement("canvas").getContext("webgl2");
+if(!gl){__hcFail("hc:webgl");return;}
+var lose=gl.getExtension("WEBGL_lose_context");if(lose)lose.loseContext();
+if(@DECODERS@){try{new WebAssembly.Module(new Uint8Array(
+[0,97,115,109,1,0,0,0]));}catch(x){__hcFail("hc:wasm");return;}}
+var files=@FILES@,base="hc-decoder:/",own=window.fetch.bind(window);
+function bytes(b){var s=atob(b),a=new Uint8Array(s.length);
+for(var i=0;i<s.length;i++)a[i]=s.charCodeAt(i);return a;}
+window.fetch=function(input,init){
+var u=typeof input==="string"?input:input instanceof URL?input.href:
+(input&&input.url)||"";
+if(u.indexOf(base)!==0)return own(input,init);
+var f=files[u.slice(base.length)];
+if(!f)return Promise.reject(new Error("decoder not packed: "+
+u.slice(base.length)));
+return Promise.resolve(new Response(bytes(f.b),
+{status:200,headers:{"Content-Type":f.t}}));};
+var c=window.ModelViewerElement;
+c.dracoDecoderLocation=base+"draco/";
+c.ktx2TranscoderLocation=base+"basis/";
+c.lottieLoaderLocation=base+"lottie.js";
+if(@MESHOPT@)c.meshoptDecoderLocation=URL.createObjectURL(
+new Blob([""],{type:"text/javascript"}));
+var log=console.error;
+console.error=function(x){if(x instanceof Error)__hcFail(x);
+return log.apply(console,arguments);};
+var v=document.createElement("model-viewer");
+[["camera-controls",""],["auto-rotate",""],["interaction-prompt","none"],
+["shadow-intensity","0.6"],["touch-action","none"]].forEach(function(a){
+v.setAttribute(a[0],a[1]);});
+v.addEventListener("load",function(){__hcDone();});
+v.addEventListener("error",function(e){var d=e.detail||{};
+__hcFail(d.sourceError||d.type||"error");});
+v.src=@SRC@;
+document.body.appendChild(v);
+})();
+''';
+
 /// A page that shows the 3D model [bytes] turning slowly; it can be dragged
-/// and pinched.
+/// and pinched. Throws a [ModelFileProblem] for a file that is not one.
 Future<String> buildModelDocument(
   Uint8List bytes, {
   required String mimeType,
   required Color background,
   AssetBundle? bundle,
 }) async {
-  final library = await (bundle ?? rootBundle).loadString(
-    kModelViewerAsset,
-    cache: false,
-  );
+  final needs = readModelNeeds(bytes);
+  final assets = bundle ?? rootBundle;
+  final library = await assets.loadString(kModelViewerAsset, cache: false);
+  final files = <String, Map<String, String>>{};
+  Future<void> pack(String name, String asset, String type) async {
+    final data = await assets.load(asset);
+    files[name] = {'t': type, 'b': base64Encode(Uint8List.sublistView(data))};
+  }
+
+  if (needs.draco) {
+    await pack(
+      'draco/draco_wasm_wrapper.js',
+      kDracoWrapperAsset,
+      'text/javascript',
+    );
+    await pack(
+      'draco/draco_decoder.wasm',
+      kDracoDecoderAsset,
+      'application/wasm',
+    );
+  }
+  if (needs.basis) {
+    await pack(
+      'basis/basis_transcoder.js',
+      kBasisTranscoderAsset,
+      'text/javascript',
+    );
+    await pack(
+      'basis/basis_transcoder.wasm',
+      kBasisTranscoderWasmAsset,
+      'application/wasm',
+    );
+  }
+  final csp = [
+    _modelCspHead,
+    if (needs.meshopt) _modelCspMeshopt,
+    if (needs.basis) _modelCspBasis,
+    _modelCspTail,
+  ].join();
+  final decoders = needs.draco || needs.meshopt || needs.basis;
+  final boot = _modelBootScript
+      .replaceFirst('@DECODERS@', '$decoders')
+      .replaceFirst('@MESHOPT@', '${needs.meshopt}')
+      .replaceFirst('@SRC@', '"data:$mimeType;base64,${base64Encode(bytes)}"')
+      .replaceFirst('@FILES@', jsonEncode(files));
   final style =
       'html,body{margin:0;height:100%;background:${_hex(background)}}'
       'model-viewer{width:100%;height:100%;--poster-color:transparent}';
-  return '${_head(_modelCsp, style)}<body><script>$library</script>'
-      '<model-viewer src="data:$mimeType;base64,${base64Encode(bytes)}" '
-      'camera-controls auto-rotate interaction-prompt="none" '
-      'shadow-intensity="0.6" touch-action="none"></model-viewer>'
-      '</body></html>';
+  return '${_head(csp, style)}<body><script>$kPageErrorChannel</script>'
+      '<script>$library</script><script>$boot</script></body></html>';
 }
 
-/// One locked-down WebView showing the page [document] returns.
+/// Why a page did not draw.
+enum WebPageFailureKind {
+  /// The page could not be made (the file is not one it can show, or the
+  /// WebView could not be set up).
+  notMade,
+
+  /// The page said so: a script error, a rejected promise or its library's
+  /// own error ([kPageErrorChannel]).
+  reported,
+
+  /// It had not drawn by its deadline.
+  timedOut,
+}
+
+class WebPageFailure {
+  const WebPageFailure(this.kind, {this.detail = '', this.cause});
+
+  final WebPageFailureKind kind;
+
+  /// What the page said, as it said it ('' when it said nothing).
+  final String detail;
+
+  /// What kept the page from being made ([WebPageFailureKind.notMade]).
+  final Object? cause;
+}
+
+/// What the user reads for [failure]: why, in a sentence, and what the page
+/// itself said, if anything. [model] for a 3D model's page.
+({String title, String? detail}) describeWebPageFailure(
+  Strings strings,
+  WebPageFailure failure, {
+  bool model = false,
+}) {
+  final cause = failure.cause;
+  if (cause is ModelFileProblem) {
+    final title = switch (cause.kind) {
+      ModelFileProblemKind.empty => strings.fcoEmpty,
+      ModelFileProblemKind.notGltf => strings.vwModelNotGltf,
+      ModelFileProblemKind.externalFiles => strings.vwModelExternal(
+        cause.files.take(3).join(', '),
+      ),
+    };
+    return (title: title, detail: null);
+  }
+  // What the model page names by a code (_modelBootScript).
+  switch (failure.detail) {
+    case 'hc:wasm':
+      return (title: strings.vwModelNeedsWasm, detail: null);
+    case 'hc:webgl':
+      return (title: strings.vwModelNeedsWebGl, detail: null);
+  }
+  final title = model ? strings.vwModelFailed : strings.vwPreviewFailed;
+  if (failure.kind == WebPageFailureKind.timedOut) {
+    return (title: title, detail: strings.vwPreviewTimedOut);
+  }
+  return (title: title, detail: failure.detail.isEmpty ? null : failure.detail);
+}
+
+/// A page that did not draw: why, and a way to try again.
+class WebPageFailureView extends StatelessWidget {
+  const WebPageFailureView({
+    super.key,
+    required this.failure,
+    this.model = false,
+    this.onRetry,
+  });
+
+  final WebPageFailure failure;
+  final bool model;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    final text = describeWebPageFailure(strings, failure, model: model);
+    final detail = text.detail;
+    // Scaled down, never cut, in a box as small as a chat preview.
+    return LayoutBuilder(
+      builder: (context, constraints) => Center(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: SizedBox(
+            width: constraints.maxWidth.isFinite ? constraints.maxWidth : 320,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                key: const ValueKey('web-page-failure'),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    HIcons.error_outline_rounded,
+                    color: colors.textSecondary,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    text.title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (detail != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      detail,
+                      key: const ValueKey('web-page-failure-detail'),
+                      textAlign: TextAlign.center,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                  if (onRetry != null) ...[
+                    const SizedBox(height: 4),
+                    TextButton.icon(
+                      key: const ValueKey('web-page-retry'),
+                      onPressed: onRetry,
+                      icon: const Icon(HIcons.refresh_rounded),
+                      label: Text(strings.commonRetry),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One locked-down WebView showing the page [document] returns. It watches
+/// the page until it has drawn: a page that fails ([kPageErrorChannel]) or
+/// has not drawn by [deadline] is a [WebPageFailure], told to [onFailed] or,
+/// without it, shown in place with a way to try again.
 class WebDocumentView extends StatefulWidget {
   const WebDocumentView({
     super.key,
@@ -162,6 +540,8 @@ class WebDocumentView extends StatefulWidget {
     this.onSnapshot,
     this.readyScript,
     this.captureScript,
+    this.deadline = kWebPageDeadline,
+    this.model = false,
   });
 
   final Future<String> Function() document;
@@ -185,7 +565,13 @@ class WebDocumentView extends StatefulWidget {
   /// Hears the height of the page's content, in logical pixels, a few times
   /// after it loads (a diagram that sizes itself).
   final ValueChanged<double>? onContentHeight;
-  final VoidCallback? onFailed;
+  final ValueChanged<WebPageFailure>? onFailed;
+
+  /// How long the page may take to draw.
+  final Duration deadline;
+
+  /// The page draws a 3D model: a failure says so.
+  final bool model;
 
   @override
   State<WebDocumentView> createState() => _WebDocumentViewState();
@@ -195,6 +581,10 @@ class _WebDocumentViewState extends State<WebDocumentView> {
   WebViewController? _controller;
   final ArtifactHtmlNavigationPolicy _policy = ArtifactHtmlNavigationPolicy();
   final List<Timer> _timers = [];
+  WebPageFailure? _failure;
+
+  /// Counts the pages made: a watch of an older one stops.
+  int _run = 0;
 
   @override
   void initState() {
@@ -229,6 +619,7 @@ class _WebDocumentViewState extends State<WebDocumentView> {
   }
 
   Future<void> _start() async {
+    final run = ++_run;
     try {
       final controller = WebViewController(
         onPermissionRequest: denyArtifactPermissionRequest,
@@ -240,60 +631,124 @@ class _WebDocumentViewState extends State<WebDocumentView> {
       );
       await controller.setBackgroundColor(const Color(0x00000000));
       final page = await widget.document();
-      if (!mounted) return;
+      if (!mounted || run != _run) return;
       // The page is the app's own (or already wrapped by the guard): its
       // script draws it. It still has no bridge and cannot navigate.
       await controller.setJavaScriptMode(JavaScriptMode.unrestricted);
       await controller.loadHtmlString(page);
-      if (!mounted) return;
+      if (!mounted || run != _run) return;
       setState(() => _controller = controller);
-      if (widget.onSnapshot != null) {
-        unawaited(_settle());
-      } else if (widget.onContentHeight != null) {
+      if (widget.onSnapshot == null && widget.onContentHeight != null) {
         for (final ms in const [350, 900, 1800, 3200]) {
           _timers.add(
             Timer(Duration(milliseconds: ms), () => unawaited(_measure())),
           );
         }
       }
-    } catch (_) {
-      if (mounted) widget.onFailed?.call();
+      unawaited(_settle(run));
+    } catch (error) {
+      if (mounted && run == _run) {
+        _fail(WebPageFailure(WebPageFailureKind.notMade, cause: error));
+      }
     }
+  }
+
+  void _fail(WebPageFailure failure) {
+    if (!mounted) return;
+    final onFailed = widget.onFailed;
+    if (onFailed != null) {
+      onFailed(failure);
+      return;
+    }
+    setState(() {
+      _failure = failure;
+      _controller = null;
+    });
+  }
+
+  void _retry() {
+    setState(() => _failure = null);
+    unawaited(_start());
   }
 
   static const MethodChannel _snapshots = MethodChannel(
     'hermes/webview_snapshot',
   );
 
-  Future<bool> _truthy(String expression) async {
+  /// A page whose script is stuck does not answer: the question is dropped
+  /// and the watch goes on to its deadline.
+  static const Duration _answerWait = Duration(seconds: 2);
+
+  Future<Object?> _ask(String script) async {
     final controller = _controller;
-    if (controller == null) return false;
+    if (controller == null) return null;
     try {
-      final result = await controller.runJavaScriptReturningResult(
-        '($expression)?1:0',
-      );
-      return result == 1 || result.toString() == '1';
+      return await controller
+          .runJavaScriptReturningResult(script)
+          .timeout(_answerWait);
     } catch (_) {
-      return false;
+      return null;
     }
   }
 
-  /// Waits for the page to draw, tells its height, then hands over a still
-  /// picture of it.
-  Future<void> _settle() async {
-    final ready = widget.readyScript ?? 'document.readyState==="complete"';
-    for (var i = 0; i < 40; i++) {
-      if (!await _pause(250)) return;
-      if (await _truthy(ready)) break;
+  Future<bool> _truthy(String expression) async {
+    final result = await _ask('($expression)?1:0');
+    return result == 1 || result.toString() == '1';
+  }
+
+  /// What the page said when it failed, as plain text.
+  Future<String> _failureDetail() async {
+    var text = (await _ask(kPageFailureScript))?.toString() ?? '';
+    if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+      try {
+        text = jsonDecode(text) as String;
+      } catch (_) {
+        text = text.substring(1, text.length - 1);
+      }
     }
-    if (!mounted) return;
+    try {
+      text = Uri.decodeComponent(text);
+    } catch (_) {
+      // Left as it came.
+    }
+    return text.replaceAll(RegExp(r'[\x00-\x1F\x7F]+'), ' ').trim();
+  }
+
+  /// Waits for the page to draw; then, for a preview, tells its height and
+  /// hands over a still picture of it. A page that fails, or has not drawn
+  /// by the deadline, is a failure.
+  Future<void> _settle(int run) async {
+    final ready = widget.readyScript ?? 'document.readyState==="complete"';
+    final ticks = (widget.deadline.inMilliseconds / 250).ceil();
+    for (var i = 0; i < ticks; i++) {
+      if (!await _pause(250) || run != _run) return;
+      if (await _truthy('($kPageStateScript)===2')) {
+        final detail = await _failureDetail();
+        if (mounted && run == _run) {
+          _fail(WebPageFailure(WebPageFailureKind.reported, detail: detail));
+        }
+        return;
+      }
+      if (await _truthy(ready)) {
+        if (widget.onSnapshot != null) await _handOver(run);
+        return;
+      }
+    }
+    if (mounted && run == _run) {
+      _fail(const WebPageFailure(WebPageFailureKind.timedOut));
+    }
+  }
+
+  Future<void> _handOver(int run) async {
     await _measure();
     // The box takes the measured height and the page paints at it.
-    if (!await _pause(700)) return;
+    if (!await _pause(700) || run != _run) return;
     await _measure();
-    if (!await _pause(150)) return;
+    if (!await _pause(150) || run != _run) return;
     final bytes = await _capture();
-    if (mounted && bytes != null) widget.onSnapshot?.call(bytes);
+    if (mounted && run == _run && bytes != null) {
+      widget.onSnapshot?.call(bytes);
+    }
   }
 
   Future<Uint8List?> _capture() async {
@@ -346,6 +801,14 @@ class _WebDocumentViewState extends State<WebDocumentView> {
 
   @override
   Widget build(BuildContext context) {
+    final failure = _failure;
+    if (failure != null) {
+      return WebPageFailureView(
+        failure: failure,
+        model: widget.model,
+        onRetry: _retry,
+      );
+    }
     final controller = _controller;
     if (controller == null) return const SizedBox.expand();
     final view = Listener(
@@ -367,11 +830,15 @@ class WebDocumentScreen extends StatelessWidget {
     required this.title,
     required this.document,
     this.actions,
+    this.readyScript,
   });
 
   final String title;
   final Future<String> Function() document;
   final List<Widget>? actions;
+
+  /// See [WebDocumentView.readyScript].
+  final String? readyScript;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -380,7 +847,9 @@ class WebDocumentScreen extends StatelessWidget {
       title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
       actions: actions,
     ),
-    body: SafeArea(child: WebDocumentView(document: document)),
+    body: SafeArea(
+      child: WebDocumentView(document: document, readyScript: readyScript),
+    ),
   );
 }
 
@@ -426,23 +895,36 @@ final class _LivePreviews {
   }
 }
 
-/// Where the still pictures are kept between runs; the app's cache folder
-/// when null. Tests set it (there is no cache folder under `flutter test`,
-/// where nothing is kept on disk otherwise).
+/// The cache folder the still pictures are kept under, standing for the
+/// app's own (`getTemporaryDirectory`) when null. Tests set it (there is no
+/// cache folder under `flutter test`, where nothing is kept on disk
+/// otherwise).
 @visibleForTesting
 Directory? debugPreviewSnapshotDirectory;
+
+/// The folder of the pictures, under the cache folder. Its name changes
+/// whenever pictures made before can no longer be trusted: those of
+/// `preview_snapshots/` were taken by builds that captured a page whatever
+/// it showed after ten seconds (a grey 3D model, a blank diagram), and are
+/// removed the first time the folder is looked up.
+const String _snapshotFolder = 'preview_snapshots_v2';
+const List<String> _retiredSnapshotFolders = ['preview_snapshots'];
 
 /// Still pictures of pages already drawn, by the key their preview gives:
 /// a preview seen again shows its picture and makes no WebView. A few are
 /// held in memory; all are kept in the app's private cache
-/// (`preview_snapshots/`), so a chat opened again shows them at once.
+/// ([_snapshotFolder]), so a chat opened again shows them at once.
 final class _Snapshots {
   static const int _maxEntries = 24;
   static const int _maxBytes = 32 * 1024 * 1024;
   static const int _maxFiles = 120;
   static final Map<String, Uint8List> _byKey = {};
   static int _bytes = 0;
-  static Future<Directory?>? _folder;
+  // Kept as a value, not as a future: a future kept across calls answers in
+  // the zone that made it, which a later caller's zone may never run (one
+  // widget test after another).
+  static Directory? _folder;
+  static bool _folderKnown = false;
 
   static Uint8List? get(String? key) {
     if (key == null) return null;
@@ -462,21 +944,43 @@ final class _Snapshots {
     }
   }
 
-  static Future<Directory?> _directory() => _folder ??= () async {
+  /// The look-up under way, shared by the previews that ask meanwhile;
+  /// dropped once it has answered.
+  static Future<Directory?>? _looking;
+
+  static Future<Directory?> _directory() async {
+    if (_folderKnown) return _folder;
+    final looking = _looking ??= _findDirectory();
+    try {
+      return await looking;
+    } finally {
+      _looking = null;
+    }
+  }
+
+  static Future<Directory?> _findDirectory() async {
+    Directory? directory;
     try {
       final fixed = debugPreviewSnapshotDirectory;
-      if (fixed == null && Platform.environment.containsKey('FLUTTER_TEST')) {
-        return null;
+      if (fixed != null || !Platform.environment.containsKey('FLUTTER_TEST')) {
+        final root = fixed?.path ?? (await getTemporaryDirectory()).path;
+        for (final retired in _retiredSnapshotFolders) {
+          try {
+            await Directory('$root/$retired').delete(recursive: true);
+          } catch (_) {
+            // Not there (already removed): nothing to clean.
+          }
+        }
+        directory = Directory('$root/$_snapshotFolder');
+        await directory.create(recursive: true);
       }
-      final directory =
-          fixed ??
-          Directory('${(await getTemporaryDirectory()).path}/preview_snapshots');
-      await directory.create(recursive: true);
-      return directory;
     } catch (_) {
-      return null;
+      directory = null;
     }
-  }();
+    _folder = directory;
+    _folderKnown = true;
+    return directory;
+  }
 
   static String _name(String key) =>
       '${sha256.convert(utf8.encode(key))}.png';
@@ -561,6 +1065,8 @@ class InlineWebPreview extends StatefulWidget {
     this.captureScript,
     this.autoLoad = true,
     this.resolveSnapshotKey,
+    this.deadline = kWebPageDeadline,
+    this.model = false,
   });
 
   final Future<String> Function() document;
@@ -581,6 +1087,10 @@ class InlineWebPreview extends StatefulWidget {
   final String? readyScript;
   final String? captureScript;
 
+  /// See [WebDocumentView.deadline] and [WebDocumentView.model].
+  final Duration deadline;
+  final bool model;
+
   /// What the placeholder says («HTML», «Diagrama», «3D»).
   final String label;
   final IconData icon;
@@ -590,7 +1100,8 @@ class InlineWebPreview extends StatefulWidget {
   final bool fitContent;
   final VoidCallback? onOpen;
 
-  /// Shown instead when the page cannot be made (no WebView).
+  /// Shown instead when the page does not draw; without it the box says
+  /// why and offers to try again.
   final Widget? fallback;
   final double maxWidth;
   final ArtifactWebViewSettingsFactory settingsFor;
@@ -601,7 +1112,7 @@ class InlineWebPreview extends StatefulWidget {
 
 class _InlineWebPreviewState extends State<InlineWebPreview> {
   bool _live = false;
-  bool _failed = false;
+  WebPageFailure? _failure;
   bool _visible = true;
   bool _covered = false;
   double? _contentHeight;
@@ -677,7 +1188,7 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
   bool get _idle =>
       !mounted ||
       _live ||
-      _failed ||
+      _failure != null ||
       _covered ||
       !_visible ||
       _looking ||
@@ -733,15 +1244,22 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
   }
 
   void _load() {
-    if (_live || _failed || _snapshot != null) return;
+    if (_live || _failure != null || _snapshot != null) return;
     _LivePreviews.claim(this);
     setState(() => _live = true);
+  }
+
+  /// A page that failed is made again, at once, on a touch.
+  void _retry() {
+    setState(() => _failure = null);
+    _load();
   }
 
   @override
   Widget build(BuildContext context) {
     final fallback = widget.fallback;
-    if (_failed && fallback != null) return fallback;
+    final failure = _failure;
+    if (failure != null && fallback != null) return fallback;
     final colors = Theme.of(context).hermes;
     final screen = MediaQuery.sizeOf(context).height;
     return Padding(
@@ -785,7 +1303,13 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                           gaplessPlayback: true,
                           excludeFromSemantics: true,
                         )
-                      else if (_live && !_failed)
+                      else if (failure != null)
+                        WebPageFailureView(
+                          failure: failure,
+                          model: widget.model,
+                          onRetry: _retry,
+                        )
+                      else if (_live)
                         WebDocumentView(
                           document: widget.document,
                           interactive: false,
@@ -800,8 +1324,10 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                                   }
                                 }
                               : null,
-                          onFailed: () => setState(() {
-                            _failed = true;
+                          deadline: widget.deadline,
+                          model: widget.model,
+                          onFailed: (failed) => setState(() {
+                            _failure = failed;
                             _live = false;
                             _LivePreviews.drop(this);
                           }),
@@ -823,15 +1349,18 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                             ],
                           ),
                         ),
-                      Material(
-                        type: MaterialType.transparency,
-                        child: InkWell(
-                          key: const ValueKey('inline-web-preview-tap'),
-                          onTap: _live || _snapshot != null || !widget.autoLoad
-                              ? widget.onOpen
-                              : _load,
+                      // A failure keeps its own button reachable.
+                      if (failure == null)
+                        Material(
+                          type: MaterialType.transparency,
+                          child: InkWell(
+                            key: const ValueKey('inline-web-preview-tap'),
+                            onTap:
+                                _live || _snapshot != null || !widget.autoLoad
+                                ? widget.onOpen
+                                : _load,
+                          ),
                         ),
-                      ),
                       if ((_live || _snapshot != null) &&
                           widget.onOpen != null)
                         PositionedDirectional(

@@ -181,10 +181,68 @@ const _activeChatDesktopFailureCauseLimit = 180;
 /// siendo un tope fijo frente a un `message` remoto enorme.
 const _activeChatDesktopFailureCauseScanLimit = 4096;
 
+/// Desktop `lib/provider-setup-errors.ts`: the sentences Hermes writes when
+/// no provider can serve the session, matched by the noun phrase only (the
+/// auxiliary-model warning "No auxiliary LLM provider configured" is not one).
+final _providerSetupSentence = RegExp(
+  r'No (?:inference|Hermes|LLM) provider(?: is)? configured|'
+  r'no_provider_configured|set an API key|'
+  r'is set in config\.yaml but no (?:API key|credentials)',
+  caseSensitive: false,
+);
+/// Desktop `isProviderSetupErrorMessage` (`lib/provider-setup-errors.ts`)
+/// over a failure as Console shows it: Hermes' sentence, or the instruction
+/// Console put in its place.
+bool isProviderSetupFailureText(String text) =>
+    _providerSetupSentence.hasMatch(text) ||
+    _providerCredentialWarningSentence.hasMatch(text) ||
+    text.contains(_providerSetupInstruction);
+
+final _providerCredentialWarningSentence = RegExp(
+  r"No API key configured for provider '[^']*'\. First message will fail\.",
+);
+
+/// A `notification.show` notice as Desktop shows it (`store/agent-notices.ts`
+/// `noticeToToast`): [key] names it, so a later notice with the same key
+/// replaces it and `notification.clear` retires it; a [sticky] one stays
+/// until then, any other lasts [ttl] (or the usual time).
+typedef AgentNotice = ({
+  String text,
+  String? key,
+  String level,
+  bool sticky,
+  Duration? ttl,
+});
+
+/// The glyph Hermes puts before a `review.summary` line.
+final _leadingGlyphs = RegExp(r'^[^\p{L}\p{N}]+', unicode: true);
+
+final _providerCredentialWarning = RegExp(
+  r"^No API key configured for provider '[^']*'\. First message will fail\.$",
+);
+
+/// What fixes a provider-setup failure, when Hermes' own sentence cannot be
+/// shown.
+const _providerSetupInstruction =
+    'Hermes has no AI provider ready for this chat. Choose one with /model, '
+    'or run `hermes setup` on the server.';
+
+/// Room for Hermes' provider-setup sentence, which carries the instruction.
+const _providerSetupCauseLimit = 480;
+
 /// Projects only the Gateway's official `message` cause. Free-form sibling
 /// fields can contain partial output, provider payloads, paths, or credentials.
+///
+/// A provider-setup failure ([code] `provider_not_configured`, or one of its
+/// sentences) is recognised first: its sentence names API keys and says what
+/// to do, so it is shown as long as it carries no URL, path or opaque value;
+/// otherwise a fixed instruction is. Desktop sends it to provider setup
+/// (`gateway-event/status.ts`).
 @visibleForTesting
-String activeChatDesktopEventFailureUiMessage(Object? rawMessage) {
+String activeChatDesktopEventFailureUiMessage(
+  Object? rawMessage, {
+  Object? code,
+}) {
   // Se inspecciona una ventana mucho mayor que la proyectada: acotar primero
   // partiría un identificador opaco justo en el límite y el fragmento restante
   // ya no alcanzaría `{24,}`, colándose como si fuera prosa.
@@ -192,8 +250,21 @@ String activeChatDesktopEventFailureUiMessage(Object? rawMessage) {
     rawMessage,
     _activeChatDesktopFailureCauseScanLimit,
   );
-  if (scanned == null) return _activeChatDesktopFailureFallback;
-  final normalized = scanned.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final normalized = scanned?.replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
+  if (code == 'provider_not_configured' ||
+      _providerSetupSentence.hasMatch(normalized) ||
+      _providerCredentialWarning.hasMatch(normalized)) {
+    final unsafe = RegExp(
+      r'''https?://|(?:^|\s)(?:~[/\\]|/(?:home|users|root|data|storage|sdcard|private|var|tmp|etc)(?:[/\\]|\b))|[a-z]:[/\\]|\b[A-Za-z0-9_+/=-]{24,}\b''',
+      caseSensitive: false,
+    );
+    final cause = normalized.isEmpty || unsafe.hasMatch(normalized)
+        ? _providerSetupInstruction
+        : normalized.length <= _providerSetupCauseLimit
+        ? normalized
+        : normalized.substring(0, _providerSetupCauseLimit);
+    return 'No se pudo completar la respuesta: $cause';
+  }
   final sensitive = RegExp(
     r'''(?:^|\s)(?:~[/\\]|/(?:home|users|root|data|storage|sdcard|private|var|tmp|etc)(?:[/\\]|\b))|[a-z]:[/\\]|https?://|\b(?:authorization|bearer|api[_ -]?key|token|password|passwd|secret|cookie|session[_ -]?id)\b|\b[A-Za-z0-9_+/=-]{24,}\b''',
     caseSensitive: false,
@@ -712,7 +783,9 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
     final answer = raw is Map ? raw['answer'] : null;
     normalized['display_kind'] = displayKind;
     normalized['display_metadata'] = <String, dynamic>{
-      'kind': raw is Map && raw['kind'] == 'bg' ? 'bg' : 'btw',
+      'kind': raw is Map && (raw['kind'] == 'bg' || raw['kind'] == 'review')
+          ? raw['kind']
+          : 'btw',
       'question': question is String ? question : '',
       'answer': answer is String ? answer : content,
       'is_error': raw is Map && raw['is_error'] == true,
@@ -8886,6 +8959,14 @@ class ActiveChat with WidgetsBindingObserver {
     return out;
   }
   String? _terminalWarning;
+
+  /// How Hermes asked to show the agent notice now in [_terminalWarning]
+  /// (`notification.show`), until the chat screen takes it.
+  AgentNotice? _agentNotice;
+
+  /// Keys of the agent notices Hermes retired (`notification.clear`), until
+  /// the chat screen takes them.
+  final List<String> _clearedAgentNoticeKeys = [];
   int? _terminalWarningEpoch;
   String? _lastDurableTailIdentity;
   bool _passiveActivityVisible = false;
@@ -9118,6 +9199,21 @@ class ActiveChat with WidgetsBindingObserver {
     final warning = _terminalWarning;
     _terminalWarning = null;
     return warning;
+  }
+
+  /// The key, level and lifetime of the agent notice [takeTerminalWarning]
+  /// gave, once; null for any other warning.
+  AgentNotice? takeAgentNotice() {
+    final notice = _agentNotice;
+    _agentNotice = null;
+    return notice;
+  }
+
+  /// The keys of the agent notices Hermes cleared since the last call.
+  List<String> takeClearedAgentNoticeKeys() {
+    final keys = List<String>.of(_clearedAgentNoticeKeys);
+    _clearedAgentNoticeKeys.clear();
+    return keys;
   }
 
   @visibleForTesting
@@ -9816,6 +9912,18 @@ class ActiveChat with WidgetsBindingObserver {
   /// Solicitud de aprobación pendiente del agente (`approval.request`), o null.
   /// La pantalla la ancla sobre el compositor con los scopes de Desktop.
   Map<String, dynamic>? _pendingApproval;
+
+  /// Approvals waiting behind [pendingApproval], oldest first. Hermes keeps
+  /// a queue per session (`tools/approval.py` `_gateway_queues`): parallel
+  /// subagents or `execute_code` can each wait on one. Desktop shows the
+  /// head and brings up the next one when it is answered or withdrawn
+  /// (`store/prompts.ts` `approval`).
+  final List<Map<String, dynamic>> _queuedApprovals = [];
+
+  /// Counts approvals that arrived, shown or queued. With the generation it
+  /// fences snapshot reads: one taken before an arrival cannot clear it.
+  int _approvalArrivals = 0;
+  int get _approvalSnapshotFence => _approvalGeneration + _approvalArrivals;
   bool _desktopContinuationRequired = false;
   int _approvalGeneration = 0;
   final Map<(int, String), Future<void>> _approvalSends = {};
@@ -9846,11 +9954,27 @@ class ActiveChat with WidgetsBindingObserver {
     _dismissedDesktopContinuationOccurrence = _desktopContinuationOccurrence;
   }
 
+  /// Null drops the queued approvals too: the turn or runtime that owned
+  /// them is over. An answered or withdrawn head uses [_retireApprovalHead].
   set pendingApproval(Map<String, dynamic>? value) {
+    if (value == null) _queuedApprovals.clear();
+    _setApprovalHead(value);
+  }
+
+  void _setApprovalHead(Map<String, dynamic>? value) {
     if (identical(_pendingApproval, value)) return;
     _pendingApproval = value;
     if (value != null) _lastApprovalDecision = null;
     _approvalGeneration += 1;
+  }
+
+  /// The head was answered, settled or withdrawn: the next queued approval
+  /// takes its place, with the approval policy applied to it on the way.
+  void _retireApprovalHead() {
+    _setApprovalHead(null);
+    while (_pendingApproval == null && _queuedApprovals.isNotEmpty) {
+      _handleApprovalRequest(_queuedApprovals.removeAt(0));
+    }
   }
 
   ConnectionCardState _connectionCard = const ConnectionCardState();
@@ -12110,7 +12234,7 @@ class ActiveChat with WidgetsBindingObserver {
     final bridgeOwnedLiveUser =
         _usingDesktopGateway && isStreaming && !_runTerminal;
     final loadTerminalFences = _terminalReconciliationFences(_messages);
-    final loadApprovalGeneration = _approvalGeneration;
+    final loadApprovalGeneration = _approvalSnapshotFence;
     _storedSessionProfile = _bindSessionProfile(profile);
     final requestedStoredSessionId = serverSessionId;
     final requestedLogicalSessionId = logicalSessionId;
@@ -18809,6 +18933,56 @@ class ActiveChat with WidgetsBindingObserver {
     ).then((receipt) => receipt != null);
   }
 
+  /// Renames the conversation through this chat's live runtime
+  /// (`session.title`), which Desktop tries before the Dashboard
+  /// (`session-actions-menu.tsx` `renameSessionPreferringRpc`). Null when
+  /// the chat holds no runtime that takes it.
+  Future<String> Function(String title)? get liveRuntimeRename {
+    final gateway = _desktopGateway;
+    final runtimeId = _desktopRuntimeSessionId;
+    if (gateway is! HermesDesktopSessionTitleGateway ||
+        runtimeId == null ||
+        connection.readOnly ||
+        _disposed) {
+      return null;
+    }
+    final titles = gateway as HermesDesktopSessionTitleGateway;
+    return (title) => titles.setSessionTitle(runtimeId, title);
+  }
+
+  /// Ends this chat's live turn and closes its runtime before the
+  /// conversation is deleted, as Desktop does (`use-session-actions`
+  /// delete: `session.interrupt`, `session.close`, then the DELETE). Hermes
+  /// refuses to delete a session whose turn runs (409 `session_busy`), and a
+  /// turn that outlived its row could still ask for an approval in a chat
+  /// that is gone. The stop is this chat's own Stop; when it fails the delete
+  /// must not go ahead, so this throws. A runtime Hermes no longer has is not
+  /// a failure, and closing is best effort. Calling it again does nothing.
+  Future<void> endRuntimeBeforeDelete() async {
+    final gateway = _desktopGateway;
+    final runtimeId = _desktopRuntimeSessionId;
+    if (gateway == null || runtimeId == null) return;
+    if (isStreaming || remoteSurfaceOwnsLiveTurn) {
+      await cancel();
+      if (_stopConfirmationState == StopConfirmationState.failed) {
+        throw StateError('The running turn could not be stopped');
+      }
+    }
+    if (_disposed || _desktopRuntimeSessionId != runtimeId) return;
+    pendingApproval = null;
+    _expireInteractivePromptsForRuntime(runtimeId);
+    if (gateway is! HermesDesktopSessionCloseGateway) return;
+    try {
+      final closed = await (gateway as HermesDesktopSessionCloseGateway)
+          .closeSession(runtimeId);
+      if (closed && !_disposed && _desktopRuntimeSessionId == runtimeId) {
+        _retireDesktopRuntime();
+      }
+    } on Object {
+      // Desktop ignores a failed close too: the DELETE decides.
+    }
+  }
+
   /// Explicitly closes a Console-owned idle runtime so another surface may
   /// acquire its durable conversation. The transcript and durable local turn
   /// state are retained; only the exact live runtime binding is retired.
@@ -19164,7 +19338,7 @@ class ActiveChat with WidgetsBindingObserver {
     final privacyProfile = previousProfile.isEmpty
         ? 'default'
         : previousProfile;
-    final approvalGeneration = _approvalGeneration;
+    final approvalGeneration = _approvalSnapshotFence;
     final connectionRequestAtResumeStart = _connectionCard.request;
     try {
       DesktopSessionSnapshot snapshot;
@@ -21682,7 +21856,7 @@ class ActiveChat with WidgetsBindingObserver {
       if (!isCurrent()) return turn;
       await gateway.connect();
       if (!isCurrent()) return turn;
-      final recoveryApprovalGeneration = _approvalGeneration;
+      final recoveryApprovalGeneration = _approvalSnapshotFence;
       final binding = await _resumeDesktopSessionForRecovery(
         gateway,
         turn.sessionId,
@@ -24059,7 +24233,7 @@ class ActiveChat with WidgetsBindingObserver {
           debugPrint('[active-chat] ticket ok');
           debugPrint('[active-chat] connected');
           debugPrint('[active-chat] resume start');
-          final recoveryApprovalGeneration = _approvalGeneration;
+          final recoveryApprovalGeneration = _approvalSnapshotFence;
           final connectionRequestAtResumeStart = _connectionCard.request;
           resuming = true;
           final binding = await _desktopRecoveryOperationBeforeDeadline(
@@ -26422,6 +26596,13 @@ class ActiveChat with WidgetsBindingObserver {
       }
       return;
     }
+    if (event.type == 'approval.cancelled') {
+      // Broadcast to every client, naming the runtime in its payload.
+      if (event.payload['session_id']?.toString() == runtimeId) {
+        _handleApprovalsCancelled(event.payload['request_ids']);
+      }
+      return;
+    }
     if (event.sessionId != runtimeId) return;
     if (event.type == 'preview.open' || event.type == 'preview.close') {
       // desktop_preview open/close for this chat's connection and session;
@@ -26485,6 +26666,22 @@ class ActiveChat with WidgetsBindingObserver {
       if (turnId != null && turnId == _desktopStreamTurnId) return;
     }
     _feedTurnRegistryEvent(event.type, payload);
+    if (event.type == 'session.usage') {
+      // Live usage while a turn runs (`tui_gateway/server.py`
+      // `_start_usage_ticker`: `{usage}` when it moved, at most once a
+      // second), so the context figures follow the turn instead of waiting
+      // for its end, as Desktop's status bar does
+      // (`gateway-event/session-info.ts`).
+      final usage = payload['usage'];
+      if (usage is Map) {
+        final next = DesktopUsageStats.fromJson(usage);
+        if (next != _desktopRuntimeInfo.usage) {
+          _desktopRuntimeInfo = _desktopRuntimeInfo.withUsage(next);
+          _emit(ActiveChatEvent.responseMetrics);
+        }
+      }
+      return;
+    }
     if (_serverAwaitsInput &&
         event.type != 'gateway.ping' &&
         event.type != 'gateway.pong' &&
@@ -26498,6 +26695,90 @@ class ActiveChat with WidgetsBindingObserver {
     }
     if (event.type == 'todo.updated') {
       _applyTodoUpdate(payload);
+      return;
+    }
+    if (event.type == 'notification.show') {
+      // A notice from the agent (credits, a model switch it dropped, a
+      // compression note: `agent_callbacks.py` `_agent_notice_update`).
+      // Desktop shows it as a toast (`gateway-event/status.ts`); here it is
+      // the chat's notice. Only its `text`, bounded and on one line.
+      final text = payload['text'];
+      if (text is String) {
+        final line = text
+            .replaceAll(RegExp(r'[\u0000-\u001f\u007f]+'), ' ')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        if (line.isNotEmpty) {
+          final shown = line.length <= 240
+              ? line
+              : '${line.substring(0, 239).trimRight()}…';
+          _terminalWarning = shown;
+          final key = payload['key'] ?? payload['id'];
+          final level = payload['level'];
+          final ttl = payload['ttl_ms'];
+          _agentNotice = (
+            text: shown,
+            key: key is String && key.trim().isNotEmpty ? key.trim() : null,
+            level: level is String ? level : 'info',
+            sticky: payload['kind'] != 'ttl',
+            ttl: ttl is int && ttl > 0 ? Duration(milliseconds: ttl) : null,
+          );
+          _emit(ActiveChatEvent.warning);
+        }
+      }
+      return;
+    }
+    if (event.type == 'notification.clear') {
+      // Desktop `clearAgentNotice` (`store/agent-notices.ts`): the clear
+      // names the key of the notice it retires (credits restored retires
+      // the depleted one).
+      final rawKey = payload['key'];
+      final key = rawKey is String ? rawKey.trim() : '';
+      if (key.isNotEmpty) {
+        _clearedAgentNoticeKeys.add(key);
+        final pending = _agentNotice;
+        if (pending != null && pending.key == key) {
+          if (_terminalWarning == pending.text) _terminalWarning = null;
+          _agentNotice = null;
+        }
+        _emit(ActiveChatEvent.warning);
+      }
+      return;
+    }
+    if (event.type == 'review.summary') {
+      // The background self-improvement review saved a memory or a skill
+      // (`tui_gateway/session_registry.py` `background_review_callback`).
+      // Desktop keeps it as a row of the transcript, never a toast that can
+      // be missed, without Hermes' leading glyph (`gateway-event/status.ts`).
+      final raw = payload['text'];
+      final text = raw is String
+          ? raw.trim().replaceFirst(_leadingGlyphs, '')
+          : '';
+      if (text.isNotEmpty) {
+        _insertSideAnswerRow(
+          taskId: '',
+          kind: 'review',
+          content: text,
+          question: '',
+          answer: text,
+        );
+      }
+      return;
+    }
+    if (event.type == 'session.title') {
+      // Live auto-title (`prompt_turn.py` `_on_session_title`), sent once
+      // the titler is done, after the turn's own refresh. Applied as a
+      // `session.info` title is; Desktop `gateway-event/session-info.ts`.
+      final named = payload['session_id'];
+      final title = payload['title'];
+      if (named is String &&
+          named.trim().isNotEmpty &&
+          title is String &&
+          title.trim().isNotEmpty &&
+          title.trim() != sessionTitle) {
+        sessionTitle = title.trim();
+        _emit(ActiveChatEvent.sessionInfo);
+      }
       return;
     }
     // A turn starting (here or on another surface) ends the stop that muted
@@ -26785,6 +27066,9 @@ class ActiveChat with WidgetsBindingObserver {
       if (_unorderedSuccessorProbe != null) {
         _unorderedSuccessorTerminalSeen = true;
       }
+      // Desktop shows every gateway `error` (`gateway-event/status.ts`),
+      // also one after the turn ended: as a notice, the turn stays as it is.
+      if (event.type == 'error') _noticeLateGatewayError(payload);
       return;
     }
     if (_usingDesktopGateway && _runTerminal && event.type == 'tool.complete') {
@@ -26943,6 +27227,9 @@ class ActiveChat with WidgetsBindingObserver {
           startsNew: event.type == 'tool.start',
           draft: event.type == 'tool.generating',
         );
+        if (event.type == 'tool.progress') {
+          _applyAssistantToolProgress(payload);
+        }
         if (event.type == 'tool.start') {
           _applyTodoToolEvent(payload);
           _rememberToolPaths(payload);
@@ -27032,18 +27319,34 @@ class ActiveChat with WidgetsBindingObserver {
         );
       case 'error':
         _clearDesktopCompactingIndicator();
+        final failure = activeChatDesktopEventFailureUiMessage(
+          payload['message'],
+          code: payload['code'],
+        );
+        // After the turn ended `_failRun` no longer records it.
+        if (_runTerminal) _noticeLateGatewayError(payload);
         final authFailure = ProviderAuthFailure.classify(
           errorText: payload['message'],
           sessionProvider: _desktopRuntimeInfo.provider,
         );
         _failRun(
-          activeChatDesktopEventFailureUiMessage(payload['message']),
+          failure,
           failureMetadata: {
             if (authFailure != null)
               providerAuthFailureKey: authFailure.toJson(),
           },
         );
     }
+  }
+
+  /// A gateway `error` with no turn left to fail is shown as the chat's
+  /// notice, through the same projection as a turn failure.
+  void _noticeLateGatewayError(Map<String, dynamic> payload) {
+    _terminalWarning = activeChatDesktopEventFailureUiMessage(
+      payload['message'],
+      code: payload['code'],
+    );
+    _emit(ActiveChatEvent.warning);
   }
 
   void _recordTerminalWarning(Object? raw) {
@@ -27689,7 +27992,7 @@ class ActiveChat with WidgetsBindingObserver {
     if ((!snapshot.pendingApprovalProvided && !absenceProvesNone) ||
         snapshot.runtimeSessionId != _desktopRuntimeSessionId ||
         (expectedGeneration != null &&
-            expectedGeneration != _approvalGeneration)) {
+            expectedGeneration != _approvalSnapshotFence)) {
       return;
     }
     final pending = snapshot.pendingApproval;
@@ -27701,7 +28004,49 @@ class ActiveChat with WidgetsBindingObserver {
       // Malformed authority is not evidence that a newer live request vanished.
       return;
     }
+    if (liveSnapshotAbsenceClears && snapshot.running) {
+      // A live recovery snapshot lists every approval Hermes still holds:
+      // the cards it no longer names died with the old socket. Desktop
+      // `replayPendingApproval` drops them the same way.
+      final live = <String?>{
+        _approvalRequestId(pending),
+        for (final entry in snapshot.openRequests)
+          _approvalRequestId(_approvalFromOpenRequest(entry)),
+      };
+      _queuedApprovals.removeWhere(
+        (queued) => !live.contains(_approvalRequestId(queued)),
+      );
+      final head = _pendingApproval;
+      if (head != null && !live.contains(_approvalRequestId(head))) {
+        _cancelApprovalNotification(head, terminal: false);
+        _setApprovalHead(null);
+      }
+    }
     _handleApprovalRequest(Map<String, dynamic>.unmodifiable(pending));
+    // `pending_approval` is only the oldest of the session's queue; the rest
+    // is in `open_requests`, oldest first (`server_requests.open_requests`).
+    // Desktop replays the whole queue (`replayPendingApproval`).
+    final headId = _approvalRequestId(_pendingApproval);
+    for (final entry in snapshot.openRequests) {
+      final approval = _approvalFromOpenRequest(entry);
+      if (approval == null || _approvalRequestId(approval) == headId) continue;
+      _handleApprovalRequest(approval);
+    }
+    if (_pendingApproval == null) _retireApprovalHead();
+  }
+
+  /// An `approval` entry of `open_requests` as the approval it carries,
+  /// keyed by the queue's `request_id`; null for any other request.
+  Map<String, dynamic>? _approvalFromOpenRequest(Map<String, dynamic> entry) {
+    final params = entry['params'];
+    if (entry['method'] != 'approval' || params is! Map) return null;
+    final payload = <String, dynamic>{
+      for (final item in params.entries)
+        if (item.key is String && item.key != 'session_id')
+          item.key as String: item.value,
+    };
+    payload.putIfAbsent('request_id', () => entry['id']);
+    return Map<String, dynamic>.unmodifiable(payload);
   }
 
   /// Request ids cuyo `resolved: 0` ya disparó una relectura del snapshot.
@@ -27726,7 +28071,7 @@ class ActiveChat with WidgetsBindingObserver {
     final bindEpoch = _desktopBindEpoch;
     final sessionEpoch = _desktopSessionEpoch;
     final runtimeId = _desktopRuntimeSessionId;
-    final approvalGeneration = _approvalGeneration;
+    final approvalGeneration = _approvalSnapshotFence;
     if (runtimeId == null || !isStreaming) return;
     try {
       final snapshot = await recovery.resumeExistingForRecovery(
@@ -27827,16 +28172,8 @@ class ActiveChat with WidgetsBindingObserver {
     }
     for (final entry in open) {
       if (entry['method'] == 'approval') {
-        final params = entry['params'];
-        if (params is Map) {
-          final payload = <String, dynamic>{
-            for (final item in params.entries)
-              if (item.key is String && item.key != 'session_id')
-                item.key as String: item.value,
-          };
-          payload.putIfAbsent('request_id', () => entry['id']);
-          _handleApprovalRequest(Map<String, dynamic>.unmodifiable(payload));
-        }
+        final approval = _approvalFromOpenRequest(entry);
+        if (approval != null) _handleApprovalRequest(approval);
         continue;
       }
       final event = TuiGatewayClient.openServerRequestEvent(entry);
@@ -28835,6 +29172,39 @@ class ActiveChat with WidgetsBindingObserver {
     _messages[index] = {...message, assistantActivityTraceKey: activity};
   }
 
+  /// `tool.progress` (MCP progress of a running call) annotates its row, as
+  /// Desktop does beside the row's timer (`gateway-event/tools.ts`
+  /// `handleToolProgressEvent`). The rows of a batched call (`id:i`) share
+  /// it, as Desktop's `$toolProgressFor` does; it ends with the step.
+  void _applyAssistantToolProgress(Map<String, dynamic> payload) {
+    final id = payload['tool_id']?.toString().trim() ?? '';
+    final index = _assistantActivityMessageIndex();
+    if (id.isEmpty || index < 0) return;
+    final text = toolProgressText(payload);
+    final message = _messages[index];
+    final activity = normalizeAssistantActivityTrace(
+      message[assistantActivityTraceKey],
+    ).map(Map<String, dynamic>.from).toList(growable: true);
+    var changed = false;
+    for (final step in activity) {
+      final stepId = step['id'];
+      if (step['status'] != 'running' ||
+          stepId is! String ||
+          (stepId != id && !stepId.startsWith('$id:'))) {
+        continue;
+      }
+      if (text == null) {
+        changed |= step.remove(assistantActivityProgressKey) != null;
+      } else if (step[assistantActivityProgressKey] != text) {
+        step[assistantActivityProgressKey] = text;
+        changed = true;
+      }
+    }
+    if (changed) {
+      _messages[index] = {...message, assistantActivityTraceKey: activity};
+    }
+  }
+
   void _upsertAssistantToolStep(
     List<Map<String, dynamic>> activity,
     Map<String, dynamic> payload, {
@@ -28929,6 +29299,11 @@ class ActiveChat with WidgetsBindingObserver {
       };
       // The tool itself spoke: the step is no longer a draft.
       if (!draft) activity[activityIndex].remove(assistantActivityDraftKey);
+      // A finished call has no progress left to say (Desktop
+      // `clearToolProgress` on `tool.complete`).
+      if (!running) {
+        activity[activityIndex].remove(assistantActivityProgressKey);
+      }
     } else {
       if (draft) _toolDraftPending = true;
       activity.add({
@@ -31178,9 +31553,19 @@ class ActiveChat with WidgetsBindingObserver {
     final requestId = _approvalRequestId(event);
     if (requestId == null) return;
     final permitted = permittedApprovalChoices(event);
-    if (decision != null &&
+    final head = _pendingApproval;
+    final behindHead = head != null && _approvalRequestId(head) != requestId;
+    if (behindHead) _approvalArrivals += 1;
+    // While this chat may not answer, a queued approval waits to be shown.
+    final answerNow = !behindHead || !mutationsBlockedByOwnershipConflict;
+    if (answerNow &&
+        decision != null &&
         decision.kind == ApprovalDecisionKind.autoApprove &&
         permitted.contains(decision.scope!.wire)) {
+      if (behindHead) {
+        _autoResolveQueuedApproval(decision.scope!.wire, event);
+        return;
+      }
       // YOLO / regla "siempre": resolver sin molestar al usuario.
       pendingApproval = event;
       state = ChatPipelineState.executing;
@@ -31190,9 +31575,14 @@ class ActiveChat with WidgetsBindingObserver {
       );
       return;
     }
-    if (decision != null &&
+    if (answerNow &&
+        decision != null &&
         decision.kind == ApprovalDecisionKind.blocked &&
         permitted.contains(ApprovalScope.deny.wire)) {
+      if (behindHead) {
+        _autoResolveQueuedApproval(ApprovalScope.deny.wire, event);
+        return;
+      }
       // Solo lectura: el agente no puede ejecutar; denegamos automáticamente.
       pendingApproval = event;
       state = ChatPipelineState.executing;
@@ -31203,6 +31593,19 @@ class ActiveChat with WidgetsBindingObserver {
       return;
     }
 
+    if (behindHead) {
+      // Another approval is on screen: this one waits its turn, as on
+      // Desktop. A newer copy of a queued request replaces it in place.
+      final index = _queuedApprovals.indexWhere(
+        (queued) => _approvalRequestId(queued) == requestId,
+      );
+      if (index < 0) {
+        _queuedApprovals.add(event);
+      } else {
+        _queuedApprovals[index] = event;
+      }
+      return;
+    }
     // Pedir: tarjeta inline + notificación (acciona aunque la app esté atrás).
     pendingApproval = event;
     state = ChatPipelineState.executing;
@@ -31236,6 +31639,36 @@ class ActiveChat with WidgetsBindingObserver {
       approvalChoices: permittedApprovalChoices(event).toList(),
       command: command.isEmpty ? null : command,
       description: (event['description'] ?? event['tool'])?.toString(),
+    );
+  }
+
+  /// The policy answers an approval that arrived behind another one at
+  /// once, without a card: it must not wait on an unrelated decision.
+  void _autoResolveQueuedApproval(String choice, Map<String, dynamic> event) {
+    _queuedApprovals.removeWhere(
+      (queued) => _approvalRequestId(queued) == _approvalRequestId(event),
+    );
+    final turn = _turnEpoch;
+    unawaited(
+      _sendApprovalResult(choice, event).then<void>(
+        (_) {},
+        onError: (Object _) {
+          // The answer did not reach Hermes, which still waits on it: the
+          // approval goes back in line instead of being lost, and is
+          // answered again (or shown) when it comes up.
+          final id = _approvalRequestId(event);
+          if (_disposed || id == null || turn != _turnEpoch) return;
+          if (_currentTurnSettledApprovals.containsKey(id)) return;
+          if (_approvalRequestId(_pendingApproval) == id ||
+              _queuedApprovals.any(
+                (queued) => _approvalRequestId(queued) == id,
+              )) {
+            return;
+          }
+          _queuedApprovals.add(event);
+          if (_pendingApproval == null) _retireApprovalHead();
+        },
+      ),
     );
   }
 
@@ -31307,6 +31740,9 @@ class ActiveChat with WidgetsBindingObserver {
     final settledId = _approvalRequestId(payload);
     if (settledId == null) return;
     _recordSettledApproval(settledId, acknowledged: true);
+    _queuedApprovals.removeWhere(
+      (queued) => _approvalRequestId(queued) == settledId,
+    );
     final approval = pendingApproval;
     if (approval == null || _approvalRequestId(approval) != settledId) return;
     final choice = payload['choice']?.toString();
@@ -31314,7 +31750,39 @@ class ActiveChat with WidgetsBindingObserver {
       _recordApprovalDecision(choice!);
     }
     _cancelApprovalNotification(approval, terminal: false);
-    pendingApproval = null;
+    _retireApprovalHead();
+    _armActivityWatchdog();
+    _emit(ActiveChatEvent.toolProgress);
+  }
+
+  /// `approval.cancelled` (`tui_gateway/session_lifecycle.py`): Hermes
+  /// dropped this runtime's pending approvals on an interrupt or teardown,
+  /// which settles them without any other word. Their cards come down by id,
+  /// and a replay of one stays down; with no ids, every card does. Desktop
+  /// `gateway-event/lifecycle.ts`.
+  void _handleApprovalsCancelled(Object? rawIds) {
+    final ids = <String>{
+      if (rawIds is List)
+        for (final id in rawIds)
+          if (id is String && id.trim().isNotEmpty) id.trim(),
+    };
+    final head = _pendingApproval;
+    for (final id in ids) {
+      _recordSettledApproval(id, acknowledged: true);
+    }
+    _queuedApprovals.removeWhere(
+      (queued) => ids.contains(_approvalRequestId(queued)),
+    );
+    if (head == null ||
+        (ids.isNotEmpty && !ids.contains(_approvalRequestId(head)))) {
+      return;
+    }
+    _cancelApprovalNotification(head, terminal: false);
+    if (ids.isEmpty) {
+      pendingApproval = null;
+    } else {
+      _retireApprovalHead();
+    }
     _armActivityWatchdog();
     _emit(ActiveChatEvent.toolProgress);
   }
@@ -31410,7 +31878,7 @@ class ActiveChat with WidgetsBindingObserver {
         // caducada durante un corte): la tarjeta quedaría muerta. Se retira
         // y el snapshot decide si hay otra aprobación pendiente.
         _cancelApprovalNotification(approval, terminal: false);
-        pendingApproval = null;
+        _retireApprovalHead();
         _emit(ActiveChatEvent.toolProgress);
         unawaited(_refreshPendingApprovalFromSnapshot(approvalId));
         return ApprovalSendResult.ignored;
@@ -31425,7 +31893,7 @@ class ActiveChat with WidgetsBindingObserver {
       }
       if (!requestStillCurrent()) return ApprovalSendResult.ignored;
       _recordApprovalDecision(choice);
-      pendingApproval = null;
+      _retireApprovalHead();
       state = ChatPipelineState.executing;
       _armActivityWatchdog();
       _emit(ActiveChatEvent.toolProgress);

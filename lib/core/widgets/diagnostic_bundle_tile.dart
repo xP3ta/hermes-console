@@ -111,6 +111,7 @@ class DiagnosticBundleController {
           for (final record in AppErrorLog.recent)
             DiagnosticErrorEvent.fromAppError(record),
         ],
+        secureStorage: SecureStorageDiagnostics.recent,
       ),
     );
   }

@@ -1604,6 +1604,47 @@ void main() {
     expect(find.byKey(const ValueKey('attachment-pdf-page-2')), findsOneWidget);
   });
 
+  testWidgets('an image sent as a file previews as an image', (
+    tester,
+  ) async {
+    // What the file picker stored before images were typed as images:
+    // a document whose MIME type is an image.
+    final file = File('${Directory.systemTemp.path}/sent_as_file.jpg')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+          'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      );
+    addTearDown(() {
+      if (file.existsSync()) file.deleteSync();
+    });
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        host(
+          AttachmentHistoryCard(
+            name: '3f2a9c.jpg',
+            sizeLabel: '67.6 KB',
+            reference: const AttachmentHistoryReference(
+              index: 0,
+              storageKey: _sentAsFileKey,
+              type: AttachmentType.document,
+              mimeType: 'image/jpeg',
+              sizeBytes: 69222,
+              sha256Hex: _sentAsFileKey,
+            ),
+            resolver: (_) async => file,
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pump();
+
+    final card = tester.widget<AttachmentCard>(find.byType(AttachmentCard));
+    expect(card.thumbnailFile?.path, file.path);
+  });
+
   group('HTML preview card while scrolling', () {
     setUp(GeneratedMediaAttachmentCard.clearReadyMemoForTesting);
     tearDown(GeneratedMediaAttachmentCard.clearReadyMemoForTesting);
@@ -1774,3 +1815,6 @@ void main() {
     });
   });
 }
+
+const _sentAsFileKey =
+    '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';

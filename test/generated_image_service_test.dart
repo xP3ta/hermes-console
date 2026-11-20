@@ -404,6 +404,37 @@ void main() {
     });
   });
 
+  test('stripImageEchoes removes a markdown image of the source whole', () {
+    const src = 'https://v3.fal.media/files/a/x.png';
+    String strip(String text) =>
+        GeneratedImageService.stripImageEchoes(text, echoSources: const [src]);
+
+    final reply = strip('Aquí tienes:\n\n![Gato]($src)\n\n¿Otra?');
+    expect(reply, contains('Aquí tienes:'));
+    expect(reply, contains('¿Otra?'));
+    expect(reply, isNot(contains('![')));
+    expect(reply, isNot(contains('()')));
+    expect(strip('![a](<$src> "t")').trim(), isEmpty);
+    // Another image is not this source.
+    const other = '![c](https://example.invalid/y.png)';
+    expect(strip(other), other);
+  });
+
+  test('stripImageEchoes leaves a link to the source a whole link', () {
+    const src = 'https://v3.fal.media/files/a/x.png';
+    String strip(String text) =>
+        GeneratedImageService.stripImageEchoes(text, echoSources: const [src]);
+
+    // Desktop keeps the link: only bare echoes and images go.
+    const link = 'Descárgala [aquí]($src).';
+    expect(strip(link), link);
+    expect(strip('Lista:\n$src\nFin.'), 'Lista:\n\nFin.');
+    expect(strip('Ver $src, por favor'), 'Ver , por favor');
+    expect(strip('[gato](#media:${Uri.encodeComponent(src)})'), isEmpty);
+    // A longer path that starts with the source is not the source.
+    expect(strip('Ver ${src}l'), 'Ver ${src}l');
+  });
+
   group('ensureDownloaded — caché local idempotente', () {
     late Directory tmp;
 

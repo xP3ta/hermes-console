@@ -1,0 +1,7 @@
+Novedades de la 1.4.2:
+• Salas, Bots y Cron cargan tras volver a iniciar sesión, sin reiniciar la app.
+• Una sala lenta ya no esconde la lista de salas.
+• Las imágenes adjuntadas como archivo muestran su miniatura; sin texto del servidor en tus mensajes.
+• Los modelos 3D comprimidos ya se dibujan; los visores dicen por qué algo no se puede mostrar.
+• Las aprobaciones en paralelo esperan en cola.
+• Menos memoria y menos datos en segundo plano.

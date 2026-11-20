@@ -130,7 +130,8 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
     });
     final controller = VideoPlayerController.file(widget.file);
     try {
-      await controller.initialize();
+      // A player that never gets ready is a failure, not a spinner for ever.
+      await controller.initialize().timeout(_initializeDeadline);
       if (!mounted || generation != _generation) {
         await controller.dispose();
         return;
@@ -234,14 +235,61 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
     }
     if (controller == null || !controller.value.isInitialized) {
       final failed = _error != null;
+      if (!failed) {
+        return _VideoFrame(
+          child: Center(
+            child: TextButton.icon(
+              onPressed: _startOrRetry,
+              icon: const Icon(HIcons.play_arrow_rounded),
+              label: Text(strings.genVideoPlay),
+            ),
+          ),
+        );
+      }
+      // Why, and what still works (Desktop: «Open video file» when its
+      // <video> fails, markdown-text.tsx MediaPlaybackAttachment).
+      final colors = Theme.of(context).hermes;
       return _VideoFrame(
         child: Center(
-          child: TextButton.icon(
-            onPressed: _startOrRetry,
-            icon: Icon(
-              failed ? HIcons.refresh_rounded : HIcons.play_arrow_rounded,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              key: const ValueKey('generated-video-failed'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  strings.vwPlaybackFailed,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 4,
+                  children: [
+                    TextButton.icon(
+                      onPressed: _startOrRetry,
+                      icon: const Icon(HIcons.refresh_rounded),
+                      label: Text(strings.commonRetry),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => shareMediaFile(widget.file),
+                      icon: const Icon(HIcons.share_outlined),
+                      label: Text(strings.commonShare),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => saveMediaToGallery(
+                        context,
+                        widget.file,
+                        isVideo: true,
+                      ),
+                      icon: const Icon(HIcons.download_rounded),
+                      label: Text(strings.commonSave),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            label: Text(failed ? strings.commonRetry : strings.genVideoPlay),
           ),
         ),
       );
@@ -311,6 +359,9 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard> {
 }
 
 const double _inlineMinHeight = 200;
+
+/// Longest a local file may take to be ready to play.
+const Duration _initializeDeadline = Duration(seconds: 30);
 const double _inlineMaxHeight = 480;
 
 /// Height of the inline player for [width] and an aspect [ratio]: tall

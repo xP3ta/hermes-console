@@ -195,7 +195,8 @@ final class BotModeSnapshot {
   HostedGroupsSnapshot get hostedGroups => HostedGroupsSnapshot(
     capabilities: capabilities,
     rooms: [for (final r in rooms) r.room],
-    logs: [for (final r in rooms) ?r.log],
+    // Index-aligned with [rooms]: a room without a log stays a null entry.
+    logs: [for (final r in rooms) r.log],
     driverStatuses: {
       for (final r in rooms)
         r.room.roomId: ?r.driverStatus,
@@ -314,7 +315,8 @@ final class BotModeRepository {
     final snapshot = HostedGroupsSnapshot(
       capabilities: hosted.caps,
       rooms: [for (final r in hosted.rooms) r.room],
-      logs: [for (final r in hosted.rooms) ?r.log],
+      // Index-aligned with rooms: a room without a log stays a null entry.
+      logs: [for (final r in hosted.rooms) r.log],
       driverStatuses: {
         for (final r in hosted.rooms)
           r.room.roomId: ?r.driverStatus,

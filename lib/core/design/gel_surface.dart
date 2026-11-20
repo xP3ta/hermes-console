@@ -1,6 +1,8 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../theme/app_theme.dart';
 import 'tokens.dart';
@@ -166,6 +168,123 @@ class _HermesGelSurfaceState extends State<HermesGelSurface> {
         child: body,
       ),
     );
+  }
+}
+
+/// Room for the glow of an accent gel inside a layer that would cut it.
+///
+/// A fade (`FadeTransition`, `AnimatedOpacity`) paints its child into a
+/// layer of its own while it is visible, at full opacity too, and that layer
+/// is as large as the fade's box: a glow drawn outside the box is cut with a
+/// hard, square edge. [wrap] gets [child] padded by [HermesGel.glowExtent] on
+/// every side, so its layer holds the whole glow; the room takes the padding
+/// back, so it lays out, paints and answers touches exactly where [child]
+/// alone would.
+class HermesGlowRoom extends StatelessWidget {
+  const HermesGlowRoom({required this.wrap, required this.child, super.key});
+
+  /// Builds the layer (the fade) around the padded child.
+  final Widget Function(Widget room) wrap;
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => _GlowRoom(
+    extent: HermesGel.glowExtent,
+    child: wrap(
+      Padding(
+        padding: const EdgeInsets.all(HermesGel.glowExtent),
+        child: child,
+      ),
+    ),
+  );
+}
+
+class _GlowRoom extends SingleChildRenderObjectWidget {
+  const _GlowRoom({required this.extent, super.child});
+
+  final double extent;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderGlowRoom(extent);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderGlowRoom renderObject) {
+    renderObject.extent = extent;
+  }
+}
+
+/// Lays its child out [extent] larger on every side, sizes itself to the
+/// child less that margin and paints it [extent] up and to the left.
+class _RenderGlowRoom extends RenderShiftedBox {
+  _RenderGlowRoom(this._extent) : super(null);
+
+  double _extent;
+  set extent(double value) {
+    if (value == _extent) return;
+    _extent = value;
+    markNeedsLayout();
+  }
+
+  double get _margin => 2 * _extent;
+
+  double _grow(double value) => value.isFinite ? value + _margin : value;
+
+  double _shrink(double value) => math.max(0, value - _margin);
+
+  BoxConstraints _inner(BoxConstraints constraints) => BoxConstraints(
+    minWidth: constraints.minWidth + _margin,
+    maxWidth: _grow(constraints.maxWidth),
+    minHeight: constraints.minHeight + _margin,
+    maxHeight: _grow(constraints.maxHeight),
+  );
+
+  Size _outer(BoxConstraints constraints, Size inner) => constraints
+      .constrain(Size(_shrink(inner.width), _shrink(inner.height)));
+
+  @override
+  double computeMinIntrinsicWidth(double height) =>
+      _shrink(child?.getMinIntrinsicWidth(_grow(height)) ?? 0);
+
+  @override
+  double computeMaxIntrinsicWidth(double height) =>
+      _shrink(child?.getMaxIntrinsicWidth(_grow(height)) ?? 0);
+
+  @override
+  double computeMinIntrinsicHeight(double width) =>
+      _shrink(child?.getMinIntrinsicHeight(_grow(width)) ?? 0);
+
+  @override
+  double computeMaxIntrinsicHeight(double width) =>
+      _shrink(child?.getMaxIntrinsicHeight(_grow(width)) ?? 0);
+
+  @override
+  Size computeDryLayout(covariant BoxConstraints constraints) {
+    final child = this.child;
+    if (child == null) return constraints.smallest;
+    return _outer(constraints, child.getDryLayout(_inner(constraints)));
+  }
+
+  @override
+  double? computeDryBaseline(
+    covariant BoxConstraints constraints,
+    TextBaseline baseline,
+  ) {
+    final inner = child?.getDryBaseline(_inner(constraints), baseline);
+    return inner == null ? null : inner - _extent;
+  }
+
+  @override
+  void performLayout() {
+    final child = this.child;
+    if (child == null) {
+      size = constraints.smallest;
+      return;
+    }
+    child.layout(_inner(constraints), parentUsesSize: true);
+    (child.parentData! as BoxParentData).offset = Offset(-_extent, -_extent);
+    size = _outer(constraints, child.size);
   }
 }
 

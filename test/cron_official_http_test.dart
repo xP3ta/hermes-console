@@ -167,4 +167,123 @@ void main() {
       }, _RealHttp());
     },
   );
+
+  test('run now on a job that outlasts the wait is a run in progress, not '
+      'a failure, and is asked once', () async {
+    await HttpOverrides.runWithHttpOverrides(() async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final triggers = <String>[];
+      var jobRuns = const Duration(milliseconds: 900);
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        request.response.headers.contentType = ContentType.json;
+        if (request.uri.path.endsWith('/trigger')) {
+          triggers.add('${request.method} ${request.uri}');
+          // As the server does: the answer comes when the job has finished.
+          await Future<void>.delayed(jobRuns);
+        }
+        request.response.write(
+          jsonEncode({
+            'id': 'fixture-slow',
+            'profile': 'owner-b',
+            'prompt': 'slow',
+            'schedule': '0 9 * * *',
+            'enabled': true,
+            'last_run_at': '2026-01-01T00:00:00Z',
+          }),
+        );
+        try {
+          await request.response.close();
+        } catch (_) {
+          // The client stopped waiting.
+        }
+      });
+      final client = DashboardClient(
+        host: '127.0.0.1',
+        port: server.port,
+        manualToken: 'synthetic-fixture-token',
+      );
+      addTearDown(client.close);
+      final repo = CronRepository(
+        client,
+        profile: 'screen-a',
+        triggerWait: const Duration(milliseconds: 150),
+      );
+      final job = CronJob.fromJson({
+        'id': 'fixture-slow',
+        'profile': 'owner-b',
+        'prompt': 'slow',
+        'schedule': '0 9 * * *',
+        'enabled': true,
+      }).withSourceProfile('owner-b');
+
+      await expectLater(
+        repo.trigger(job),
+        throwsA(
+          isA<CronRunInProgress>().having((e) => e.jobId, 'job', 'fixture-slow'),
+        ),
+      );
+      // The notification "Retry" uses the same route: started is success.
+      await repo.triggerById('fixture-slow');
+      await Future<void>.delayed(const Duration(milliseconds: 1000));
+      // One request each, never repeated on the timeout (a second one would
+      // get the server's 409 "already running").
+      expect(triggers, [
+        'POST /api/cron/jobs/fixture-slow/trigger?profile=owner-b',
+        'POST /api/cron/jobs/fixture-slow/trigger?profile=screen-a',
+      ]);
+
+      // A job that ends within the wait still returns its result.
+      jobRuns = Duration.zero;
+      final done = await repo.trigger(job);
+      expect(done.id, 'fixture-slow');
+      expect(triggers.length, 3);
+    }, _RealHttp());
+  });
+
+  test('delivery targets and the blueprint catalog are read for the profile '
+      'the routine is created in', () async {
+    await HttpOverrides.runWithHttpOverrides(() async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      final seen = <String>[];
+      server.listen((request) async {
+        await utf8.decoder.bind(request).join();
+        seen.add('${request.method} ${request.uri}');
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'targets': [
+              {'id': 'local', 'name': 'Local'},
+            ],
+            'blueprints': <Object>[],
+          }),
+        );
+        await request.response.close();
+      });
+      final client = DashboardClient(
+        host: '127.0.0.1',
+        port: server.port,
+        manualToken: 'synthetic-fixture-token',
+      );
+      addTearDown(client.close);
+
+      final scoped = CronRepository(client, profile: 'writer bot');
+      expect((await scoped.deliveryTargets()).single.id, 'local');
+      await scoped.blueprints();
+      final unscoped = CronRepository(client);
+      await unscoped.deliveryTargets();
+      await unscoped.blueprints();
+
+      expect(seen, [
+        'GET /api/cron/delivery-targets?profile=writer+bot',
+        'GET /api/cron/blueprints?profile=writer+bot',
+        // No profile chosen: the server's own, and the catalog of the
+        // profile a blueprint is instantiated into ("default").
+        'GET /api/cron/delivery-targets',
+        'GET /api/cron/blueprints?profile=default',
+      ]);
+    }, _RealHttp());
+  });
 }

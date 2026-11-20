@@ -13,11 +13,11 @@ import 'package:hermes_android/core/widgets/dashboard_sign_in_event.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 const _unix =
-    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/'
+    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/setup-v1.6.0/'
     'hermes-dashboard-setup.sh | sh -s -- --new-access';
 const _windows =
     '& ([scriptblock]::Create((irm https://raw.githubusercontent.com/xP3ta/'
-    'hermes-setup/main/hermes-dashboard-setup.ps1))) -NewAccess';
+    'hermes-setup/setup-v1.6.0/hermes-dashboard-setup.ps1))) -NewAccess';
 
 Future<void> _page(WidgetTester tester, {String locale = 'en'}) async {
   await tester.pumpWidget(
@@ -58,7 +58,8 @@ void main() {
       }
     }
     expect(hits.toSet(), {'lib/core/services/official_dashboard_command.dart'});
-    expect(kHermesSetupRef, 'main');
+    // A released tag of the setup scripts, never a branch.
+    expect(kHermesSetupRef, matches(RegExp(r'^setup-v\d+\.\d+\.\d+$')));
   });
 
   testWidgets(

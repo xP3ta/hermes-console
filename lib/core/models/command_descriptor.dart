@@ -465,6 +465,18 @@ final class DesktopCommandCatalog {
   /// opposed to registry commands. Drives the palette's Skills group.
   final Set<String> skillNames;
 
+  /// Names (without `/`) the palette does not offer: commands Hermes marks
+  /// with no app surface (`desktop`: terminal, advanced, settings, ...) or
+  /// as hidden. Desktop `isDesktopSlashSuggestion`
+  /// (`lib/desktop-slash-commands.ts`).
+  final Set<String> paletteHiddenNames;
+
+  /// How each command (without `/`) takes its argument, as Hermes declares
+  /// it in `commands`: `options`, `text` or `mixed` (`hermes_cli/commands.py`
+  /// `infer_argument_mode`). A command it does not name takes none, or the
+  /// server does not say.
+  final Map<String, String> argumentModes;
+
   const DesktopCommandCatalog._({
     required this.commands,
     required this.categories,
@@ -473,7 +485,15 @@ final class DesktopCommandCatalog {
     this.skillCount,
     this.revision,
     this.skillNames = const <String>{},
+    this.paletteHiddenNames = _terminalOnlyExtras,
+    this.argumentModes = const <String, String>{},
   });
+
+  /// Whether the slash palette may suggest [name] (without `/`).
+  bool offersInPalette(String name) => !paletteHiddenNames.contains(name);
+
+  /// The `argument_mode` of [name] (without `/`), or null.
+  String? argumentModeOf(String name) => argumentModes[name];
 
   factory DesktopCommandCatalog.fromJson(Object? value) {
     if (value is! Map) {
@@ -512,7 +532,13 @@ final class DesktopCommandCatalog {
       }
     }
 
-    accumulator.addDescriptors(json['commands'], null, null);
+    // Hermes sends `commands` as `{"/name": {"desktop": ...}}`
+    // (`tui_gateway/command_discovery.py` `command_catalog`): how each
+    // command is offered, not a list of commands.
+    final rawCommands = json['commands'];
+    if (rawCommands is! Map) {
+      accumulator.addDescriptors(rawCommands, null, null);
+    }
     accumulator.addPairs(json['pairs'], null, null);
     accumulator.addCanon(json['canon']);
 
@@ -534,6 +560,12 @@ final class DesktopCommandCatalog {
     }
     return DesktopCommandCatalog._(
       skillNames: Set<String>.unmodifiable(skillNames),
+      paletteHiddenNames: Set<String>.unmodifiable(
+        _paletteHiddenNames(rawCommands),
+      ),
+      argumentModes: Map<String, String>.unmodifiable(
+        _argumentModes(rawCommands, json['canon']),
+      ),
       commands: List<CommandCatalogEntry>.unmodifiable(accumulator.build()),
       categories: List<CommandCatalogCategory>.unmodifiable(
         accumulator.categories.values,
@@ -544,6 +576,67 @@ final class DesktopCommandCatalog {
       revision: revision,
     );
   }
+}
+
+/// Dispositions with no app surface (Desktop `DesktopUnavailableReason`),
+/// plus `hidden`: runnable, but kept out of the palette.
+const _paletteHiddenDispositions = {
+  'advanced',
+  'composer-voice',
+  'messaging',
+  'settings',
+  'terminal',
+  'hidden',
+};
+
+/// Terminal display toggles the registry never lists, and `/pets` (Desktop
+/// `TS_ONLY_NO_DESKTOP_SURFACE`).
+const _terminalOnlyExtras = {'density', 'details', 'logs', 'mouse', 'pets'};
+
+/// Desktop `isDesktopSlashSuggestion` over the catalog's `commands`
+/// metadata: a command with no app surface, a hidden one, or one whose
+/// `desktop_subcommands` allow nothing is not suggested.
+Set<String> _paletteHiddenNames(Object? raw) {
+  final hidden = <String>{..._terminalOnlyExtras};
+  if (raw is! Map) return hidden;
+  for (final item in raw.entries.take(DesktopCommandCatalog.maxCommands * 4)) {
+    final name = CommandDescriptor.tryNormalizeName(item.key);
+    final meta = item.value;
+    if (name == null || meta is! Map) continue;
+    final subcommands = meta['desktop_subcommands'];
+    if (_paletteHiddenDispositions.contains(meta['desktop']) ||
+        (subcommands is List && subcommands.isEmpty)) {
+      hidden.add(name);
+    }
+  }
+  return hidden;
+}
+
+/// Desktop `desktopSlashCommandArgumentMode` (`lib/desktop-slash-commands.ts`)
+/// over the catalog: each command's `argument_mode`, and an alias in `canon`
+/// takes the mode of the command it names.
+Map<String, String> _argumentModes(Object? raw, Object? canon) {
+  final modes = <String, String>{};
+  if (raw is! Map) return modes;
+  for (final item in raw.entries.take(DesktopCommandCatalog.maxCommands * 4)) {
+    final name = CommandDescriptor.tryNormalizeName(item.key);
+    final meta = item.value;
+    if (name == null || meta is! Map) continue;
+    final mode = meta['argument_mode'];
+    if (mode == 'options' || mode == 'text' || mode == 'mixed') {
+      modes[name] = mode as String;
+    }
+  }
+  if (canon is Map) {
+    final entries = canon.entries.take(DesktopCommandCatalog.maxCommands * 4);
+    for (final item in entries) {
+      final alias = CommandDescriptor.tryNormalizeName(item.key);
+      final target = CommandDescriptor.tryNormalizeName(item.value);
+      final mode = target == null ? null : modes[target];
+      if (alias != null && mode != null) modes.putIfAbsent(alias, () => mode);
+    }
+  }
+  return modes;
 }
 
 final class SlashCompletionSuggestion {

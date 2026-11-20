@@ -32,7 +32,7 @@ BotLiveStatus referenceForAgent({
           m.owner.connectionId == room.authorityGatewayId &&
           m.owner.profile == agent.profile.name,
     )) {
-      final events = rooms.logs
+      final events = rooms.logs.nonNulls
           .where(
             (log) =>
                 log.authority.gatewayId == room.authorityGatewayId &&

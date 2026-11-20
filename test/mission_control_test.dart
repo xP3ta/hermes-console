@@ -746,7 +746,10 @@ void main() {
       );
 
       expect(endpoint, startsWith('profiles/sessions?'));
-      expect(Uri.splitQueryString(endpoint!.split('?').last)['profile'], 'all');
+      final query = Uri.splitQueryString(endpoint!.split('?').last);
+      expect(query['profile'], 'all');
+      // Full rows carry every session's rendered prompt; a list never reads it.
+      expect(query.containsKey('full'), isFalse);
       expect(sessions.map((session) => session.profile), ['infra', 'security']);
       expect(sessions.map((session) => session.id), ['shared-id', 'shared-id']);
     });

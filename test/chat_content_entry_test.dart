@@ -11,10 +11,12 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/screens/chat_content_screen.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
+import 'package:hermes_android/core/services/attachment_uploader.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
@@ -26,6 +28,7 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/theme/hermes_style.dart';
 import 'package:hermes_android/core/widgets/media_viewer/media_viewer.dart';
+import 'package:hermes_android/core/widgets/user_server_attachment_card.dart';
 import 'package:hermes_android/main.dart';
 import 'support/test_api_client.dart';
 
@@ -258,6 +261,232 @@ void main() {
         findsOneWidget,
         reason: label,
       );
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the bubble hides the context Hermes attaches for the model', (
+    tester,
+  ) async {
+    // agent/context_references.py: expand_context_references keeps the
+    // `@file:` token the user sent and appends `--- Attached Context ---`;
+    // _binary_reference_block writes the note for a file it did not inline.
+    final temp = Directory.systemTemp.createTempSync('attached-context-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (_) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+    const path = '/home/u/.hermes/attachments/3f2a9c.jpg';
+    const block =
+        '\n\n--- Attached Context ---\n\n'
+        '📎 @file:$path (image/jpeg, 67.6 KB) — binary file, not inlined as '
+        'text. It is available on disk at `$path`. Use your tools to work '
+        'with it (read or convert it, extract its text, or view/render it as '
+        'needed); do not tell the user the file type is unsupported.';
+    await pumpChat(
+      tester,
+      history: [
+        {'role': 'assistant', 'content': 'Recibido.'},
+        {
+          'role': 'user',
+          // An older backend stripped the token from the prose.
+          'content': 'Y esta otra$block',
+          'timestamp': 1781774400,
+        },
+        {'role': 'assistant', 'content': 'Hola.'},
+        {
+          'role': 'user',
+          'content': 'Mira esta foto\n@file:$path$block',
+          'timestamp': 1781774300,
+        },
+      ],
+      // The server copy is out of reach here; failing at once frees the
+      // shared fetch slots for the tests that follow.
+      userServerMediaFetcher: (_, _) async =>
+          throw const FileSystemException('offline'),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(
+      find.textContaining('Attached Context', findRichText: true),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('not inlined', findRichText: true),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('do not tell the user', findRichText: true),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('/home/u/.hermes', findRichText: true),
+      findsNothing,
+    );
+    // What the user wrote stays.
+    expect(
+      find.textContaining('Mira esta foto', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Y esta otra', findRichText: true),
+      findsOneWidget,
+    );
+    // Each message still shows its attachment, once.
+    expect(find.byType(UserServerAttachmentCard), findsNWidgets(2));
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an image turn shows its image and none of the hints Hermes '
+      'stored with it', (tester) async {
+    final temp = Directory.systemTemp.createTempSync('image-hints-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (_) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+    // Console's own send keeps a private copy of the picture and names it
+    // in the text it sends (ChatScreen `_send`).
+    late final AttachmentHistoryReference copy;
+    await tester.runAsync(() async {
+      final picked = File('${temp.path}/IMG_20261120.jpg');
+      await picked.writeAsBytes(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDw'
+          'AChwGA60e6kgAAAABJRU5ErkJggg==',
+        ),
+      );
+      copy = (await AttachmentUploader.persistForHistory(
+        AttachmentDraft(
+          type: AttachmentType.image,
+          name: 'IMG_20261120.jpg',
+          mimeType: 'image/jpeg',
+          sizeBytes: await picked.length(),
+          localPath: picked.path,
+        ),
+        index: 0,
+        baseDir: temp,
+      ))!;
+    });
+    // agent/image_routing.py build_native_content_parts writes the caption,
+    // a blank line and one hint per image; the session store writes each
+    // image part as a `[screenshot]` line after it.
+    await pumpChat(
+      tester,
+      history: [
+        {'role': 'assistant', 'content': 'Veo un cuaderno.'},
+        {
+          // Quoted in the caption, the same words are the user's.
+          'role': 'user',
+          'content': 'Escribe tal cual [Image attached at: x] y nada más',
+          'timestamp': 1781774500,
+        },
+        {'role': 'assistant', 'content': 'Dos fotos de la playa.'},
+        {
+          // Two images, from any client.
+          'role': 'user',
+          'content':
+              'Compara estas dos\n\n'
+              '[Image attached at: /home/u/.hermes/images/upload_a.jpg]\n'
+              '[Image attached at: /home/u/.hermes/images/upload b.png]\n'
+              '[screenshot]\n'
+              '[screenshot]',
+          'timestamp': 1781774400,
+        },
+        {'role': 'assistant', 'content': 'Una mesa.'},
+        {
+          // Console's own send (Files, gallery and camera share it): its
+          // attachment line, the caption, its copy's marker, then what
+          // Hermes added.
+          'role': 'user',
+          'content':
+              '[📎 IMG_20261120.jpg · 1.2 MB]\n'
+              'PRUEBA J1. Di en una frase que ves en la imagen.\n'
+              '${copy.toMarker()}\n\n'
+              '[Image attached at: '
+              '/home/u/.hermes/images/upload_qa1.jpg]\n'
+              '[screenshot]',
+          'timestamp': 1781774300,
+        },
+      ],
+      userServerMediaFetcher: (_, _) async =>
+          throw const FileSystemException('offline'),
+    );
+    // Room for the three turns at once.
+    tester.view.physicalSize = const Size(1080, 7200);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(
+      find.textContaining('PRUEBA J1', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Compara estas dos', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('upload_qa1', findRichText: true),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('[screenshot]', findRichText: true),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('Image attached at: /home', findRichText: true),
+      findsNothing,
+    );
+    expect(
+      find.textContaining(
+        'Escribe tal cual [Image attached at: x] y nada más',
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
+    // One image for Console's send (its line and Hermes' path are the same
+    // image), two for the other turn.
+    final cards = tester
+        .widgetList<UserServerAttachmentCard>(
+          find.byType(UserServerAttachmentCard),
+        )
+        .toList();
+    expect(
+      cards.map((card) => card.serverRef.path),
+      unorderedEquals([
+        '/home/u/.hermes/images/upload_qa1.jpg',
+        '/home/u/.hermes/images/upload_a.jpg',
+        '/home/u/.hermes/images/upload b.png',
+      ]),
+    );
+    expect(cards.every((card) => card.serverRef.isImage), isTrue);
+    final sent = cards.singleWhere(
+      (card) => card.serverRef.path.endsWith('upload_qa1.jpg'),
+    );
+    expect(sent.name, 'IMG_20261120.jpg');
+    expect(sent.localReference?.storageKey, copy.storageKey);
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 20));
     }
     expect(tester.takeException(), isNull);
   });

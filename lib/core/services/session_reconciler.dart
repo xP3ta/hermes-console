@@ -125,6 +125,26 @@ const assistantToolResultEvidenceKey = '_activity_tool_results';
 /// the call, so the tool has not started and may never do.
 const assistantActivityDraftKey = 'draft';
 
+/// The live progress of a running tool (`tool.progress`), said as Desktop
+/// says it beside the row's timer. It lives only while the step runs.
+const assistantActivityProgressKey = 'progress';
+
+/// Desktop `formatToolProgress` (`store/tool-progress.ts`): `42% · refining
+/// mesh`, from the `percent` and `message` of a `tool.progress` payload
+/// (`agent/tool_progress_relay.py` `tool_progress_payload`). Null when it
+/// carries neither.
+String? toolProgressText(Map<String, dynamic> payload) {
+  final percent = payload['percent'];
+  final message = payload['message'];
+  final parts = <String>[
+    if (percent is num && percent.isFinite)
+      '${percent == percent.roundToDouble() ? percent.round() : percent}%',
+    if (message is String && message.trim().isNotEmpty)
+      message.replaceAll(RegExp(r'\s+'), ' ').trim(),
+  ];
+  return parts.isEmpty ? null : parts.join(' · ');
+}
+
 Map<String, dynamic>? normalizeAssistantActivityStep(Object? raw) {
   if (raw is! Map) return null;
   final kind = raw['kind']?.toString().trim().toLowerCase();
@@ -156,6 +176,10 @@ Map<String, dynamic>? normalizeAssistantActivityStep(Object? raw) {
   // The gateway's own label of an MCP or connector call.
   final rawTitle = raw['title'];
   final title = rawTitle is String ? rawTitle.trim() : '';
+  final rawProgress = raw[assistantActivityProgressKey];
+  final progress = status == 'running' && rawProgress is String
+      ? rawProgress.trim()
+      : '';
   // mp1215: a `memory` call keeps its structural write (action, target,
   // landed and a screened preview); any other tool never carries one.
   final memory = isMemoryTool(label)
@@ -178,6 +202,10 @@ Map<String, dynamic>? normalizeAssistantActivityStep(Object? raw) {
         title.length <= 120 &&
         !title.contains(_unsafeDisplayTextPattern))
       'title': title,
+    if (progress.isNotEmpty &&
+        progress.length <= 160 &&
+        !progress.contains(_unsafeDisplayTextPattern))
+      assistantActivityProgressKey: progress,
     memoryWriteStepKey: ?memory,
   });
 }

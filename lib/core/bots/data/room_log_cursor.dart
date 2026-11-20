@@ -223,20 +223,41 @@ final class RoomLogPoller {
   final RoomPollBackoff backoff;
   final RoomPollTimerFactory _timer;
 
+  /// True when pushes move the room between reads (`groups.changed`): after
+  /// a read that succeeded the next one waits [RoomPollBackoff.slow], a
+  /// backstop, as Hermes Desktop's open room does
+  /// (`canonical-group-workspace.tsx` `ROOM_BACKSTOP_MS`). A failed read
+  /// keeps the usual cadence.
+  final bool Function()? backstop;
+
   Timer? _pending;
   bool _visible = false;
   bool _foreground = true;
   bool _disposed = false;
   bool _running = false;
+  bool _again = false;
 
   RoomLogPoller({
     required this.tick,
     this.onDelta,
     this.onError,
+    this.backstop,
     RoomPollBackoff? backoff,
     RoomPollTimerFactory? timer,
   }) : backoff = backoff ?? RoomPollBackoff(),
        _timer = timer ?? Timer.new;
+
+  /// Reads now (a push named the room): at once when no read is in flight,
+  /// else once more right after it, never two at a time.
+  void readNow() {
+    if (!active) return;
+    if (_running) {
+      _again = true;
+      return;
+    }
+    _pending?.cancel();
+    _pending = _timer(Duration.zero, _fire);
+  }
 
   bool get isScheduled => _pending != null;
   bool get active => _visible && _foreground && !_disposed;
@@ -265,18 +286,28 @@ final class RoomLogPoller {
     _running = true;
     var working = false;
     var changed = false;
+    var failed = false;
     try {
       final result = await tick();
       working = result.working;
       changed = result.delta.changed;
       if (changed) onDelta?.call(result.delta);
     } catch (error) {
+      failed = true;
       onError?.call(error);
     } finally {
       _running = false;
     }
     if (!active) return;
-    _pending = _timer(backoff.next(working: working, changed: changed), _fire);
+    var delay = backoff.next(working: working, changed: changed);
+    if (_again) {
+      _again = false;
+      delay = Duration.zero;
+    } else if (!failed && (backstop?.call() ?? false)) {
+      delay = backoff.slow;
+    }
+    _pending?.cancel();
+    _pending = _timer(delay, _fire);
   }
 
   void dispose() {

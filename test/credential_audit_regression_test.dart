@@ -147,6 +147,35 @@ void main() {
     },
   );
 
+  test('a stored sign-in moves the credential epoch sockets wait on; a '
+      'failed one does not', () async {
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    await manager.upsertConnection(connection());
+    final client = DashboardClient.forConnection(connection());
+    addTearDown(client.close);
+    final before = client.credentialEpoch;
+    await manager.setDashboardSecrets(
+      'audit',
+      username: 'user',
+      password: 'test-password',
+    );
+    final stored = client.credentialEpoch;
+    expect(stored, greaterThan(before));
+    failNextWrite = 'dash_pass_audit';
+    await expectLater(
+      manager.setDashboardSecrets(
+        'audit',
+        username: 'other',
+        password: 'other-test-password',
+      ),
+      throwsA(isA<PlatformException>()),
+    );
+    expect(client.credentialEpoch, stored);
+  });
+
   test('failed password write rolls back its paired username', () async {
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),

@@ -2593,7 +2593,12 @@ class _ChatScreenState extends State<ChatScreen>
   PreparedTurn? _recoveredTurnNotice;
   String? _composerPreparedTurnClientTurnId;
   String? _failedTurnDiscardInFlightId;
-  final Completer<bool> _initialOutboxRead = Completer<bool>();
+  Completer<bool> _initialOutboxRead = Completer<bool>();
+  // That read failed on the storage itself (not on the app lock). It is one
+  // attempt's answer, not this screen's: the next attempt starts with a
+  // fresh completer, and a send makes that attempt (see [_outboxReadForSend])
+  // instead of being refused until the chat is reopened.
+  bool _initialOutboxReadFailed = false;
   // Completed when that read stopped with no result and nobody is reading:
   // the app lock closed the Keystore under it. The next attempt starts with
   // a fresh one. A send waits for whichever comes first, so a read that is
@@ -4103,10 +4108,28 @@ class _ChatScreenState extends State<ChatScreen>
     if (mounted && !_disposed) setState(() {});
   }
 
+  /// The restore read a send (or voice mode) waits for. A read that failed
+  /// on storage is made again here, now: the failure may have been a moment's
+  /// (the Keystore busy or not ready), and keeping it for the life of the
+  /// screen refused every send until the chat was reopened. Still fail
+  /// closed: nothing is sent unless this attempt reads.
+  Future<bool> _outboxReadForSend() {
+    if (_initialOutboxReadFailed && !_draftRestoreRunning) {
+      // The action the route was opened for belonged to the first frame.
+      _initialDraftActionStarted = true;
+      unawaited(_restoreDraftAndRunInitialAction());
+    }
+    return _initialOutboxRead.future;
+  }
+
   bool _initialDraftActionStarted = false;
   Future<void> _restoreDraftAndRunInitialAction() async {
     if (_initialOutboxReadParked.isCompleted) {
       _initialOutboxReadParked = Completer<void>();
+    }
+    if (_initialOutboxReadFailed) {
+      _initialOutboxReadFailed = false;
+      _initialOutboxRead = Completer<bool>();
     }
     try {
       await _restoreDraft();
@@ -4124,7 +4147,10 @@ class _ChatScreenState extends State<ChatScreen>
       // La lectura segura forma parte del ownership del turno. Fallar abierto
       // permitiría crear otra entrada y duplicar una entrega todavía oculta.
       debugPrint('[turn-outbox] secure recovery failed (${error.runtimeType})');
-      if (!_initialOutboxRead.isCompleted) _initialOutboxRead.complete(false);
+      if (!_initialOutboxRead.isCompleted) {
+        _initialOutboxRead.complete(false);
+        _initialOutboxReadFailed = true;
+      }
     }
     if (!mounted || _initialDraftActionStarted) return;
     _initialDraftActionStarted = true;
@@ -4134,7 +4160,8 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
       if (widget.initialVoiceMode) {
         _recognizerPrewarm?.armOnMicPressDown();
-        await _enterVoiceMode();
+        // The restore just answered: a failure is told, not asked again.
+        await _enterVoiceMode(retryRestore: false);
       } else {
         await _startDictation();
       }
@@ -5591,9 +5618,13 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _refreshSlashCompletion(String text) {
+    // Past the name, only a command with options is completed (Desktop
+    // `use-composer-trigger.ts` `refreshTrigger`).
+    final argument =
+        slashArgumentPaletteApplies(text, _desktopCommandCatalog) &&
+        text.length <= maxSlashArgumentInput;
     if (_textFocusNode.hasFocus &&
-        slashPaletteApplies(text) &&
-        text.length <= 65) {
+        ((slashPaletteApplies(text) && text.length <= 65) || argument)) {
       _slashCompletions.schedule(
         '$_composerCompletionScope\n$text',
         _applySlashLookup,
@@ -5636,6 +5667,13 @@ class _ChatScreenState extends State<ChatScreen>
         lookup == null ||
         key.substring(0, split) != _composerCompletionScope ||
         _textController.text != input) {
+      return;
+    }
+    if (slashArgumentCommand(input) != null) {
+      final completion = lookup.completion;
+      _slashSuggestions.value = completion == null
+          ? const []
+          : slashArgumentSuggestions(input: input, completion: completion);
       return;
     }
     final merged = mergeSlashSuggestions(
@@ -6378,6 +6416,7 @@ class _ChatScreenState extends State<ChatScreen>
         inputTokens: next.inputTokens,
         cacheReadTokens: next.cacheReadTokens,
         cacheWriteTokens: next.cacheWriteTokens,
+        cacheHitPercent: next.cacheHitPercent,
         observedFirstTokenLatencyMs: next.observedFirstTokenLatencyMs,
       );
     }
@@ -10456,16 +10495,7 @@ class _ChatScreenState extends State<ChatScreen>
         }
         break;
       case ActiveChatEvent.warning:
-        final warning = _chat.takeTerminalWarning();
-        if (warning != null && warning.isNotEmpty) {
-          HermesNotice.of(context).showSnackBar(
-            SnackBar(
-              content: Text(warning),
-              duration: const Duration(seconds: 8),
-            ),
-            kind: HermesNoticeKind.warning,
-          );
-        }
+        _showChatWarning();
         break;
       case ActiveChatEvent.queueChanged:
         // El panel ya refleja la entrada atascada con el setState genérico de
@@ -12633,7 +12663,7 @@ class _ChatScreenState extends State<ChatScreen>
     // Null: the restore read parked without a result (the app lock closed
     // the Keystore). The send is refused now, not held until an unlock.
     final outboxRecoveryAvailable = await Future.any<bool?>([
-      _initialOutboxRead.future,
+      _outboxReadForSend(),
       _initialOutboxReadParked.future.then<bool?>((_) => null),
     ]);
     if (!mounted) return _sendRefused('routeClosed');
@@ -14122,9 +14152,11 @@ class _ChatScreenState extends State<ChatScreen>
     if (message == null || _editingRewriteSubmitted) return;
     final ordinal = _editingUserMessageOrdinal;
     if (ordinal == null) return;
-    final rawContent = memoryContextDisplayText(
-      message['role'],
-      (message['content'] ?? '').toString(),
+    final rawContent = _stripAttachedContext(
+      memoryContextDisplayText(
+        message['role'],
+        (message['content'] ?? '').toString(),
+      ),
     );
     final parsed = _parseUserContent(rawContent);
     if (edited.isEmpty || edited == parsed.text.trim()) return;
@@ -14326,7 +14358,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (user == null) return;
     final userOrdinal = projection.userOrdinalFor(user);
     if (userOrdinal == null) return;
-    final prompt = (user['content'] ?? '').toString().trim();
+    final prompt = _stripAttachedContext(
+      (user['content'] ?? '').toString(),
+    ).trim();
     if (prompt.isEmpty) return;
     releaseTextFocusIfKeyboardHidden(context);
     final confirmed = await showHermesDialogRoute<bool>(
@@ -14466,6 +14500,16 @@ class _ChatScreenState extends State<ChatScreen>
   /// El usuario elige un comando de la paleta. Los que llevan argumento rellenan
   /// `/nombre ` y mantienen el foco; el resto se ejecutan al instante.
   void _pickSlash(SlashCommand cmd) {
+    // An argument option is the whole command, as Desktop commits it; the
+    // space after it is for what the user types next.
+    if (cmd.insertText case final text?) {
+      _textController.value = TextEditingValue(
+        text: '$text ',
+        selection: TextSelection.collapsed(offset: text.length + 1),
+      );
+      _slashSuggestions.value = const [];
+      return;
+    }
     if (cmd.takesArg) {
       _textController.text = '/${cmd.name} ';
       _textController.selection = TextSelection.collapsed(
@@ -14948,6 +14992,68 @@ class _ChatScreenState extends State<ChatScreen>
       result.compressionStatus == DesktopCompressionStatus.noOp ||
       (result.compressionStatus == null &&
           result.accepted == DesktopCommandAcceptance.accepted);
+
+  /// Agent notices on screen by their key (`notification.show`), so the same
+  /// key replaces in place and `notification.clear` retires it, as Desktop's
+  /// toasts are keyed (`store/agent-notices.ts`).
+  final Map<String, HermesNoticeHandle> _agentNoticeHandles = {};
+
+  void _showChatWarning() {
+    final notices = HermesNotice.of(context);
+    for (final key in _chat.takeClearedAgentNoticeKeys()) {
+      _agentNoticeHandles.remove(key)?.dismiss();
+    }
+    final warning = _chat.takeTerminalWarning();
+    final notice = _chat.takeAgentNotice();
+    if (warning == null || warning.isEmpty) return;
+    final message = activeChatStoredErrorUiMessage(
+      warning,
+      languageCode: Localizations.localeOf(context).languageCode,
+    );
+    if (notice == null || notice.text != warning) {
+      // A failure after the turn ended: a provider-setup one takes the user
+      // where providers are set up, as Desktop does.
+      final setUp =
+          isProviderSetupFailureText(warning) && !widget.connection.readOnly
+          ? SnackBarAction(
+              label: Strings.of(context).chaErrSetUpProvider,
+              onPressed: _openProviderSetup,
+            )
+          : null;
+      notices.showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 8),
+          action: setUp,
+        ),
+        kind: HermesNoticeKind.warning,
+      );
+      return;
+    }
+    // Desktop `noticeToToast`: the level picks the look; sticky stays until
+    // cleared, a ttl one lasts its `ttl_ms`.
+    final key = notice.key;
+    final handle = notices.show(
+      message: message,
+      kind: switch (notice.level) {
+        'error' => HermesNoticeKind.error,
+        'warn' => HermesNoticeKind.warning,
+        'success' => HermesNoticeKind.success,
+        _ => HermesNoticeKind.info,
+      },
+      sticky: notice.sticky,
+      duration: notice.sticky ? null : notice.ttl,
+      id: key == null ? null : 'agent-notice:$key',
+    );
+    if (key != null && handle != null) _agentNoticeHandles[key] = handle;
+  }
+
+  /// Desktop sends a provider-setup failure to provider setup
+  /// (`gateway-event/status.ts` `requestDesktopOnboarding`, Settings >
+  /// Providers in `contrib/wiring.tsx`); Console's place for providers is
+  /// the Models screen.
+  void _openProviderSetup() =>
+      _pushScreen(ModelsScreen(connection: widget.connection));
 
   void _pushScreen(Widget screen) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
@@ -15817,6 +15923,7 @@ class _ChatScreenState extends State<ChatScreen>
     final entries = deriveChatPromptEntries(
       _messages,
       isSystemRow: _isSystemChipRow,
+      visibleText: _userPromptVisibleText,
     );
     final tops = <double?>[
       for (final entry in entries)
@@ -16715,8 +16822,10 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       final result = await deleteSessionWithResolvedLineage(
         widget.session,
-        deleteSession: (sessionId) =>
-            client.deleteSession(sessionId, profile: ownerProfile),
+        deleteSession: (sessionId) async {
+          await _chat.endRuntimeBeforeDelete();
+          return client.deleteSession(sessionId, profile: ownerProfile);
+        },
         remoteSessionId: _chat.serverSessionId,
         localRecoverySessionId: widget.session.id,
         clearLocalRecovery: _clearDeletedChatRecovery,
@@ -17058,7 +17167,9 @@ class _ChatScreenState extends State<ChatScreen>
         }
         switch (pendingAttachmentLimitViolation(
           sizeBytes: sizeBytes,
-          itemLimit: AttachmentUploader.maxBytes,
+          itemLimit: file.name.toLowerCase().endsWith('.pdf')
+              ? AttachmentUploader.maxBytes
+              : AttachmentUploader.maxImageBytes,
           currentBatchBytes: batchBytes,
         )) {
           case PendingAttachmentLimitViolation.invalid:
@@ -17121,7 +17232,9 @@ class _ChatScreenState extends State<ChatScreen>
             content: Text(
               Strings.of(
                 context,
-              ).chaImageTooBig(AttachmentUploader.maxBytes ~/ (1024 * 1024)),
+              ).chaImageTooBig(
+                AttachmentUploader.maxImageBytes ~/ (1024 * 1024),
+              ),
             ),
           ),
           kind: HermesNoticeKind.warning,
@@ -17335,6 +17448,7 @@ class _ChatScreenState extends State<ChatScreen>
       String? rejectedItemLimitLabel;
       var rejectedForBatchLimit = false;
       var rejectedForPersistence = false;
+      var images = _pendingAttachments.where((item) => item.isImage).length;
       for (final file in result.files) {
         if (!AttachmentUploader.isAllowedDocumentName(file.name)) {
           rejectedForPersistence = true;
@@ -17348,11 +17462,17 @@ class _ChatScreenState extends State<ChatScreen>
           rejectedForPersistence = true;
           continue;
         }
+        // An image picked as a file is still an image, as on Desktop
+        // (`use-composer-actions.ts` `isImagePath`): it previews and goes
+        // to the model as one. Past the image slots it goes as a file.
+        final mimeType = _mimeForExtension(file.extension);
+        final asImage =
+            mimeType.startsWith('image/') && images < _maxPendingImages;
         final selected = AttachmentDraft(
           localId: const Uuid().v4(),
-          type: AttachmentType.document,
+          type: asImage ? AttachmentType.image : AttachmentType.document,
           name: file.name,
-          mimeType: _mimeForExtension(file.extension),
+          mimeType: mimeType,
           sizeBytes: sizeBytes,
           localPath: path,
         );
@@ -17360,6 +17480,8 @@ class _ChatScreenState extends State<ChatScreen>
         // (256 KB si se incrusta como texto, 8 MB si se sube al agente).
         final limit = AttachmentUploader.isTextEmbeddable(selected)
             ? AttachmentUploader.maxTextBytes
+            : selected.isImage
+            ? AttachmentUploader.maxImageBytes
             : AttachmentUploader.maxBytes;
         switch (pendingAttachmentLimitViolation(
           sizeBytes: sizeBytes,
@@ -17390,6 +17512,7 @@ class _ChatScreenState extends State<ChatScreen>
           continue;
         }
         drafts.add(persisted);
+        if (persisted.isImage) images++;
         knownDigests.add(digest);
         batchBytes += persisted.sizeBytes;
       }
@@ -19489,10 +19612,12 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Future<void> _enterVoiceMode() async {
+  Future<void> _enterVoiceMode({bool retryRestore = true}) async {
     if (!kVoiceRuntimeEnabled) return;
     await _profileReady;
-    final outboxRecoveryAvailable = await _initialOutboxRead.future;
+    final outboxRecoveryAvailable = retryRestore
+        ? await _outboxReadForSend()
+        : await _initialOutboxRead.future;
     if (!mounted) return;
     if (!outboxRecoveryAvailable) {
       _showOutboxUnavailable();
@@ -21779,7 +21904,9 @@ class _ChatScreenState extends State<ChatScreen>
   /// «Copy message» on the long-press surface: the same plain text as the
   /// header copy button.
   static String _reactionCopyText(Map<String, dynamic> unit) {
-    if (unit['role'] == 'user') return projectedUserVisibleContent(unit);
+    if (unit['role'] == 'user') {
+      return _userPromptVisibleText(projectedUserVisibleContent(unit));
+    }
     final content = unit['content'];
     if (content is! String) return '';
     return markdownToClipboardText(
@@ -22255,7 +22382,11 @@ class _ChatScreenState extends State<ChatScreen>
         detail: timelineEvent.detail,
         icon: timelineEvent.icon,
         raw: content,
-        titleMaxLines: msg['display_kind'] == 'process_complete' ? 2 : null,
+        titleMaxLines: switch (msg) {
+          {'display_kind': 'process_complete'} => 2,
+          {'display_metadata': {'kind': 'review'}} => 4,
+          _ => null,
+        },
       );
     }
 
@@ -22301,6 +22432,7 @@ class _ChatScreenState extends State<ChatScreen>
         billing: billing,
         onCompress: readOnly ? null : () => unawaited(_compressFromError()),
         onChooseModel: readOnly ? null : _showModelSheet,
+        onSetUpProvider: readOnly ? null : _openProviderSetup,
         onEditMessage: _editMessageOfError(msg),
         onOpenBilling: _openBillingAction(billing),
         onSignInFreeTier: readOnly ? null : _signInFreeTier,
@@ -23500,8 +23632,11 @@ class _SlashPalette extends StatelessWidget {
   }
 
   Widget _row(HermesThemeColors colors, SlashCommand command) {
+    final option = command.insertText;
     return InkWell(
-      key: ValueKey('chat-slash-command-${command.name}'),
+      key: option == null
+          ? ValueKey('chat-slash-command-${command.name}')
+          : ValueKey('chat-slash-option-$option'),
       onTap: () => onPick(command),
       child: Padding(
         padding: const EdgeInsetsDirectional.fromSTEB(
@@ -23546,7 +23681,7 @@ class _SlashPalette extends StatelessWidget {
                     TextSpan(
                       children: [
                         TextSpan(
-                          text: '/${command.name}',
+                          text: command.optionLabel ?? '/${command.name}',
                           style: TextStyle(
                             color: colors.accent,
                             fontWeight: FontWeight.w800,
@@ -23854,6 +23989,9 @@ class ChatErrorBubble extends StatefulWidget {
   /// Recovery handlers the plan may offer; a null one is never painted.
   final VoidCallback? onCompress;
   final VoidCallback? onChooseModel;
+
+  /// Opens where providers are set up, for a provider-setup failure.
+  final VoidCallback? onSetUpProvider;
   final VoidCallback? onEditMessage;
   final VoidCallback? onOpenBilling;
 
@@ -23891,6 +24029,7 @@ class ChatErrorBubble extends StatefulWidget {
     this.billing,
     this.onCompress,
     this.onChooseModel,
+    this.onSetUpProvider,
     this.onEditMessage,
     this.onOpenBilling,
     this.onSignInFreeTier,
@@ -23954,6 +24093,12 @@ class _ErrorBubbleState extends State<ChatErrorBubble> {
     final coded = authFailure == null && isChatErrorCode(widget.error);
     final signIn = coded && kind == _ErrorKind.dashboardSignInRequired
         ? widget.onDashboardSignIn
+        : null;
+    // No provider can serve the chat: Desktop sends the user to provider
+    // setup (`gateway-event/status.ts`), here the Models screen.
+    final setUpProvider =
+        authFailure == null && isProviderSetupFailureText(widget.error)
+        ? widget.onSetUpProvider
         : null;
     final summary = authFailure != null
         ? providerAuthBody(str, authFailure)
@@ -24059,6 +24204,13 @@ class _ErrorBubbleState extends State<ChatErrorBubble> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 8,
                   children: [
+                    if (setUpProvider != null)
+                      _ErrorBubbleAction(
+                        key: const ValueKey('chat-error-provider-setup'),
+                        label: str.chaErrSetUpProvider,
+                        color: colors.error,
+                        onTap: setUpProvider,
+                      ),
                     if (authFailure != null)
                       _ErrorBubbleAction(
                         key: const ValueKey('hr1215-error-reauth'),
@@ -25057,6 +25209,98 @@ String _stripCronPreamble(String raw) {
 /// con "## Historical Task Snapshot", reglas de compactación, etc. Devuelve lo
 /// que haya DESPUÉS del resumen (el mensaje real, si lo hay) o '' si todo es
 /// resumen.
+final RegExp _attachedContextMarker = RegExp(
+  r'(?:^|\n)--- Attached Context ---\s*\n',
+);
+final RegExp _contextWarningsMarker = RegExp(
+  r'(?:^|\n)--- Context Warnings ---[\s\S]*$',
+);
+final RegExp _contextReference = RegExp(
+  r'@(?:file|folder|url|image|tool|terminal):'
+  r"""(?:"[^"\n]+"|'[^'\n]+'|`[^`\n]+`|\S+)""",
+);
+
+/// What the user wrote, without what Hermes adds to his stored message for
+/// the model (`agent/context_references.py`: `--- Context Warnings ---` and
+/// `--- Attached Context ---` with each file's contents, or a note with its
+/// path on the server). Desktop `lib/chat-messages/hydration.ts`
+/// (`ATTACHED_CONTEXT_MARKER_RE`): the text before the block stays, and a
+/// reference the block names that the text lacks is listed before it, so
+/// the attachment still shows.
+String _stripAttachedContext(String raw) {
+  final lifted = _liftImageRoutingHints(raw);
+  final text = _stripAttachedContextBlock(lifted.text);
+  return lifted.refs.isEmpty
+      ? text
+      : [if (text.isNotEmpty) text, ...lifted.refs].join('\n');
+}
+
+/// Hermes' native image turn as its store keeps it
+/// (`agent/image_routing.py` `build_native_content_parts`: the caption, a
+/// blank line and one `[Image attached at: PATH]` or
+/// `[Image attached: URL]` per image; the store then writes each image part
+/// as a `[screenshot]` line). Desktop `lib/chat-messages/hydration.ts`
+/// `persistedImageRefs` turns that suffix back into the message's `@image:`
+/// refs, so the bubble shows its images and none of the hints; only the
+/// suffix, never the same words quoted in the caption.
+final RegExp _imageRoutingSuffix = RegExp(
+  r'\n\n((?:\[Image attached(?: at)?: [^\n]+\]\n)+)'
+  r'((?:\[screenshot\](?:\n|$))+)$',
+);
+final RegExp _imageRoutingHint = RegExp(
+  r'^\[Image attached(?: at)?: (.+)\]$',
+  multiLine: true,
+);
+
+({String text, List<String> refs}) _liftImageRoutingHints(String raw) {
+  final suffix = _imageRoutingSuffix.firstMatch(raw);
+  if (suffix == null) return (text: raw, refs: const []);
+  final paths = [
+    for (final hint in _imageRoutingHint.allMatches(suffix.group(1)!))
+      hint.group(1)!,
+  ];
+  // One placeholder per image, or it is not the suffix Hermes wrote.
+  final shots = '[screenshot]'.allMatches(suffix.group(2)!).length;
+  if (paths.isEmpty || paths.length != shots) {
+    return (text: raw, refs: const []);
+  }
+  return (
+    text: raw.substring(0, suffix.start),
+    refs: [for (final path in paths) '@image:${_referenceValue(path)}'],
+  );
+}
+
+/// Desktop `formatRefValue` (`directive-text.tsx`): a value with spaces is
+/// quoted.
+String _referenceValue(String value) {
+  if (!value.contains(RegExp(r'\s'))) return value;
+  if (!value.contains('`')) return '`$value`';
+  if (!value.contains('"')) return '"$value"';
+  return "'$value'";
+}
+
+String _stripAttachedContextBlock(String raw) {
+  final marker = _attachedContextMarker.firstMatch(raw);
+  if (marker == null) {
+    return raw.contains('--- Context Warnings ---')
+        ? raw.replaceFirst(_contextWarningsMarker, '').trim()
+        : raw;
+  }
+  final visible = raw
+      .substring(0, marker.start)
+      .replaceFirst(_contextWarningsMarker, '')
+      .trim();
+  final attached = raw.substring(marker.end);
+  final missing = <String>{
+    for (final match in _contextReference.allMatches(attached))
+      if (!visible.contains(match.group(0)!)) match.group(0)!,
+  };
+  return [
+    missing.join('\n'),
+    visible,
+  ].where((part) => part.isNotEmpty).join('\n\n');
+}
+
 String _stripContextCompaction(String raw) {
   final t = raw.trimLeft();
   if (!t.startsWith('[CONTEXT COMPACTION')) return raw;
@@ -25165,6 +25409,18 @@ _timelineSystemEventPresentation(
       // body (the full Desktop-format line stays in `content` for copy/export).
       final rawMetadata = message['display_metadata'];
       final metadata = rawMetadata is Map ? rawMetadata : const {};
+      if (metadata['kind'] == 'review') {
+        // `review.summary`: what the background review saved, in Hermes'
+        // words (Desktop's memory-write row).
+        final summary = metadata['answer'];
+        return (
+          title: summary is String
+              ? summary
+              : (message['content'] ?? '').toString(),
+          detail: null,
+          icon: HIcons.auto_awesome_rounded,
+        );
+      }
       final question = metadata['question'];
       final asked = question is String ? question.trim() : '';
       final answer = metadata['answer'];
@@ -25278,6 +25534,16 @@ final LinkedHashMap<String, _ParsedUserContent> _parsedUserContentMemo =
     LinkedHashMap<String, _ParsedUserContent>();
 const int _parsedUserContentMemoLimit = 256;
 
+/// The text of a user message as its bubble shows it: without the lines
+/// Hermes adds for the model (attached context, image hints, attachment
+/// markers). A message that is only attachments is named by them.
+String _userPromptVisibleText(String raw) {
+  final parsed = _parseUserContent(raw);
+  final text = parsed.text.trim();
+  if (text.isNotEmpty) return text;
+  return parsed.attachments.map((a) => a.name).join(', ');
+}
+
 _ParsedUserContent _parseUserContent(String raw) {
   final cached = _parsedUserContentMemo.remove(raw);
   if (cached != null) {
@@ -25356,7 +25622,7 @@ _ParsedUserContent _parseUserContentUncached(String raw) {
   List<UserServerAttachmentRef> serverRefs,
 })
 _parseUserContentMarkers(String raw) {
-  raw = stripBotMentionNote(raw);
+  raw = _stripAttachedContext(stripBotMentionNote(raw));
   // Quita los blobs de SISTEMA que no son del usuario: preámbulo de cron/skill y
   // el resumen de compactación de contexto. Si tras ellos hay un mensaje real,
   // se muestra ese; si no, el llamador ya lo habrá pintado como chip.
@@ -26284,6 +26550,7 @@ List<ChatTraceEvent> _assistantActivityEvents(
         startedAt: measured?.startedAt,
         duration: measured?.duration,
         title: measured?.title,
+        progress: step[assistantActivityProgressKey] as String?,
         memory: MemoryWrite.fromStep(step[memoryWriteStepKey]),
         output: _settledToolOutput(step, label, toolOutputs),
       ),
@@ -27496,6 +27763,32 @@ class _GeneratedImageSlotState extends State<_GeneratedImageSlot> {
   }
 }
 
+/// What a generated file that could not be fetched says, by what failed.
+@visibleForTesting
+String generatedMediaDownloadErrorLabel(Strings strings, Object error) {
+  if (error is DashboardAuthException &&
+      error.code == DashboardAuthFailureCode.rateLimited) {
+    return strings.dashboardAuthRateLimited;
+  }
+  if (error is DashboardHttpException) {
+    if (error.statusCode == 401 || error.statusCode == 403) {
+      return strings.genMediaDenied;
+    }
+    if (error.statusCode == 404) return strings.genMediaUnavailable;
+  }
+  final message = error.toString().toLowerCase();
+  // A file with no bytes is empty; it was being called too large.
+  if (message.contains(generatedMediaEmptyMessage)) return strings.fcoEmpty;
+  if (message.contains('exceeds') || message.contains('too large')) {
+    return strings.genMediaTooLarge;
+  }
+  if (message.contains('incomplete') ||
+      message.contains('before content-length')) {
+    return strings.genMediaIncomplete;
+  }
+  return strings.genMediaError;
+}
+
 /// Canonical `MEDIA:` attachment rendered from the authenticated managed-file
 /// API. The server path never appears in visible UI and the downloaded copy is
 /// kept in app-private storage.
@@ -27508,28 +27801,8 @@ class _GeneratedMediaSlot extends StatefulWidget {
 }
 
 class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
-  String _downloadErrorLabel(BuildContext context, Object error) {
-    final strings = Strings.of(context);
-    if (error is DashboardAuthException &&
-        error.code == DashboardAuthFailureCode.rateLimited) {
-      return strings.dashboardAuthRateLimited;
-    }
-    if (error is DashboardHttpException) {
-      if (error.statusCode == 401 || error.statusCode == 403) {
-        return strings.genMediaDenied;
-      }
-      if (error.statusCode == 404) return strings.genMediaUnavailable;
-    }
-    final message = error.toString().toLowerCase();
-    if (message.contains('exceeds') || message.contains('too large')) {
-      return strings.genMediaTooLarge;
-    }
-    if (message.contains('incomplete') ||
-        message.contains('before content-length')) {
-      return strings.genMediaIncomplete;
-    }
-    return strings.genMediaError;
-  }
+  String _downloadErrorLabel(BuildContext context, Object error) =>
+      generatedMediaDownloadErrorLabel(Strings.of(context), error);
 
   Future<void> _open(
     BuildContext context,

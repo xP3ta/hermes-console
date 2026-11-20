@@ -60,7 +60,9 @@ class HerdrAskSheet extends StatelessWidget {
           ),
         ),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(HermesSpace.x3),
+          // The accept button's glow reaches this far past the button, and
+          // the scroll view clips at its own edge.
+          padding: const EdgeInsets.all(HermesGel.glowExtent),
           child: Semantics(
             container: true,
             liveRegion: true,

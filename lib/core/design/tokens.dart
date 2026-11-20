@@ -476,6 +476,9 @@ final class HermesGel {
   static const double glowBlur = 14;
   static const double glowDrop = 4;
 
+  /// How far the glow reaches outside its piece: its blur, plus its drop.
+  static const double glowExtent = glowBlur + glowDrop;
+
   /// The accent gradient's far end: turned this many degrees and lifted.
   static const double accent2Turn = 24;
   static const double accent2Lift = 0.08;

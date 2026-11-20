@@ -331,7 +331,7 @@ final class _RoomEventIndex {
     // Same events, in the same order, as filtering the logs by authority and
     // room per call; the sort then yields the same order as [derive].
     final grouped = <(String, int, String), List<HostedGroupEvent>>{};
-    for (final log in rooms.logs) {
+    for (final log in rooms.logs.nonNulls) {
       final gateway = log.authority.gatewayId;
       final epoch = log.authority.epoch;
       for (final e in log.events) {

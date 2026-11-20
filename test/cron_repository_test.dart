@@ -292,4 +292,75 @@ void main() {
       expect(listing.jobs.single.id, 'legacy-job');
     },
   );
+
+  test(
+    'the default profile lists its own jobs, not every profile\'s',
+    () async {
+      final requested = <String?>[];
+      final client = DashboardClient(
+        host: 'hermes.local',
+        manualToken: 'token',
+        httpClientOverride: MockClient((request) async {
+          if (request.method != 'GET' || request.url.path != '/api/cron/jobs') {
+            return http.Response('{}', 404);
+          }
+          requested.add(request.url.queryParameters['profile']);
+          // The server reads an omitted profile as `all`.
+          final wanted = request.url.queryParameters['profile'] ?? 'all';
+          const jobs = [
+            {'id': 'mine', 'profile': 'default', 'enabled': true},
+            {'id': 'bot-job', 'profile': 'research', 'enabled': true},
+          ];
+          return http.Response(
+            jsonEncode([
+              for (final job in jobs)
+                if (wanted == 'all' || job['profile'] == wanted) job,
+            ]),
+            200,
+          );
+        }),
+      );
+      addTearDown(client.close);
+
+      final listing = await CronRepository(
+        client,
+      ).listJobsForScope(CronProfileScope.active);
+
+      expect(requested, ['default']);
+      expect(listing.jobs.map((job) => job.id), ['mine']);
+    },
+  );
+
+  test(
+    'the default profile\'s legacy fallback is still its own jobs',
+    () async {
+      final requested = <String?>[];
+      final client = DashboardClient(
+        host: 'hermes.local',
+        manualToken: 'token',
+        httpClientOverride: MockClient((request) async {
+          if (request.method != 'GET' || request.url.path != '/api/cron/jobs') {
+            return http.Response('{}', 404);
+          }
+          final profile = request.url.queryParameters['profile'];
+          requested.add(profile);
+          if (profile == 'all') return http.Response('{}', 422);
+          return http.Response(
+            jsonEncode([
+              {'id': 'legacy-job', 'profile': profile, 'enabled': true},
+            ]),
+            200,
+          );
+        }),
+      );
+      addTearDown(client.close);
+
+      final listing = await CronRepository(
+        client,
+      ).listJobsForScope(CronProfileScope.all);
+
+      expect(requested, ['all', 'default']);
+      expect(listing.usedLegacyActiveFallback, isTrue);
+    },
+  );
 }

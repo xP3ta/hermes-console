@@ -147,6 +147,195 @@ void main() {
     });
   });
 
+  test('MCP servers added for a profile name it on the create and the '
+      'sign-in; the unscoped surface names none', () async {
+    final requests = <http.Request>[];
+    final client = TuiGatewayClient(
+      _connection(),
+      dashboard: _dashboard(
+        MockClient((request) async {
+          requests.add(request);
+          final payload = switch ((request.method, request.url.path)) {
+            ('POST', '/api/mcp/servers') => {
+              'name': 'reports',
+              'transport': 'http',
+              'url': 'https://mcp.example/mcp',
+              'auth': 'oauth',
+              'enabled': true,
+            },
+            ('POST', '/api/mcp/servers/reports/auth') => {
+              'flow_id': 'flow-1',
+              'server_name': 'reports',
+              'status': 'authorization_required',
+              'authorization_url': 'https://idp.example/authorize',
+            },
+            ('GET', '/api/mcp/oauth/flows/flow-1') => {
+              'flow_id': 'flow-1',
+              'server_name': 'reports',
+              'status': 'approved',
+            },
+            _ => <String, dynamic>{},
+          };
+          return http.Response(jsonEncode(payload), 200);
+        }),
+      ),
+    );
+    addTearDown(client.close);
+    List<String> calls() => [
+      for (final request in requests)
+        '${request.method} ${request.url.path}'
+            '${request.url.hasQuery ? '?${request.url.query}' : ''}',
+    ];
+    final draft = McpServerDraft.http(
+      name: 'reports',
+      url: 'https://mcp.example/mcp',
+      auth: McpAuthMode.oauth,
+    );
+
+    final writer = client.mcpProvisioningOf('writer bot');
+    expect((await writer.addMcpServer(draft)).name, 'reports');
+    final started = await writer.startMcpOAuth('reports');
+    expect(started.status, McpOAuthStatus.authorizationRequired);
+    // The server keys a sign-in by its flow id alone.
+    final done = await writer.mcpOAuthFlow('flow-1');
+    expect(done.status, McpOAuthStatus.approved);
+    expect(calls(), [
+      'POST /api/mcp/servers?profile=writer+bot',
+      'POST /api/mcp/servers/reports/auth?profile=writer+bot',
+      'GET /api/mcp/oauth/flows/flow-1',
+    ]);
+    // The body is the draft, as before: the profile travels in the query.
+    expect(_body(requests.first), {
+      'name': 'reports',
+      'url': 'https://mcp.example/mcp',
+      'auth': 'oauth',
+    });
+
+    // No profile chosen is the default profile, by name, not whichever
+    // profile the server was started as.
+    requests.clear();
+    final unnamed = client.mcpProvisioningOf('  ');
+    await unnamed.addMcpServer(draft);
+    await unnamed.startMcpOAuth('reports');
+    expect(calls(), [
+      'POST /api/mcp/servers?profile=default',
+      'POST /api/mcp/servers/reports/auth?profile=default',
+    ]);
+
+    requests.clear();
+    await client.addMcpServer(draft);
+    await client.startMcpOAuth('reports');
+    expect(calls(), [
+      'POST /api/mcp/servers',
+      'POST /api/mcp/servers/reports/auth',
+    ]);
+  });
+
+  test('a read-only connection adds no MCP server to any profile', () async {
+    var calls = 0;
+    final client = TuiGatewayClient(
+      _connection(readOnly: true),
+      dashboard: _dashboard(
+        MockClient((request) async {
+          calls++;
+          return http.Response('{}', 200);
+        }),
+      ),
+    );
+    addTearDown(client.close);
+    final scoped = client.mcpProvisioningOf('writer bot');
+    final forbidden = throwsA(
+      isA<DesktopControlFailure>().having(
+        (failure) => failure.kind,
+        'kind',
+        DesktopControlFailureKind.forbidden,
+      ),
+    );
+    expect(
+      () => scoped.addMcpServer(
+        McpServerDraft.http(name: 'reports', url: 'https://mcp.example/mcp'),
+      ),
+      forbidden,
+    );
+    expect(() => scoped.startMcpOAuth('reports'), forbidden);
+    expect(calls, 0);
+  });
+
+  test('the webhooks of a profile name it on every call, the delete '
+      'included; the unscoped surface names none', () async {
+    final requests = <http.Request>[];
+    final client = TuiGatewayClient(
+      _connection(),
+      dashboard: _dashboard(
+        MockClient((request) async {
+          requests.add(request);
+          final payload = switch ((request.method, request.url.path)) {
+            ('GET', '/api/webhooks') => {
+              'enabled': true,
+              'base_url': 'http://127.0.0.1:8642',
+              'subscriptions': <dynamic>[],
+            },
+            ('POST', '/api/webhooks/enable') => {
+              'ok': true,
+              'enabled': true,
+              'restart_started': false,
+              'needs_restart': false,
+            },
+            ('POST', '/api/webhooks') => {
+              'name': 'deploy-hook',
+              'events': ['push'],
+              'deliver': 'log',
+              'url': 'http://127.0.0.1:8642/webhooks/deploy-hook',
+              'secret_set': true,
+              'enabled': true,
+              'secret': 'one-shot-secret',
+            },
+            ('PUT', '/api/webhooks/deploy-hook/enabled') => {
+              'ok': true,
+              'name': 'deploy-hook',
+              'enabled': false,
+            },
+            _ => <String, dynamic>{'ok': true},
+          };
+          return http.Response(jsonEncode(payload), 200);
+        }),
+      ),
+    );
+    addTearDown(client.close);
+    List<String> calls() => [
+      for (final request in requests)
+        '${request.method} ${request.url.path}'
+            '${request.url.hasQuery ? '?${request.url.query}' : ''}',
+    ];
+
+    final writer = client.webhooksOf('writer bot');
+    await writer.webhookSnapshot();
+    await writer.enableWebhooks();
+    await writer.createWebhook(
+      WebhookDraft(name: 'Deploy Hook', events: const ['push']),
+    );
+    await writer.setWebhookEnabled('deploy-hook', false);
+    await writer.removeWebhook('deploy-hook');
+    expect(calls(), [
+      'GET /api/webhooks?profile=writer+bot',
+      'POST /api/webhooks/enable?profile=writer+bot',
+      'POST /api/webhooks?profile=writer+bot',
+      'PUT /api/webhooks/deploy-hook/enabled?profile=writer+bot',
+      'DELETE /api/webhooks/deploy-hook?profile=writer+bot',
+    ]);
+
+    // No profile chosen is the default profile, by name: a backend that
+    // serves several refuses a delete that names none.
+    requests.clear();
+    await client.webhooksOf('  ').removeWebhook('deploy-hook');
+    expect(calls(), ['DELETE /api/webhooks/deploy-hook?profile=default']);
+
+    requests.clear();
+    await client.webhookSnapshot();
+    await client.removeWebhook('deploy-hook');
+    expect(calls(), ['GET /api/webhooks', 'DELETE /api/webhooks/deploy-hook']);
+  });
+
   test('read-only bloquea mutaciones antes de la red', () async {
     var calls = 0;
     final client = TuiGatewayClient(

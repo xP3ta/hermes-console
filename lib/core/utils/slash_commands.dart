@@ -48,6 +48,13 @@ class SlashCommand {
   /// `skills` key); the palette groups these under their own header.
   final bool isSkill;
 
+  /// An argument option (`/personality alice`): the composer text that
+  /// picking it leaves. Null for a command row.
+  final String? insertText;
+
+  /// What an argument option row says (the server's `display`).
+  final String? optionLabel;
+
   const SlashCommand({
     required this.name,
     required this.description,
@@ -55,6 +62,8 @@ class SlashCommand {
     this.argHint = '',
     this.takesArg = false,
     this.isSkill = false,
+    this.insertText,
+    this.optionLabel,
   });
 
   factory SlashCommand.remote({
@@ -102,7 +111,11 @@ List<SlashCommand> mergeSlashSuggestions({
   final skills = <SlashCommand>[];
 
   void offer(String name, String meta, bool skillKind) {
-    if (isUnavailableSlashName(name) || byName.containsKey(name)) return;
+    if (isUnavailableSlashName(name) ||
+        byName.containsKey(name) ||
+        catalog?.offersInPalette(name) == false) {
+      return;
+    }
     final entry = catalogByName[name];
     final skill = skillKind || skillNames.contains(name);
     final command = SlashCommand.remote(
@@ -135,6 +148,63 @@ List<SlashCommand> mergeSlashSuggestions({
     ...skills,
   ];
   return merged.length <= limit ? merged : merged.sublist(0, limit);
+}
+
+/// Longest composer text that still asks `complete.slash` for arguments.
+const int maxSlashArgumentInput = 256;
+
+/// The command whose argument is being typed (`/personality ali` gives
+/// `personality`), or null. Desktop's argument stage: a command token, then
+/// a space (`text-utils.ts` `SLASH_COMMAND_TRIGGER_RE`, `composer-utils.ts`
+/// `slashArgStage`), here on one line.
+String? slashArgumentCommand(String text) =>
+    _slashArgumentStage.firstMatch(text)?.group(1)!.toLowerCase();
+
+final RegExp _slashArgumentStage = RegExp(r'^/([A-Za-z][\w-]*)[ \t]+[^\n]*$');
+
+/// Whether the palette stays open past the command name. Desktop
+/// (`use-composer-trigger.ts` `refreshTrigger`) keeps completing only a
+/// command whose catalog `argument_mode` is `options` or `mixed`; free text
+/// (`text`) and a command with no argument close it. Console's own commands
+/// run here and are never completed by the server.
+bool slashArgumentPaletteApplies(String text, DesktopCommandCatalog? catalog) {
+  final name = slashArgumentCommand(text);
+  if (name == null || catalog == null || parseSlashCommand(text) != null) {
+    return false;
+  }
+  final mode = catalog.argumentModeOf(name);
+  return mode == 'options' || mode == 'mixed';
+}
+
+/// The rows of an argument answer of `complete.slash`. Hermes sends only the
+/// argument (`alice` for `/personality alic`, `replace_from` 13); Desktop
+/// (`use-slash-completions.ts`) puts back the typed text up to `replace_from`
+/// so the pick is the whole `/personality alice`.
+List<SlashCommand> slashArgumentSuggestions({
+  required String input,
+  required SlashCompletionBatch completion,
+  int limit = maxSlashPaletteRows,
+}) {
+  final name = slashArgumentCommand(input);
+  if (name == null) return const [];
+  final rows = <SlashCommand>[];
+  final seen = <String>{};
+  for (final item in completion.suggestions) {
+    if (item.replaceFrom <= 1 || item.replaceFrom > input.length) continue;
+    final text = '${input.substring(0, item.replaceFrom)}${item.replacement}';
+    if (!seen.add(text)) continue;
+    rows.add(
+      SlashCommand(
+        name: name,
+        description: item.meta,
+        action: SlashAction.remote,
+        insertText: text,
+        optionLabel: item.display,
+      ),
+    );
+    if (rows.length == limit) break;
+  }
+  return rows;
 }
 
 /// Catálogo de comandos conocidos (cliente). El orden es el de la paleta.

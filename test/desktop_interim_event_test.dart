@@ -455,6 +455,240 @@ void main() {
       },
     );
 
+    test('a notification.show from the agent is shown as a notice', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+      final notice = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.warning,
+      );
+
+      fixture.gateway.emit('notification.show', const {
+        'text': 'You have used 75% of your credits.\nTop up to keep going.',
+        'level': 'warn',
+        'kind': 'sticky',
+        'ttl_ms': null,
+        'key': 'credits.usage',
+        'id': 'credits.usage',
+      });
+      await notice.timeout(const Duration(seconds: 1));
+
+      expect(
+        fixture.chat.takeTerminalWarning(),
+        'You have used 75% of your credits. Top up to keep going.',
+      );
+      // A notice is not part of the turn.
+      expect(fixture.chat.isStreaming, isTrue);
+    });
+
+    test('a session.usage tick moves the context figures mid-turn', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+      final metrics = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.responseMetrics,
+      );
+
+      // tui_gateway/server.py _start_usage_ticker: {usage: _get_usage()}.
+      fixture.gateway.emit('session.usage', const {
+        'usage': {
+          'model': 'test-model',
+          'input': 1200,
+          'output': 300,
+          'reasoning': 0,
+          'prompt': 1200,
+          'completion': 300,
+          'total': 1500,
+          'calls': 2,
+          'context_used': 5000,
+          'context_max': 10000,
+          'context_percent': 50,
+          'compressions': 0,
+          'cache_hit_pct': 87,
+        },
+      });
+      await metrics.timeout(const Duration(seconds: 1));
+
+      final usage = fixture.chat.desktopRuntimeInfo.usage!;
+      expect(usage.contextUsed, 5000);
+      expect(usage.contextMax, 10000);
+      expect(usage.contextPercent, 50);
+      expect(usage.cacheHitPercent, 87);
+      // A tick is not part of the turn.
+      expect(fixture.chat.isStreaming, isTrue);
+    });
+
+    test('a review.summary becomes a row of the transcript', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+      final row = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.backgroundTaskComplete,
+      );
+
+      // tui_gateway/session_registry.py background_review_callback.
+      fixture.gateway.emit('review.summary', const {
+        'text': '💾 Self-improvement review: Memory updated · 1 entry',
+      });
+      await row.timeout(const Duration(seconds: 1));
+
+      final review = fixture.chat.internalMessagesForTesting.singleWhere(
+        (message) => message['display_kind'] == 'side_answer',
+      );
+      expect(review['role'], 'system');
+      expect(review['display_metadata'], {
+        'kind': 'review',
+        'question': '',
+        'answer': 'Self-improvement review: Memory updated · 1 entry',
+        'is_error': false,
+      });
+      expect(review['content'], isNot(contains('💾')));
+      // A summary is not part of the turn.
+      expect(fixture.chat.isStreaming, isTrue);
+    });
+
+    test('a notice keeps its key and lifetime, and a clear names it', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+      var warned = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.warning,
+      );
+
+      // tui_gateway/model_switch.py LARGE_MODEL_NOTICE_KEY, a timed notice.
+      fixture.gateway.emit('notification.show', const {
+        'text': 'Switched to a large model',
+        'level': 'info',
+        'kind': 'ttl',
+        'ttl_ms': 6000,
+        'key': 'model.large_notice',
+        'id': 'model.large_notice',
+      });
+      await warned.timeout(const Duration(seconds: 1));
+
+      expect(fixture.chat.takeTerminalWarning(), 'Switched to a large model');
+      final notice = fixture.chat.takeAgentNotice()!;
+      expect(notice.key, 'model.large_notice');
+      expect(notice.level, 'info');
+      expect(notice.sticky, isFalse);
+      expect(notice.ttl, const Duration(seconds: 6));
+      expect(fixture.chat.takeAgentNotice(), isNull);
+
+      warned = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.warning,
+      );
+      fixture.gateway.emit('notification.clear', const {
+        'key': 'model.large_notice',
+      });
+      await warned.timeout(const Duration(seconds: 1));
+      expect(fixture.chat.takeClearedAgentNoticeKeys(), [
+        'model.large_notice',
+      ]);
+      expect(fixture.chat.takeClearedAgentNoticeKeys(), isEmpty);
+    });
+
+    test('a session.title push renames the chat at once', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+      final renamed = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.sessionInfo,
+      );
+
+      fixture.gateway.emit('session.title', const {
+        'session_id': 'stored-interim',
+        'title': '  Plan del viaje a Lisboa ',
+      });
+      await renamed.timeout(const Duration(seconds: 1));
+
+      expect(fixture.chat.sessionTitle, 'Plan del viaje a Lisboa');
+      // A push without a title leaves it alone.
+      fixture.gateway.emit('session.title', const {
+        'session_id': 'stored-interim',
+        'title': ' ',
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(fixture.chat.sessionTitle, 'Plan del viaje a Lisboa');
+    });
+
+    test('a provider-setup failure keeps its instruction', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+      final failed = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.error,
+      );
+      // tui_gateway/user_messages.py agent_init_failed_message around
+      // agent/auxiliary_unavailable.py missing_provider_credentials_message.
+      const sentence =
+          'Hermes could not start the assistant for this session. Details: '
+          "Provider 'openrouter' is set in config.yaml but no API key was "
+          'found. Set the OPENROUTER_API_KEY environment variable. Check the '
+          'model and provider with /model, or run `hermes setup` in a '
+          'terminal to reconfigure.';
+
+      fixture.gateway.emit('error', const {
+        'message': sentence,
+        'code': 'provider_not_configured',
+      });
+      await failed.timeout(const Duration(seconds: 1));
+
+      final error = fixture.chat.messages.firstWhere(
+        (message) => message['role'] == 'assistant_error',
+      );
+      expect(error['content'], 'No se pudo completar la respuesta: $sentence');
+    });
+
+    test('a provider-setup failure hides a credential it quotes', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+      final failed = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.error,
+      );
+
+      fixture.gateway.emit('error', const {
+        'message':
+            'No LLM provider configured. Tried '
+            'https://user:PRIVATE_KEY_VALUE_0123456789@example.invalid/v1',
+      });
+      await failed.timeout(const Duration(seconds: 1));
+
+      final error = fixture.chat.messages.firstWhere(
+        (message) => message['role'] == 'assistant_error',
+      );
+      final content = error['content'] as String;
+      expect(content, isNot(contains('PRIVATE')));
+      expect(content, isNot(contains('example.invalid')));
+      expect(content, contains('`hermes setup`'));
+      expect(content, contains('/model'));
+    });
+
+    test('an error after the turn ended is shown as a notice', () async {
+      final fixture = await _startChat();
+      addTearDown(fixture.dispose);
+      await _complete(fixture, const {'text': 'Hecho.'});
+      expect(fixture.chat.state, ChatPipelineState.completed);
+      final notice = fixture.chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.warning,
+      );
+
+      fixture.gateway.emit('error', const {
+        'message': 'No LLM provider configured. Run `hermes model` to select '
+            'a provider.',
+        'code': 'provider_not_configured',
+      });
+      await notice.timeout(const Duration(seconds: 1));
+
+      expect(
+        fixture.chat.takeTerminalWarning(),
+        'No se pudo completar la respuesta: No LLM provider configured. Run '
+        '`hermes model` to select a provider.',
+      );
+      // The finished turn is left as it was.
+      expect(fixture.chat.state, ChatPipelineState.completed);
+      expect(
+        fixture.chat.messages.where(
+          (message) => message['role'] == 'assistant_error',
+        ),
+        isEmpty,
+      );
+      expect(_nonEmptyAssistantTexts(fixture.chat), ['Hecho.']);
+    });
+
     test(
       'ambos terminales nunca emiten un secreto partido por el acote',
       () async {

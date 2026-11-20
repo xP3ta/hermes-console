@@ -2207,7 +2207,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("v1.2.9", policy)
         self.assertIn("86edaa150fabd33d8184f5b958400cabadacb49632f7ec50ecbe49608058d159", policy)
         self.assertIn(
-            "48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35",
+            "d4ca77fba619727e1b824c604c50ade17000a419eb4513d6a606db6200b6f8da",
             policy,
         )
 
@@ -2231,7 +2231,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("./tool/sbom/generate.sh", workflow)
         self.assertIn("git diff --exit-code -- sbom", workflow)
         self.assertIn(
-            "48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35",
+            "d4ca77fba619727e1b824c604c50ade17000a419eb4513d6a606db6200b6f8da",
             workflow,
         )
 
@@ -2620,7 +2620,7 @@ class ReleaseContractAndDoubleBuildTest(unittest.TestCase):
         )
         self.assertEqual(
             policy["source"]["authoritativeLockSha256"],
-            "48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35",
+            "d4ca77fba619727e1b824c604c50ade17000a419eb4513d6a606db6200b6f8da",
         )
         self.assertEqual(policy["android"]["packageId"], "dev.xpetalab.hermesconsole")
         self.assertEqual(set(policy["channels"]), {"direct-public", "play-private"})
@@ -2717,7 +2717,7 @@ class ReleaseContractAndDoubleBuildTest(unittest.TestCase):
         self.assertIn("git clone --no-local", source)
         self.assertIn("PUB_CACHE", source)
         self.assertIn("GRADLE_USER_HOME", source)
-        self.assertIn("48d6da0ead3f18dc1aa599fdfe314b5ff7825fa834653e5aacd94322300cbe35", source)
+        self.assertIn("d4ca77fba619727e1b824c604c50ade17000a419eb4513d6a606db6200b6f8da", source)
         self.assertIn("compare_rebuilds.py", source)
         self.assertIn("ANDROID_HOME", source)
         self.assertIn("ANDROID_SDK_ROOT", source)

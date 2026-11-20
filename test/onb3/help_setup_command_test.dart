@@ -13,11 +13,11 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import '../support/onboarding_fakes.dart';
 
 const _unix =
-    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/main/'
+    'curl -fsSL https://raw.githubusercontent.com/xP3ta/hermes-setup/setup-v1.6.0/'
     'hermes-dashboard-setup.sh | sh';
 const _windows =
     '& ([scriptblock]::Create((irm '
-    'https://raw.githubusercontent.com/xP3ta/hermes-setup/main/'
+    'https://raw.githubusercontent.com/xP3ta/hermes-setup/setup-v1.6.0/'
     'hermes-dashboard-setup.ps1)))';
 
 Future<(Strings, List<String>, List<String>)> _open(
@@ -139,7 +139,17 @@ void main() {
       'lib/core/services/official_dashboard_command.dart',
     ).readAsStringSync();
     expect('raw.githubusercontent.com'.allMatches(src).length, 1);
-    expect("kHermesSetupRef = 'main'".allMatches(src).length, 1);
+    expect('const String kHermesSetupRef = '.allMatches(src).length, 1);
+    expect(src, isNot(contains('hermes-setup/main')));
+    // No screen names the scripts' branch either: one ref, a release tag.
+    for (final f in Directory('lib').listSync(recursive: true)) {
+      if (f is! File || !f.path.endsWith('.dart')) continue;
+      expect(
+        f.readAsStringSync(),
+        isNot(contains('hermes-setup/main')),
+        reason: f.path,
+      );
+    }
     final screen = File(
       'lib/core/screens/onboarding_screen.dart',
     ).readAsStringSync();

@@ -1135,10 +1135,43 @@ class SessionArchive extends ChangeNotifier {
   /// answer carries the row. Without a server that takes titles (gateway
   /// only, read-only, an older handler, an unpersisted chat) the rename is
   /// a local override, as before. Any other failure rolls back and throws.
-  Future<void> renameSession(Session session, String title) async {
+  ///
+  /// [liveRuntime] renames through the chat's live runtime first, as
+  /// Desktop does (`renameSessionPreferringRpc`): Hermes keeps the title
+  /// even before the conversation has a stored row, and with no Dashboard.
+  /// When it fails the path above decides, as on Desktop.
+  Future<void> renameSession(
+    Session session,
+    String title, {
+    Future<String> Function(String title)? liveRuntime,
+  }) async {
     final clean = title.trim();
     if (clean.isEmpty) return;
     final id = session.logicalId;
+    if (liveRuntime != null && !session.isUnpersistedMobileDraft) {
+      final generation = _newIntent(_titleField, id);
+      _titleOverlay[id] = _StateOverlay(clean, generation);
+      _changed();
+      String? kept;
+      try {
+        kept = (await liveRuntime(clean)).trim();
+      } on Object {
+        _dropOverlay(_titleOverlay, id, generation);
+      }
+      if (kept != null) {
+        if (!_isCurrent(_titleField, id, generation)) return;
+        _titleOverlay[id] = _StateOverlay(
+          kept.isEmpty ? clean : kept,
+          generation,
+        )..ack = ++_ackSeq;
+        for (final alias in _aliases(session)) {
+          _titles.remove(alias);
+          _autoTitles.remove(alias);
+        }
+        await _flushTitles();
+        return;
+      }
+    }
     if (!_writable(_titleField) || session.isUnpersistedMobileDraft) {
       return setSessionTitle(session, clean);
     }

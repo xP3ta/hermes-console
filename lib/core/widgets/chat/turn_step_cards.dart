@@ -39,6 +39,7 @@ final class TurnStepCardEntry {
     this.startedAt,
     this.clock,
     this.memory,
+    this.progress,
   });
 
   final String id;
@@ -90,6 +91,10 @@ final class TurnStepCardEntry {
 
   /// What a memory tool's call/result says it wrote (null for other tools).
   final MemoryWrite? memory;
+
+  /// A running call's live progress (`42% · refining mesh`), said beside its
+  /// timer as Desktop's `ToolRunningMeta` does.
+  final String? progress;
 
   bool get isToolStep => kind == TurnStepCardKind.tool || toolName != null;
 }
@@ -963,11 +968,20 @@ class _LineStep extends StatelessWidget {
         : measured == null
         ? null
         : time(statusText == null ? measured : '· $measured');
+    final progress = entry.running ? entry.progress : null;
     final statusAndTime = Wrap(
       spacing: HermesSpace.x1,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         if (statusText != null) Text(statusText, style: timeStyle),
+        if (progress != null)
+          Text(
+            progress,
+            key: ValueKey('turn-step-progress-${entry.id}'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: timeStyle,
+          ),
         ?elapsed,
       ],
     );
@@ -1049,7 +1063,10 @@ class _LineStep extends StatelessWidget {
                 ),
               ),
             ),
-            if (!stackStatus && (elapsed != null || statusText != null)) ...[
+            if (!stackStatus &&
+                (elapsed != null ||
+                    statusText != null ||
+                    progress != null)) ...[
               const SizedBox(width: HermesSpace.x2),
               Flexible(flex: 4, child: statusAndTime),
             ],

@@ -916,6 +916,7 @@
   "chaVoiceModeTooltip": "Démarrer une conversation vocale",
   "chaErrViewDetails": "voir les détails",
   "chaErrHideDetails": "masquer les détails",
+  "chaErrSetUpProvider": "Configurer un fournisseur",
   "chaModelServer": "Modèle du serveur",
   "chaApproveAlways": "Toujours autoriser cette action de l’agent",
   "chaApproveOnce": "Approuver une action de l’agent",
@@ -1670,6 +1671,19 @@
   "crnStatusCompleted": "terminée",
   "crnOpenFromConversation": "Ouvrir la planification associée",
   "crnRunNow": "Exécuter maintenant",
+  "crnStop": "Arrêter",
+  "crnStopping": "Arrêt…",
+  "crnRunStopped": "Exécution annulée",
+  "crnRunFinishedFirst": "L’exécution s’est terminée avant l’arrêt",
+  "crnNothingToStop": "Aucune exécution en cours",
+  "crnStopFailed": "Impossible d’arrêter l’exécution : {error}",
+  "crnLastCancelled": "Dernière exécution annulée",
+  "crnLastCancelledReason": "Dernière exécution annulée : {reason}",
+  "crnCatchUpLabel": "Exécutions manquées",
+  "crnCatchUpHint": "Que faire des exécutions manquées pendant que Hermes ne tournait pas.",
+  "crnCatchUpDefault": "Utiliser la valeur par défaut",
+  "crnCatchUpRun": "Exécuter une fois au retour",
+  "crnCatchUpSkip": "Les ignorer",
   "crnResume": "Reprendre",
   "crnPause": "Mettre en pause",
   "crnNoRuns": "Aucune exécution enregistrée.",
@@ -4144,6 +4158,18 @@
   "embedSvgLabel": "Image SVG",
   "vwDiagramLabel": "Diagramme",
   "vwModelLabel": "Modèle 3D",
+  "vwModelFailed": "Impossible d’afficher ce modèle 3D.",
+  "vwPreviewFailed": "Impossible d’afficher cet aperçu.",
+  "vwPreviewTimedOut": "L’affichage a pris trop de temps.",
+  "vwModelExternal": "Ce modèle a besoin de fichiers qui ne l’accompagnent pas : {files}.",
+  "vwModelNotGltf": "Ce fichier n’est pas un modèle glTF.",
+  "vwModelTooLarge": "Ce modèle dépasse {size}, trop volumineux pour être affiché ici. Tu peux l’ouvrir avec une autre application ou le partager.",
+  "vwPlaybackFailed": "Impossible de le lire ici. Tu peux l’ouvrir avec une autre application ou le partager.",
+  "vwUnsupportedHere": "Ce type de fichier ne peut pas être affiché dans l’application.",
+  "vwModelNeedsWasm": "Ce modèle est compressé et la WebView de ce téléphone ne peut pas exécuter son décodeur. Mettre à jour Android System WebView corrige le problème.",
+  "vwModelNeedsWebGl": "La WebView de ce téléphone ne peut pas afficher la 3D (WebGL 2 est désactivé ou absent).",
+  "vwPdfFailed": "Impossible d’ouvrir ce PDF. Il est peut-être endommagé ou protégé.",
+  "embedLoadFailed": "Impossible de charger {service}.",
   "reactAdd": "Réagir",
   "reactFailed": "Impossible d’enregistrer la réaction",
   "reactSettingsTitle": "Réactions",
@@ -9522,5 +9548,102 @@
   "pb1215UnlistedChatsBody": "Hermes les compte dans ce dossier, mais ce ne sont pas des discussions ordinaires de ce profil : exécutions automatiques (dans Conversations › Automatisation), sessions de sous-agents ou vides.",
   "subagentUiStatusNotActive": "{count, plural, one{Non actif} other{Non actifs}}",
   "subagentUiResultUnavailable": "Résultat final indisponible",
-  "kluUsagePeriodDay": "24 h"
+  "kluUsagePeriodDay": "24 h",
+  "msgPairTitle": "Accès par messagerie",
+  "msgPairSubtitle": "Approuvez ou révoquez les personnes qui peuvent écrire au bot",
+  "msgPairIntro": "Toute personne qui écrit à un bot pour la première fois attend ici votre approbation. L'approbation prend effet dès son prochain message.",
+  "msgPairPending": "Demandes en attente ({count})",
+  "@msgPairPending": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApproved": "Utilisateurs approuvés ({count})",
+  "@msgPairApproved": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairApprove": "Approuver",
+  "msgPairRevoke": "Révoquer",
+  "msgPairRevokeTitle": "Révoquer l'accès",
+  "msgPairRevokeBody": "{name} perdra l'accès et ne sera plus reconnu(e) dès son prochain message.",
+  "@msgPairRevokeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairJustNow": "à l'instant",
+  "msgPairMinutesAgo": "il y a {minutes} min",
+  "@msgPairMinutesAgo": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPairEmpty": "Personne n'attend d'approbation et aucun utilisateur n'a encore été approuvé.",
+  "msgPairUnavailable": "Ce serveur ne permet pas de gérer l'accès par messagerie.",
+  "msgPairLoadFailed": "Impossible de charger l'accès par messagerie.",
+  "msgPairApprovedDone": "{name} approuvé(e). Cette personne sera reconnue automatiquement dès son prochain message.",
+  "@msgPairApprovedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokedDone": "Accès de {name} révoqué",
+  "@msgPairRevokedDone": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairApproveFailed": "Échec de l'approbation de {name}",
+  "@msgPairApproveFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairRevokeFailed": "Échec de la révocation de {name}",
+  "@msgPairRevokeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPairLockedOut": "Trop de tentatives d'approbation échouées : cette plateforme est verrouillée. Réessayez plus tard.",
+  "msgPairVerifyApprove": "Vérifiez votre identité pour approuver l'accès",
+  "msgPairVerifyRevoke": "Vérifiez votre identité pour révoquer l'accès",
+  "srvCheckDoctor": "Exécuter doctor",
+  "srvCheckDoctorSub": "Vérifie l'installation, la configuration et les fournisseurs",
+  "srvCheckAudit": "Audit de sécurité",
+  "srvCheckAuditSub": "Recherche les réglages à risque dans la configuration et les skills",
+  "srvCheckRun": "Exécuter",
+  "srvCheckRunning": "En cours…",
+  "srvCheckLog": "Sortie",
+  "srvCheckFinished": "Terminé",
+  "srvCheckFinishedCode": "Terminé avec le code de sortie {code}",
+  "@srvCheckFinishedCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "srvCheckStillRunning": "Toujours en cours ; le suivi a été arrêté",
+  "srvCheckUnavailable": "Ce serveur ne peut pas l'exécuter.",
+  "srvCheckStartFailed": "Impossible de le démarrer.",
+  "srvCheckLost": "Impossible de suivre l'exécution. Relancez-la pour voir sa sortie."
 }

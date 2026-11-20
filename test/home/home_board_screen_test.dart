@@ -9,6 +9,7 @@ import 'package:hermes_android/core/app_header_title.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/config/feature_flags.dart';
+import 'package:hermes_android/core/design/gel_surface.dart';
 import 'package:hermes_android/core/guide/guide_layer.dart';
 import 'package:hermes_android/core/home/board/home_board_catalog.dart';
 import 'package:hermes_android/core/home/board/home_board_kit.dart';
@@ -53,6 +54,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/gel_glow.dart';
 import '../support/profile_model_fakes.dart' show FakeModelGateway;
 import '../support/fake_connection_link.dart';
 import '../support/account_usage_fixtures.dart';
@@ -186,7 +188,7 @@ final class _Harness {
   }
 }
 
-HostedGroupsSnapshot _groups({bool withApproval = true}) =>
+HostedGroupsSnapshot _groups({bool withApproval = true, DateTime? readAt}) =>
     HostedGroupsSnapshot(
       capabilities: spec070Capabilities(),
       rooms: [spec070Room()],
@@ -197,6 +199,12 @@ HostedGroupsSnapshot _groups({bool withApproval = true}) =>
         ),
       ],
       driverStatuses: {if (withApproval) 'room-devs': spec070DriverStatus()},
+      // A real read of the room's driver status records when it happened;
+      // Home offers approvals only for a status read in the last minutes.
+      driverReadAt: {
+        if (withApproval)
+          'room-devs': readAt ?? _clock.subtract(const Duration(minutes: 1)),
+      },
     );
 
 AgentProfile _profile(
@@ -1608,7 +1616,12 @@ void main() {
       final h = await harness(tester);
       h.cache.write(
         h.connection,
-        MissionBackendSnapshot(hostedGroups: _groups(), loadedAt: _clock),
+        // A read whose rooms answered, as the repository reports it.
+        MissionBackendSnapshot(
+          hostedGroups: _groups(),
+          hostedGroupsCapability: MissionCapabilityState.available,
+          loadedAt: _clock,
+        ),
       );
       await pumpHome(tester, h);
       final allow = find.byWidgetPredicate(
@@ -1634,7 +1647,34 @@ void main() {
         h.connection,
         MissionBackendSnapshot(
           hostedGroups: _groups(),
+          hostedGroupsCapability: MissionCapabilityState.available,
           loadedAt: _clock.subtract(const Duration(minutes: 9)),
+        ),
+      );
+      await pumpHome(tester, h);
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w.key is ValueKey<String> &&
+              (w.key! as ValueKey<String>).value.startsWith('home-now-allow-'),
+        ),
+        findsNothing,
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('a room whose driver status was read long ago (or never) '
+        'offers no approval, even from a fresh room list', (tester) async {
+      final h = await harness(tester);
+      h.cache.write(
+        h.connection,
+        MissionBackendSnapshot(
+          // The list is fresh; the status was read by a view 9 minutes ago.
+          hostedGroups: _groups(
+            readAt: _clock.subtract(const Duration(minutes: 9)),
+          ),
+          hostedGroupsCapability: MissionCapabilityState.available,
+          loadedAt: _clock,
         ),
       );
       await pumpHome(tester, h);
@@ -2259,6 +2299,31 @@ void main() {
       expect(find.byKey(const ValueKey('home-edit-bar')), findsNothing);
       expect(find.byType(HermesAppBar), findsOneWidget);
       expect(tester.getRect(tile), rect);
+      await unmount(tester);
+    });
+
+    testWidgets('the Done pill is the bar\'s accent gel and casts no glow '
+        'for the header\'s layer to cut', (tester) async {
+      final h = await harness(tester);
+      await pumpHome(tester, h);
+      await hold(tester, tileOf(HomeWidgetKind.continueChats));
+      final done = find.byKey(const ValueKey('home-edit-done'));
+      expect(done, findsOneWidget);
+
+      // The header paints into a layer of its own and the toolbar clips: a
+      // glow outside the pill would be cut to a straight line along the
+      // header's edge, so the pill has none.
+      final gel = tester.widget<HermesGelSurface>(
+        find.descendant(of: done, matching: find.byType(HermesGelSurface)),
+      );
+      expect(gel.tone, HermesGelTone.accent);
+      expect(gel.glow, isFalse);
+      expectGlowsUncut(
+        tester,
+        find.byKey(const ValueKey('home-edit-bar')),
+        expected: 0,
+        reason: 'the edit bar',
+      );
       await unmount(tester);
     });
 

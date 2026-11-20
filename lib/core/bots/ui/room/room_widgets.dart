@@ -396,17 +396,27 @@ class RoomMessageTile extends StatelessWidget {
           actions: attachmentActions,
         ),
       ),
-    // Files sent through the room's own attachment store (Desktop): named
-    // here, opened on Desktop (Console does not download them).
+    // Files sent through the room's own attachment store: read with
+    // `groups.attachment.download` when the server lists it, as Desktop does
+    // (`canonical-group-history.tsx`, `downloads`); otherwise named here and
+    // opened on Desktop.
     for (final file in entry.event.attachments)
       Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: RoomServerAttachmentChip(
-          key: ValueKey(
-            'room-server-attachment-${entry.event.eventId}-${file.attachmentId}',
-          ),
-          attachment: file,
-        ),
+        child: attachmentActions is RoomStoredAttachmentActions
+            ? RoomAttachmentCard(
+                key: ValueKey(
+                  'room-server-attachment-${entry.event.eventId}-${file.attachmentId}',
+                ),
+                attachment: RoomAttachmentRef.stored(entry.event.eventId, file),
+                actions: attachmentActions,
+              )
+            : RoomServerAttachmentChip(
+                key: ValueKey(
+                  'room-server-attachment-${entry.event.eventId}-${file.attachmentId}',
+                ),
+                attachment: file,
+              ),
       ),
     // A member's files whose manifest this Console does not accept: said,
     // never hidden silently (review M3).
@@ -2253,6 +2263,11 @@ class RoomUnreadableAttachmentsNote extends StatelessWidget {
   }
 }
 
+/// Largest stored image a room card fetches without a tap: Desktop's
+/// `IMAGE_PREVIEW_MAX_BYTES` (`canonical-group-history.tsx`). Larger ones
+/// load when opened.
+const int roomStoredImagePreviewMaxBytes = 5 * 1024 * 1024;
+
 class RoomAttachmentCard extends StatefulWidget {
   final RoomAttachmentRef attachment;
   final RoomAttachmentActions? actions;
@@ -2282,6 +2297,13 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
   late File? _file = widget.localFile ?? _cachedCopy();
   bool _previewFailed = false;
 
+  /// Why the last fetch of a stored file failed, shown with «Retry», and
+  /// what it was for (null: its preview).
+  Object? _failure;
+  _AttachmentOp? _failedOp;
+
+  RoomStoredFile? get _stored => widget.attachment.stored;
+
   File? _cachedCopy() {
     final actions = widget.actions;
     if (!_hasMediaPreview || actions is! RoomAttachmentCache) return null;
@@ -2294,17 +2316,28 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
   static int _activePreviews = 0;
   static final List<Completer<void>> _previewWaiters = <Completer<void>>[];
 
-  AttachmentPreviewKind get _kind =>
-      attachmentPreviewKindFor(widget.attachment.name, '');
+  AttachmentPreviewKind get _kind => attachmentPreviewKindFor(
+    widget.attachment.name,
+    _stored?.attachment.mime ?? '',
+  );
 
   /// Images, videos and audio preview in place, so they are fetched without
-  /// a tap; documents still wait for one.
-  bool get _hasMediaPreview => switch (_kind) {
-    AttachmentPreviewKind.image ||
-    AttachmentPreviewKind.video ||
-    AttachmentPreviewKind.audio => true,
-    _ => false,
-  };
+  /// a tap; documents still wait for one. A stored file previews only when
+  /// it is an image within Desktop's preview cap
+  /// (`canonical-group-history.tsx` `IMAGE_PREVIEW_MAX_BYTES`).
+  bool get _hasMediaPreview {
+    final stored = _stored;
+    if (stored != null) {
+      return stored.attachment.kind == 'image' &&
+          stored.attachment.size <= roomStoredImagePreviewMaxBytes;
+    }
+    return switch (_kind) {
+      AttachmentPreviewKind.image ||
+      AttachmentPreviewKind.video ||
+      AttachmentPreviewKind.audio => true,
+      _ => false,
+    };
+  }
 
   @override
   void initState() {
@@ -2332,8 +2365,16 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
       final file = await actions.fetch(widget.attachment);
       if (!mounted) return;
       setState(() => _file ??= file);
-    } catch (_) {
-      if (mounted) setState(() => _previewFailed = true);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _previewFailed = true;
+          if (_stored != null) {
+            _failure = error;
+            _failedOp = null;
+          }
+        });
+      }
     } finally {
       if (_previewWaiters.isNotEmpty) {
         _previewWaiters.removeAt(0).complete();
@@ -2349,7 +2390,10 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
     final s = Strings.of(context);
     final notice = HermesNotice.of(context);
     final feedback = AppFeedback.of(context);
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _failure = null;
+    });
     try {
       final file = _file ?? await actions.fetch(widget.attachment);
       if (!mounted) return;
@@ -2382,13 +2426,63 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
       );
     } catch (error) {
       debugPrint('[room] attachment ${op.name} failed ${error.runtimeType}');
-      notice.showSnackBar(
-        SnackBar(content: Text(s.roomFileFailed)),
-        kind: HermesNoticeKind.error,
-      );
+      if (_stored != null) {
+        // A stored file says why in place, with «Retry».
+        if (mounted) {
+          setState(() {
+            _failure = error;
+            _failedOp = op;
+          });
+        }
+      } else {
+        notice.showSnackBar(
+          SnackBar(content: Text(s.roomFileFailed)),
+          kind: HermesNoticeKind.error,
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Runs again what failed: the preview, or the action the reader chose.
+  void _retry() {
+    final op = _failedOp;
+    setState(() {
+      _failure = null;
+      _failedOp = null;
+      _previewFailed = false;
+    });
+    unawaited(op == null ? _loadPreview() : _run(op));
+  }
+
+  /// A failed fetch of a stored file: the server's words when it said any,
+  /// and «Retry». Never a blank card.
+  Widget _failureLine(Strings s, HermesThemeColors colors, Object failure) {
+    final ref = widget.attachment;
+    final actions = widget.actions;
+    final said = actions is RoomStoredAttachmentActions
+        ? actions.failureMessage(failure)
+        : null;
+    return Row(
+      key: ValueKey('room-attachment-failed-${ref.path}'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            said == null ? s.roomFileFailed : '${s.roomFileFailed}: $said',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: colors.error),
+          ),
+        ),
+        TextButton(
+          key: ValueKey('room-attachment-retry-${ref.path}'),
+          onPressed: _busy ? null : _retry,
+          child: Text(s.commonRetry),
+        ),
+      ],
+    );
   }
 
   @override
@@ -2400,9 +2494,11 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
     final file = _file;
     // Media the server will not serve (outside the managed files, sensitive,
     // or no connection) is labelled instead of spinning or showing a path.
+    final failure = _failure;
     final unavailable =
-        _previewFailed ||
-        (_hasMediaPreview && file == null && !enabled && !_busy);
+        failure == null &&
+        (_previewFailed ||
+            (_hasMediaPreview && file == null && !enabled && !_busy));
     final Widget? preview = file != null && _hasMediaPreview && !_previewFailed
         ? AttachmentPreview(
             key: ValueKey('room-attachment-media-${ref.path}'),
@@ -2411,7 +2507,8 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
             sizeLabel: '',
             file: file,
           )
-        : _kind == AttachmentPreviewKind.image &&
+        : _hasMediaPreview &&
+              _kind == AttachmentPreviewKind.image &&
               file == null &&
               !_previewFailed &&
               (widget.actions?.canFetch(ref) ?? false)
@@ -2502,16 +2599,24 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 11, color: colors.textSecondary),
                 ),
+              if (failure != null) _failureLine(s, colors, failure),
             ],
           )
-        : Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: AttachmentPreview(
-              name: ref.name,
-              mimeType: '',
-              sizeLabel: '',
-              onOpen: enabled ? () => unawaited(_run(openOp)) : null,
-            ),
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: AttachmentPreview(
+                  name: ref.name,
+                  mimeType: _stored?.attachment.mime ?? '',
+                  sizeLabel: '',
+                  onOpen: enabled ? () => unawaited(_run(openOp)) : null,
+                ),
+              ),
+              if (failure != null) _failureLine(s, colors, failure),
+            ],
           );
     final row = Row(
       children: [

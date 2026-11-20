@@ -1,4 +1,5 @@
 import 'package:hermes_android/core/design/hicons.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -13,6 +14,7 @@ import '../services/attachment_uploader.dart';
 import '../services/generated_media_service.dart';
 import '../theme/app_theme.dart';
 import 'artifact_viewer/artifact_viewer_screen.dart';
+import 'artifact_viewer/pdf_document_view.dart' show kPdfRenderDeadline;
 import 'attachment_card.dart';
 import 'attachment_preview.dart';
 import 'hermes_app_bar.dart';
@@ -120,7 +122,7 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
       );
       return;
     }
-    if (widget.reference.type == AttachmentType.image) {
+    if (_isImage) {
       await showImageViewer(context, file);
       return;
     }
@@ -151,6 +153,17 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
     );
   }
 
+  /// An image sent through the file picker was stored as a document; its
+  /// MIME type still says it is an image, so it previews as one.
+  bool get _isImage =>
+      widget.reference.type == AttachmentType.image ||
+      const {
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+      }.contains(widget.reference.mimeType.toLowerCase());
+
   bool get _playsInline => switch (attachmentPreviewKindFor(
     widget.name,
     widget.reference.mimeType,
@@ -177,10 +190,7 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
             file: file,
           );
         }
-        final thumbnail =
-            available && widget.reference.type == AttachmentType.image
-            ? file
-            : null;
+        final thumbnail = available && _isImage ? file : null;
         final openPreview = available ? _open : null;
         final card = AttachmentCard(
           name: widget.name,
@@ -322,7 +332,9 @@ class _AttachmentBytesPreviewScreenState
                       ? _PdfBytesPreview(
                           reference: widget.reference,
                           file: widget.file,
-                          fallbackBytes: bytes,
+                          onOpenExternal: widget.onOpenExternal,
+                          onShare: widget.onShare,
+                          onSave: widget.onSave,
                         )
                       : _BinaryBytesPreview(bytes: bytes),
                 ),
@@ -420,12 +432,16 @@ class _PdfPageResult {
 class _PdfBytesPreview extends StatefulWidget {
   final AttachmentHistoryReference reference;
   final File file;
-  final Uint8List fallbackBytes;
+  final VoidCallback? onOpenExternal;
+  final VoidCallback? onShare;
+  final VoidCallback? onSave;
 
   const _PdfBytesPreview({
     required this.reference,
     required this.file,
-    required this.fallbackBytes,
+    this.onOpenExternal,
+    this.onShare,
+    this.onSave,
   });
 
   @override
@@ -441,19 +457,18 @@ class _PdfBytesPreviewState extends State<_PdfBytesPreview> {
   Future<_PdfPageResult> _renderPage(int page) =>
       _pages.putIfAbsent(page, () async {
         final locator = GeneratedMediaService.cacheLocator(widget.file);
-        final response = await _channel.invokeMapMethod<String, dynamic>(
-          'renderPdfPage',
-          {
-            'storageKey': widget.reference.storageKey,
-            'page': page,
-            'expectedSize': widget.reference.sizeBytes,
-            'expectedSha256': widget.reference.sha256Hex,
-            if (locator != null) ...{
-              'generatedConnectionKey': locator.connectionKey,
-              'generatedFileKey': locator.fileKey,
-            },
-          },
-        );
+        final response = await _channel
+            .invokeMapMethod<String, dynamic>('renderPdfPage', {
+              'storageKey': widget.reference.storageKey,
+              'page': page,
+              'expectedSize': widget.reference.sizeBytes,
+              'expectedSha256': widget.reference.sha256Hex,
+              if (locator != null) ...{
+                'generatedConnectionKey': locator.connectionKey,
+                'generatedFileKey': locator.fileKey,
+              },
+            })
+            .timeout(kPdfRenderDeadline);
         final png = response?['pngBytes'];
         final count = (response?['pageCount'] as num?)?.toInt();
         if (png is! Uint8List || png.isEmpty || count == null || count <= 0) {
@@ -472,9 +487,16 @@ class _PdfBytesPreviewState extends State<_PdfBytesPreview> {
           return const Center(child: ConsoleLoader.medium());
         }
         if (snapshot.hasError || snapshot.data == null) {
-          return _BinaryBytesPreview(
-            bytes: widget.fallbackBytes,
-            warning: strings.chaAttachmentPreviewUnavailable,
+          // A PDF the renderer refuses (broken, protected) is said in
+          // words, with what still works; only a renderer that did not
+          // answer in time may do better on a second try.
+          final timedOut = snapshot.error is TimeoutException;
+          return _PdfFailure(
+            detail: timedOut ? strings.vwPreviewTimedOut : null,
+            onRetry: timedOut ? () => setState(_pages.clear) : null,
+            onOpenExternal: widget.onOpenExternal,
+            onShare: widget.onShare,
+            onSave: widget.onSave,
           );
         }
         final firstPage = snapshot.data!;
@@ -561,9 +583,8 @@ class _LazyPdfPage extends StatelessWidget {
 
 class _BinaryBytesPreview extends StatelessWidget {
   final Uint8List bytes;
-  final String? warning;
 
-  const _BinaryBytesPreview({required this.bytes, this.warning});
+  const _BinaryBytesPreview({required this.bytes});
 
   @override
   Widget build(BuildContext context) {
@@ -576,10 +597,6 @@ class _BinaryBytesPreview extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (warning != null) ...[
-            Text(warning!, style: TextStyle(color: colors.error)),
-            const SizedBox(height: 12),
-          ],
           Text(
             strings.chaAttachmentPreviewBinaryTitle,
             style: TextStyle(
@@ -614,6 +631,92 @@ class _BinaryBytesPreview extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A PDF whose pages cannot be shown: why, and the file's actions.
+class _PdfFailure extends StatelessWidget {
+  const _PdfFailure({
+    this.detail,
+    this.onRetry,
+    this.onOpenExternal,
+    this.onShare,
+    this.onSave,
+  });
+
+  final String? detail;
+  final VoidCallback? onRetry;
+  final VoidCallback? onOpenExternal;
+  final VoidCallback? onShare;
+  final VoidCallback? onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final detail = this.detail;
+    return Center(
+      key: const ValueKey('attachment-pdf-failure'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              HIcons.file_present_outlined,
+              size: 48,
+              color: colors.textSecondary,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              strings.vwPdfFailed,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.textPrimary),
+            ),
+            if (detail != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                detail,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.textSecondary, fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              children: [
+                if (onRetry != null)
+                  TextButton.icon(
+                    key: const ValueKey('attachment-pdf-retry'),
+                    onPressed: onRetry,
+                    icon: const Icon(HIcons.refresh_rounded),
+                    label: Text(strings.commonRetry),
+                  ),
+                if (onOpenExternal != null)
+                  TextButton.icon(
+                    onPressed: onOpenExternal,
+                    icon: const Icon(HIcons.open_in_new_rounded),
+                    label: Text(strings.genMediaOpenWith),
+                  ),
+                if (onShare != null)
+                  TextButton.icon(
+                    onPressed: onShare,
+                    icon: const Icon(HIcons.share_outlined),
+                    label: Text(strings.commonShare),
+                  ),
+                if (onSave != null)
+                  TextButton.icon(
+                    onPressed: onSave,
+                    icon: const Icon(HIcons.save_alt_rounded),
+                    label: Text(strings.commonSave),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

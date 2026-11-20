@@ -189,17 +189,39 @@ List<HomeQuestionItem> homeChatQuestions(
   return items;
 }
 
+/// Whether [snapshot]'s rooms are recent enough to offer their approvals:
+/// its rooms read answered (rooms kept from an earlier read after a failed
+/// one carry a new [MissionBackendSnapshot.loadedAt] but old approvals) and
+/// it is no older than [maxAge].
+bool homeRoomApprovalsCurrent(
+  MissionBackendSnapshot snapshot,
+  DateTime now,
+  Duration maxAge,
+) =>
+    snapshot.hostedGroupsCapability == MissionCapabilityState.available &&
+    now.difference(snapshot.loadedAt) <= maxAge;
+
 /// Hosted-room approvals of the Bots [attention] (the same source as the
 /// Bots home).
+///
+/// A room's approvals come from the driver status a view of the room read
+/// (the room list alone carries none, see [HostedGroupsSnapshot]). With
+/// [readSince], a room whose status was read before it, or at an unknown
+/// time, offers none: it may be answered already.
 List<HomeApprovalItem> homeRoomApprovals(
   HostedGroupsSnapshot groups,
   AttentionSummary attention, {
   String Function(HostedGroupRoom room)? titleOf,
   bool readOnly = false,
+  DateTime? readSince,
 }) {
   final items = <HomeApprovalItem>[];
   for (final room in groups.rooms) {
     if (room.disbanded) continue;
+    if (readSince != null) {
+      final readAt = groups.driverReadAt[room.roomId];
+      if (readAt == null || readAt.isBefore(readSince)) continue;
+    }
     for (final item in attention.room(room.roomId)?.items ?? const []) {
       final action = item.approval;
       if (item.kind != AttentionKind.approval || action == null) continue;
@@ -239,7 +261,7 @@ List<HomeRoomNews> homeRoomNews(
     if (seen == null) continue;
     var count = 0;
     HostedGroupEvent? last;
-    for (final log in groups.logs) {
+    for (final log in groups.logs.nonNulls) {
       for (final event in log.events) {
         if (event.roomId != room.roomId ||
             event.kind != 'message.member' ||
@@ -391,7 +413,7 @@ List<HomeBoardRoom> homeBoardRooms(
   for (final room in groups.rooms) {
     if (room.disbanded) continue;
     final events = <HostedGroupEvent>[
-      for (final log in groups.logs)
+      for (final log in groups.logs.nonNulls)
         for (final event in log.events)
           if (event.roomId == room.roomId) event,
     ]..sort((a, b) => a.sequence.compareTo(b.sequence));
