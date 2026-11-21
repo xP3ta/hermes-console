@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/content.dart' show HermesStatusText;
+import 'package:hermes_android/core/screens/messaging_platform_detail.dart';
 import 'package:hermes_android/core/screens/messaging_platforms_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/messaging_pairing.dart';
@@ -286,6 +287,36 @@ String _status(WidgetTester tester) => tester
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('a field named as a credential is a secret without the server\'s '
+      'password flag', () {
+    // Both server versions describe WECOM_CALLBACK_TOKEN unflagged.
+    for (final key in [
+      'WECOM_CALLBACK_TOKEN',
+      'WECOM_CALLBACK_ENCODING_AES_KEY',
+      'SLACK_SIGNING_SECRET',
+      'MATRIX_PASSWORD',
+    ]) {
+      expect(
+        messagingFieldIsSecret(MessagingEnvField(key: key)),
+        isTrue,
+        reason: key,
+      );
+    }
+    for (final key in ['TELEGRAM_HOME_CHANNEL', 'TELEGRAM_ALLOWED_USERS']) {
+      expect(
+        messagingFieldIsSecret(MessagingEnvField(key: key)),
+        isFalse,
+        reason: key,
+      );
+    }
+    expect(
+      messagingFieldIsSecret(
+        const MessagingEnvField(key: 'ANYTHING', isPassword: true),
+      ),
+      isTrue,
+    );
+  });
+
   Future<_Server> open(
     WidgetTester tester, {
     _Server? server,
@@ -485,10 +516,24 @@ void main() {
       expect(token.controller!.text, isEmpty);
       expect(token.obscureText, isTrue);
       expect(token.enableSuggestions, isFalse);
+      expect(token.enableIMEPersonalizedLearning, isFalse);
+      // A field the server does not flag as a password does not teach the
+      // keyboard either.
+      final channel = _input(tester, 'TELEGRAM_HOME_CHANNEL');
+      expect(channel.enableIMEPersonalizedLearning, isFalse);
+      expect(channel.autofillHints, isNull);
       expect(find.text('1234…wxyz'), findsOneWidget);
       // The allowlist shows its plain ids, one per box.
       expect(find.text('111'), findsOneWidget);
       expect(find.text('222'), findsOneWidget);
+      // Those boxes are fields of the same form: no learning, no autofill.
+      for (final id in ['111', '222']) {
+        final box = tester.widget<TextField>(
+          find.ancestor(of: find.text(id), matching: find.byType(TextField)),
+        );
+        expect(box.enableIMEPersonalizedLearning, isFalse, reason: id);
+        expect(box.autofillHints, isNull, reason: id);
+      }
       expect(saveEnabled(tester), isFalse);
       expect(find.byKey(const ValueKey('msgplat-unsaved')), findsNothing);
 

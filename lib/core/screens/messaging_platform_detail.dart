@@ -781,7 +781,7 @@ class _MessagingValueInputState extends State<MessagingValueInput>
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final secret = widget.field.isPassword;
+    final secret = messagingFieldIsSecret(widget.field);
     final field = HermesField(
       fieldKey: ValueKey('msgplat-input-${widget.field.key}'),
       label: widget.label,
@@ -794,8 +794,11 @@ class _MessagingValueInputState extends State<MessagingValueInput>
       keyboardType: secret ? TextInputType.visiblePassword : TextInputType.text,
       autocorrect: false,
       enableSuggestions: false,
-      enableIMEPersonalizedLearning: !secret,
-      autofill: !secret,
+      // Every field of this form is a setting of the bot's account: none
+      // of them teaches the keyboard or is offered to autofill, whatever
+      // the server says about it.
+      enableIMEPersonalizedLearning: false,
+      autofill: false,
       contextMenuBuilder: secret ? _pasteOnlyMenu : null,
       onChanged: widget.onChanged,
       suffix: secret
@@ -985,6 +988,10 @@ class _MessagingAllowlistInputState extends State<MessagingAllowlistInput> {
                       enabled: widget.enabled,
                       autocorrect: false,
                       enableSuggestions: false,
+                      // Who may write to the bot: like the rest of the form,
+                      // it does not teach the keyboard nor go to autofill.
+                      enableIMEPersonalizedLearning: false,
+                      autofillHints: null,
                       textInputAction: TextInputAction.next,
                       onChanged: (value) => _change(row, value),
                       onSubmitted: (value) {
@@ -1028,3 +1035,17 @@ class _MessagingAllowlistInputState extends State<MessagingAllowlistInput> {
     );
   }
 }
+
+
+/// Names that are credentials whatever flag the server sends with them:
+/// both server versions describe `WECOM_CALLBACK_TOKEN` without the
+/// password flag.
+final _credentialName = RegExp(
+  r'(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|AES_KEY|PRIVATE_KEY)'
+  r'(_|$)',
+);
+
+/// Whether [field] is typed and shown as a secret: the server's flag, or a
+/// name that says so.
+bool messagingFieldIsSecret(MessagingEnvField field) =>
+    field.isPassword || _credentialName.hasMatch(field.key.toUpperCase());
