@@ -683,12 +683,15 @@ class MessagingPlatformsClient {
   /// does. The poll talks to the server the restart takes down, so a
   /// refused read mid-window is expected, and a fresh process that never
   /// saw the action answers "not running, no exit code": both keep waiting.
-  /// Only a recorded non-zero exit is a failure, and a window in which no
-  /// read was ever answered is one too. Still running when the window
-  /// closes counts as done (a no-service install keeps the child as the
-  /// foreground gateway).
+  /// Only a recorded non-zero exit is a failure, and so is a window that
+  /// closes with the server not answering. Still running, and answering,
+  /// when the window closes counts as done (a no-service install keeps the
+  /// child as the foreground gateway).
   Future<bool> awaitGatewayRestart(String profile) async {
-    var answered = false;
+    // Whether the latest read of the window was answered. One early answer
+    // followed by refusals until the window closes is a server that went
+    // down and did not come back, not a restart that completed.
+    var lastAnswered = false;
     for (var attempt = 0; attempt < restartPollAttempts; attempt += 1) {
       await _sleep(restartPollInterval);
       final Map<String, dynamic> status;
@@ -697,14 +700,15 @@ class MessagingPlatformsClient {
           _scoped('actions/gateway-restart/status?lines=200', profile),
         );
       } catch (_) {
+        lastAnswered = false;
         continue;
       }
-      answered = true;
+      lastAnswered = true;
       final code = status['exit_code'];
       if (status['running'] == true || code == null) continue;
       return code == 0;
     }
-    return answered;
+    return lastAnswered;
   }
 }
 

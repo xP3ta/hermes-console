@@ -570,6 +570,26 @@ void main() {
       expect(server.seen, hasLength(2));
     });
 
+    test('one early answer and then refusals until the window closes is a '
+        'gateway that did not come back', () async {
+      server.restartReads.addAll([
+        {'running': true, 'exit_code': null},
+        ...List.filled(17, null),
+      ]);
+      expect(await real(() => client.awaitGatewayRestart('research')), isFalse);
+      expect(slept, hasLength(MessagingPlatformsClient.restartPollAttempts));
+    });
+
+    test('refusals in the middle of the window are expected when it answers '
+        'again before the end', () async {
+      server.restartReads.addAll([
+        {'running': true, 'exit_code': null},
+        ...List.filled(10, null),
+        ...List.filled(7, {'running': true, 'exit_code': null}),
+      ]);
+      expect(await real(() => client.awaitGatewayRestart('research')), isTrue);
+    });
+
     test('a window in which no read was answered is a failure, and one '
         'still running at its end is done', () async {
       server.restartReads.addAll(List.filled(18, null));
