@@ -1065,11 +1065,17 @@ class InlineWebPreview extends StatefulWidget {
     this.captureScript,
     this.autoLoad = true,
     this.resolveSnapshotKey,
+    this.knownSnapshotKey,
     this.deadline = kWebPageDeadline,
     this.model = false,
   });
 
   final Future<String> Function() document;
+
+  /// What [resolveSnapshotKey] answered for these very bytes earlier in
+  /// this run, without any work, or null. With it a picture already in
+  /// memory is on the preview's first frame instead of after a placeholder.
+  final String? Function()? knownSnapshotKey;
 
   /// Gives the picture's key when it takes work to know (the digest of a
   /// file); used instead of [snapshotKey].
@@ -1121,12 +1127,31 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
   bool _looking = false;
   String? _key;
 
+  /// The picture has been taken and is being decoded: the live page stays
+  /// under it until it has a frame. Dropping the page in the same frame the
+  /// picture was set left the box empty for a frame or more.
+  bool _handingOver = false;
+
   @override
   void initState() {
     super.initState();
     _key = widget.snapshotKey;
     final resolve = widget.resolveSnapshotKey;
-    if (resolve == null) _snapshot = _Snapshots.get(_key);
+    if (resolve == null) {
+      _snapshot = _Snapshots.get(_key);
+    } else {
+      String? known;
+      try {
+        known = widget.knownSnapshotKey?.call();
+      } catch (_) {
+        known = null;
+      }
+      final kept = _Snapshots.get(known);
+      if (kept != null) {
+        _key = known;
+        _snapshot = kept;
+      }
+    }
     if (_snapshot == null &&
         widget.autoLoad &&
         (_key != null || resolve != null)) {
@@ -1211,15 +1236,33 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
     if (!mounted) return;
     setState(() {
       _snapshot = png;
-      _live = false;
+      _handingOver = _live;
     });
-    _LivePreviews.drop(this);
+  }
+
+  /// The picture is on screen (or cannot be drawn): the page under it goes.
+  void _pictureShown() {
+    if (!_handingOver) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_handingOver) return;
+      _LivePreviews.drop(this);
+      if (!mounted) return;
+      setState(() {
+        _handingOver = false;
+        _live = false;
+      });
+    });
   }
 
   void _release() {
     _LivePreviews.drop(this);
     if (!_live) return;
-    if (mounted) setState(() => _live = false);
+    if (mounted) {
+      setState(() {
+        _live = false;
+        _handingOver = false;
+      });
+    }
   }
 
   void _checkVisibility() {
@@ -1294,23 +1337,15 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      if (_snapshot != null)
-                        Image.memory(
-                          _snapshot!,
-                          key: const ValueKey('inline-web-preview-picture'),
-                          fit: BoxFit.cover,
-                          alignment: Alignment.topCenter,
-                          gaplessPlayback: true,
-                          excludeFromSemantics: true,
-                        )
-                      else if (failure != null)
+                      if (failure != null && _snapshot == null)
                         WebPageFailureView(
                           failure: failure,
                           model: widget.model,
                           onRetry: _retry,
                         )
-                      else if (_live)
+                      else if (_live && (_snapshot == null || _handingOver))
                         WebDocumentView(
+                          key: const ValueKey('inline-web-preview-page'),
                           document: widget.document,
                           interactive: false,
                           settingsFor: widget.settingsFor,
@@ -1332,7 +1367,7 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                             _LivePreviews.drop(this);
                           }),
                         )
-                      else
+                      else if (_snapshot == null)
                         Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -1348,6 +1383,23 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                               ),
                             ],
                           ),
+                        ),
+                      if (_snapshot != null)
+                        Image.memory(
+                          _snapshot!,
+                          key: const ValueKey('inline-web-preview-picture'),
+                          fit: BoxFit.cover,
+                          alignment: Alignment.topCenter,
+                          gaplessPlayback: true,
+                          excludeFromSemantics: true,
+                          frameBuilder: (context, child, frame, sync) {
+                            if (sync || frame != null) _pictureShown();
+                            return child;
+                          },
+                          errorBuilder: (context, error, stack) {
+                            _pictureShown();
+                            return const SizedBox.shrink();
+                          },
                         ),
                       // A failure keeps its own button reachable.
                       if (failure == null)

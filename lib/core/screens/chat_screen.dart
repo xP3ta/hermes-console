@@ -3494,11 +3494,20 @@ class _ChatScreenState extends State<ChatScreen>
     final unread = found.count;
     final newestRead = found.newestRead;
     _entryLandingPending = true;
+    // No row has been painted yet (the first transcript of this entry): the
+    // rows stay hidden from their very first frame until the landing has
+    // decided where the reader stands. Hiding only once the landing ran, a
+    // frame later, showed the bottom of the chat, then nothing, then the
+    // landing. Rows already on screen (a cached transcript painted first)
+    // are not blanked for a landing that may not even have to move.
+    final nothingPainted = !_messageAnchors.values.any((box) => box.attached);
+    if (nothingPainted) _transcriptConcealed.value = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(
         _landOnNewSinceYouLeft(firstUnread, newestRead, unread).whenComplete(
           () {
             _entryLandingPending = false;
+            if (!_disposed) _transcriptConcealed.value = false;
             _scheduleStickyPromptUpdate();
           },
         ),
@@ -7695,6 +7704,12 @@ class _ChatScreenState extends State<ChatScreen>
       }
       unawaited(_loadDesktopCommandCatalog());
       unawaited(_chat.loadMentionRoster());
+      // Rows already here (a chat still in memory, or painted from the kept
+      // transcript) get their media asked for now, like a page that has
+      // just loaded: no event will announce them.
+      if (_chat.messages.isNotEmpty) {
+        _prefetchArrivedMedia(ActiveChatEvent.messagesHydrated);
+      }
       // Observa el modo voz global: re-renderiza el overlay al cambiar de fase,
       // y muestra el diálogo de "dictado no disponible" cuando el servicio lo
       // pida (necesita un BuildContext, que el servicio no tiene).

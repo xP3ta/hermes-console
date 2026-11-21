@@ -329,6 +329,27 @@ class GeneratedMediaService {
     }
   }
 
+  /// [isSafeForInlinePreview] without leaving the frame: the same checks on
+  /// the same paths. For a copy already in the private cache, so a file
+  /// card can be painted ready on its first frame.
+  static bool isSafeForInlinePreviewSync(
+    GeneratedMediaReference reference,
+    File file,
+  ) {
+    final sourcePath = reference.sourceKind == GeneratedMediaSourceKind.https
+        ? Uri.tryParse(reference.source)?.path ?? reference.source
+        : reference.source;
+    if (_isSensitivePath(sourcePath) ||
+        _isSensitiveName(reference.displayName)) {
+      return false;
+    }
+    try {
+      return !_isSensitivePath(file.resolveSymbolicLinksSync());
+    } on FileSystemException {
+      return false;
+    }
+  }
+
   static ({String connectionKey, String fileKey})? cacheLocator(File file) {
     final fileName = file.uri.pathSegments.isEmpty
         ? ''

@@ -1052,13 +1052,19 @@ class _GeneratedMediaAttachmentCardState
   /// Synchronous so the very first frame is already the ready card: the
   /// in-process memo, then a finished prefetch, then the private disk cache
   /// (reopen / app restart), none of which touch the network.
+  ///
+  /// A file (a page, a PDF, text) is restored the same way. It used to be
+  /// left to a real load, so the first time a chat was opened in a run of
+  /// the app a file already on the phone showed its Download button, then
+  /// a progress bar, then the file, each a different height, in a list
+  /// that grows upwards: the rows above jumped twice per file.
   void _restoreRemembered() {
     final key = _memoKey;
     if (key == null) return;
     var remembered = GeneratedMediaAttachmentCard._recallReady(key);
-    if (remembered == null &&
-        widget.reference.kind != GeneratedMediaKind.file) {
-      // Files (text/PDF) keep the async inline-safety check of a real load.
+    var countLines = false;
+    if (remembered == null) {
+      final isFile = widget.reference.kind == GeneratedMediaKind.file;
       final cached =
           MediaPrefetcher.instance.readyFile(key) ??
           GeneratedMediaService.cachedFileSync(
@@ -1068,12 +1074,29 @@ class _GeneratedMediaAttachmentCardState
       if (cached != null) {
         try {
           final length = cached.lengthSync();
-          if (length > 0 && length <= _autoLimit) {
-            GeneratedMediaAttachmentCard._rememberReady(key, cached, length);
+          if (length > 0 &&
+              length <= _autoLimit &&
+              (!isFile ||
+                  GeneratedMediaService.isSafeForInlinePreviewSync(
+                    widget.reference,
+                    cached,
+                  ))) {
+            final text = isFile ? _readTextPreview(cached, length) : null;
+            // The whole file's line count is read off the frame; the card
+            // is already the right size without it.
+            countLines = text != null && length > _textPreviewMaxBytes;
+            if (!countLines) {
+              GeneratedMediaAttachmentCard._rememberReady(
+                key,
+                cached,
+                length,
+                text: text,
+              );
+            }
             remembered = (
               file: cached,
               length: length,
-              text: null,
+              text: text,
               lines: null,
             );
           }
@@ -1090,6 +1113,28 @@ class _GeneratedMediaAttachmentCardState
     _receivedBytes = remembered.length;
     _totalBytes = remembered.length;
     _status = GeneratedFileStatus.ready;
+    if (countLines) unawaited(_countRestoredLines(key, remembered));
+  }
+
+  Future<void> _countRestoredLines(String key, _ReadyEntry restored) async {
+    final generation = _generation;
+    final int lines;
+    try {
+      lines = await _countLines(restored.file);
+    } catch (_) {
+      return;
+    }
+    GeneratedMediaAttachmentCard._rememberReady(
+      key,
+      restored.file,
+      restored.length,
+      text: restored.text,
+      lines: lines,
+    );
+    if (!mounted || generation != _generation || _file != restored.file) {
+      return;
+    }
+    setState(() => _textLines = lines);
   }
 
   @override
