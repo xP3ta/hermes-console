@@ -100,6 +100,15 @@ import '../feedback/feedback_policy.dart';
 
 const sessionLibraryRefreshGap = Duration(seconds: 10);
 
+/// The least time between two activity reads (`session.active_list` and the
+/// per-row process snapshots) started by `sessions.changed`. The first event
+/// reads at once, so a row that finished goes to rest without waiting for a
+/// poll; the events of a burst after it share ONE more read when the gap
+/// ends, which carries the final state. 1.4.3 read on every event: a busy
+/// agent emits many a second, each one a round trip and a snapshot per
+/// working row (#226).
+const sessionActivityRefreshGap = Duration(seconds: 1);
+
 /// Roster refreshes driven by events of runtimes the aggregate does not route
 /// are coalesced to one per 30 s, like Desktop's event-driven `active_list`.
 const sessionLibraryActivityRefreshGap = Duration(seconds: 30);
@@ -807,6 +816,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _moveLease = null;
     _retryTimer?.cancel();
     _searchTimer?.cancel();
+    _activityEventGate?.cancel();
     _eventRefreshTimer?.cancel();
     _activityRefreshTimer?.cancel();
     _activityPollTimer?.cancel();
@@ -925,7 +935,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       _remoteActivityDirty = true;
       return;
     }
-    unawaited(_refreshRemoteActivity());
+    _refreshActivityFromEvent();
     final now = DateTime.now();
     final last = _lastEventRefreshAt;
     final elapsed = last == null
@@ -949,6 +959,37 @@ class _SessionListScreenState extends State<SessionListScreen>
       unawaited(_refreshFromSessionEvent());
     });
   }
+
+  Timer? _activityEventGate;
+  bool _activityEventOwed = false;
+
+  /// One activity read now, and at most one more per
+  /// [sessionActivityRefreshGap] while events keep coming.
+  void _refreshActivityFromEvent() {
+    if (_activityEventGate != null) {
+      _activityEventOwed = true;
+      return;
+    }
+    unawaited(_refreshRemoteActivity());
+    _activityEventGate = Timer(sessionActivityRefreshGap, _onActivityEventGate);
+  }
+
+  void _onActivityEventGate() {
+    _activityEventGate = null;
+    if (!_activityEventOwed) return;
+    _activityEventOwed = false;
+    if (!mounted) return;
+    if (!_foreground || !_listVisible) {
+      _remoteActivityDirty = true;
+      return;
+    }
+    unawaited(_refreshRemoteActivity());
+    _activityEventGate = Timer(sessionActivityRefreshGap, _onActivityEventGate);
+  }
+
+  /// Rows whose process snapshot is on the wire: a second activity read
+  /// that lands meanwhile does not ask for the same row again.
+  final Set<String> _processSnapshotsInFlight = <String>{};
 
   /// False while another route covers the list (a chat pushed over it keeps
   /// the list mounted). Without a route (tests, embedding) it counts visible.
@@ -1181,6 +1222,11 @@ class _SessionListScreenState extends State<SessionListScreen>
     required GlobalActivityScope scope,
   }) async {
     final rosterBusy = rosterStatusIsBusy(rosterStatus);
+    // These reads are not awaited by the activity read that starts them, so
+    // its single-flight does not cover them: without this, a second read
+    // landing meanwhile launched a second batch for the same rows.
+    final flight = '${scope.durableSessionId}\u0000${scope.runtimeSessionId}';
+    if (!_processSnapshotsInFlight.add(flight)) return;
     try {
       final snapshot = await loadSnapshot(scope.runtimeSessionId);
       if (!mounted || !snapshot.processesFullyParsed) {
@@ -1243,6 +1289,8 @@ class _SessionListScreenState extends State<SessionListScreen>
       // Optional/legacy process.list cannot erase the last proven state.
       if (!rosterBusy) return;
       aggregate.markTransportStale(scope.connectionId, scope.profile);
+    } finally {
+      _processSnapshotsInFlight.remove(flight);
     }
   }
 
