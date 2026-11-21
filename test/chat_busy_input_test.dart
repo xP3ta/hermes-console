@@ -29,6 +29,7 @@ import 'package:hermes_android/main.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'support/test_api_client.dart';
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/memory_sealed_files.dart';
 
 SavedConnection _connection() => SavedConnection(
   id: 'conn-busy-input',
@@ -214,7 +215,10 @@ void main() {
   List<PreparedTurn> persistedTurns() {
     // Observe the write itself. loadAllForChat is a recovery operation: it
     // deliberately rewrites any submitting record to ambiguous.
-    final raw = secureStore[TurnOutboxStore.storageKeyForTesting] ?? '{}';
+    // The outbox is a sealed file.
+    final raw =
+        SealedValues(secureStore)[TurnOutboxStore.storageKeyForTesting] ??
+        '{}';
     return (jsonDecode(raw) as Map<String, dynamic>).values
         .map(
           (value) =>

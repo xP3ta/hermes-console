@@ -10,6 +10,8 @@ import '../models/session.dart';
 import 'app_error_log.dart';
 import 'attachment_uploader.dart';
 import 'app_lock_sensitive_read_fence.dart';
+import 'sealed_local_files.dart';
+import 'secure_storage.dart';
 import 'session_deletion.dart';
 import 'turn_outbox_store.dart';
 
@@ -82,7 +84,8 @@ class ChatDraftEntry {
 }
 
 /// Borrador local cifrado por instancia y sesión. El texto puede contener datos
-/// sensibles aunque no sea una credencial, por eso vive en el Keystore y no en
+/// sensibles aunque no sea una credencial, por eso vive cifrado
+/// ([SealedLocalFiles], con la clave en el Keystore) y no en
 /// SharedPreferences. Las rutas SAF/caché se validan al restaurar porque Android
 /// puede revocarlas o borrarlas.
 typedef ChatDraftChange = ({
@@ -113,6 +116,7 @@ class ChatDraftStore {
 
   final SharedPreferences _prefs;
   final FlutterSecureStorage _secure;
+  final SealedLocalFiles _files;
   final Future<bool> Function(AttachmentDraft) _deletePrivateCopy;
   final String mutationNamespaceForTesting;
 
@@ -122,68 +126,151 @@ class ChatDraftStore {
     Future<bool> Function(AttachmentDraft)? deletePrivateCopy,
     this.mutationNamespaceForTesting = '',
   }) : _secure = secureStorage,
+       _files = SealedLocalFiles(
+         SealedLocalFiles.drafts,
+         secureStorage: secureStorage,
+       ),
        _deletePrivateCopy =
            deletePrivateCopy ?? AttachmentUploader.deletePrivateDraftCopy;
 
-  Future<String?> _read({required String key}) async {
+  /// What a draft file that does not open reads as: like an entry that does
+  /// not parse, it is never a draft (load and list delete it).
+  static const _unreadable = '\u0000';
+
+  /// An entry an older version wrote is moved into its file only when it
+  /// parses; one that does not is left for the unreadable path.
+  static bool _movable(String raw) {
+    try {
+      return jsonDecode(raw) is Map;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  static SealedName _name(String key) =>
+      AttachmentOwnershipCoordinator.draftName(key);
+
+  /// The draft stored under [key]. An entry an older version wrote is moved
+  /// into its file unless [move] is false (a cleanup about to delete it) or
+  /// its key is not a well-formed v3 key (it is only ever deleted).
+  Future<String?> _read({
+    required String key,
+    bool move = true,
+    void Function()? onSettled,
+  }) async {
     final ticket = AppLockSensitiveReadFence.current;
     ticket.ensureCurrent();
     await _prefs.reload();
     ticket.ensureCurrent();
-    final result = await _secure.read(key: key);
-    ticket.ensureCurrent();
-    return result;
+    final name = _name(key);
+    try {
+      return await _files.read(
+        name,
+        fence: ticket.ensureCurrent,
+        movable: move && name.scope.length == 3 ? _movable : (_) => false,
+        onSettled: onSettled,
+      );
+    } on SealedFileUnreadable catch (error) {
+      SecureStorageDiagnostics.record(SecureStorageOperation.draftLoad, error);
+      return _unreadable;
+    }
   }
 
-  Future<Map<String, String>> _readAll() async {
+  /// The drafts of [scope] (connection, profile, chat; a null part matches
+  /// any) whose key passes [matches]: their files, and the entries an older
+  /// version left, found by the names of the index (built once, see
+  /// [_indexNames]). A file that does not open is deleted, with its
+  /// breadcrumb. [move] as for [_read]. With [unfinished], a draft whose
+  /// only file is a write a process death interrupted is included too (a
+  /// cleanup must find it).
+  Future<Map<String, String>> _stored(
+    List<String?> scope,
+    bool Function(String key) matches, {
+    bool move = false,
+    bool unfinished = false,
+    List<String>? unreadablePartialOut,
+    Map<String, String>? unfinishedOut,
+  }) async {
     final ticket = AppLockSensitiveReadFence.current;
     ticket.ensureCurrent();
     await _prefs.reload();
     ticket.ensureCurrent();
-    final result = await _secure.readAll();
+    final files = await _files.readScope(scope, fence: ticket.ensureCurrent);
     ticket.ensureCurrent();
-    return result;
+    if (files.unreadable.isNotEmpty) {
+      SecureStorageDiagnostics.record(
+        SecureStorageOperation.draftList,
+        const SealedFileUnreadable(),
+      );
+      await _files.deleteFiles(files.unreadable);
+      ticket.ensureCurrent();
+    }
+    unreadablePartialOut?.addAll(files.unreadablePartial);
+    unfinishedOut?.addAll(files.unfinished);
+    final drafts = {
+      for (final MapEntry(:key, :value) in files.values.entries)
+        if (matches(key)) key: value,
+      if (unfinished)
+        for (final MapEntry(:key, :value) in files.unfinished.entries)
+          if (matches(key) && !files.values.containsKey(key)) key: value,
+    };
+    final settled = <String>{};
+    for (final key in await _indexNames()) {
+      ticket.ensureCurrent();
+      if (!matches(key)) continue;
+      if (drafts.containsKey(key)) {
+        if (move && files.values.containsKey(key)) {
+          await _files.settleLegacy(key);
+          ticket.ensureCurrent();
+          settled.add(key);
+        }
+        continue;
+      }
+      var wasSettled = false;
+      final raw = await _read(
+        key: key,
+        move: move,
+        onSettled: () => wasSettled = true,
+      );
+      ticket.ensureCurrent();
+      // Absent: a write that never landed. Its name is harmless.
+      if (raw != null) drafts[key] = raw;
+      if (wasSettled) settled.add(key);
+    }
+    if (settled.isNotEmpty && ticket.isCurrent) {
+      await _pruneIndexed(settled);
+      ticket.ensureCurrent();
+    }
+    return drafts;
   }
 
-  Future<void> _delete({required String key}) async {
+  /// Deletes the draft stored under [key], and (with [unfinished]) a write
+  /// of it a process death interrupted: not from a list, which runs beside
+  /// the draft's own saves.
+  Future<void> _delete({required String key, bool unfinished = true}) async {
     final ticket = AppLockSensitiveReadFence.current;
     ticket.ensureCurrent();
-    await _secure.delete(key: key);
+    await _files.delete(_name(key), unfinished: unfinished);
     // The app lock closed during the delete: nothing else is read. The
     // name stays in the index and reads as absent.
     if (!ticket.isCurrent) return;
-    await _noteIndexed(key, present: false);
+    await _pruneIndexed([key]);
   }
 
   Future<void> _write({required String key, required String value}) async {
     final ticket = AppLockSensitiveReadFence.current;
     ticket.ensureCurrent();
     AttachmentOwnershipCoordinator.noteDraftKeyWritten(key);
-    // Named before it exists: the index may name a draft that is not there
-    // (it reads as absent), never miss one that is.
-    final indexed = await _noteIndexed(key, present: true);
-    ticket.ensureCurrent();
-    await _secure.write(key: key, value: value);
-    // No index yet: a list may have built it while this draft was on its
-    // way, without it. Not with the app lock closed meanwhile: a revoked
-    // write reads nothing more, and the draft's next save names it.
-    if (!indexed && ticket.isCurrent) await _noteIndexed(key, present: true);
+    await _files.write(_name(key), value);
   }
 
-  // The names of the stored drafts, in one Keystore entry of their own, so
-  // a draft list can read each draft by name. Absent until the first list
-  // builds it from what an older version stored.
-  //
-  // Its updates are deliberately not queued behind one another: a queue
-  // shared by every draft would let one storage call that never answers
-  // hold all later saves. Two drafts saved in the same instant can lose
-  // one name; every save of a draft names it again, and a draft is always
-  // loaded by its own key, so only a list can miss it, until its next save.
-  // The attachment cleanup also reads the drafts by these names, together
-  // with every draft this isolate wrote, so a copy a draft still uses is
-  // never taken for unowned (`AttachmentOwnershipCoordinator`). The legacy
-  // v2 drafts are named too: nothing writes them any more, so the names
-  // found when the index is built are all of them.
+  // The names of legacy secure-storage drafts, in one small Keystore entry,
+  // so lists and attachment cleanup can check them by name. The first list
+  // builds it once from the keys an older version stored.
+  // File-backed drafts are found by listing
+  // their sealed directory and are never added here; entries shrink out of
+  // this index as each legacy v3 draft moves into a file or is deleted.
+  // Legacy v2 drafts stay listed here until removed.
   static const String _indexKey = AttachmentOwnershipCoordinator.draftIndexKey;
 
   Future<Set<String>?> _readIndex() async {
@@ -198,50 +285,31 @@ class ChatDraftStore {
     return null;
   }
 
-  /// False when there is no index yet (the first list builds it).
-  Future<bool> _noteIndexed(String key, {required bool present}) async {
+  /// Removes legacy [keys] that moved into files or were deleted.
+  Future<void> _pruneIndexed(Iterable<String> keys) async {
     final index = await _readIndex();
-    if (index == null) return false;
-    if (present ? !index.add(key) : !index.remove(key)) return true;
+    if (index == null) return;
+    var changed = false;
+    for (final key in keys) {
+      changed = index.remove(key) || changed;
+    }
+    if (!changed) return;
     await _secure.write(key: _indexKey, value: jsonEncode(index.toList()));
-    return true;
   }
 
-  /// The stored drafts whose key starts with [prefix], for the lists Home
-  /// and Chats repaint every few seconds.
-  ///
-  /// It reads each draft by its name. `readAll()` decrypts and ships every
-  /// secret of the app in one platform message (chat tails are megabytes),
-  /// and is for cleanup, not for a path that repeats (see `ColdStartStore`).
-  /// It runs here once, to index the drafts an older version stored.
-  Future<Map<String, String>> _draftsWithPrefix(String prefix) async {
+  /// The names of the index, built from secure key names when absent.
+  Future<Set<String>> _indexNames() async {
     final ticket = AppLockSensitiveReadFence.current;
-    ticket.ensureCurrent();
-    await _prefs.reload();
-    ticket.ensureCurrent();
     var names = await _readIndex();
     ticket.ensureCurrent();
     if (names == null) {
-      final all = await _secure.readAll();
+      final keys = await SecureStorage.listKeys(_secure);
       ticket.ensureCurrent();
-      names = {
-        for (final key in all.keys)
-          if (key.startsWith('chat_draft_v3.') ||
-              key.startsWith('chat_draft_v2_'))
-            key,
-      };
+      names = keys.where(AttachmentOwnershipCoordinator.isDraftKey).toSet();
       await _secure.write(key: _indexKey, value: jsonEncode(names.toList()));
       ticket.ensureCurrent();
     }
-    final drafts = <String, String>{};
-    for (final key in names) {
-      if (!key.startsWith(prefix)) continue;
-      final raw = await _secure.read(key: key);
-      ticket.ensureCurrent();
-      // Absent: a write that never landed. Its name is harmless.
-      if (raw != null) drafts[key] = raw;
-    }
-    return drafts;
+    return names;
   }
 
   SensitiveReadTicket captureDisclosure() =>
@@ -431,7 +499,8 @@ class ChatDraftStore {
   ) async {
     final prefix = 'chat_draft_v3.${_scope(connectionId)}.';
     final entries = <ChatDraftEntry>[];
-    final secureEntries = await _draftsWithPrefix(prefix);
+    bool matches(String key) => key.startsWith(prefix);
+    final secureEntries = await _stored([connectionId], matches, move: true);
     for (final item in secureEntries.entries) {
       if (!item.key.startsWith(prefix)) continue;
       final suffix = item.key.substring(prefix.length).split('.');
@@ -972,7 +1041,10 @@ class ChatDraftStore {
       }
       final securePrefix = 'chat_draft_v3.${_scope(connectionId)}.';
       final secureSuffix = '.${_scope(sessionId)}';
-      final secureEntries = await _readAll();
+      bool matches(String key) =>
+          key.startsWith(securePrefix) && key.endsWith(secureSuffix);
+      final scope = [connectionId, null, sessionId];
+      final secureEntries = await _stored(scope, matches, unfinished: true);
       final matchingKeys = <String>{
         ...secureEntries.keys.where(
           (key) => key.startsWith(securePrefix) && key.endsWith(secureSuffix),
@@ -1050,7 +1122,15 @@ class ChatDraftStore {
             'chat_draft_v3.${_scope(connectionId)}.${_scope(owner)}.';
         var removed = 0;
         final removedAttachments = <AttachmentDraft>[];
-        final secureEntries = await _readAll();
+        final unreadablePartial = <String>[];
+        final unfinished = <String, String>{};
+        bool inProfile(String key) => key.startsWith(securePrefix);
+        final secureEntries = await _stored(
+          [connectionId, owner],
+          inProfile,
+          unreadablePartialOut: unreadablePartial,
+          unfinishedOut: unfinished,
+        );
         bool shouldRemoveSecure(String key) {
           if (key.startsWith(securePrefix)) {
             try {
@@ -1074,6 +1154,18 @@ class ChatDraftStore {
           await _delete(key: key);
           removed++;
         }
+        // Unfinished writes of removed chats (its saves are held while this
+        // runs); dedicated bot and room drafts keep their unfinished writes.
+        for (final entry in unfinished.entries) {
+          if (!shouldRemoveSecure(entry.key)) continue;
+          if (!secureEntries.containsKey(entry.key)) {
+            removedAttachments.addAll(_attachmentsFromRaw(entry.value));
+            await _delete(key: entry.key);
+          }
+        }
+        if (unreadablePartial.isNotEmpty) {
+          await _files.deleteFiles(unreadablePartial);
+        }
         await _cleanupUnowned(removedAttachments);
         return removed;
       },
@@ -1096,7 +1188,13 @@ class ChatDraftStore {
           final securePrefix = 'chat_draft_v3.${_scope(connectionId)}.';
           var removed = 0;
           final removedAttachments = <AttachmentDraft>[];
-          final secureEntries = await _readAll();
+          final unfinished = <String, String>{};
+          bool matches(String key) => key.startsWith(securePrefix);
+          final secureEntries = await _stored(
+            [connectionId],
+            matches,
+            unfinishedOut: unfinished,
+          );
           for (final key in secureEntries.keys.where(
             (key) => key.startsWith(securePrefix),
           )) {
@@ -1106,6 +1204,14 @@ class ChatDraftStore {
             await _delete(key: key);
             removed++;
           }
+          for (final entry in unfinished.entries) {
+            if (matches(entry.key) && !secureEntries.containsKey(entry.key)) {
+              removedAttachments.addAll(_attachmentsFromRaw(entry.value));
+            }
+          }
+          // Writes a process death interrupted: no name of the connection
+          // survives it (its saves are held while this runs).
+          await _files.deleteFiles(await _files.unfinishedIn([connectionId]));
           await _cleanupUnowned(removedAttachments);
           return removed;
         },
@@ -1113,7 +1219,7 @@ class ChatDraftStore {
 
   Future<void> _deleteSecureDraft(String key, String raw) async {
     final candidates = _attachmentsFromRaw(raw);
-    await _delete(key: key);
+    await _delete(key: key, unfinished: false);
     await _cleanupUnowned(candidates);
   }
 

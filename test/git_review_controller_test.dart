@@ -317,17 +317,27 @@ void main() {
 
     // GITPILL (Pixel, 1.4.0 c09d1f28): an unread folder showed the pill on
     // the first opening and lost it once the read said "not a repository".
-    test('notch entry: no pill while the folder is not read yet', () {
-      final entry = gitNotchEntry(
+    // Rewritten in 1.4.3: Git is offered as Desktop offers its review pane
+    // (any folder; «not a repository» is said inside), so the entry is the
+    // same before and after the read and never changes shape.
+    test('notch entry: the same before the read and after «not a '
+        'repository», without a badge', () {
+      ({bool available, int? badge}) entry() => gitNotchEntry(
         gateway: FakeGitReviewGateway(),
         repoPath: '/r',
         connectionId: 'c1',
       );
-      expect(entry.available, isFalse);
-      expect(entry.badge, isNull);
+      final before = entry();
+      expect(before.available, isTrue);
+      expect(before.badge, isNull);
+      GitStatusCache.instance.record('c1', '/r', null);
+      expect(entry(), before);
     });
 
-    test('notch entry: hidden without gateway, folder, routes or repo', () {
+    // Rewritten in 1.4.3: a folder that is not a repository is offered
+    // (the panel says so); no gateway, no folder or no git routes still
+    // hide it.
+    test('notch entry: hidden without gateway, folder or routes', () {
       bool shown(FakeGitReviewGateway? gateway, String? repoPath) =>
           gitNotchEntry(
             gateway: gateway,
@@ -337,11 +347,12 @@ void main() {
       final gateway = FakeGitReviewGateway();
       expect(shown(null, '/r'), isFalse);
       expect(shown(gateway, null), isFalse);
+      expect(shown(gateway, '  '), isFalse);
       // A confirmed repository on a Hermes that lost its git routes.
       GitStatusCache.instance.record('c1', '/r', const GitRepoStatus());
       expect(shown(FakeGitReviewGateway()..unsupported = true, '/r'), isFalse);
       GitStatusCache.instance.record('c1', '/r', null);
-      expect(shown(gateway, '/r'), isFalse);
+      expect(shown(gateway, '/r'), isTrue);
     });
 
     test('folders are kept per connection', () {

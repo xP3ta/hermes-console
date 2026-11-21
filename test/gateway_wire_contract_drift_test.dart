@@ -30,8 +30,17 @@ const _knownMethodDrift = <String, String>{
   'turn.status':
       'idempotent turn probe of the exclusive-submit extension; Console '
       'treats a missing method as "unknown" and falls back',
+  'bot_delivery.list':
+      'teammate delivery status published by the newer upstream contract '
+      '(tui_gateway/contracts/groups_bot_relay.py); this snapshot predates '
+      'it. Only asked for the sender bot of a canonical Bot Chat: an older '
+      'gateway answers -32601 and the strip stays out',
   'groups.attachment.download':
       'room file read published by the newer upstream contract '
+      '(apps/shared/src/gateway-contract.openrpc.json); this snapshot '
+      'predates it. Only called when groups.capabilities lists it',
+  'groups.attachment.upload':
+      'room file upload published by the newer upstream contract '
       '(apps/shared/src/gateway-contract.openrpc.json); this snapshot '
       'predates it. Only called when groups.capabilities lists it',
 };

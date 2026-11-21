@@ -34,6 +34,7 @@ import '../../design/hermes_design.dart'
         HermesScrim;
 import '../../feedback/haptics.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/hermes_tokens.dart' show HermesSpace;
 import '../../theme/motion.dart' show HermesMotion;
 import '../../utils/responsive.dart';
 import 'chat_views.dart';
@@ -53,6 +54,8 @@ class ChatWorkspaceHost extends StatefulWidget {
     this.navigation,
     this.navigationWidth = 84,
     this.tabBadge,
+    this.herdrFor,
+    this.tabRouteScope,
     super.key,
   });
 
@@ -74,6 +77,14 @@ class ChatWorkspaceHost extends StatefulWidget {
   /// A count on a tab (v25: Git's changed files); null shows none.
   final int? Function(ChatWorkspaceTab tab)? tabBadge;
 
+  /// The bar's Herdr button for [tab] when its screen publishes none
+  /// ([ChatWorkspaceToolbar.onHerdr]): the chat fills it for the Terminal
+  /// of a Herdr profile. Null for a tab: no button.
+  final VoidCallback? Function(ChatWorkspaceTab tab)? herdrFor;
+
+  /// A change replaces that tab's route stack, including pushed editors.
+  final Object? Function(ChatWorkspaceTab tab)? tabRouteScope;
+
   @override
   State<ChatWorkspaceHost> createState() => _ChatWorkspaceHostState();
 }
@@ -82,7 +93,10 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
     with TickerProviderStateMixin {
   final GlobalKey _chatKey = GlobalKey(debugLabel: 'chat-workspace-chat');
   final GlobalKey _workspaceKey = GlobalKey(debugLabel: 'chat-workspace-pane');
-  final Map<ChatWorkspaceTab, GlobalKey<NavigatorState>> _navigators = {};
+  final Map<
+    ChatWorkspaceTab,
+    ({Object? scope, GlobalKey<NavigatorState> key})
+  > _navigators = {};
   final Map<ChatWorkspaceTab, _TabRootObserver> _observers = {};
   final Map<ChatWorkspaceTab, ValueNotifier<ChatWorkspaceToolbar>> _toolbars =
       {};
@@ -90,22 +104,29 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
 
   ChatWorkspaceController get _controller => widget.controller;
 
-  GlobalKey<NavigatorState> _navigatorFor(ChatWorkspaceTab tab) =>
-      _navigators.putIfAbsent(
-        tab,
-        () => GlobalKey<NavigatorState>(debugLabel: 'workspace-${tab.name}'),
-      );
+  GlobalKey<NavigatorState> _navigatorFor(ChatWorkspaceTab tab) {
+    final scope = widget.tabRouteScope?.call(tab);
+    final current = _navigators[tab];
+    if (current != null && current.scope == scope) return current.key;
+    final key = GlobalKey<NavigatorState>(debugLabel: 'workspace-${tab.name}');
+    _navigators[tab] = (scope: scope, key: key);
+    _observers.remove(tab);
+    return key;
+  }
 
   /// Closes [tab] when its first screen leaves (e.g. App Lock cancelled),
   /// instead of leaving an empty pane (review P1-F4-2).
-  _TabRootObserver _observerFor(ChatWorkspaceTab tab) => _observers.putIfAbsent(
-    tab,
-    () => _TabRootObserver(
-      onRootGone: () => WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _controller.close(tab);
-      }),
-    ),
-  );
+  _TabRootObserver _observerFor(ChatWorkspaceTab tab) =>
+      _observers.putIfAbsent(tab, () {
+        final navigator = _navigatorFor(tab);
+        return _TabRootObserver(
+          onRootGone: () => WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _navigators[tab]?.key == navigator) {
+              _controller.close(tab);
+            }
+          }),
+        );
+      });
 
   /// What [tab]'s screen adds to the pane's bar.
   ValueNotifier<ChatWorkspaceToolbar> _toolbarFor(ChatWorkspaceTab tab) =>
@@ -456,6 +477,7 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
     final width = constraints.maxWidth;
     final height = constraints.maxHeight;
     final fits = width.isFinite && chatWorkspaceSplitFits(width);
+    final fullscreen = _controller.fullscreen;
     // the owner (9714, ORDEN-Q9-ORIENTACION 2): turned upright or folded with a
     // panel showing, the panel used to go and leave the chat. Where nothing
     // fits beside the chat, a panel that was showing takes the screen
@@ -482,11 +504,12 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
           tabBuilder: widget.tabBuilder,
           availableTabs: widget.availableTabs,
           tabBadge: widget.tabBadge,
+          herdrFor: widget.herdrFor,
           navigatorFor: _navigatorFor,
           observerFor: _observerFor,
           toolbarFor: _toolbarFor,
           hidden: hidden,
-          compact: !fits,
+          compact: !fits || fullscreen,
         ),
       ),
     );
@@ -521,6 +544,7 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
     // the status bar, where the floating bar covered the battery.
     final safe = MediaQuery.paddingOf(context);
     final showNavigation =
+        !fullscreen &&
         widget.navigation != null &&
         spansWindow &&
         width >= kChatWorkspaceNavigationMinWidth;
@@ -545,7 +569,7 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
       ratio: ratio,
       hinge: hinge,
     );
-    const pad = ChatWorkspaceGeometry.padding;
+    final pad = fullscreen ? HermesSpace.x1 : ChatWorkspaceGeometry.padding;
     final paneHeight = math.max(0.0, usableHeight - 2 * pad);
     final framePadding = EdgeInsets.fromLTRB(
       lead + pad,
@@ -619,7 +643,8 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
       // Decided from this build's constraints, so a turn of the phone or a
       // fold/unfold draws the other layout at once; the chat, the panel and
       // every tab keep their state across it.
-      final railed = width.isFinite && width >= Responsive.tabletBreakpoint;
+      final railed =
+          !fullscreen && width.isFinite && width >= Responsive.tabletBreakpoint;
       final chrome = railed
           ? ChatWorkspaceGeometry.rail + ChatWorkspaceGeometry.divider
           : 0.0;
@@ -1198,6 +1223,7 @@ class _WorkspacePane extends StatelessWidget {
     required this.tabBuilder,
     required this.availableTabs,
     required this.tabBadge,
+    required this.herdrFor,
     required this.navigatorFor,
     required this.observerFor,
     required this.toolbarFor,
@@ -1209,6 +1235,7 @@ class _WorkspacePane extends StatelessWidget {
   final ChatWorkspaceTabBuilder tabBuilder;
   final List<ChatWorkspaceTab> availableTabs;
   final int? Function(ChatWorkspaceTab tab)? tabBadge;
+  final VoidCallback? Function(ChatWorkspaceTab tab)? herdrFor;
   final GlobalKey<NavigatorState> Function(ChatWorkspaceTab) navigatorFor;
   final _TabRootObserver Function(ChatWorkspaceTab) observerFor;
   final ValueNotifier<ChatWorkspaceToolbar> Function(ChatWorkspaceTab)
@@ -1223,7 +1250,9 @@ class _WorkspacePane extends StatelessWidget {
   final bool compact;
 
   void _backFromRoot(ChatWorkspaceTab tab) {
-    if (controller.mode == ChatWorkspaceMode.workspace) {
+    if (controller.fullscreen) {
+      controller.toggleExpanded();
+    } else if (controller.mode == ChatWorkspaceMode.workspace) {
       controller.setMode(ChatWorkspaceMode.split);
     } else {
       controller.close(tab);
@@ -1274,6 +1303,7 @@ class _WorkspacePane extends StatelessWidget {
                     availableTabs: availableTabs,
                     tabBadge: tabBadge,
                     toolbar: active == null ? null : toolbarFor(active),
+                    herdrFor: herdrFor,
                   ),
                 ),
               ),
@@ -1362,6 +1392,12 @@ class _WorkspaceTabBack extends StatefulWidget {
 
 class _WorkspaceTabBackState extends State<_WorkspaceTabBack> {
   bool _canHandlePop = false;
+
+  @override
+  void didUpdateWidget(covariant _WorkspaceTabBack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.navigator != widget.navigator) _canHandlePop = false;
+  }
 
   @override
   Widget build(BuildContext context) => PopScope<Object?>(
@@ -1468,9 +1504,12 @@ class _KeyboardFoldState extends State<_KeyboardFold> {
   }
 
   void _onViews() {
-    final mode = widget.controller.mode;
+    final controller = widget.controller;
+    final mode = controller.mode;
+    if (controller.fullscreen) _expandedForKeyboard = false;
     if (mode == _mode) return;
-    _expandedForKeyboard = _typing && mode == ChatWorkspaceMode.workspace;
+    _expandedForKeyboard =
+        _typing && mode == ChatWorkspaceMode.workspace && !controller.fullscreen;
     _mode = mode;
   }
 
@@ -1490,7 +1529,9 @@ class _KeyboardFoldState extends State<_KeyboardFold> {
           _expandedForKeyboard = false;
           final controller = widget.controller;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && controller.mode == ChatWorkspaceMode.workspace) {
+            if (mounted &&
+                !controller.fullscreen &&
+                controller.mode == ChatWorkspaceMode.workspace) {
               controller.setMode(ChatWorkspaceMode.split);
             }
           });
@@ -1625,12 +1666,16 @@ class _PaneBar extends StatelessWidget {
     required this.availableTabs,
     required this.tabBadge,
     required this.toolbar,
+    this.herdrFor,
   });
 
   final ChatWorkspaceController controller;
   final List<ChatWorkspaceTab> availableTabs;
   final int? Function(ChatWorkspaceTab tab)? tabBadge;
   final ValueListenable<ChatWorkspaceToolbar>? toolbar;
+
+  /// The host's Herdr for a tab whose screen has none.
+  final VoidCallback? Function(ChatWorkspaceTab tab)? herdrFor;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -1647,6 +1692,7 @@ class _PaneBar extends StatelessWidget {
         controller: controller,
         toolbar: toolbar,
         availableTabs: availableTabs,
+        herdrFor: herdrFor,
       ),
     ],
   );
@@ -2084,11 +2130,16 @@ class _PaneActions extends StatelessWidget {
     required this.controller,
     required this.toolbar,
     required this.availableTabs,
+    this.herdrFor,
   });
 
   final ChatWorkspaceController controller;
   final ValueListenable<ChatWorkspaceToolbar>? toolbar;
   final List<ChatWorkspaceTab> availableTabs;
+
+  /// Read each time the bar is built (the tab's screen publishes again as
+  /// it changes, e.g. once its session is up), never kept.
+  final VoidCallback? Function(ChatWorkspaceTab tab)? herdrFor;
 
   @override
   Widget build(BuildContext context) {
@@ -2105,7 +2156,7 @@ class _PaneActions extends StatelessWidget {
     final strings = Strings.of(context);
     final ink = colors.textSecondary;
     final on = colors.accent;
-    final expanded = controller.mode == ChatWorkspaceMode.workspace;
+    final expanded = controller.fullscreen;
     final active = controller.active;
     Widget button({
       required Key key,
@@ -2141,6 +2192,7 @@ class _PaneActions extends StatelessWidget {
     }
 
     final herdrAttention = tools.herdrNeedsYou?.call() ?? 0;
+    final herdr = active == null ? null : herdrFor?.call(active);
     return DecoratedBox(
       key: const ValueKey('chat-workspace-actions'),
       decoration: ShapeDecoration(
@@ -2160,7 +2212,7 @@ class _PaneActions extends StatelessWidget {
                 selected: tools.keysShown,
                 onPressed: toggle,
               ),
-            if (tools.onHerdr case final openHerdr?)
+            if (tools.onHerdr ?? herdr case final openHerdr?)
               button(
                 key: const ValueKey('chat-workspace-herdr'),
                 icon: HIcons.tag,
@@ -2184,13 +2236,13 @@ class _PaneActions extends StatelessWidget {
               key: const ValueKey('chat-workspace-expand'),
               icon: expanded ? HIcons.close_fullscreen : HIcons.open_in_full,
               tooltip: expanded
-                  ? strings.cwsRestoreSplit
+                  ? strings.videoPlayerExitFullscreen
                   : strings.cwsExpandWorkspace,
               onPressed: controller.toggleExpanded,
             ),
             // «Vistas» lives here while the chat is hidden (its own header
             // has it otherwise): always one tap away.
-            if (expanded)
+            if (!controller.chatVisible || chatWorkspaceOpensOverChat(controller))
               Builder(
                 builder: (buttonContext) => button(
                   key: const ValueKey('chat-workspace-views-button'),

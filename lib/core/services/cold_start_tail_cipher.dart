@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:isolate';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:pointycastle/api.dart';
 import 'package:pointycastle/macs/poly1305.dart';
 import 'package:pointycastle/stream/chacha20poly1305.dart';
@@ -33,6 +33,11 @@ final class ColdStartTailCipher {
   /// Content above this is sealed and opened off the UI isolate, like the
   /// JSON of a large tail (`decodeJsonOffMain`).
   static const int offMainBytes = 64 * 1024;
+
+  /// Tests: everything on the calling isolate. A widget test runs in a
+  /// fake-async zone that never sees another isolate answer.
+  @visibleForTesting
+  static bool debugOnCallingIsolate = false;
 
   static const fileSuffix = '.ct';
 
@@ -65,11 +70,28 @@ final class ColdStartTailCipher {
       '${profilePrefix(connectionId, owner)}'
       '${_hash('t', tailKey)}$fileSuffix';
 
+  /// The file of [entryKey] under [scope] (a connection first, then what a
+  /// cleanup selects by: a profile, a chat): one keyed hash per part and
+  /// one of the entry. The files of a connection, of a profile or of a chat
+  /// in any profile are found by name ([scopeHash]), and the name tells
+  /// nothing without the key.
+  String scopedFileName(List<String> scope, String entryKey) => [
+    for (var i = 0; i < scope.length; i++) scopeHash(scope, i),
+    '${_hash('t', entryKey)}$fileSuffix',
+  ].join('.');
+
+  /// Part [index] of every file name under [scope]: it depends on the
+  /// connection (`scope[0]`) and on `scope[index]` only.
+  String scopeHash(List<String?> scope, int index) => _hash(
+    's$index',
+    index == 0 ? scope[0]! : '${scope[0]}\u0000${scope[index]}',
+  );
+
   /// [content] sealed for the file [name].
   Future<Uint8List> seal(String name, Uint8List content) {
     final key = _key;
     final nonce = _random(nonceBytes);
-    if (content.length <= offMainBytes) {
+    if (content.length <= offMainBytes || debugOnCallingIsolate) {
       return Future.value(_sealed(key, nonce, name, content));
     }
     return Isolate.run(() => _sealed(key, nonce, name, content));
@@ -79,7 +101,7 @@ final class ColdStartTailCipher {
   /// key, a truncated or altered file, another file's bytes).
   Future<Uint8List?> open(String name, Uint8List sealed) {
     final key = _key;
-    if (sealed.length <= offMainBytes) {
+    if (sealed.length <= offMainBytes || debugOnCallingIsolate) {
       return Future.value(_opened(key, name, sealed));
     }
     return Isolate.run(() => _opened(key, name, sealed));

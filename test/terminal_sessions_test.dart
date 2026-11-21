@@ -254,6 +254,7 @@ void main() {
       TerminalRecentStore? recents,
       Size size = const Size(420, 900),
       double textScale = 1,
+      bool startOnHerdr = false,
     }) async {
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1;
@@ -283,6 +284,7 @@ void main() {
                   context,
                   run: server.call,
                   recents: recents,
+                  startOnHerdr: startOnHerdr,
                 ),
                 child: const Text('open'),
               ),
@@ -321,6 +323,23 @@ void main() {
         find.byKey(const ValueKey('ssh-sessions-herdr-session-work')),
         findsOneWidget,
       );
+    });
+
+    // 1.4.3: the workspace bar's Herdr button opens the sheet on Herdr.
+    testWidgets('from the workspace bar\'s Herdr it opens on Herdr', (
+      tester,
+    ) async {
+      final server = FakeHerdrServer(
+        agents: [FakeAgent('w1:p1', 'claude', HerdrAgentStatus.working)],
+      )..tmux = const [FakeTmux(r'$0', 'work', windows: 2, attached: 1)];
+      await open(tester, server, startOnHerdr: true);
+      expect(find.byKey(const ValueKey('ssh-sessions-shell')), findsNothing);
+      expect(find.text('Default session'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('ssh-sessions-herdr-session-work')),
+        findsOneWidget,
+      );
+      expect(find.text('2 windows · In use'), findsNothing);
     });
 
     testWidgets('choosing a tmux row returns the exact line', (tester) async {
@@ -362,8 +381,8 @@ void main() {
       await tester.pumpAndSettle();
       // By id, so the name's quote and `$()` never reach the shell.
       expect(choice!.line, r"tmux attach-session -t '$7'");
-      expect(choice!.recent.name, "it's \$(x)");
-      expect(choice!.recent.kind, TerminalRecentKind.tmux);
+      expect(choice!.recent!.name, "it's \$(x)");
+      expect(choice!.recent!.kind, TerminalRecentKind.tmux);
     });
 
     testWidgets('no tmux, no Herdr: each tab says «Not installed»', (

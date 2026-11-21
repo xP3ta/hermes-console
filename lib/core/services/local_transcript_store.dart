@@ -13,6 +13,8 @@ import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
 import 'notifications/notification_strings.dart' show resolveNotificationLang;
+import 'sealed_local_files.dart';
+import 'secure_storage.dart';
 import 'session_deletion.dart';
 import 'session_reconciler.dart';
 
@@ -56,11 +58,18 @@ final class LocalTranscriptSnapshot {
 /// contrato que devuelve la API remota — para poder reconstruir el chat sin
 /// depender de un endpoint que no existe.
 ///
-/// Los transcripts nuevos se escriben cifrados vía flutter_secure_storage. Las
-/// claves históricas quedan conservadas pero fuera del alcance operativo; una
-/// copia v3 previa en SharedPreferences solo se admite como fallback de lectura.
+/// Los transcripts se escriben en archivos sellados ([SealedLocalFiles], con la
+/// clave en el Keystore); la entrada de flutter_secure_storage que escribía una
+/// versión anterior se mueve a su archivo al leerla. Las claves históricas
+/// quedan conservadas pero fuera del alcance operativo; una copia v3 previa en
+/// SharedPreferences solo se admite como fallback de lectura.
 class LocalTranscriptStore {
   static const _storage = FlutterSecureStorage();
+  static final _files = SealedLocalFiles(SealedLocalFiles.transcripts);
+
+  /// What a file that does not open reads as: a corrupt value (never a
+  /// transcript, never authority).
+  static const _unreadable = '\u0000';
   static const _maxStoredMessages = 1000;
   static const _maxEncodedBytes = 2 * 1024 * 1024;
 
@@ -106,6 +115,22 @@ class LocalTranscriptStore {
 
   static String _key(String connId, String sessionId, {String? profile}) =>
       '$_v3Prefix${_scope(connId)}.${_scope(_canonicalProfile(profile))}.${_scope(sessionId)}';
+
+  static SealedName _name(String connId, String sessionId, {String? profile}) =>
+      SealedName(_key(connId, sessionId, profile: profile), [
+        connId,
+        _canonicalProfile(profile),
+        sessionId,
+      ]);
+
+  static Future<String?> _readSealed(SealedName name) async {
+    try {
+      // An entry that does not parse stays untouched, as before.
+      return await _files.read(name, movable: SealedLocalFiles.isJson);
+    } on SealedFileUnreadable {
+      return _unreadable;
+    }
+  }
 
   static ({String connectionId, String profile, String sessionId})? _parseKey(
     String key,
@@ -197,9 +222,10 @@ class LocalTranscriptStore {
     required LocalConversationResourceKey resource,
   }) async {
     final key = _key(connId, sessionId, profile: profile);
+    final name = _name(connId, sessionId, profile: profile);
     var previouslyTruncated = false;
     LocalTranscriptSnapshot? previous;
-    final secureRaw = await _storage.read(key: key);
+    final secureRaw = await _readSealed(name);
     LocalConversationCleanupFence.ensureOperationAllowed(operation);
     Object? previousRaw = secureRaw;
     if (secureRaw == null) {
@@ -228,7 +254,7 @@ class LocalTranscriptStore {
           olderHistoryTruncated: bounded.olderHistoryTruncated,
           privacyCheckpoint: previous!.privacyCheckpoint,
         );
-        await _storage.write(key: key, value: _encodeSnapshot(snapshot));
+        await _files.write(name, _encodeSnapshot(snapshot));
         return snapshot;
       }
       if (bounded.hadValidMessage && bounded.olderHistoryTruncated) {
@@ -241,8 +267,7 @@ class LocalTranscriptStore {
         await LocalConversationCleanupFence.commitEffect(
           operation: operation,
           resource: resource,
-          mutation: () =>
-              _storage.write(key: key, value: _encodeSnapshot(snapshot)),
+          mutation: () => _files.write(name, _encodeSnapshot(snapshot)),
         );
         return snapshot;
       }
@@ -264,8 +289,7 @@ class LocalTranscriptStore {
     await LocalConversationCleanupFence.commitEffect(
       operation: operation,
       resource: resource,
-      mutation: () =>
-          _storage.write(key: key, value: _encodeSnapshot(snapshot)),
+      mutation: () => _files.write(name, _encodeSnapshot(snapshot)),
     );
     return snapshot;
   }
@@ -305,9 +329,10 @@ class LocalTranscriptStore {
     } catch (error, stackTrace) {
       return Future<LocalTranscriptSnapshot>.error(error, stackTrace);
     }
+    final name = _name(connId, sessionId, profile: owner);
     return _serialize(key, () async {
       try {
-        final secureRaw = await _storage.read(key: key);
+        final secureRaw = await _readSealed(name);
         LocalConversationCleanupFence.ensureOperationAllowed(journalOperation);
         Object? raw = secureRaw;
         if (secureRaw == null) {
@@ -335,8 +360,7 @@ class LocalTranscriptStore {
         await LocalConversationCleanupFence.commitEffect(
           operation: journalOperation,
           resource: resource,
-          mutation: () =>
-              _storage.write(key: key, value: _encodeSnapshot(snapshot)),
+          mutation: () => _files.write(name, _encodeSnapshot(snapshot)),
         );
         if (LocalConversationCleanupFence.wasInvalidatedByCleanup(
               journalOperation,
@@ -372,7 +396,9 @@ class LocalTranscriptStore {
     String? profile,
   }) async {
     final key = _key(connId, sessionId, profile: profile);
-    final secureRaw = await _storage.read(key: key);
+    final secureRaw = await _readSealed(
+      _name(connId, sessionId, profile: profile),
+    );
     Object? raw = secureRaw;
     if (secureRaw == null) {
       final prefs = await SharedPreferences.getInstance();
@@ -613,7 +639,7 @@ class LocalTranscriptStore {
     Object? firstError;
     StackTrace? firstStackTrace;
     try {
-      await _storage.delete(key: key);
+      await _files.delete(_name(connId, sessionId, profile: profile));
     } catch (error, stackTrace) {
       firstError = error;
       firstStackTrace = stackTrace;
@@ -632,7 +658,11 @@ class LocalTranscriptStore {
     }
   }
 
+  /// Removes the transcripts of [scope] (connection, then profile) that
+  /// pass [matches]: files, entries an older version left in secure storage
+  /// and plaintext copies.
   static Future<int> _deleteMatching(
+    List<String> scope,
     bool Function(({String connectionId, String profile, String sessionId}))
     matches,
   ) async {
@@ -656,17 +686,34 @@ class LocalTranscriptStore {
       remember(error, stackTrace);
     }
     try {
-      final secure = await _storage.readAll();
-      for (final key in secure.keys) {
+      for (final key in await SecureStorage.listKeys(_storage)) {
         final identity = _parseKey(key);
         if (identity != null && matches(identity)) keys.add(key);
       }
     } catch (error, stackTrace) {
       remember(error, stackTrace);
     }
+    try {
+      final files = await _files.readScope(scope);
+      for (final key in files.values.keys) {
+        final identity = _parseKey(key);
+        if (identity != null && matches(identity)) keys.add(key);
+      }
+      // Nothing could name these again.
+      await _files.deleteFiles([...files.unreadable, ...files.partial]);
+    } catch (error, stackTrace) {
+      remember(error, stackTrace);
+    }
     for (final key in keys) {
+      final identity = _parseKey(key)!;
       try {
-        await _storage.delete(key: key);
+        await _files.delete(
+          _name(
+            identity.connectionId,
+            identity.sessionId,
+            profile: identity.profile,
+          ),
+        );
       } catch (error, stackTrace) {
         remember(error, stackTrace);
       }
@@ -692,6 +739,7 @@ class LocalTranscriptStore {
       connectionId: connId,
       profile: owner,
       operation: () => _deleteMatching(
+        [connId, owner],
         (identity) =>
             identity.connectionId == connId && identity.profile == owner,
       ),
@@ -701,8 +749,9 @@ class LocalTranscriptStore {
   static Future<int> deleteForConnection(String connId) =>
       LocalConversationCleanupFence.cleanupConnection(
         connectionId: connId,
-        operation: () =>
-            _deleteMatching((identity) => identity.connectionId == connId),
+        operation: () => _deleteMatching([
+          connId,
+        ], (identity) => identity.connectionId == connId),
       );
 
   /// Devuelve una [Session] mínima por cada transcript guardado para [connId],
@@ -714,20 +763,22 @@ class LocalTranscriptStore {
     String? profile,
   }) async {
     final requestedOwner = profile == null ? null : _canonicalProfile(profile);
-    final secure = await _storage.readAll();
+    final secureKeys = (await SecureStorage.listKeys(_storage)).toSet();
+    final files = await _files.readScope([connId]);
     final prefs = await SharedPreferences.getInstance();
-    final entries = <String, Object?>{
-      for (final key in prefs.getKeys()) key: prefs.get(key),
-      ...secure,
-    };
+    final keys = {...prefs.getKeys(), ...secureKeys, ...files.values.keys};
     final sessions = <Session>[];
-    for (final entry in entries.entries) {
-      final identity = _parseKey(entry.key);
+    for (final key in keys) {
+      final identity = _parseKey(key);
       if (identity == null || identity.connectionId != connId) continue;
       if (requestedOwner != null && identity.profile != requestedOwner) {
         continue;
       }
-      final raw = entry.value;
+      final raw =
+          files.values[key] ??
+          (secureKeys.contains(key)
+              ? await _storage.read(key: key)
+              : prefs.get(key));
       if (raw is! String || raw.isEmpty) continue;
       List<Map<String, dynamic>> msgs;
       try {

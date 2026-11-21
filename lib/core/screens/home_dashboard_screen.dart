@@ -1191,6 +1191,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
             roster: roster,
             hasLocalChat: (id) =>
                 _activeChats?.of(connection.id, id, profile: profile) != null,
+            trackedIds: aggregate.trackedDurableIds(connection.id, profile),
           ),
         ),
       );

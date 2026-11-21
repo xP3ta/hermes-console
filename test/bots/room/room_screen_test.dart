@@ -11,7 +11,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/widgets/chat/mention_chips.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
+import 'package:hermes_android/core/services/app_lock_sensitive_read_fence.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
+import 'package:hermes_android/core/services/session_deletion.dart'
+    show LocalConversationCleanupFence;
+import 'package:hermes_android/core/services/turn_outbox_store.dart'
+    show AttachmentOwnershipCoordinator;
 import 'package:hermes_android/core/bots/ui/room/room_launcher.dart';
 import 'package:hermes_android/core/bots/ui/room/room_dictation.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
@@ -39,6 +45,7 @@ import 'package:image_picker_platform_interface/image_picker_platform_interface.
 
 import '../../support/clipboard_image_fake.dart';
 import '../../support/inter_font.dart';
+import '../../support/memory_sealed_files.dart';
 import 'room_fixtures.dart';
 
 final class _FakeTimer implements Timer {
@@ -281,6 +288,7 @@ Future<FakeRoomGateway> _pump(
   RoomCapabilities caps = _allCaps,
   RoomAttachmentActions? actions,
   RoomAttachmentUploader? uploader,
+  RoomFileStore Function(FakeRoomGateway gateway)? fileStore,
   RoomLocalPrefs? prefs,
   RoomDraftStore? drafts,
   AgentProfile? Function(HostedGroupMember member)? profileFor,
@@ -308,6 +316,7 @@ Future<FakeRoomGateway> _pump(
       drafts: drafts,
       attachmentActions: actions,
       uploader: uploader,
+      fileStore: fileStore?.call(gateway),
       dictation: dictation,
       memberCompressor: memberCompressor,
       pollTimer: (_, _) => _FakeTimer(),
@@ -467,6 +476,71 @@ final class _FlakyUploader implements RoomAttachmentUploader {
   }
 }
 
+/// The room's own file store: records every upload and send. The same
+/// upload id answers the same row, as the server's `idempotent` receipt.
+final class _FakeFileStore implements RoomFileStore {
+  _FakeFileStore(this.gateway);
+
+  final FakeRoomGateway gateway;
+  final List<
+    ({String uploadId, String kind, String name, String mime, int size})
+  >
+  uploads = [];
+  final List<({String text, List<String> files, String event})> sends = [];
+
+  /// What the next uploads and sends throw, in order (null: they succeed).
+  final List<Object?> uploadOutcomes = [];
+  final List<Object?> sendOutcomes = [];
+  final Map<String, HostedGroupAttachment> _rows = {};
+
+  /// The attachment id of the [n]th stored row.
+  static String idOf(int n) => 'att_${n.toRadixString(16).padLeft(32, '0')}';
+
+  @override
+  Future<HostedGroupAttachment> upload(
+    HostedGroupRoom room, {
+    required String uploadId,
+    required String kind,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+  }) async {
+    uploads.add((
+      uploadId: uploadId,
+      kind: kind,
+      name: name,
+      mime: mime,
+      size: bytes.length,
+    ));
+    final outcome = uploadOutcomes.isEmpty ? null : uploadOutcomes.removeAt(0);
+    if (outcome != null) throw outcome;
+    return _rows[uploadId] ??= HostedGroupAttachment.fromJson({
+      'attachment_id': idOf(_rows.length + 1),
+      'kind': kind,
+      'name': name,
+      'size': bytes.length,
+      'mime': mime,
+    });
+  }
+
+  @override
+  Future<HostedGroupWorkspaceReadback> send(
+    HostedGroupRoom room, {
+    required String text,
+    required List<HostedGroupAttachment> attachments,
+    required HostedGroupSendAttempt attempt,
+  }) async {
+    sends.add((
+      text: text,
+      files: [for (final file in attachments) file.attachmentId],
+      event: attempt.clientEventId,
+    ));
+    final outcome = sendOutcomes.isEmpty ? null : sendOutcomes.removeAt(0);
+    if (outcome != null) throw outcome;
+    return gateway._readback;
+  }
+}
+
 /// A real file of [bytes] bytes in a throwaway dir (the picker's cache copy).
 PlatformFile _pickedFile(String name, int bytes) {
   final dir = Directory.systemTemp.createTempSync('room-pick-');
@@ -523,32 +597,35 @@ void main() {
         'synthetic-room-conn',
         'mob-room-synthetic',
       );
-      final values = <String, String>{
-        key: jsonEncode({
-          'savedAt': DateTime.now().millisecondsSinceEpoch,
-          'text': 'SYNTHETIC_ROOM_DRAFT',
-          'attachments': [],
-        }),
-      };
+      // The draft is a sealed file; its reads are counted there.
+      final values = <String, String>{};
+      final sealed = SealedValues(values);
+      sealed[key] = jsonEncode({
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+        'text': 'SYNTHETIC_ROOM_DRAFT',
+        'attachments': [],
+      });
       var reads = 0;
       final entered = Completer<void>();
       final release = Completer<void>();
+      final files = MemorySealedFileIo.of(SealedLocalFiles.drafts)
+        ..resetHooks();
+      addTearDown(files.resetHooks);
+      files.beforeRead = (name) async {
+        if (name != sealed.fileNameOf(key)) return;
+        reads++;
+        if (scenario == 'pending ABA' && reads == 1) {
+          entered.complete();
+          await release.future;
+        }
+      };
       const channel = MethodChannel(
         'plugins.it_nomads.com/flutter_secure_storage',
       );
       TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
             final args = (call.arguments as Map?) ?? {};
-            if (call.method == 'read') {
-              if (args['key'] == key) {
-                reads++;
-                if (scenario == 'pending ABA' && reads == 1) {
-                  entered.complete();
-                  await release.future;
-                }
-              }
-              return values[args['key']];
-            }
+            if (call.method == 'read') return values[args['key']];
             if (call.method == 'readAll') return values;
             if (call.method == 'write') {
               values[args['key'] as String] = args['value'] as String;
@@ -594,7 +671,7 @@ void main() {
       );
       expect(reads, scenario == 'cold locked' ? 1 : 2);
       expect(
-        jsonDecode(values[key]!)['text'],
+        jsonDecode(sealed[key]!)['text'],
         scenario == 'dirty unlock' ? 'NEWER_EDITOR' : 'SYNTHETIC_ROOM_DRAFT',
       );
       expect(tester.takeException(), isNull);
@@ -2394,6 +2471,529 @@ void main() {
         expect(_roomComposerCards(tester).length, open ? 1 : 0);
       });
     }
+  });
+
+  group('files sent through the room store (groups.attachment.upload)', () {
+    Finder retryButton() => find.byWidgetPredicate(
+      (w) =>
+          w.key is ValueKey<String> &&
+          (w.key! as ValueKey<String>).value.startsWith('room-pending-retry-'),
+    );
+
+    testWidgets('[RED] a picked file is kept in the room store and the '
+        'message lists its receipt; members on another connection do not '
+        'block it', (tester) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('plan.pdf', 2048)]);
+      late _FakeFileStore store;
+      final gateway = await _pump(
+        tester,
+        events: const [],
+        room: buildRoom(
+          members: [
+            memberJson('m-builder', 'builder'),
+            memberJson('m-peer', 'peerbot', peer: 'peer-1'),
+          ],
+        ),
+        fileStore: (g) => store = _FakeFileStore(g),
+      );
+      final composer = tester.widget<ConsoleComposer>(
+        find.byType(ConsoleComposer),
+      );
+      expect(composer.attachEnabled, isTrue);
+      expect(
+        find.byKey(const ValueKey('room-attach-disabled-reason')),
+        findsNothing,
+      );
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+
+      await _sendRoomComposer(tester, 'see the plan');
+      await _settlePaste(tester, until: () => store.sends.isNotEmpty);
+      await tester.pumpAndSettle();
+
+      final upload = store.uploads.single;
+      expect(upload.uploadId, matches(RegExp(r'^[0-9a-f-]{36}$')));
+      expect(
+        [upload.kind, upload.name, upload.mime, upload.size],
+        ['pdf', 'plan.pdf', 'application/pdf', 2048],
+      );
+      expect(store.sends.single.text, 'see the plan');
+      expect(store.sends.single.files, [_FakeFileStore.idOf(1)]);
+      // Nothing goes by path any more.
+      expect(gateway.calls.where((c) => c.$1 == 'send'), isEmpty);
+      expect(_roomComposerCards(tester), isEmpty);
+    });
+
+    testWidgets('[RED] a retry uploads only the files without a receipt and '
+        'never one twice', (tester) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('a.pdf', 1024), _pickedFile('b.md', 512)]);
+      late _FakeFileStore store;
+      await _pump(
+        tester,
+        events: const [],
+        fileStore: (g) {
+          store = _FakeFileStore(g);
+          store.uploadOutcomes.addAll([null, StateError('offline')]);
+          store.sendOutcomes.add(StateError('reply lost'));
+          return store;
+        },
+      );
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).length == 2,
+      );
+      await _sendRoomComposer(tester, 'two files');
+      await _settlePaste(tester, until: () => store.uploads.length == 2);
+      await tester.pump();
+
+      // The message is not sent without its second file.
+      expect(find.text('Could not upload b.md'), findsOneWidget);
+      expect(store.sends, isEmpty);
+      expect(retryButton(), findsOneWidget);
+
+      await tester.tap(retryButton());
+      await _settlePaste(tester, until: () => store.sends.isNotEmpty);
+      await tester.pump();
+      expect(store.uploads.map((u) => u.name), ['a.pdf', 'b.md', 'b.md']);
+      expect(store.uploads[2].uploadId, store.uploads[1].uploadId);
+      expect(store.uploads[0].uploadId, isNot(store.uploads[1].uploadId));
+      expect(store.sends.single.files, [
+        _FakeFileStore.idOf(1),
+        _FakeFileStore.idOf(2),
+      ]);
+      expect(retryButton(), findsOneWidget);
+
+      await tester.tap(retryButton());
+      await _settlePaste(tester, until: () => store.sends.length == 2);
+      await tester.pumpAndSettle();
+      expect(store.uploads, hasLength(3));
+      expect(store.sends[1].files, store.sends[0].files);
+      expect(store.sends[1].event, store.sends[0].event);
+      expect(retryButton(), findsNothing);
+    });
+
+    testWidgets('[RED] a server without the store method (-32601) gets the '
+        'file by path, and so do the next ones', (tester) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('notes.md', 1024)]);
+      final uploader = _FlakyUploader();
+      late _FakeFileStore store;
+      final gateway = await _pump(
+        tester,
+        events: const [],
+        uploader: uploader,
+        fileStore: (g) {
+          store = _FakeFileStore(g);
+          store.uploadOutcomes.add(
+            const TuiGatewayRpcError(
+              'groups.attachment.upload',
+              'Group operation is unavailable',
+              code: -32601,
+            ),
+          );
+          return store;
+        },
+      );
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      await _sendRoomComposer(tester, 'read this');
+      await _settlePaste(tester, until: () => uploader.uploaded.isNotEmpty);
+      await tester.pumpAndSettle();
+
+      expect(store.uploads, hasLength(1));
+      expect(store.sends, isEmpty);
+      expect(
+        gateway.calls.where((c) => c.$1 == 'send').single.$2['text'],
+        endsWith('notes.md → @file:/srv/uploads/notes.md'),
+      );
+
+      _useFilePicker([_pickedFile('more.md', 256)]);
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      await _sendRoomComposer(tester, 'and this');
+      await _settlePaste(tester, until: () => uploader.uploaded.length == 2);
+      await tester.pumpAndSettle();
+      expect(store.uploads, hasLength(1));
+      expect(uploader.uploaded.map((d) => d.name), ['notes.md', 'more.md']);
+    });
+
+    testWidgets('[RED] the store takes files up to its own 15 MB, not the '
+        "Dashboard's 8 MB, and says its limit", (tester) async {
+      _mockPathProvider();
+      _useFilePicker([
+        _pickedFile('scan.pdf', 9 * 1024 * 1024),
+        _pickedFile('huge.pdf', HostedGroupAttachment.maxBytes + 1),
+      ]);
+      await _pump(tester, events: const [], fileStore: _FakeFileStore.new);
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      const notice = 'The file exceeds the 15 MB limit.';
+      for (var i = 0; i < 15; i++) {
+        await _settlePaste(
+          tester,
+          until: () => find.text(notice).evaluate().isNotEmpty,
+        );
+        if (find.text(notice).evaluate().isNotEmpty) break;
+      }
+      await tester.pump();
+      expect(_roomComposerCards(tester).map((c) => c.name), ['scan.pdf']);
+      expect(find.text(notice), findsOneWidget);
+    });
+
+    testWidgets('[RED] the store takes at most 8 files per message', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      _useFilePicker([
+        for (var i = 1; i <= 9; i++) _pickedFile('part-$i.md', 64),
+      ]);
+      await _pump(tester, events: const [], fileStore: _FakeFileStore.new);
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      const notice = 'You can attach up to 8 files per message.';
+      await _settlePaste(
+        tester,
+        until: () => find.text(notice).evaluate().isNotEmpty,
+      );
+      await tester.pump();
+      expect(_roomComposerCards(tester), hasLength(8));
+      expect(find.text(notice), findsOneWidget);
+    });
+  });
+
+  group('a queued room message with files across a restart', () {
+    const connectionId = 'room-store-conn';
+    // A room of its own per test: the store serializes writes per draft.
+    var visits = 0;
+    late String sessionId;
+    late String key;
+    late Map<String, String> values;
+    late SealedValues sealed;
+    late SharedPreferences preferences;
+
+    Future<void> realDrafts() async {
+      sessionId = 'mob-room-store-files-${++visits}';
+      key = ChatDraftStore.keyForTesting(connectionId, sessionId);
+      LocalConversationCleanupFence.resetForTesting();
+      AttachmentOwnershipCoordinator.resetForTesting();
+      SharedPreferences.setMockInitialValues({});
+      preferences = await SharedPreferences.getInstance();
+      // An app without App Lock: drafts are readable.
+      final issuer = Object();
+      AppLockSensitiveReadFence.bind(
+        issuer,
+        preferences,
+        ValueNotifier(false),
+      );
+      addTearDown(() => AppLockSensitiveReadFence.unbind(issuer));
+      values = <String, String>{};
+      sealed = SealedValues(values);
+      const channel = MethodChannel(
+        'plugins.it_nomads.com/flutter_secure_storage',
+      );
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = (call.arguments as Map?) ?? {};
+            switch (call.method) {
+              case 'read':
+                return values[args['key']];
+              case 'readAll':
+                return values;
+              case 'write':
+                values[args['key'] as String] = args['value'] as String;
+              case 'delete':
+                values.remove(args['key']);
+              case 'containsKey':
+                return values.containsKey(args['key']);
+            }
+            return null;
+          });
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+    }
+
+    /// The draft store as Mission Control builds it, new for each visit.
+    RoomDraftStore drafts() => ChatDraftRoomStore(
+      store: ChatDraftStore(preferences),
+      connectionId: connectionId,
+      profile: 'default',
+      sessionId: sessionId,
+    );
+
+    Map<String, dynamic> stored() =>
+        jsonDecode(sealed[key]!) as Map<String, dynamic>;
+
+    Finder retryButton() => find.byWidgetPredicate(
+      (w) =>
+          w.key is ValueKey<String> &&
+          (w.key! as ValueKey<String>).value.startsWith('room-pending-retry-'),
+    );
+
+    /// Sends 'see the plan' with plan.pdf while the store refuses it.
+    Future<_FakeFileStore> sendFailing(
+      WidgetTester tester, {
+      bool uploadFails = true,
+    }) async {
+      _useFilePicker([_pickedFile('plan.pdf', 2048)]);
+      late _FakeFileStore store;
+      await _pump(
+        tester,
+        events: const [],
+        drafts: drafts(),
+        fileStore: (g) {
+          store = _FakeFileStore(g);
+          if (uploadFails) {
+            store.uploadOutcomes.add(StateError('offline'));
+          } else {
+            store.sendOutcomes.add(StateError('reply lost'));
+          }
+          return store;
+        },
+      );
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      await _sendRoomComposer(tester, 'see the plan');
+      await _settlePaste(
+        tester,
+        until: () =>
+            retryButton().evaluate().isNotEmpty &&
+            sealed.containsKey(key) &&
+            stored()['preparedTurnClientTurnId'] != null,
+      );
+      await tester.pump();
+      expect(retryButton(), findsOneWidget);
+      expect(sealed.containsKey(key), isTrue);
+      expect(values.containsKey(key), isFalse);
+      return store;
+    }
+
+    testWidgets('[RED] its text and file come back after a restart and the '
+        'upload keeps its id', (tester) async {
+      await realDrafts();
+      _mockPathProvider();
+      final first = await sendFailing(tester);
+      final uploadId = first.uploads.single.uploadId;
+      final files = stored()['attachments'] as List;
+      expect(stored()['text'], 'see the plan');
+      expect((files.single as Map)['local_id'], uploadId);
+      expect((files.single as Map)['name'], 'plan.pdf');
+      expect(
+        File((files.single as Map)['local_path'] as String).existsSync(),
+        isTrue,
+      );
+
+      // The app goes away with the message unsent.
+      await tester.pumpWidget(const SizedBox.shrink());
+      late _FakeFileStore second;
+      await _pump(
+        tester,
+        events: const [],
+        drafts: drafts(),
+        fileStore: (g) => second = _FakeFileStore(g),
+      );
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      expect(_roomField(tester).controller!.text, 'see the plan');
+      expect(_roomComposerCards(tester).single.name, 'plan.pdf');
+
+      await tester.tap(
+        find.byKey(const ValueKey('composer-primary-action-switcher')),
+      );
+      await _settlePaste(tester, until: () => second.sends.isNotEmpty);
+      await tester.pumpAndSettle();
+      expect(second.uploads.single.uploadId, uploadId);
+      expect(second.sends.single.text, 'see the plan');
+      expect(second.sends.single.files, [_FakeFileStore.idOf(1)]);
+    });
+
+    testWidgets('[RED] one that landed before the restart is not offered '
+        'again', (tester) async {
+      await realDrafts();
+      _mockPathProvider();
+      await sendFailing(tester, uploadFails: false);
+      final prepared = stored()['preparedTurnClientTurnId'] as String;
+      expect(stored()['attachments'] as List, hasLength(1));
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      // The room shows the message: its reply was lost, not the send.
+      final seq = EventSeq();
+      final landed = _withStoredFile(
+        seq.user(
+          'see the plan',
+          id: TuiGatewayClient.durableGroupEventId(prepared),
+        ),
+      );
+      late _FakeFileStore second;
+      await _pump(
+        tester,
+        events: [landed],
+        drafts: drafts(),
+        fileStore: (g) => second = _FakeFileStore(g),
+      );
+      await _settlePaste(tester, until: () => !sealed.containsKey(key));
+      await tester.pump();
+      expect(sealed.containsKey(key), isFalse);
+      expect(_roomField(tester).controller!.text, isEmpty);
+      expect(_roomComposerCards(tester), isEmpty);
+      expect(second.uploads, isEmpty);
+    });
+
+    testWidgets('[RED] a failed message keeps its file through later draft '
+        'saves; Retry still uploads it', (tester) async {
+      await realDrafts();
+      _mockPathProvider();
+      final store = await sendFailing(tester);
+      final path =
+          ((stored()['attachments'] as List).single as Map)['local_path']
+              as String;
+
+      // Typing replaces the stored draft: the sent file is no longer in it.
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ConsoleComposer),
+          matching: find.byType(TextField),
+        ),
+        'next',
+      );
+      await tester.pump(const Duration(seconds: 1));
+      await _settlePaste(
+        tester,
+        until: () => sealed.containsKey(key) && stored()['text'] == 'next',
+      );
+      expect(stored()['attachments'], isEmpty);
+      await _settlePaste(tester);
+      expect(File(path).existsSync(), isTrue);
+
+      await tester.tap(retryButton());
+      await _settlePaste(tester, until: () => store.sends.isNotEmpty);
+      await tester.pumpAndSettle();
+      expect(store.uploads, hasLength(2));
+      expect(store.uploads[1].size, 2048);
+      expect(store.sends.single.files, [_FakeFileStore.idOf(1)]);
+    });
+  });
+
+  group('the Files sheet lists the room store', () {
+    Future<Finder> openFiles(WidgetTester tester) async {
+      await tester.longPress(find.byKey(const ValueKey('room-header')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('room-menu-files')));
+      await tester.pumpAndSettle();
+      return find.byKey(const ValueKey('room-files-sheet'));
+    }
+
+    testWidgets('[RED] newest message first, a message\'s path files before '
+        'its stored ones, each opened by its own message', (tester) async {
+      final seq = EventSeq();
+      final first = _withStoredFile(seq.user('Plan', id: 'evt-1'));
+      final second = seq.user(
+        appendRoomAttachmentSuffix('Report', const [
+          RoomAttachmentRef(
+            name: 'report.pdf',
+            path: '/srv/uploads/report.pdf',
+          ),
+        ]),
+        id: 'evt-2',
+      );
+      final third = _withStoredFile(
+        seq.user('Later', id: 'evt-3'),
+        name: 'later.pdf',
+      );
+      final actions = _StoreActions();
+      await _pump(tester, events: [first, second, third], actions: actions);
+
+      await tester.longPress(find.byKey(const ValueKey('room-header')));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('room-menu-files')),
+          matching: find.text('3'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('room-menu-files')));
+      await tester.pumpAndSettle();
+      final sheet = find.byKey(const ValueKey('room-files-sheet'));
+
+      double top(String key) => tester
+          .getTopLeft(
+            find.descendant(of: sheet, matching: find.byKey(ValueKey(key))),
+          )
+          .dy;
+      final later = top('room-file-evt-3-room-store:evt-3/$_storedId');
+      final report = top('room-file-evt-2-/srv/uploads/report.pdf');
+      final plan = top('room-file-evt-1-room-store:evt-1/$_storedId');
+      expect(later, lessThan(report));
+      expect(report, lessThan(plan));
+
+      await tester.tap(
+        find.descendant(
+          of: sheet,
+          matching: find.byKey(
+            const ValueKey('room-attachment-open-room-store:evt-1/$_storedId'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(actions.calls, ['fetch:evt-1/$_storedId', 'open:plan.pdf']);
+    });
+
+    testWidgets('[RED] without store reads a stored file is named as on '
+        'Desktop', (tester) async {
+      final seq = EventSeq();
+      await _pump(
+        tester,
+        events: [_withStoredFile(seq.user('Plan', id: 'evt-1'))],
+        actions: FakeActions(),
+      );
+      final sheet = await openFiles(tester);
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.byKey(
+            const ValueKey('room-file-evt-1-room-store:evt-1/$_storedId'),
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.text('Open it on Hermes Desktop'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('[CONTROL] a room without files says so', (tester) async {
+      final seq = EventSeq();
+      await _pump(tester, events: [seq.user('hi')], actions: _StoreActions());
+      final sheet = await openFiles(tester);
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.text('No files shared in this room yet.'),
+        ),
+        findsOneWidget,
+      );
+    });
   });
 
   group('rp1215 reply quote chip', () {

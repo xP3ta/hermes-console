@@ -134,6 +134,24 @@ class LauncherWidgetCronPublisher {
   final Future<String?> Function() _preferredConnection;
   Future<void> _tail = Future<void>.value();
 
+  /// What was last offered for each connection, for [renew].
+  final Map<String, ({List<CronJob> jobs, String? profile})> _offered = {};
+
+  /// Offers again what was last offered for [connectionId], when the caller
+  /// knows it is still current without listing it again (the listener heard
+  /// no `cron.changed` on its live socket). An unchanged listing is then
+  /// re-stamped as usual, so the widget keeps knowing its data is current.
+  /// Nothing happens before a first offer.
+  Future<void> renew(String connectionId) {
+    final last = _offered[connectionId];
+    if (last == null) return Future<void>.value();
+    return offer(
+      connectionId: connectionId,
+      jobs: last.jobs,
+      profile: last.profile,
+    );
+  }
+
   /// Offers the jobs just listed for [connectionId].
   ///
   /// [profile] is the single profile the listing covers, or null when it
@@ -144,6 +162,7 @@ class LauncherWidgetCronPublisher {
     required List<CronJob> jobs,
     required String? profile,
   }) {
+    _offered[connectionId] = (jobs: jobs, profile: profile);
     final operation = _tail.then((_) async {
       try {
         await _publish(connectionId, jobs, profile);

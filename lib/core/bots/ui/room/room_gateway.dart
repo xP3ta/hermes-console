@@ -103,8 +103,50 @@ final class RoomCapabilities {
   }
 }
 
-/// Why the composer `+` is disabled (gap G1: `groups.send` carries text only).
+/// Why the composer `+` is disabled. [crossGateway] and [noUploader] only
+/// apply to the Dashboard path ([RoomAttachmentUploader]); the room's own
+/// store ([RoomFileStore]) is offered whatever the members' connections,
+/// as Desktop offers it.
 enum RoomAttachBlock { none, crossGateway, noUploader, readOnly }
+
+/// The room's own file store, as Hermes Desktop sends a file to a room:
+/// each file is kept with `groups.attachment.upload` and the message lists
+/// the receipts in its `groups.send` payload
+/// (`canonical-group-attachments.tsx` `upload`,
+/// `canonical-group-workspace.tsx` `sendIntent`). The room's gateway hands
+/// the files to its own members
+/// (`gateway/session_hosted_attachments.py::bound_submission_payload`); a
+/// member reached over a peer route gets the text only, and the server
+/// fails that member's turn visibly (`attachments_unsupported_on_route`,
+/// `tui_gateway/hosted_room_driver.py`).
+abstract interface class RoomFileStore {
+  /// Keeps [bytes] in the room's store under [uploadId]. The same id with
+  /// the same bytes answers the same receipt, never a second copy.
+  Future<HostedGroupAttachment> upload(
+    HostedGroupRoom room, {
+    required String uploadId,
+    required String kind,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+  });
+
+  /// `groups.send` of [text] listing [attachments] (receipts of [upload]).
+  Future<HostedGroupWorkspaceReadback> send(
+    HostedGroupRoom room, {
+    required String text,
+    required List<HostedGroupAttachment> attachments,
+    required HostedGroupSendAttempt attempt,
+  });
+}
+
+/// The store kind of a file of [mime], as Desktop picks it
+/// (`canonical-group-attachments.tsx::kindFor`): `image`, `pdf` or `file`.
+String roomStoreKind(String mime) {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime == 'application/pdf') return 'pdf';
+  return 'file';
+}
 
 /// Upload for the G1 interim: the file lands in the server's managed
 /// filesystem and its path is referenced from the message text.

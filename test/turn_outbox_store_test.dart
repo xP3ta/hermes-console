@@ -10,12 +10,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+
+import 'support/memory_sealed_files.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secure = <String, String>{};
+  // The outbox is a sealed file; its value by key.
+  final sealed = SealedValues(secure);
   Completer<void>? blockedWriteEntered;
   Completer<void>? releaseBlockedWrite;
   var blockNextOutboxWrite = false;
@@ -28,6 +33,14 @@ void main() {
     blockedWriteEntered = null;
     releaseBlockedWrite = null;
     blockNextOutboxWrite = false;
+    MemorySealedFileIo.of(SealedLocalFiles.outbox)
+      ..resetHooks()
+      ..beforeWrite = (_) async {
+        if (!blockNextOutboxWrite) return;
+        blockNextOutboxWrite = false;
+        blockedWriteEntered?.complete();
+        await releaseBlockedWrite?.future;
+      };
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -36,12 +49,6 @@ void main() {
                 (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
             switch (call.method) {
               case 'write':
-                if (args['key'] == 'chat_turn_outbox_v1' &&
-                    blockNextOutboxWrite) {
-                  blockNextOutboxWrite = false;
-                  blockedWriteEntered?.complete();
-                  await releaseBlockedWrite?.future;
-                }
                 secure[args['key'] as String] = args['value'] as String;
               case 'read':
                 return secure[args['key'] as String];
@@ -93,10 +100,16 @@ void main() {
 
     expect((await store.loadForChat('c1', 's1'))?.clientTurnId, 't1');
     expect((await store.loadForChat('c2', 's1'))?.clientTurnId, 't2');
-    expect(secure.keys, ['chat_turn_outbox_v1']);
-    expect(secure.values.single, contains('mensaje privado'));
-    // El mapa observado pertenece al mock del plugin; en producción el valor
-    // completo vive detrás de flutter_secure_storage/Keystore, no en prefs.
+    // Secure storage keeps only the key of the sealed file; the outbox is
+    // that file, with no text in clear.
+    expect(secure.keys, [SealedLocalFiles.keyKey]);
+    expect(sealed['chat_turn_outbox_v1'], contains('mensaje privado'));
+    final file = MemorySealedFileIo.of(SealedLocalFiles.outbox).files;
+    expect(file, hasLength(1));
+    expect(
+      String.fromCharCodes(file.values.single),
+      isNot(contains('mensaje privado')),
+    );
   });
 
   test('mention identities and annotation survive encrypted outbox restore independently of draft text', () async {
@@ -301,7 +314,8 @@ void main() {
           state: PreparedTurnState.prepared,
         ),
       );
-      final persisted = jsonDecode(secure['chat_turn_outbox_v1']!) as Map;
+      expect(secure.containsKey('chat_turn_outbox_v1'), isFalse);
+      final persisted = jsonDecode(sealed['chat_turn_outbox_v1']!) as Map;
       expect(persisted, hasLength(1));
       expect(persisted.keys.single, restored.storageId);
       expect(
@@ -645,7 +659,8 @@ void main() {
       expect(await store.prune(), 0);
       expect((await store.loadForChat('c1', 's1'))?.clientTurnId, 't1');
 
-      secure['chat_turn_outbox_v1'] = '{no-json';
+      // The file opens but what it holds does not parse.
+      sealed['chat_turn_outbox_v1'] = '{no-json';
       await expectLater(
         store.loadForChat('c1', 's1'),
         throwsA(isA<StateError>()),

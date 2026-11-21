@@ -35,6 +35,7 @@ import 'package:hermes_android/main.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 import 'package:hermes_android/core/design/hicons.dart';
 
@@ -524,6 +525,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Strings s;
   final secureStore = <String, String>{};
+  // Drafts and the outbox are sealed files; their values by key.
+  final sealed = SealedValues(secureStore);
   var foregroundServiceRunning = false;
 
   setUpAll(() async {
@@ -2241,7 +2244,7 @@ void main() {
       expect(restored.controller?.text, 'directed turn');
       await tester.pump(const Duration(milliseconds: 300));
       expect(gateway.submissions, ['directed turn']);
-      final recovered = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+      final recovered = jsonDecode(sealed['chat_turn_outbox_v1']!) as Map;
       final recoveredId = (recovered.values.single as Map)['client_turn_id'];
 
       // Un turno dirigido recuperado conserva la propiedad de su outbox hasta
@@ -2257,7 +2260,7 @@ void main() {
       await _submitSlash(tester);
       expect(gateway.submissions, ['directed turn']);
       final afterBlockedSlash =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+          jsonDecode(sealed['chat_turn_outbox_v1']!) as Map;
       expect(afterBlockedSlash, hasLength(1));
       expect(
         (afterBlockedSlash.values.single as Map)['client_turn_id'],
@@ -2270,7 +2273,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 800));
       expect(gateway.submissions, ['directed turn']);
       final stillRecovered =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+          jsonDecode(sealed['chat_turn_outbox_v1']!) as Map;
       expect(stillRecovered, hasLength(1));
       expect(
         (stillRecovered.values.single as Map)['client_turn_id'],
@@ -2285,7 +2288,7 @@ void main() {
       await tester.tap(discard.last);
       await tester.pump(const Duration(milliseconds: 400));
       expect(restored.controller?.text, 'directed turn');
-      expect(secureStore.containsKey('chat_turn_outbox_v1'), isFalse);
+      expect(sealed.containsKey('chat_turn_outbox_v1'), isFalse);
       await _pumpSlashChat(tester, gateway, stt: stt);
       final resubmitted = tester.widget<TextField>(find.byType(TextField).last);
       expect(resubmitted.controller?.text, 'directed turn');
@@ -2293,7 +2296,7 @@ void main() {
       _sendAction(tester).onPressed!();
       await tester.pump(const Duration(milliseconds: 800));
       expect(gateway.submissions, ['directed turn', 'directed turn']);
-      final submitted = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+      final submitted = jsonDecode(sealed['chat_turn_outbox_v1']!) as Map;
       final submittedId = (submitted.values.single as Map)['client_turn_id'];
       expect(submittedId, isNot(recoveredId));
       gateway._events.add(

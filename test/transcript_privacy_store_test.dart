@@ -5,8 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/transcript_privacy_state.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/memory_sealed_files.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +21,18 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     secure = <String, String>{};
     storageHook = null;
+    // Transcripts are sealed files: a write of one is a storage call with
+    // the value it seals.
+    ObservedSealedFileIo(
+      SealedLocalFiles.transcripts,
+      onWrite: (name, bytes) => storageHook?.call(
+        MethodCall('write', {
+          'key': name,
+          'value': SealedValues(secure).valueOfFile(name, bytes),
+        }),
+      ),
+    ).install();
+    addTearDown(MemorySealedFileIo.install);
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -98,7 +113,7 @@ void main() {
       if (call.method != 'write') return;
       final args = (call.arguments as Map?) ?? const {};
       if ((args['value'] as String).contains('privacy_checkpoint')) {
-        throw StateError('checkpoint write failed');
+        throw PlatformException(code: 'checkpoint write failed');
       }
     };
 

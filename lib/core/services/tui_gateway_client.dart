@@ -1,3 +1,4 @@
+import '../bots/data/bot_delivery.dart';
 import '../bots/data/gateway_socket_meter.dart';
 import '../browser/agent_preview_protocol.dart';
 import '../bots/state/bot_chat_target.dart';
@@ -1657,6 +1658,7 @@ class TuiGatewayClient
         BotProfileGateway,
         BotModelGateway,
         BotChatTitleLookup,
+        BotDeliveryGateway,
         HermesDesktopRedirectGateway,
         HermesDesktopInterruptedPromptGateway,
         HermesDesktopClientSurfacePromptGateway,
@@ -5482,12 +5484,18 @@ class TuiGatewayClient
     }
   }
 
+  /// `groups.send` of one owner message. [attachments] are files already
+  /// kept in the room's own store ([uploadGroupAttachment]); the payload
+  /// then lists them, and the text may be empty, as Hermes Desktop sends
+  /// them (`canonical-group-workspace.tsx` `sendIntent`, upstream
+  /// `hosted_room_discussion.py::validate_user_payload`).
   Future<HostedGroupLogPage> sendGroupText({
     required String roomId,
     required String text,
     required String eventId,
     required String threadId,
     required int generation,
+    List<HostedGroupAttachment> attachments = const [],
   }) async {
     final proof = await _requireGroupMethod(
       GroupMethod.send,
@@ -5498,13 +5506,21 @@ class TuiGatewayClient
     final clientEventId = _groupIdentifier(eventId, 'event id');
     final durableEventId = durableGroupEventId(clientEventId);
     final thread = _groupIdentifier(threadId, 'thread id');
-    if (text.trim().isEmpty || utf8.encode(text).length > 65536) {
+    if ((text.trim().isEmpty && attachments.isEmpty) ||
+        utf8.encode(text).length > 65536 ||
+        attachments.length > HostedGroupAttachment.maxPerMessage) {
       throw const FormatException('invalid group message');
     }
+    final sentFiles = [for (final file in attachments) file.attachmentId];
     final result = await _requestGroupOnLease(proof.lease, 'groups.send', {
       'room_id': room,
       'event_id': clientEventId,
-      'payload': {'text': text, 'thread_id': thread},
+      'payload': {
+        'text': text,
+        'thread_id': thread,
+        if (attachments.isNotEmpty)
+          'attachments': [for (final file in attachments) file.toManifest()],
+      },
     });
     if (result['accepted'] != true ||
         result['client_event_id'] != clientEventId ||
@@ -5522,7 +5538,11 @@ class TuiGatewayClient
           acknowledged.actor.kind != 'user' ||
           acknowledged.actor.id != 'desktop' ||
           acknowledged.publicText != text ||
-          acknowledged.threadId != thread) {
+          acknowledged.threadId != thread ||
+          !_sameIds(
+            [for (final file in acknowledged.attachments) file.attachmentId],
+            sentFiles,
+          )) {
         throw const FormatException('event acknowledgement tuple mismatch');
       }
     } on FormatException {
@@ -5554,6 +5574,74 @@ class TuiGatewayClient
       );
     }
     return page;
+  }
+
+  static bool _sameIds(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// `groups.attachment.upload`: keeps one file in the room's own store for
+  /// a later `groups.send` that lists it, as Hermes Desktop sends a room
+  /// file (`canonical-group-attachments.tsx` `upload`: `room_id`,
+  /// `upload_id`, `kind`, `name`, `mime`, `data_base64`, the closed set of
+  /// `gateway/session_group_controls.py`). The server keeps one row per
+  /// [uploadId] in the room and answers that row again for the same bytes
+  /// (`gateway/hosted_room_attachments.py::HostedRoomAttachmentStore.put`,
+  /// `idempotent`), so a repeated upload never stores the file twice. The
+  /// answer is the stored row (`tui_gateway/contracts/canonical.py`
+  /// `RoomAttachment`); a send lists its five manifest fields.
+  Future<HostedGroupAttachment> uploadGroupAttachment({
+    required String roomId,
+    required String uploadId,
+    required String kind,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+    int? generation,
+  }) async {
+    const method = 'groups.attachment.upload';
+    final proof = await _requireGroupMethod(
+      GroupMethod.attachmentUpload,
+      generation: generation,
+    );
+    final room = _groupIdentifier(roomId, 'room id');
+    final upload = _groupIdentifier(uploadId, 'upload id');
+    if (bytes.isEmpty || bytes.length > HostedGroupAttachment.maxBytes) {
+      throw const FormatException('invalid room file size');
+    }
+    final result = await _requestGroupOnLease(proof.lease, method, {
+      'room_id': room,
+      'upload_id': upload,
+      'kind': kind,
+      'name': name,
+      'mime': mime,
+      'data_base64': base64.encode(bytes),
+    });
+    try {
+      final receipt = HostedGroupAttachment.fromJson({
+        for (final field in const [
+          'attachment_id',
+          'kind',
+          'name',
+          'size',
+          'mime',
+        ])
+          field: result[field],
+      });
+      if (receipt.size != bytes.length) {
+        throw const FormatException('room file size mismatch');
+      }
+      return receipt;
+    } on FormatException {
+      throw const GroupInvalidResponseError(
+        method,
+        'Hermes returned an invalid room file receipt',
+      );
+    }
   }
 
   /// `groups.attachment.download`: the bytes of one file of the room's own
@@ -5719,6 +5807,29 @@ class TuiGatewayClient
       if (summary != null && summary.title == botChatTitle) return summary;
     }
     return null;
+  }
+
+  /// `bot_delivery.list {profile}` (Hermes `tui_gateway/methods_bot_relay.py`):
+  /// the SENDER bot's unsettled `message_agent` deliveries to local
+  /// teammates, newest first. Read-only. A gateway older than the method
+  /// answers -32601, which reaches the caller as a [TuiGatewayRpcError].
+  @override
+  Future<List<BotDelivery>> listBotDeliveries(String profile) async {
+    final owner = profile.trim();
+    if (!RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(owner)) {
+      throw const FormatException('invalid profile');
+    }
+    final result = await _request('bot_delivery.list', {
+      'profile': owner,
+    }, timeout: listReadTimeout);
+    final rows = result['deliveries'];
+    if (rows is! List) {
+      throw const TuiGatewayRpcError(
+        'bot_delivery.list',
+        'Hermes returned an invalid delivery list',
+      );
+    }
+    return [for (final row in rows) ?BotDelivery.tryParse(row)];
   }
 
   Future<HostedGroupRoom> approveGroupTask({
@@ -10009,9 +10120,26 @@ class TuiGatewayClient
     });
   }
 
-  String _fsQuery(String route, String path) {
+  HermesPinnedProjectFiles pinProjectFiles({
+    required String profile,
+    String? sessionId,
+  }) => _PinnedProjectFiles(this, profile, sessionId);
+
+  String _fsQuery(
+    String route,
+    String path, {
+    String? profile,
+    String? sessionId,
+  }) {
     final value = _validatedControlValue(path, maxLength: 4096);
-    return 'fs/$route?path=${Uri.encodeQueryComponent(value)}';
+    return Uri(
+      path: 'fs/$route',
+      queryParameters: {
+        'path': value,
+        'profile': ?profile,
+        'session_id': ?sessionId,
+      },
+    ).toString();
   }
 
   @override
@@ -10019,8 +10147,11 @@ class TuiGatewayClient
       !_capabilityCache.canAttempt(DesktopGatewayCapability.projectFiles);
 
   @override
-  Future<ProjectDirectoryListing> listProjectDirectory(String path) async {
-    final endpoint = _fsQuery('list', path);
+  Future<ProjectDirectoryListing> listProjectDirectory(
+    String path, {
+    String? profile,
+  }) async {
+    final endpoint = _fsQuery('list', path, profile: profile);
     if (projectFilesKnownUnsupported) {
       throw const DesktopControlFailure(
         DesktopControlFailureKind.unsupported,
@@ -10079,8 +10210,17 @@ class TuiGatewayClient
   }
 
   @override
-  Future<ProjectFilePreview> readProjectFileText(String path) async {
-    final endpoint = _fsQuery('read-text', path);
+  Future<ProjectFilePreview> readProjectFileText(
+    String path, {
+    String? profile,
+    String? sessionId,
+  }) async {
+    final endpoint = _fsQuery(
+      'read-text',
+      path,
+      profile: profile,
+      sessionId: sessionId,
+    );
     return _projectFileRead(() async {
       final result = await _dashboard.apiGet(endpoint);
       final text = result['text'];
@@ -10104,8 +10244,17 @@ class TuiGatewayClient
   }
 
   @override
-  Future<Uint8List> readProjectFileBytes(String path) async {
-    final endpoint = _fsQuery('read-data-url', path);
+  Future<Uint8List> readProjectFileBytes(
+    String path, {
+    String? profile,
+    String? sessionId,
+  }) async {
+    final endpoint = _fsQuery(
+      'read-data-url',
+      path,
+      profile: profile,
+      sessionId: sessionId,
+    );
     return _projectFileRead(() async {
       final result = await _dashboard.apiGet(endpoint);
       final dataUrl = result['dataUrl'];
@@ -10181,10 +10330,26 @@ class TuiGatewayClient
     }
   }
 
+  /// The managed-file routes act on the Dashboard host. A chat whose
+  /// terminal uses a remote or isolated backend needs that backend's writes.
+  Future<void> _requireLocalProjectFiles(String? profile) async {
+    if (profile == null) return;
+    final config = await _projectFileRead(
+      () => _dashboard.apiGet(
+        'config?profile=${Uri.encodeQueryComponent(profile)}',
+      ),
+    );
+    final terminal = config['terminal'];
+    if (terminal is! Map || terminal['backend'] != 'local') {
+      throw const DesktopControlFailure(DesktopControlFailureKind.forbidden);
+    }
+  }
+
   @override
-  Future<String> createProjectFolder(String path) async {
+  Future<String> createProjectFolder(String path, {String? profile}) async {
     final value = _validatedControlValue(path, maxLength: 4096);
     return _projectFileWrite(ProjectFileWriteAction.createFolder, () async {
+      await _requireLocalProjectFiles(profile);
       final result = await _dashboard.apiPost(
         'files/mkdir',
         body: {'path': value},
@@ -10197,24 +10362,88 @@ class TuiGatewayClient
   }
 
   @override
-  Future<void> writeProjectFileText(String path, String content) async {
+  Future<void> createProjectFile(
+    String path, {
+    String? profile,
+    String? sessionId,
+  }) => _writeProjectText(
+    path,
+    '',
+    profile: profile,
+    sessionId: sessionId,
+    createOnly: true,
+  );
+
+  @override
+  Future<void> writeProjectFileText(
+    String path,
+    String content, {
+    String? profile,
+    String? sessionId,
+  }) => _writeProjectText(path, content, profile: profile, sessionId: sessionId);
+
+  Future<void> _writeProjectText(
+    String path,
+    String content, {
+    String? profile,
+    String? sessionId,
+    bool createOnly = false,
+  }) async {
     final value = _validatedControlValue(path, maxLength: 4096);
+    final endpoint = Uri(
+      path: 'fs/write-text',
+      queryParameters: profile == null ? null : {'profile': profile},
+    ).toString();
     return _projectFileWrite(ProjectFileWriteAction.writeText, () async {
+      if (createOnly) {
+        await _requireProjectFileAbsent(value, profile, sessionId);
+      }
       await _dashboard.apiPost(
-        'fs/write-text',
-        body: {'path': value, 'content': content},
+        endpoint,
+        body: {
+          'path': value,
+          'content': content,
+          'session_id': ?sessionId,
+        },
       );
     });
   }
+
+  /// Hermes has no exclusive text-create route. Check the exact path on the
+  /// same backend just before writing. A generic 404 (e.g. missing route or
+  /// session), a directory, or a failed check must never authorize creation.
+  Future<void> _requireProjectFileAbsent(
+    String path,
+    String? profile,
+    String? sessionId,
+  ) => _projectFileRead(() async {
+    try {
+      await _dashboard.apiGet(
+        _fsQuery('read-text', path, profile: profile, sessionId: sessionId),
+      );
+    } on DashboardHttpException catch (error) {
+      if (error.statusCode == 404) {
+        final detail = jsonDecode(error.body);
+        if (detail is Map && detail['detail'] == 'File not found') return;
+      }
+      rethrow;
+    }
+    throw const DesktopControlFailure(
+      DesktopControlFailureKind.rejected,
+      code: 409,
+    );
+  });
 
   @override
   Future<String> uploadProjectFile(
     String path, {
     required String localPath,
     required String filename,
+    String? profile,
   }) async {
     final value = _validatedControlValue(path, maxLength: 4096);
     return _projectFileWrite(ProjectFileWriteAction.upload, () async {
+      await _requireLocalProjectFiles(profile);
       final result = await _dashboard.apiPostMultipartFile(
         'files/upload-stream',
         fieldName: 'file',
@@ -10230,9 +10459,10 @@ class TuiGatewayClient
   }
 
   @override
-  Future<void> deleteProjectEntry(String path) async {
+  Future<void> deleteProjectEntry(String path, {String? profile}) async {
     final value = _validatedControlValue(path, maxLength: 4096);
     return _projectFileWrite(ProjectFileWriteAction.delete, () async {
+      await _requireLocalProjectFiles(profile);
       await _dashboard.apiDelete(
         'files',
         body: {'path': value, 'recursive': false},
@@ -11535,6 +11765,69 @@ class _PendingRpc {
     this.timer, {
     this.redactRemoteError = false,
   });
+}
+
+final class _PinnedProjectFiles implements HermesPinnedProjectFiles {
+  const _PinnedProjectFiles(this._client, this._profile, this._sessionId);
+
+  final TuiGatewayClient _client;
+  final String _profile;
+  final String? _sessionId;
+
+  @override
+  bool get projectFilesKnownUnsupported => _client.projectFilesKnownUnsupported;
+
+  @override
+  bool get projectFileWritesAllowed => _client.projectFileWritesAllowed;
+
+  @override
+  bool projectFileWriteKnownUnsupported(ProjectFileWriteAction action) =>
+      _client.projectFileWriteKnownUnsupported(action);
+
+  @override
+  Future<ProjectDirectoryListing> listProjectDirectory(String path) =>
+      _client.listProjectDirectory(path, profile: _profile);
+
+  @override
+  Future<ProjectFilePreview> readProjectFileText(String path) =>
+      _client.readProjectFileText(path, profile: _profile, sessionId: _sessionId);
+
+  @override
+  Future<Uint8List> readProjectFileBytes(String path) =>
+      _client.readProjectFileBytes(path, profile: _profile, sessionId: _sessionId);
+
+  @override
+  Future<void> createProjectFile(String path) =>
+      _client.createProjectFile(path, profile: _profile, sessionId: _sessionId);
+
+  @override
+  Future<void> writeProjectFileText(String path, String content) =>
+      _client.writeProjectFileText(
+        path,
+        content,
+        profile: _profile,
+        sessionId: _sessionId,
+      );
+
+  @override
+  Future<String> createProjectFolder(String path) =>
+      _client.createProjectFolder(path, profile: _profile);
+
+  @override
+  Future<String> uploadProjectFile(
+    String path, {
+    required String localPath,
+    required String filename,
+  }) => _client.uploadProjectFile(
+    path,
+    localPath: localPath,
+    filename: filename,
+    profile: _profile,
+  );
+
+  @override
+  Future<void> deleteProjectEntry(String path) =>
+      _client.deleteProjectEntry(path, profile: _profile);
 }
 
 /// Zone key of the profile a [_PinnedProjects] call runs under.

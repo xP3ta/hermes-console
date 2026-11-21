@@ -8772,6 +8772,9 @@
   "hdpTabRecent": "最近",
   "hdpShellRow": "普通 Shell",
   "hdpShellBody": "终端保持原样。",
+  "hdpReturnToShell": "返回 Shell",
+  "hdpReturnToShellBody": "服务器上的会话将保持打开。",
+  "hdpOpenSessionFailed": "无法打开会话。",
   "hdpNoSessions": "还没有会话。",
   "hdpNoRecent": "没有仍然存在的最近项目。",
   "hdpSessionWindows": "{count, plural, other{{count} 个窗口}}",
@@ -9645,5 +9648,511 @@
   "srvCheckStillRunning": "仍在运行，已停止跟踪",
   "srvCheckUnavailable": "此服务器无法运行它。",
   "srvCheckStartFailed": "无法启动。",
-  "srvCheckLost": "无法跟踪运行过程。请重新运行以查看输出。"
+  "srvCheckLost": "无法跟踪运行过程。请重新运行以查看输出。",
+  "roomFilesCountLimit": "每条消息最多可附加 {count} 个文件。",
+  "@roomFilesCountLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatTitle": "消息平台",
+  "msgPlatSubtitle": "设置 Telegram、Discord、Slack 等平台",
+  "msgPlatIntro": "可以联系此配置文件 bot 的平台。打开某个平台即可设置、开启或关闭，并选择谁可以给它发消息。",
+  "msgPlatTooOldTitle": "服务器版本过旧",
+  "msgPlatTooOld": "你的 Hermes 服务器版本过旧，不支持消息平台设置。请更新 Hermes，以便在这里设置平台。",
+  "msgPlatLoadFailed": "无法加载消息平台",
+  "msgPlatEmpty": "此服务器未提供消息平台。",
+  "msgPlatSearch": "搜索消息平台",
+  "msgPlatNoMatches": "没有匹配的平台。",
+  "msgPlatFilterAll": "全部",
+  "msgPlatFilterBad": "错误",
+  "msgPlatFilterGood": "已连接",
+  "msgPlatFilterMuted": "未启用",
+  "msgPlatFilterWarn": "需要处理",
+  "msgPlatPendingCount": "{count, plural, =1{1 个待处理的配对请求} other{{count} 个待处理的配对请求}}",
+  "@msgPlatPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatStateConnected": "已连接",
+  "msgPlatStateConnecting": "连接中",
+  "msgPlatStateDisabled": "已禁用",
+  "msgPlatStateFatal": "错误",
+  "msgPlatStateGatewayStopped": "消息 Gateway 已停止",
+  "msgPlatStateNotConfigured": "需要设置",
+  "msgPlatStatePendingRestart": "需要重启",
+  "msgPlatStateRetrying": "重试中",
+  "msgPlatStateStartupFailed": "启动失败",
+  "msgPlatStateUnknown": "未知",
+  "msgPlatReadOnly": "此连接为只读：可以查看平台，但无法更改。",
+  "msgPlatRestartNeeded": "已保存。请重启消息 Gateway，使新设置生效。",
+  "msgPlatRestartNow": "立即重启",
+  "msgPlatRestarting": "正在重启…",
+  "msgPlatRestartFailed": "Hermes 无法重启以应用你的消息设置。请重试；如果仍然失败，请查看服务器日志。",
+  "msgPlatHintPendingRestart": "请重启消息 Gateway 以应用此更改。",
+  "msgPlatHintGatewayStopped": "请启动消息 Gateway 以建立连接。",
+  "msgPlatSharedListener": "由共享 Gateway 监听器提供服务，地址为 {url}",
+  "@msgPlatSharedListener": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatEnabled": "已启用",
+  "msgPlatDisabled": "已禁用",
+  "msgPlatPlatformEnabled": "已启用 {name}",
+  "@msgPlatPlatformEnabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatPlatformDisabled": "已禁用 {name}",
+  "@msgPlatPlatformDisabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRestartToApply": "此更改将在 Gateway 重启后生效。",
+  "msgPlatAppliedLive": "已应用到正在运行的 Gateway。",
+  "msgPlatSetupSaved": "已保存 {name} 的设置",
+  "@msgPlatSetupSaved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRestartToReconnect": "新的凭据将在 Gateway 重启后生效。",
+  "msgPlatConnectingLive": "正在运行的 Gateway 正在使用新的凭据连接。",
+  "msgPlatKeyCleared": "已清除 {key}",
+  "@msgPlatKeyCleared": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedUpdate": "更新 {name} 失败",
+  "@msgPlatFailedUpdate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedSave": "保存 {name} 失败",
+  "@msgPlatFailedSave": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedClear": "清除 {key} 失败",
+  "@msgPlatFailedClear": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedDetail": "{message}：{detail}",
+  "@msgPlatFailedDetail": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      },
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatGetCredentials": "获取凭据",
+  "msgPlatOpenSetupGuide": "打开设置指南",
+  "msgPlatRequired": "必填",
+  "msgPlatRecommended": "推荐",
+  "msgPlatAdvanced": "高级（{count}）",
+  "@msgPlatAdvanced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatNoTokenNeeded": "此平台在这里不需要 token。请按上方的设置指南操作，然后启用它。",
+  "msgPlatUnsavedChanges": "有未保存的更改",
+  "msgPlatSaving": "正在保存…",
+  "msgPlatSaveChanges": "保存更改",
+  "msgPlatSaved": "已保存",
+  "msgPlatReplaceValue": "替换当前值",
+  "msgPlatOpenDocs": "打开文档",
+  "msgPlatClearField": "清除 {key}",
+  "@msgPlatClearField": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatAddEntry": "再添加一个",
+  "msgPlatRemoveEntry": "移除",
+  "msgPlatEntryPlaceholder": "输入 ID",
+  "msgPlatEntryLabel": "{label} {index}",
+  "@msgPlatEntryLabel": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatTest": "测试连接",
+  "msgPlatTesting": "正在测试…",
+  "msgPlatTestResult": "{name}：{message}",
+  "@msgPlatTestResult": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTestFailed": "无法测试该渠道",
+  "msgPlatOpenFailed": "无法打开链接。",
+  "msgPlatHandle": "@{name}",
+  "@msgPlatHandle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayTitle": "Team Gateway",
+  "msgPlatRelayBadge": "无需 bot token",
+  "msgPlatRelayIntro": "{platform} 通过共享的 Hermes bot 连接到此智能体。请关联你的 {platform} 账号，然后给 bot 发消息即可与你的智能体对话。",
+  "@msgPlatRelayIntro": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLink": "关联 {platform}",
+  "@msgPlatRelayLink": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLinkAnother": "关联另一个 {platform} 账号",
+  "@msgPlatRelayLinkAnother": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLinkedAccounts": "已关联的账号",
+  "msgPlatRelayUnlink": "取消关联",
+  "msgPlatRelayUnlinkFailed": "无法取消关联该账号",
+  "msgPlatRelayStepOpen": "1. 在 {platform} 中打开 bot。",
+  "@msgPlatRelayStepOpen": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayStepSend": "2. 用你要关联的账号向 bot 发送这条消息：",
+  "msgPlatRelayOpen": "打开 {platform}",
+  "@msgPlatRelayOpen": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayCopy": "复制消息",
+  "msgPlatRelayCopied": "已复制",
+  "msgPlatRelayWaiting": "正在等待 bot 看到你的消息。该代码只能使用一次。",
+  "msgPlatRelayLinked": "{platform} 账号已关联。给 bot 发消息即可与你的智能体对话。",
+  "@msgPlatRelayLinked": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayExpired": "该代码在使用前已过期。请获取新代码后重试。",
+  "msgPlatRelayRefused": "{platform} 拒绝了此次关联。请获取新代码后重试。",
+  "@msgPlatRelayRefused": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayManaged": "由 Team Gateway 管理",
+  "msgPlatRelayManagedNote": "此部署由 Team Gateway 承载消息，因此 Gateway 每次启动时都会关闭 {platform} 直连。如需与中继同时运行，请在 Gateway 的环境中设置 GATEWAY_RELAY_ALLOW_DIRECT_PLATFORMS=true（直连会使实例无法缩容到零，并可能导致消息重复投递）。",
+  "@msgPlatRelayManagedNote": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayManagedIntro": "此智能体的账号通过 Nous Portal 关联。",
+  "msgPlatRelayOpenPortal": "在 Nous Portal 中关联账号",
+  "msgPlatRelayNoNewAccount": "该代码已失效，也没有出现新账号。如果列表中没有你的 {platform} 账号，请获取新代码后重试。",
+  "@msgPlatRelayNoNewAccount": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayUnavailable": "此服务器不支持 Team Gateway 账号关联。",
+  "msgPlatRelayFailed": "Gateway 没有响应。请重试。",
+  "msgPlatTgQuickSetup": "快速设置",
+  "msgPlatTgQuickHelp": "在 Telegram 中确认后，Hermes 会创建 bot 并自动检测你的 Telegram 用户 ID。",
+  "msgPlatTgCreate": "使用 Telegram 创建",
+  "msgPlatTgStarting": "正在启动…",
+  "msgPlatTgReplaceWarning": "已配置 Telegram 凭据。保存时，新的快速设置或新的 bot token 将替换当前的 bot。",
+  "msgPlatTgOpenHint": "打开 Telegram，并在那里确认新的 bot。",
+  "msgPlatTgWaiting": "正在等待 Telegram…",
+  "msgPlatTgExpiresIn": "{remaining} 后过期",
+  "@msgPlatTgExpiresIn": {
+    "placeholders": {
+      "remaining": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTgExpired": "已过期",
+  "msgPlatTgOpenTelegram": "打开 Telegram",
+  "msgPlatTgReady": "bot 已创建",
+  "msgPlatTgAllowedUsers": "允许的用户",
+  "msgPlatTgOwnerDetected": "已检测到所有者",
+  "msgPlatTgAddAtLeastOne": "请至少添加一个 Telegram 用户 ID。",
+  "msgPlatTgUserIdLabel": "Telegram 用户 ID",
+  "msgPlatTgAdd": "添加",
+  "msgPlatTgRemoveId": "移除 {id}",
+  "@msgPlatTgRemoveId": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTgNumericOnly": "允许的 Telegram 用户 ID 必须是数字。",
+  "msgPlatTgSaveAndRestart": "保存并重启",
+  "msgPlatTgPairingExpired": "Telegram 配对已过期。请开始新的快速设置后重试。",
+  "msgPlatTgStillWaiting": "仍在等待 Telegram。重试中…",
+  "msgPlatTgSavedRestarting": "已保存 Telegram；正在重启 Gateway…",
+  "msgPlatTgSavedRestartFailed": "已保存 Telegram；Gateway 重启失败",
+  "msgPlatTgStartFailed": "无法启动 Telegram 快速设置。",
+  "msgPlatTgUnavailable": "此服务器无法为你创建 Telegram bot。请改为在下方粘贴 bot token。",
+  "msgPlatFTelegramBotTokenLabel": "bot token",
+  "msgPlatFTelegramBotTokenHelp": "使用 @BotFather 创建 bot，然后粘贴它给你的 token。",
+  "msgPlatFTelegramBotTokenHint": "粘贴 Telegram bot token",
+  "msgPlatFTelegramAllowedUsersLabel": "允许的 Telegram 用户 ID",
+  "msgPlatFTelegramAllowedUsersHelp": "推荐。来自 @userinfobot 的数字 ID，每个框一个。若不设置，任何人都可以私信你的 bot。",
+  "msgPlatFTelegramProxyLabel": "代理 URL",
+  "msgPlatFTelegramProxyHelp": "仅在 Telegram 被屏蔽的网络中需要。",
+  "msgPlatFDiscordBotTokenLabel": "bot token",
+  "msgPlatFDiscordBotTokenHelp": "在 Discord Developer Portal 中创建应用，添加 bot，然后粘贴它的 token。",
+  "msgPlatFDiscordAllowedUsersLabel": "允许的 Discord 用户 ID",
+  "msgPlatFDiscordAllowedUsersHelp": "推荐。Discord 用户 ID，每个框一个。",
+  "msgPlatFDiscordReplyToModeLabel": "回复方式",
+  "msgPlatFDiscordReplyToModeHelp": "first、all 或 off。",
+  "msgPlatFDiscordAllowAllUsersLabel": "允许所有 Discord 用户",
+  "msgDiscordEveryoneHelp": "仅限开发使用。为 true 时，任何人都可以在没有 allowlist 的情况下私信 bot。",
+  "msgPlatFDiscordHomeChannelLabel": "主频道 ID",
+  "msgPlatFDiscordHomeChannelHelp": "bot 主动发送消息（cron 输出、提醒）的频道。",
+  "msgPlatFDiscordHomeChannelNameLabel": "主频道名称",
+  "msgPlatFDiscordHomeChannelNameHelp": "主频道在日志和状态输出中的显示名称。",
+  "msgPlatFBluebubblesAllowAllUsersLabel": "允许所有 iMessage 用户",
+  "msgPlatFBluebubblesAllowAllUsersHelp": "为 true 时，跳过 BlueBubbles 的 allowlist。",
+  "msgPlatFMattermostAllowAllUsersLabel": "允许所有 Mattermost 用户",
+  "msgPlatFMattermostHomeChannelLabel": "主频道",
+  "msgPlatFQqAllowAllUsersLabel": "允许所有 QQ 用户",
+  "msgPlatFQqbotHomeChannelLabel": "QQ 主频道",
+  "msgPlatFQqbotHomeChannelHelp": "cron 投递使用的默认频道或群组。",
+  "msgPlatFQqbotHomeChannelNameLabel": "QQ 主频道名称",
+  "msgPlatFSlackBotTokenLabel": "Slack bot token",
+  "msgPlatFSlackBotTokenHelp": "安装 Slack 应用后，使用 OAuth & Permissions 中的 bot token。",
+  "msgPlatFSlackBotTokenHint": "粘贴 Slack bot token",
+  "msgPlatFSlackAppTokenLabel": "Slack 应用 token",
+  "msgPlatFSlackAppTokenHelp": "使用 Socket Mode 所需的应用级 token。",
+  "msgPlatFSlackAppTokenHint": "粘贴 Slack 应用 token",
+  "msgPlatFSlackAllowedUsersLabel": "允许的 Slack 用户 ID",
+  "msgPlatFSlackAllowedUsersHelp": "推荐。Slack 用户 ID，每个框一个。",
+  "msgPlatFMattermostUrlLabel": "服务器 URL",
+  "msgPlatFMattermostUrlHint": "https://mattermost.example.com",
+  "msgPlatFMattermostTokenLabel": "bot token",
+  "msgPlatFMattermostAllowedUsersLabel": "允许的用户 ID",
+  "msgPlatFMattermostAllowedUsersHelp": "推荐。Mattermost 用户 ID，每个框一个。",
+  "msgPlatFMatrixHomeserverLabel": "Homeserver URL",
+  "msgPlatFMatrixHomeserverHint": "https://matrix.org",
+  "msgPlatFMatrixAccessTokenLabel": "访问 token",
+  "msgPlatFMatrixUserIdLabel": "bot 用户 ID",
+  "msgPlatFMatrixUserIdHint": "@hermes:example.org",
+  "msgPlatFMatrixAllowedUsersLabel": "允许的 Matrix 用户 ID",
+  "msgPlatFMatrixAllowedUsersHelp": "推荐。@user:server 格式的用户 ID，每个框一个。",
+  "msgPlatFSignalHttpUrlLabel": "Signal 桥接 URL",
+  "msgPlatFSignalHttpUrlHelp": "正在运行的 signal-cli REST 桥接的 URL。",
+  "msgPlatFSignalHttpUrlHint": "http://127.0.0.1:8080",
+  "msgPlatFSignalAccountLabel": "电话号码",
+  "msgPlatFSignalAccountHelp": "在 signal-cli 桥接中注册的号码。",
+  "msgPlatFSignalAllowedUsersLabel": "允许的 Signal 用户",
+  "msgPlatFSignalAllowedUsersHelp": "推荐。Signal 标识符，每个框一个。",
+  "msgPlatFWhatsappEnabledLabel": "启用 WhatsApp 桥接",
+  "msgPlatFWhatsappEnabledHelp": "由“已启用”开关自动设置。除非你确定需要，否则请不要改动。",
+  "msgPlatFWhatsappModeLabel": "桥接模式",
+  "msgPlatFWhatsappAllowedUsersLabel": "允许的 WhatsApp 用户",
+  "msgPlatFWhatsappAllowedUsersHelp": "推荐。电话号码或 WhatsApp ID，每个框一个。",
+  "msgPlatIntroTelegram": "在 Telegram 中与 @BotFather 对话，运行 /newbot，并复制它给你的 token。然后从 @userinfobot 获取你的数字用户 ID。",
+  "msgPlatIntroDiscord": "打开 Discord Developer Portal，创建应用，添加 Bot，然后复制它的 token。用正确的权限范围把 bot 邀请到你的服务器。",
+  "msgPlatIntroSlack": "创建 Slack 应用，启用 Socket Mode，将其安装到你的工作区，然后复制 bot token 和应用级 token。",
+  "msgPlatIntroMattermost": "在你的 Mattermost 服务器上创建 bot 账号或个人访问 token，然后在这里粘贴服务器 URL 和 token。",
+  "msgPlatIntroMatrix": "用 bot 账号登录你的 homeserver，然后复制访问 token、用户 ID 和 homeserver URL。",
+  "msgPlatIntroSignal": "在可访问的位置运行 signal-cli REST 桥接，然后把 URL 和已注册的电话号码告诉 Hermes。",
+  "msgPlatIntroWhatsapp": "启动 Hermes 自带的 WhatsApp 桥接，首次运行时扫描二维码，然后启用该平台。",
+  "msgPlatIntroBluebubbles": "在带 iMessage 的 Mac 上运行 BlueBubbles Server，开放其 API，然后把 URL 和服务器密码告诉 Hermes。",
+  "msgPlatIntroHomeassistant": "在 Home Assistant 中打开你的个人资料，创建长期访问 token。将它与你的 HA URL 一起粘贴到这里。",
+  "msgPlatIntroEmail": "请使用专用邮箱。对于 Gmail/Workspace，请创建应用专用密码，并使用 imap.gmail.com / smtp.gmail.com。",
+  "msgPlatIntroSms": "从 Twilio 控制台获取 Account SID 和 Auth Token，以及一个可以发送短信的电话号码。",
+  "msgPlatIntroDingtalk": "在开发者控制台中创建 DingTalk 应用，然后把 Client ID（App key）和 Client Secret 复制到这里。",
+  "msgPlatIntroFeishu": "创建 Feishu / Lark 应用，配置 bot 能力，然后复制 App ID、App secret 和事件加密密钥。",
+  "msgPlatIntroWecom": "在 WeCom 中添加群机器人，并将其 webhook 密钥复制为 WECOM_BOT_ID。仅支持发送——如需双向通信，请使用 WeCom (app) 选项。",
+  "msgPlatIntroWecomCallback": "设置 WeCom 自建应用，开放其回调 URL，并提供 corp ID、secret、agent ID 和 AES 密钥。",
+  "msgPlatIntroWeixin": "运行 `hermes gateway setup`，选择 Weixin，然后用个人微信账号扫描并确认二维码。Hermes 通过腾讯的 iLink Bot API 连接并保存凭据。",
+  "msgPlatIntroQqbot": "在 QQ Open Platform（q.qq.com）注册应用，并复制 App ID 和 Client Secret。",
+  "msgPlatIntroApiServer": "将 Hermes 作为兼容 OpenAI 的 API 对外提供。设置认证密钥，然后将 Open WebUI / LobeChat 等指向 host:port。",
+  "msgPlatIntroWebhook": "运行一个 HTTP 服务器，供其他工具（GitHub、GitLab、自定义应用）POST。使用 secret 验证签名。",
+  "botDelivTitle": "正在等待队友",
+  "botDelivQueued": "已排队",
+  "botDelivClaimed": "已领取",
+  "botDelivWorking": "处理中",
+  "botDelivWaitingClarify": "等你处理——请回答它的问题",
+  "botDelivWaitingApproval": "等你处理——请批准或拒绝",
+  "botDelivFailed": "失败：{reason}",
+  "@botDelivFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "botDelivUnknownOutcome": "结果未知",
+  "botDelivOpen": "打开",
+  "botDelivDismiss": "忽略",
+  "botDelivNeverResent": "这里的内容绝不会被重新发送。结果未知意味着队友可能已经执行——再次请求之前，请先打开它的聊天。",
+  "botDelivStale": "无法刷新——显示的是最后已知的状态。",
+  "botDelivReasonProviderAuth": "其模型提供商拒绝了密钥",
+  "botDelivReasonProviderQuota": "其提供商额度已用完",
+  "botDelivReasonProviderRateLimit": "其提供商正在限流",
+  "botDelivReasonProviderServer": "无法连接其提供商",
+  "botDelivReasonMissingConfig": "它没有设置模型",
+  "botDelivReasonModelUnavailable": "其模型不可用",
+  "botDelivReasonContextOverflow": "其上下文已满",
+  "botDelivReasonRuntimeOffline": "它已离线",
+  "botDelivReasonQueuedExpired": "它一直没有领取",
+  "botDelivReasonTimeout": "已超时",
+  "botDelivReasonBlocked": "它被阻止了",
+  "botDelivReasonCancelled": "已取消",
+  "botDelivReasonUnknown": "未知错误",
+  "turnFeedSkillsLoaded": "{count, plural, other{已加载 {count} 个技能}}",
+  "turnFeedSkillResourcesRead": "{count, plural, other{已读取 {count} 个技能资源}}",
+  "turnFeedRepeated": "{count, plural, other{{tool} · {count} 次}}",
+  "wsPanelTagSftp": "SFTP",
+  "wsPanelTagServer": "服务器",
+  "wsPanelFilesUnavailable": "文件需要 SSH 配置文件，或服务器可以列出的聊天文件夹。",
+  "wsPanelPickerHint": "在此屏幕上，面板会在聊天上方打开。",
+  "wsPanelNeedsSsh": "需要 SSH 配置文件",
+  "wsPanelNeedsSshOrFolder": "需要 SSH 配置文件或聊天文件夹",
+  "wsPanelNoFolder": "此聊天还没有文件夹",
+  "termUxCopied": "已复制",
+  "termUxCopyScreen": "复制屏幕",
+  "termUxCopyLink": "复制链接",
+  "termUxOpenLink": "打开链接",
+  "termUxJumpToBottom": "跳到底部",
+  "termUxPromptSend": "发送 {answer}",
+  "@termUxPromptSend": {
+    "placeholders": {
+      "answer": {
+        "type": "String"
+      }
+    }
+  },
+  "termUxKeyEscape": "Esc 键",
+  "termUxKeyTab": "Tab 键",
+  "termUxKeyBackTab": "Shift 加 Tab",
+  "termUxKeyControl": "Control 键",
+  "termUxKeyControlNext": "Control 键，仅下一个键",
+  "termUxKeyControlLocked": "Control 键，已锁定",
+  "termUxKeyAlt": "Alt 键",
+  "termUxKeyAltNext": "Alt 键，仅下一个键",
+  "termUxKeyAltLocked": "Alt 键，已锁定",
+  "termUxKeyHome": "Home 键",
+  "termUxKeyEnd": "End 键",
+  "termUxKeyPageUp": "向上翻页",
+  "termUxKeyPageDown": "向下翻页",
+  "termUxKeyBackspace": "退格",
+  "termUxKeyEnter": "回车",
+  "termUxKeySlash": "斜杠",
+  "termUxKeyHyphen": "连字符",
+  "termUxKeyUnderscore": "下划线",
+  "termUxKeyColon": "冒号",
+  "termUxCompose": "撰写",
+  "termUxComposeHint": "消息或命令",
+  "termUxComposeSend": "发送",
+  "termUxComposeHistory": "本次会话已发送",
+  "termUxComposeNotSent": "未发送：连接尚未就绪。文本仍保留在此。",
+  "termUxAttach": "附加",
+  "termUxAttachReadOnly": "此连接为只读：无法上传文件。",
+  "termUxAttachOffline": "请先连接：文件通过此 SSH 连接上传。",
+  "termUxUploading": "正在上传",
+  "termUxUploaded": "已上传",
+  "termUxUploadFailed": "上传失败",
+  "termUxRemoveAttachment": "移除附件",
+  "termUxComposeInsertHint": "长按可插入但不回车",
+  "termUxDictate": "听写",
+  "termUxDictateStop": "停止听写",
+  "termUxDictationUnavailable": "听写当前不可用。",
+  "termUxKeyArrows": "方向键",
+  "termUxKeySuspend": "Control Z，挂起",
+  "termUxKeyClear": "Control L，清屏",
+  "termUxKeyboardShow": "键盘",
+  "termUxKeyboardHide": "隐藏键盘",
+  "termUxKeyPage": "按键，第 {page} 页，共 {count} 页",
+  "@termUxKeyPage": {
+    "placeholders": {
+      "page": {
+        "type": "String"
+      },
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "tg143ComposeDeliveryUncertain": "发送后连接立即断开。重新发送前请检查终端。",
+  "bg143LoopbackHttpsTitle": "无法预览 localhost 上的 HTTPS 页面",
+  "bg143LoopbackHttpsBody": "Android 无法在不降低 TLS 安全性的情况下隔离通过 SSH 进行的 HTTPS 回环转发。请通过 SSH 隧道使用 http://，或使用具有有效证书的主机名。",
+  "bg143LoopbackUnavailableBody": "无法打开预览所需的 SSH 隧道。请重试或检查 SSH 配置。"
 }

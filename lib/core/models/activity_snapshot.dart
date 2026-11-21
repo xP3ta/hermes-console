@@ -215,11 +215,24 @@ String? _detailFile(String value) {
   return _cap(name);
 }
 
-/// Catalogue IDs may be category/name; each segment is still an identifier,
-/// never an absolute path, traversal, free text or a secret.
+/// A skill's namespace: a plugin's (`omh:web-research`) or a category's
+/// (`research:current-news`), as Hermes resolves `namespace:name`
+/// (`agent/skill_utils.py` `is_valid_namespace`).
+final _detailSkillNamespace = RegExp(r'^[a-zA-Z0-9_-]+$');
+
+/// Catalogue IDs may be category/name, and may be qualified by a namespace
+/// (`namespace:name`, or `plugin:namespace:name` as the skills index writes
+/// a plugin's; `tools/skills_tool.py` `_resolve_plugin_skill`). Each segment
+/// is still an identifier, never an absolute path, traversal, free text or a
+/// secret.
 bool _detailSkillId(String value) {
-  final segments = value.split('/');
-  return segments.length <= 2 &&
+  final qualified = value.split(':');
+  final segments = qualified.last.split('/');
+  return qualified.length <= 3 &&
+      qualified
+          .take(qualified.length - 1)
+          .every(_detailSkillNamespace.hasMatch) &&
+      segments.length <= 2 &&
       segments.every(_detailIdentifier.hasMatch) &&
       !_secretLike.hasMatch(value);
 }

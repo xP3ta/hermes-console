@@ -15,9 +15,12 @@ import 'package:flutter/foundation.dart';
 import 'package:xterm/xterm.dart';
 
 import '../utils/utf8_chunks.dart';
+import 'herdr_agents.dart' show herdrShellQuote;
 import 'herdr_status.dart';
+import 'ssh_compose_uploads.dart';
 import 'ssh_manager.dart';
 import 'ssh_session_kind.dart';
+import 'ssh_terminal_input.dart';
 import 'ssh_working_directory.dart';
 
 enum SshSessionPhase { connecting, ready, closed, error }
@@ -40,10 +43,12 @@ enum SshSessionEnd {
 /// in the pty of [session], with the same authenticated [client], so a reader
 /// can open its own `execute` channel. F1 leaves it unset: the Herdr CLI and
 /// socket API must be checked against a real Herdr before anything reads it.
-typedef SshMultiplexerAttached =
-    void Function(SshTerminalSession session, SSHClient client);
+typedef SshMultiplexerAttached = void Function(
+  SshTerminalSession session,
+  SSHClient client,
+);
 
-/// Control character for [data] when the key row's one-shot ctrl is armed:
+/// Control character for [data] when the key row's ctrl is armed:
 /// letters map to ^A..^Z, `@[\]^_` to their C0 codes, space to NUL and `?`
 /// to DEL. Anything else (several characters, escape sequences) passes as is.
 String sshCtrlChord(String data) {
@@ -81,11 +86,32 @@ class SshTerminalSession {
       workingDirectory.value = directory;
     };
     terminal.onTitleChange = (title) {
+      final shown = title.trim();
+      windowTitle.value = shown.isEmpty ? null : shown;
       if (_directoryFromOsc7) return;
       final directory = sshWorkingDirectoryFromTitle(title);
       if (directory != null) workingDirectory.value = directory;
     };
+    phase.addListener(() {
+      if (phase.value == SshSessionPhase.closed ||
+          phase.value == SshSessionPhase.error) {
+        markClosed();
+      }
+    });
   }
+
+  final Completer<void> _closed = Completer<void>();
+
+  /// Completes once this session enters closed/error or its SSH client ends.
+  Future<void> get closedFuture => _closed.future;
+
+  void markClosed() {
+    if (!_closed.isCompleted) _closed.complete();
+  }
+
+  /// The window title the shell last set (`user@host: ~`); the terminal's
+  /// header shows it. Null until it sets one.
+  final ValueNotifier<String?> windowTitle = ValueNotifier<String?>(null);
 
   /// The folder the shell last said it is in; null until it says one.
   final ValueNotifier<String?> workingDirectory = ValueNotifier<String?>(null);
@@ -95,6 +121,15 @@ class SshTerminalSession {
 
   /// Session type resolved when this connection was opened.
   SshSessionKind kind = SshSessionKind.shell;
+
+  // A multiplexer attaches in its own PTY on the same SSH transport. The
+  // login shell keeps its own terminal, input and scrollback underneath.
+  final _attachment = ValueNotifier<SshTerminalSession?>(null);
+  int _attachmentRevision = 0;
+  bool _keepPlainShell = false;
+
+  ValueListenable<SshTerminalSession?> get attachment => _attachment;
+  SshTerminalSession get visibleTerminal => _attachment.value ?? this;
 
   /// Set when [kind] is Herdr or tmux but `command -v` did not find it. The
   /// session stays a plain shell and the UI explains how to install it; the
@@ -110,19 +145,18 @@ class SshTerminalSession {
   /// starts and stops its polling.
   HerdrMonitor? herdr;
 
-  /// One-shot ctrl from the terminal key row: the next input goes through
-  /// [sshCtrlChord] and the modifier clears itself.
+  /// Ctrl from the terminal key row: the next input goes through
+  /// [sshCtrlChord] and the modifier clears itself, unless it was locked
+  /// with a double tap ([modifiers]).
   final ValueNotifier<bool> ctrlArmed = ValueNotifier<bool>(false);
 
-  /// Applies the armed ctrl modifier, if any, to user input.
-  /// Only a single character takes (and clears) it: xterm also sends its
-  /// own replies through the same output (cursor and focus reports, mouse,
-  /// bracketed paste), and Herdr/tmux ask for them often.
-  String applyModifiers(String data) {
-    if (!ctrlArmed.value || data.length != 1) return data;
-    ctrlArmed.value = false;
-    return sshCtrlChord(data);
-  }
+  /// The key row's sticky Ctrl (on [ctrlArmed]) and Alt.
+  late final SshKeyModifiers modifiers = SshKeyModifiers(ctrlArmed: ctrlArmed);
+
+  /// Applies the armed modifiers, if any, to user input (see
+  /// [SshKeyModifiers.apply]: a single character only, never xterm's own
+  /// replies nor a paste).
+  String applyModifiers(String data) => modifiers.apply(data);
 
   /// Shell stdout/stderr listeners. Cancelled on close so a client torn down
   /// without its channel completing cannot keep the terminal referenced.
@@ -144,6 +178,17 @@ class SshTerminalSession {
   bool get isLive =>
       phase.value == SshSessionPhase.ready ||
       phase.value == SshSessionPhase.connecting;
+
+  /// Whether the underlying SSH client transport is already closed.
+  bool get isClientClosed {
+    final c = client;
+    if (c == null) return false;
+    try {
+      return c.isClosed;
+    } on NoSuchMethodError {
+      return false;
+    }
+  }
 }
 
 /// Gestiona sesiones de terminal persistentes, una por instancia.
@@ -171,6 +216,80 @@ class SshSessionService {
   SshMultiplexerAttached? onMultiplexerAttached;
 
   bool get hasActive => _sessions.values.any((s) => s.isLive);
+
+  /// Terminal screens currently visible and in the foreground per connection:
+  /// [closeIdle] spares their sessions only while actively viewed.
+  final Map<String, int> _views = {};
+
+  /// Marks a terminal screen of [connectionId] as actively visible in the
+  /// foreground; pair with [detachView].
+  void attachView(String connectionId) {
+    _views[connectionId] = (_views[connectionId] ?? 0) + 1;
+  }
+
+  /// A terminal screen of [connectionId] closed.
+  void detachView(String connectionId) {
+    final left = (_views[connectionId] ?? 0) - 1;
+    if (left > 0) {
+      _views[connectionId] = left;
+    } else {
+      _views.remove(connectionId);
+    }
+  }
+
+  /// Whether a terminal screen of [connectionId] is open.
+  bool isViewed(String connectionId) => _views.containsKey(connectionId);
+
+  /// Most entries the Compose sheet remembers per connection.
+  static const int composeHistoryLimit = 20;
+
+  /// What the Compose sheet sent per connection, the newest first. In
+  /// memory only, never stored (a command may carry a secret), and
+  /// forgotten when the session is closed.
+  final Map<String, List<String>> _composed = {};
+
+  /// The entries the Compose sheet sent to [connectionId], newest first.
+  List<String> composeHistory(String connectionId) =>
+      List.unmodifiable(_composed[connectionId] ?? const <String>[]);
+
+  /// Compose's draft per connection (text and attachments), in memory.
+  final Map<String, SshComposeDraft> _drafts = {};
+
+  /// The Compose draft of [connectionId]; its attachments go up over SFTP
+  /// on that connection's terminal session ([openSftp]).
+  SshComposeDraft composeDraft(String connectionId) => _drafts.putIfAbsent(
+    connectionId,
+    () => SshComposeDraft(
+      SshComposeUploader(
+        () => openSftp(connectionId),
+        onSessionDone: () => _sessions[connectionId]?.closedFuture,
+      ),
+    ),
+  );
+
+  /// The Compose draft of [connectionId] if one already exists.
+  SshComposeDraft? composeDraftIfPresent(String connectionId) =>
+      _drafts[connectionId];
+
+  /// SFTP on [connectionId]'s live terminal connection (the same SSH
+  /// client, a channel of its own); throws when there is none.
+  Future<SftpClient> openSftp(String connectionId) async {
+    final client = _sessions[connectionId]?.client;
+    if (client == null) throw StateError('No SSH session');
+    return client.sftp();
+  }
+
+  /// Remembers [text] as the newest entry sent to [connectionId].
+  void rememberComposed(String connectionId, String text) {
+    if (text.trim().isEmpty) return;
+    final entries = _composed.putIfAbsent(connectionId, () => <String>[]);
+    entries
+      ..remove(text)
+      ..insert(0, text);
+    if (entries.length > composeHistoryLimit) {
+      entries.removeRange(composeHistoryLimit, entries.length);
+    }
+  }
 
   SshTerminalSession? of(String connectionId) => _sessions[connectionId];
 
@@ -207,17 +326,27 @@ class SshSessionService {
     required Future<bool> Function(SshHostKeyPrompt) onHostKey,
   }) async {
     final existing = _sessions[connectionId];
-    final terminal = existing?.terminal ?? Terminal(maxLines: 10000);
-    final s = SshTerminalSession(connectionId, terminal);
+    final terminal =
+        existing?.terminal ??
+        Terminal(maxLines: 10000, wordSeparators: sshTerminalWordSeparators);
+    final s = SshTerminalSession(connectionId, terminal)
+      .._keepPlainShell = existing?._keepPlainShell ?? false;
     s.phase.value = SshSessionPhase.connecting;
     _sessions[connectionId] = s;
     _refresh();
     SSHClient? candidate;
     try {
-      s.kind = await _ssh.loadSessionKind(connectionId);
+      s.kind = s._keepPlainShell
+          ? SshSessionKind.shell
+          : await _ssh.loadSessionKind(connectionId);
       if (!identical(_sessions[connectionId], s)) return s;
       candidate = await _ssh.connect(connectionId, onHostKey: onHostKey);
       s.client = candidate;
+      try {
+        unawaited(candidate.done.whenComplete(s.markClosed));
+      } on NoSuchMethodError {
+        // Minimal test double without a done future.
+      }
       if (!identical(_sessions[connectionId], s)) {
         candidate.close();
         return s;
@@ -230,10 +359,8 @@ class SshSessionService {
       final probe = s.kind.probeCommand;
       var probed = probe == null ? null : await _probeProgram(candidate, probe);
       final fallback = s.kind.fallbackProbeCommand;
-      var foundByFallback = false;
       if (probe != null && probed == null && fallback != null) {
         probed = await _probeProgram(candidate, fallback);
-        foundByFallback = probed != null;
       }
       final installed = probe == null || probed != null;
       if (!identical(_sessions[connectionId], s)) {
@@ -254,41 +381,18 @@ class SshSessionService {
         candidate.close();
         return s;
       }
-      terminal.onOutput = (data) {
-        s.touch();
-        final input = s.applyModifiers(data);
-        shell.write(Uint8List.fromList(utf8.encode(input)));
-      };
-      terminal.onResize = (w, h, pw, ph) => shell.resizeTerminal(w, h, pw, ph);
-      // One decoder per stream: a character split across two packets comes
-      // out whole, and stdout and stderr never complete each other's.
-      final stdoutText = Utf8ChunkDecoder(terminal.write);
-      final stderrText = Utf8ChunkDecoder(terminal.write);
-      void output(Utf8ChunkDecoder text, Uint8List chunk) {
-        s.touch();
-        text.add(chunk);
-      }
-
-      s._outputSubscriptions
-        ..add(
-          shell.stdout.listen(
-            (d) => output(stdoutText, d),
-            onDone: stdoutText.close,
-          ),
-        )
-        ..add(
-          shell.stderr.listen(
-            (d) => output(stderrText, d),
-            onDone: stderrText.close,
-          ),
-        );
+      _bindTerminal(s, shell, touch: s.touch);
       shell.done.then((_) {
-        s.herdr?.stop();
+        s._attachmentRevision++;
+        _detachTerminal(s);
         // No exit status or signal means the channel was torn down under
         // the shell: the connection dropped rather than the shell exiting.
         s.end ??= shell.exitCode == null && shell.exitSignal == null
             ? SshSessionEnd.connectionLost
             : SshSessionEnd.remoteExit;
+        if (s.end == SshSessionEnd.connectionLost) {
+          _drafts[connectionId]?.recoverUncertainSend();
+        }
         s.phase.value = SshSessionPhase.closed;
         final banner = _ssh.appStrings.i18n1215SshSessionClosedBanner;
         terminal.write('\r\n\x1b[90m$banner\x1b[0m\r\n');
@@ -300,25 +404,28 @@ class SshSessionService {
       onNeedForeground?.call();
       final launch = s.kind.launchCommand;
       if (launch != null && installed) {
-        // Constant command (ssh_session_kind.dart); typed like a user would,
-        // so detaching from Herdr/tmux leaves a normal shell behind.
-        // Found only by the fallback look, the interactive shell may not have
-        // its folder in PATH either: type the path the probe validated.
-        final fallbackPath = foundByFallback
+        // The login-shell probe can see a binary outside the PATH of
+        // the noninteractive SSH command. Use its verified path for Herdr.
+        final herdrPath = s.kind == SshSessionKind.herdr
             ? herdrPathFromProbe(probed ?? '')
             : null;
-        final line = fallbackPath == null ? launch : "'$fallbackPath'";
-        shell.write(Uint8List.fromList(utf8.encode('$line\n')));
-        if (s.kind == SshSessionKind.herdr) {
-          final client = candidate;
-          s.herdr = HerdrMonitor(
-            run: (command) => _runRemote(client, command),
-            herdr: herdrPathFromProbe(probed ?? ''),
-          );
+        final line = herdrPath == null ? launch : "'$herdrPath'";
+        final attached = await attachTerminal(s, s.kind, line);
+        if (attached && s.attachment.value != null) {
+          if (s.kind == SshSessionKind.herdr) {
+            final client = candidate;
+            s.herdr = HerdrMonitor(
+              run: (command) => _runRemote(client, command),
+              herdr: herdrPath,
+            );
+          }
+          onMultiplexerAttached?.call(s, candidate);
+        } else {
+          s.kind = SshSessionKind.shell;
         }
-        onMultiplexerAttached?.call(s, candidate);
       } else if (!installed) {
         s.missingProgram.value = s.kind;
+        s.kind = SshSessionKind.shell;
       }
     } catch (e) {
       candidate?.close();
@@ -329,6 +436,158 @@ class SshSessionService {
       onMaybeRelease?.call();
     }
     return s;
+  }
+
+  void _bindTerminal(
+    SshTerminalSession session,
+    SSHSession shell, {
+    required VoidCallback touch,
+  }) {
+    final terminal = session.terminal;
+    terminal.onOutput = (data) {
+      touch();
+      final safe = sshSanitizeTerminalOutput(data);
+      if (safe.isEmpty) return;
+      final input = session.applyModifiers(safe);
+      shell.write(Uint8List.fromList(utf8.encode(input)));
+    };
+    terminal.onResize = (w, h, pw, ph) => shell.resizeTerminal(w, h, pw, ph);
+    // One decoder per stream: a character split across two packets comes
+    // out whole, and stdout and stderr never complete each other's.
+    final stdoutText = Utf8ChunkDecoder(terminal.write);
+    final stderrText = Utf8ChunkDecoder(terminal.write);
+    void output(Utf8ChunkDecoder text, Uint8List chunk) {
+      touch();
+      text.add(chunk);
+    }
+
+    session._outputSubscriptions
+      ..add(
+        shell.stdout.listen(
+          (d) => output(stdoutText, d),
+          onDone: stdoutText.close,
+        ),
+      )
+      ..add(
+        shell.stderr.listen(
+          (d) => output(stderrText, d),
+          onDone: stderrText.close,
+        ),
+      );
+  }
+
+  /// Open only the chosen multiplexer client. The active shell's stdin
+  /// could belong to any process, so switching must not type into it.
+  Future<bool> attachTerminal(
+    SshTerminalSession session,
+    SshSessionKind kind,
+    String line,
+  ) async {
+    final client = session.client;
+    if (client == null ||
+        session.isClientClosed ||
+        !identical(of(session.connectionId), session) ||
+        session.phase.value != SshSessionPhase.ready ||
+        kind == SshSessionKind.shell ||
+        line.isEmpty ||
+        RegExp(r'[\x00-\x1F\x7F]').hasMatch(line)) {
+      return false;
+    }
+    final revision = ++session._attachmentRevision;
+    final current = session.visibleTerminal.terminal;
+    SSHSession channel;
+    try {
+      final opening = client.execute(
+        '"\${SHELL:-/bin/sh}" -lc ${herdrShellQuote(line)}',
+        pty: SSHPtyConfig(
+          width: current.viewWidth > 0 ? current.viewWidth : 80,
+          height: current.viewHeight > 0 ? current.viewHeight : 24,
+        ),
+      );
+      channel = await opening.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          unawaited(
+            opening.then<void>(
+              (lateChannel) => lateChannel.close(),
+              onError: (Object _) {},
+            ),
+          );
+          throw TimeoutException('SSH terminal channel');
+        },
+      );
+    } on Exception catch (error) {
+      debugPrint('[ssh] terminal attachment failed (${error.runtimeType})');
+      return false;
+    }
+    if (revision != session._attachmentRevision ||
+        !identical(of(session.connectionId), session) ||
+        session.phase.value != SshSessionPhase.ready ||
+        session.isClientClosed) {
+      channel.close();
+      return false;
+    }
+
+    final attached =
+        SshTerminalSession(
+            session.connectionId,
+            Terminal(
+              maxLines: 10000,
+              wordSeparators: sshTerminalWordSeparators,
+            ),
+          )
+          ..client = client
+          ..shell = channel
+          ..kind = kind
+          ..phase.value = SshSessionPhase.ready;
+    _bindTerminal(attached, channel, touch: session.touch);
+    final previous = session._attachment.value;
+    session.herdr?.stop();
+    session._attachment.value = attached;
+    if (previous != null) _closeAttachment(previous);
+
+    void done() {
+      if (!identical(session._attachment.value, attached)) return;
+      // A completed program returns naturally to the shell. Loss of the
+      // transport must still reattach a profile configured to do so.
+      if (channel.exitCode != null || channel.exitSignal != null) {
+        session._keepPlainShell = true;
+        session.kind = SshSessionKind.shell;
+      }
+      _detachTerminal(session);
+    }
+
+    unawaited(
+      channel.done.then<void>((_) => done(), onError: (Object _) => done()),
+    );
+    return true;
+  }
+
+  /// Leave an attached client and keep the original login shell alive. A
+  /// user who goes back to it also stays in it on this terminal's reconnect.
+  void showPlainShell(SshTerminalSession session) {
+    if (!identical(of(session.connectionId), session)) return;
+    session._keepPlainShell = true;
+    session.kind = SshSessionKind.shell;
+    session._attachmentRevision++;
+    _detachTerminal(session);
+  }
+
+  void _detachTerminal(SshTerminalSession session) {
+    final attached = session._attachment.value;
+    session.herdr?.stop();
+    if (attached == null) return;
+    session._attachment.value = null;
+    _closeAttachment(attached);
+  }
+
+  void _closeAttachment(SshTerminalSession session) {
+    session.end = SshSessionEnd.closedByApp;
+    session._cancelOutput();
+    session.terminal.onOutput = null;
+    session.terminal.onResize = null;
+    session.shell?.close();
+    session.phase.value = SshSessionPhase.closed;
   }
 
   /// A probe prints a path: more than this is not one (kept, not read).
@@ -427,21 +686,41 @@ class SshSessionService {
 
   /// Escribe en el shell (p.ej. un comando rápido).
   void send(String connectionId, String data) {
-    final s = _sessions[connectionId];
+    final s = _sessions[connectionId]?.visibleTerminal;
     if (s?.shell == null || s!.phase.value != SshSessionPhase.ready) return;
     s.shell!.write(Uint8List.fromList(utf8.encode(data)));
   }
 
   /// Cierra y olvida la sesión de una instancia.
   void close(String connectionId) {
+    _composed.remove(connectionId);
+    final draft = _drafts.remove(connectionId);
     final s = _sessions.remove(connectionId);
+    final keepClientForCleanup =
+        draft != null &&
+        draft.hasUnsentUploads &&
+        s != null &&
+        s.client != null &&
+        !s.isClientClosed;
     if (s != null) {
       s.end ??= SshSessionEnd.closedByApp;
-      s.herdr?.stop();
+      _detachTerminal(s);
       s._cancelOutput();
       s.shell?.close();
-      s.client?.close();
+      if (!keepClientForCleanup) {
+        s.client?.close();
+      }
       s.phase.value = SshSessionPhase.closed;
+    }
+    if (keepClientForCleanup) {
+      unawaited(
+        draft.cleanupUnsent().whenComplete(() {
+          draft.dispose();
+          s.client?.close();
+        }),
+      );
+    } else {
+      draft?.dispose();
     }
     _refresh();
     onMaybeRelease?.call();
@@ -460,13 +739,16 @@ class SshSessionService {
   /// parada en el prompt no justifica mantener el FGS y la radio despiertos
   /// toda la noche. La UI ya sabe recuperarse: al volver, la pantalla del
   /// terminal muestra "sesión cerrada" con Reconectar (scrollback intacto).
-  /// Devuelve cuántas cerró.
+  /// A session whose terminal is actively visible in the foreground
+  /// ([attachView]) is never closed for being quiet. Devuelve cuántas
+  /// cerró.
   int closeIdle(Duration maxIdle) {
     final now = DateTime.now();
     final idle = _sessions.entries
         .where(
           (e) =>
               e.value.isLive &&
+              !isViewed(e.key) &&
               now.difference(e.value.lastActivityAt) > maxIdle,
         )
         .map((e) => e.key)

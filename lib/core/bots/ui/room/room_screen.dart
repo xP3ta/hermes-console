@@ -16,6 +16,8 @@ import '../../../models/hosted_groups.dart';
 import '../../../services/attachment_uploader.dart';
 import '../../../services/tui_gateway_client.dart'
     show TuiGatewayEvent, TuiGatewayRpcError;
+import '../../../services/turn_outbox_store.dart'
+    show AttachmentOwnershipCoordinator;
 import '../../../theme/app_theme.dart';
 import '../../../utils/plain_preview.dart';
 import '../../../utils/unread_rules.dart';
@@ -49,18 +51,25 @@ import 'room_widgets.dart';
 abstract interface class RoomDraftStore {
   /// [preparedId] is set while the stored text is a send still waiting for
   /// the server's acknowledgement; [preparedText] is the leading part of the
-  /// text that is that send (null: all of it).
+  /// text that is that send (null: all of it). [files] are the composer's
+  /// files, or that send's files while it is bound: their names, sizes,
+  /// ids and private-copy paths, never their bytes.
   Future<RoomDraft> load();
   Future<void> save(
     String text, {
     String? threadId,
     String? preparedId,
     String? preparedText,
+    List<AttachmentDraft> files = const [],
   });
 
   /// Retires the send [preparedId]: only its own text, never what was typed
   /// after it.
   Future<void> clear({required String preparedId});
+
+  /// Deletes the private copies of [files] that no stored draft still
+  /// names (a message that left the outbox).
+  Future<void> retire(List<AttachmentDraft> files);
 }
 
 typedef RoomDraft = ({
@@ -68,6 +77,7 @@ typedef RoomDraft = ({
   String? threadId,
   String? preparedId,
   String? preparedText,
+  List<AttachmentDraft> files,
 });
 
 /// A stored draft bound to a send: [sent] is that send's own text, the
@@ -86,7 +96,30 @@ typedef _HeldDraft = ({
   String sent,
   String? threadId,
   String preparedId,
+  List<AttachmentDraft> files,
 });
+
+/// [pendingAttachmentLimitViolation] with the limits of the room's own
+/// store, which the server refuses past (`gateway/hosted_room_attachments.py`
+/// `MAX_ATTACHMENT_BYTES`, `MAX_MESSAGE_ATTACHMENT_BYTES`).
+PendingAttachmentLimitViolation? roomStoreLimitViolation({
+  required int sizeBytes,
+  required int currentBatchBytes,
+}) {
+  if (sizeBytes <= 0) return PendingAttachmentLimitViolation.invalid;
+  if (sizeBytes > HostedGroupAttachment.maxBytes) {
+    return PendingAttachmentLimitViolation.item;
+  }
+  if (currentBatchBytes + sizeBytes > HostedGroupAttachment.maxMessageBytes) {
+    return PendingAttachmentLimitViolation.batch;
+  }
+  return null;
+}
+
+/// [bytes] as the "too large" wording shows it: the store's limits are
+/// decimal megabytes, the Dashboard's binary ones.
+String _megabytes(int bytes, {required bool store}) =>
+    '${bytes ~/ (store ? 1000000 : 1024 * 1024)} MB';
 
 /// The part of [held] typed after its send, without the separator.
 String _typedAfterSend(_HeldDraft held) {
@@ -150,6 +183,11 @@ class RoomScreen extends StatefulWidget {
   final RoomLocalPrefs prefs;
   final RoomDraftStore? drafts;
   final RoomAttachmentUploader? uploader;
+
+  /// The room's own file store, when the server lists
+  /// `groups.attachment.upload`. Files then go there, as Hermes Desktop
+  /// sends them; [uploader] stays the path for a server without it.
+  final RoomFileStore? fileStore;
   final RoomAttachmentActions? attachmentActions;
   final RoomDictation? dictation;
 
@@ -197,6 +235,7 @@ class RoomScreen extends StatefulWidget {
     this.avatarCache,
     this.drafts,
     this.uploader,
+    this.fileStore,
     this.attachmentActions,
     this.dictation,
     this.displayName,
@@ -304,6 +343,14 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
 
   final List<AttachmentDraft> _attachments = [];
   Future<void> _pasteTail = Future<void>.value();
+
+  /// The server answered that it has no `groups.attachment.upload`
+  /// (-32601): files take the Dashboard path for the rest of the visit.
+  bool _storeMissing = false;
+  bool get _storeUploads => widget.fileStore != null && !_storeMissing;
+
+  /// The composer's files came from the stored draft and were not touched.
+  bool _restoredDraftFiles = false;
   final Set<String> _answering = {};
 
   /// Prompts open in members' sessions (latest probe), and the ones being
@@ -404,6 +451,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _restoringDraft = true;
       _composer.clear();
       _restoringDraft = false;
+      if (_restoredDraftFiles) {
+        _restoredDraftFiles = false;
+        setState(_attachments.clear);
+      }
     }
   }
 
@@ -810,13 +861,16 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       // user just left), so it stays out of the composer until the room
       // proves the send did not land.
       final prepared = draft.preparedId;
-      if (prepared != null && draft.text.isNotEmpty) {
+      // A send of files alone is held too: it may have landed already.
+      if (prepared != null &&
+          (draft.text.isNotEmpty || draft.files.isNotEmpty)) {
         _heldDisclosureTicket = ticket;
         _heldDraft = (
           text: draft.text,
           sent: draft.preparedText ?? draft.text,
           threadId: draft.threadId,
           preparedId: prepared,
+          files: draft.files,
         );
         await _settleHeldDraft();
         return;
@@ -827,6 +881,14 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _composer.text = draft.text;
       _restoredDraftText = draft.text;
       _restoringDraft = false;
+      if (draft.files.isNotEmpty) {
+        _restoredDraftFiles = true;
+        setState(() {
+          _attachments
+            ..clear()
+            ..addAll(draft.files);
+        });
+      }
     } catch (_) {
       // Never overwrite an unreadable draft.
     } finally {
@@ -923,6 +985,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             threadId: held.threadId,
             preparedId: held.preparedId,
             preparedText: held.sent,
+            files: held.files,
           )
           .then<void>((_) {}, onError: (Object _) {}),
     );
@@ -980,7 +1043,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       if (typed != null && typed.trim().isNotEmpty) {
         unawaited(
           store
-              .save('${held.text}\n$typed', threadId: held.threadId)
+              .save(
+                '${held.text}\n$typed',
+                threadId: held.threadId,
+                files: held.files,
+              )
               .then<void>((_) {}, onError: (Object _) {}),
         );
       }
@@ -991,8 +1058,19 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _threadId ??= held.threadId;
     _composer.text = typed.trim().isEmpty ? held.text : '${held.text}\n$typed';
     _restoringDraft = false;
+    // The unsent message's files come back with its text.
+    final picked = _attachments.isNotEmpty;
+    if (held.files.isNotEmpty) {
+      setState(() {
+        for (final file in held.files) {
+          if (!_attachments.any((a) => a.localId == file.localId)) {
+            _attachments.add(file);
+          }
+        }
+      });
+    }
     // The stored slot may hold newer text now; keep both in the store.
-    if (typed.trim().isNotEmpty || _sentWhileHeld) {
+    if (typed.trim().isNotEmpty || _sentWhileHeld || picked) {
       _draftDirty = true;
       _flushDraft();
     }
@@ -1011,9 +1089,15 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final store = widget.drafts;
     // Never overwrite a held draft before it is settled.
     if (!_draftDirty || store == null || _heldDraft != null) return;
+    // The composer's files are stored with its text: a file restored from
+    // the draft keeps its private copy until it is sent or removed.
     unawaited(
       store
-          .save(_composer.text, threadId: _threadId)
+          .save(
+            _composer.text,
+            threadId: _threadId,
+            files: List.of(_attachments),
+          )
           .then<void>((_) {}, onError: (Object _) {}),
     );
   }
@@ -1034,6 +1118,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       unawaited(_settleHeldDraft());
     }
     _flushDraft();
+    // Failed messages are not sent after the screen closes: their files
+    // stay only where a stored draft still names them.
+    for (final message in _outbox) {
+      if (message.failed) _releaseFiles(message);
+    }
     _markSeen();
     _composer.removeListener(_onComposerChanged);
     _composer.dispose();
@@ -1085,6 +1174,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (landed.isEmpty) return;
     for (final m in landed) {
       _outbox.remove(m);
+      _releaseFiles(m);
       unawaited(
         widget.drafts
                 ?.clear(preparedId: m.attempt.clientEventId)
@@ -1448,6 +1538,16 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
 
   RoomAttachBlock get _attachBlock {
     if (!widget.capabilities.canSend) return RoomAttachBlock.readOnly;
+    // Desktop offers the room's own store on the method list alone
+    // (`canonical-group-workspace.tsx`, `uploads`), also when members run
+    // on another connection: the server then fails such a member's turn
+    // visibly (`attachments_unsupported_on_route`).
+    if (_storeUploads) return RoomAttachBlock.none;
+    return _dashboardBlock;
+  }
+
+  /// The Dashboard path's own gate (a server without the room store).
+  RoomAttachBlock get _dashboardBlock {
     if (widget.uploader == null) return RoomAttachBlock.noUploader;
     // G1 interim: the staged path is only readable by members running on
     // the room's own gateway.
@@ -1481,6 +1581,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       ),
       text: text,
       attachments: List.unmodifiable(drafts),
+      // Its private copies outlive later draft saves until it leaves the
+      // outbox (the chat composer's `retainProducer` path).
+      owner: AttachmentOwnershipCoordinator.retainProducer(drafts),
     );
     // Until the server acknowledges it, the sent text stays in the stored
     // draft bound to this attempt; the acknowledgement retires exactly it.
@@ -1493,10 +1596,12 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 raw,
                 threadId: thread,
                 preparedId: message.attempt.clientEventId,
+                files: drafts,
               )
               .then<void>((_) {}, onError: (Object _) {}) ??
           Future<void>.value(),
     );
+    _restoredDraftFiles = false;
     setState(() {
       _outbox.add(message);
       _outboxVersion++;
@@ -1553,6 +1658,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 Future<void>.value(),
           );
           _outbox.remove(message);
+          _releaseFiles(message);
           _outboxVersion++;
           if (!mounted) continue;
           _apply(result);
@@ -1562,6 +1668,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           final from = _outbox.indexOf(message);
           for (final m in _outbox.skip(from < 0 ? 0 : from)) {
             m.failed = true;
+            if (!mounted) _releaseFiles(m);
           }
           _outboxVersion++;
           if (mounted) setState(() {});
@@ -1572,9 +1679,53 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// [message] left the outbox: the private copies of its files are
+  /// deleted unless a stored draft still names them.
+  void _releaseFiles(_OutgoingMessage message) {
+    final owner = message.owner;
+    if (owner == null) return;
+    message.owner = null;
+    final store = widget.drafts;
+    Future<void> retire(List<AttachmentDraft> files) async {
+      if (store != null) return store.retire(files);
+      for (final file in files) {
+        await AttachmentUploader.deletePrivateDraftCopy(file);
+      }
+    }
+
+    final released = AttachmentOwnershipCoordinator.releaseProducer(
+      owner,
+      retire,
+    );
+    unawaited(released.then<void>((_) {}, onError: (Object _) {}));
+  }
+
   Future<HostedGroupWorkspaceReadback> _deliver(
     _OutgoingMessage message,
   ) async {
+    final store = widget.fileStore;
+    if (message.attachments.isNotEmpty && store != null && !_storeMissing) {
+      final manifest = await _uploadToStore(store, message);
+      if (manifest != null) {
+        return store.send(
+          _room,
+          text: message.text,
+          attachments: manifest,
+          attempt: message.attempt,
+        );
+      }
+      // No `groups.attachment.upload` on this server after all: the
+      // Dashboard path, where its gate allows it.
+      if (_dashboardBlock == RoomAttachBlock.crossGateway) {
+        if (mounted) {
+          _notice(
+            Strings.of(context).roomAttachCrossGateway,
+            kind: HermesNoticeKind.warning,
+          );
+        }
+        throw StateError('attachment upload failed');
+      }
+    }
     final refs = <RoomAttachmentRef>[];
     for (final draft in message.attachments) {
       final path = await widget.uploader?.upload(draft);
@@ -1589,6 +1740,48 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       text: appendRoomAttachmentSuffix(message.text, refs),
       attempt: message.attempt,
     );
+  }
+
+  /// Keeps the files of [message] in the room's own store, in order, and
+  /// returns their manifest. A file is uploaded once per message: a retry
+  /// sends only what has no receipt yet, and the upload id is the file's
+  /// stable draft id, so the server answers a repeated upload (a lost
+  /// reply, a restart) with the same stored row. Null when the server has
+  /// no `groups.attachment.upload` (-32601).
+  Future<List<HostedGroupAttachment>?> _uploadToStore(
+    RoomFileStore store,
+    _OutgoingMessage message,
+  ) async {
+    for (final draft in message.attachments) {
+      if (message.uploaded.containsKey(draft.localId)) continue;
+      final mime = draft.mimeType.trim().isEmpty
+          ? 'application/octet-stream'
+          : draft.mimeType.trim().toLowerCase();
+      try {
+        final bytes = await File(draft.localPath).readAsBytes();
+        message.uploaded[draft.localId] = await store.upload(
+          _room,
+          uploadId: draft.localId,
+          kind: roomStoreKind(mime),
+          name: draft.name,
+          mime: mime,
+          bytes: bytes,
+        );
+      } catch (error) {
+        if (error is TuiGatewayRpcError && error.code == -32601) {
+          _storeMissing = true;
+          message.uploaded.clear();
+          if (mounted) setState(() {});
+          return null;
+        }
+        // Never sent without its file: the message stays failed.
+        if (mounted) _notice(Strings.of(context).roomAttachFailed(draft.name));
+        rethrow;
+      }
+    }
+    return [
+      for (final draft in message.attachments) message.uploaded[draft.localId]!,
+    ];
   }
 
   /// Local bubbles still to show: an attempt whose durable event is already
@@ -1647,10 +1840,18 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       }
       // Same caps as the main chat (8 MB per file, 24 MB per message), but
       // every room file is uploaded, never embedded as text: a large .html
-      // or .md must not hit the 256 KB inline-text cap and vanish.
+      // or .md must not hit the 256 KB inline-text cap and vanish. The
+      // room's own store has its own caps (15 MB per file, 25 MB and 8
+      // files per message).
+      final store = _storeUploads;
+      final itemLimit = store
+          ? HostedGroupAttachment.maxBytes
+          : AttachmentUploader.maxBytes;
       var batchBytes = _attachments.fold<int>(0, (sum, a) => sum + a.sizeBytes);
+      var count = _attachments.length;
       int? tooBig;
       var batchFull = false;
+      var countFull = false;
       var unreadable = false;
       for (final f in picked) {
         final path = f.path;
@@ -1660,16 +1861,26 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         } catch (_) {
           size = 0;
         }
-        switch (pendingAttachmentLimitViolation(
-          sizeBytes: size,
-          itemLimit: AttachmentUploader.maxBytes,
-          currentBatchBytes: batchBytes,
-        )) {
+        if (store && count >= HostedGroupAttachment.maxPerMessage) {
+          countFull = true;
+          continue;
+        }
+        final violation = store
+            ? roomStoreLimitViolation(
+                sizeBytes: size,
+                currentBatchBytes: batchBytes,
+              )
+            : pendingAttachmentLimitViolation(
+                sizeBytes: size,
+                itemLimit: AttachmentUploader.maxBytes,
+                currentBatchBytes: batchBytes,
+              );
+        switch (violation) {
           case PendingAttachmentLimitViolation.invalid:
             unreadable = true;
             continue;
           case PendingAttachmentLimitViolation.item:
-            tooBig = AttachmentUploader.maxBytes;
+            tooBig = itemLimit;
             continue;
           case PendingAttachmentLimitViolation.batch:
             batchFull = true;
@@ -1686,7 +1897,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             sizeBytes: size,
             localPath: path!,
           ),
-          itemLimit: AttachmentUploader.maxBytes,
+          itemLimit: itemLimit,
         );
         if (draft == null) {
           unreadable = true;
@@ -1697,7 +1908,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           continue;
         }
         batchBytes += draft.sizeBytes;
+        count++;
         setState(() => _attachments.add(draft));
+        _onComposerChanged();
       }
       if (!mounted) return;
       final s = Strings.of(context);
@@ -1708,14 +1921,24 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         );
       } else if (tooBig != null) {
         _notice(
-          s.chaFileTooBig('${tooBig ~/ (1024 * 1024)} MB'),
+          s.chaFileTooBig(_megabytes(tooBig, store: store)),
           kind: HermesNoticeKind.warning,
         );
       } else if (batchFull) {
         _notice(
           s.chaAttachmentBatchTooBig(
-            '${AttachmentUploader.maxBatchBytes ~/ (1024 * 1024)} MB',
+            _megabytes(
+              store
+                  ? HostedGroupAttachment.maxMessageBytes
+                  : AttachmentUploader.maxBatchBytes,
+              store: store,
+            ),
           ),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (countFull) {
+        _notice(
+          s.roomFilesCountLimit(HostedGroupAttachment.maxPerMessage),
           kind: HermesNoticeKind.warning,
         );
       } else if (unreadable) {
@@ -1752,7 +1975,16 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         _notice(s.roomAttachUnavailable, kind: HermesNoticeKind.warning);
         return;
     }
-    if (composerPasteRejection(content, pending: _attachments) != null) {
+    if (_storeUploads &&
+        _attachments.length >= HostedGroupAttachment.maxPerMessage) {
+      _notice(
+        s.roomFilesCountLimit(HostedGroupAttachment.maxPerMessage),
+        kind: HermesNoticeKind.warning,
+      );
+      return;
+    }
+    if (composerPasteRejection(content, pending: _attachments) != null ||
+        _storeRefuses(content.data?.length ?? 0)) {
       _notice(s.chaAttachmentPreparationFailed);
       return;
     }
@@ -1770,9 +2002,21 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         return;
       }
       setState(() => _attachments.add(draft));
+      _onComposerChanged();
     } catch (_) {
       if (mounted) _notice(s.chaAttachmentPreparationFailed);
     }
+  }
+
+  /// Whether a pasted file of [size] bytes breaks the room store's limits.
+  bool _storeRefuses(int size) {
+    if (!_storeUploads) return false;
+    final batch = _attachments.fold<int>(0, (sum, a) => sum + a.sizeBytes);
+    final violation = roomStoreLimitViolation(
+      sizeBytes: size,
+      currentBatchBytes: batch,
+    );
+    return violation != null;
   }
 
   static String _mime(String name, AttachmentType type) {
@@ -2609,8 +2853,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           onContentInserted: (content) =>
               unawaited(_insertKeyboardContent(content)),
           attachments: _attachments,
-          onRemoveAttachment: (id) =>
-              setState(() => _attachments.removeWhere((a) => a.localId == id)),
+          onRemoveAttachment: (id) {
+            setState(() => _attachments.removeWhere((a) => a.localId == id));
+            _onComposerChanged();
+          },
           sendEnabled: hasContent,
           palette: _palette(s),
           reduceMotion: MediaQuery.maybeDisableAnimationsOf(context) ?? false,
@@ -3758,9 +4004,18 @@ final class _OutgoingMessage {
   final List<AttachmentDraft> attachments;
   bool failed = false;
 
+  /// Receipts of the files already kept in the room's store, by draft id:
+  /// a retry never uploads them again.
+  final Map<String, HostedGroupAttachment> uploaded = {};
+
+  /// Retention of [attachments]' private copies while the message is in
+  /// the outbox (`AttachmentOwnershipCoordinator.retainProducer`).
+  int? owner;
+
   _OutgoingMessage({
     required this.attempt,
     required this.text,
     required this.attachments,
+    this.owner,
   });
 }

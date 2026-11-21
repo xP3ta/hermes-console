@@ -52,6 +52,7 @@ import 'gateway_manager_screen.dart';
 import 'instance_edit_screen.dart';
 import 'models_screen.dart';
 import 'messaging_pairing_screen.dart';
+import 'messaging_platforms_screen.dart';
 import 'permissions_screen.dart';
 import 'server_check_screen.dart';
 import 'vault_screen.dart';
@@ -609,9 +610,28 @@ List<Widget> settingsSectionRows(
               ),
             ),
           ),
-          // Desktop's Messaging page, pending and approved users of each
-          // platform: who may message the bot of the profile these Settings
-          // show.
+          // Desktop's Messaging page: the platforms the bot of the profile
+          // these Settings show can be reached on, their setup, and who may
+          // message it on each.
+          HermesNavRow(
+            key: const ValueKey('settings-messaging'),
+            icon: HIcons.forum_outlined,
+            title: Strings.of(context).msgPlatTitle,
+            subtitle: Strings.of(context).msgPlatSubtitle,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MessagingPlatformsScreen(
+                  connection: conn,
+                  profile: Session.profileOwner(
+                    connManager.activeProfileFor(conn.id),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // The same pending and approved users, every platform on one
+          // page.
           HermesNavRow(
             key: const ValueKey('settings-messaging-pairing'),
             icon: HIcons.group_add_outlined,

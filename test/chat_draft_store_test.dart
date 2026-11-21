@@ -14,12 +14,14 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 
 const _maxLocalTranscriptMessages = 1000;
@@ -65,6 +67,8 @@ ApiClient _restOnlyLocalApi(SavedConnection connection, List<Uri> requests) =>
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secureStore = <String, String>{};
+  // Drafts and transcripts are sealed files; their values by key.
+  final sealed = SealedValues(secureStore);
   var readAllCalls = 0;
 
   setUp(() {
@@ -102,17 +106,23 @@ void main() {
       'what an older version stored, and by name from then on', () async {
     final prefs = await SharedPreferences.getInstance();
     final store = ChatDraftStore(prefs);
-    // A draft stored by a version that kept no index, next to megabytes of
-    // other secrets a draft list has no business decrypting.
-    await ChatDraftStore(
-      prefs,
-    ).save('conn-idx', 'session-old', 'old draft', const []);
-    expect(secureStore.containsKey('chat_draft_index_v1'), isFalse);
+    // A draft stored by a version that kept drafts in secure storage and
+    // no index, next to megabytes of other secrets a draft list has no
+    // business decrypting.
+    final oldKey = ChatDraftStore.keyForTesting('conn-idx', 'session-old');
+    secureStore[oldKey] = jsonEncode({
+      'savedAt': DateTime.now().millisecondsSinceEpoch,
+      'text': 'old draft',
+      'attachments': const <Object>[],
+    });
     secureStore['cold_start_tail.unrelated'] = 'x' * 4096;
 
     final first = await store.listForConnection('conn-idx');
     expect(first.map((entry) => entry.sessionId), ['session-old']);
     expect(readAllCalls, 1);
+    // Moved into its file on that first read.
+    expect(secureStore.containsKey(oldKey), isFalse);
+    expect(jsonDecode(sealed[oldKey]!)['text'], 'old draft');
 
     await store.save('conn-idx', 'session-new', 'new draft', const []);
     await store.save('conn-other', 'session-else', 'elsewhere', const []);
@@ -459,7 +469,8 @@ void main() {
       prefs.getKeys().where((key) => key.startsWith('chat_draft_')),
       isEmpty,
     );
-    expect(secureStore.keys.single, startsWith('chat_draft_v3.'));
+    expect(secureStore.keys, [SealedLocalFiles.keyKey]);
+    expect(sealed.keys.single, startsWith('chat_draft_v3.'));
 
     await store.clear('conn-a', 'session-a');
     expect((await store.load('conn-a', 'session-a')).text, isEmpty);
@@ -672,34 +683,15 @@ void main() {
     () async {
       final writeStarted = Completer<void>();
       final releaseWrite = Completer<void>();
-      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(
-            const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
-            (call) async {
-              final args =
-                  (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
-              switch (call.method) {
-                case 'write':
-                  final value = args['value'] as String;
-                  if (value.contains('autosave anterior')) {
-                    if (!writeStarted.isCompleted) writeStarted.complete();
-                    await releaseWrite.future;
-                  }
-                  secureStore[args['key'] as String] = value;
-                  return null;
-                case 'read':
-                  return secureStore[args['key'] as String];
-                case 'delete':
-                  secureStore.remove(args['key'] as String);
-                  return null;
-                case 'readAll':
-                  return Map<String, String>.from(secureStore);
-                case 'containsKey':
-                  return secureStore.containsKey(args['key'] as String);
-              }
-              return null;
-            },
-          );
+      // The draft is a sealed file: the autosave's write is held there.
+      final files = MemorySealedFileIo.of(SealedLocalFiles.drafts)
+        ..resetHooks();
+      addTearDown(files.resetHooks);
+      files.beforeWrite = (_) async {
+        if (writeStarted.isCompleted) return;
+        writeStarted.complete();
+        await releaseWrite.future;
+      };
       final store = ChatDraftStore(await SharedPreferences.getInstance());
 
       final staleSave = store.save(
@@ -720,7 +712,7 @@ void main() {
         isEmpty,
       );
       expect(
-        secureStore.containsKey(
+        sealed.containsKey(
           ChatDraftStore.keyForTesting('conn-ordered', 'session-ordered'),
         ),
         isFalse,
@@ -900,38 +892,22 @@ void main() {
       final releaseOutboxWrite = Completer<void>();
       final draftKeyDeleted = Completer<void>();
       final draftCopyDeleted = Completer<void>();
-      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(
-            const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
-            (call) async {
-              final args =
-                  (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
-              switch (call.method) {
-                case 'write':
-                  final value = args['value'] as String;
-                  if (!outboxWriteStarted.isCompleted &&
-                      args['key'] == 'chat_turn_outbox_v1' &&
-                      value.contains('turn-adversarial-live-race')) {
-                    outboxWriteStarted.complete();
-                    await releaseOutboxWrite.future;
-                  }
-                  secureStore[args['key'] as String] = value;
-                  return null;
-                case 'read':
-                  return secureStore[args['key'] as String];
-                case 'delete':
-                  final key = args['key'] as String;
-                  secureStore.remove(key);
-                  if (key.startsWith('chat_draft_v3.')) {
-                    draftKeyDeleted.complete();
-                  }
-                  return null;
-                case 'readAll':
-                  return Map<String, String>.from(secureStore);
-              }
-              return null;
-            },
-          );
+      // The outbox and the draft are sealed files: the outbox write is held
+      // there, and the draft's deletion is seen there.
+      final outboxFiles = MemorySealedFileIo.of(SealedLocalFiles.outbox)
+        ..resetHooks();
+      final draftFiles = MemorySealedFileIo.of(SealedLocalFiles.drafts)
+        ..resetHooks();
+      addTearDown(outboxFiles.resetHooks);
+      addTearDown(draftFiles.resetHooks);
+      outboxFiles.beforeWrite = (_) async {
+        if (outboxWriteStarted.isCompleted) return;
+        outboxWriteStarted.complete();
+        await releaseOutboxWrite.future;
+      };
+      draftFiles.beforeDelete = (_) async {
+        if (!draftKeyDeleted.isCompleted) draftKeyDeleted.complete();
+      };
       final prefs = await SharedPreferences.getInstance();
       final drafts = ChatDraftStore(
         prefs,
@@ -1401,7 +1377,7 @@ void main() {
           sessionId,
           profile: owner,
         );
-        expect(secureStore.containsKey(key), isTrue);
+        expect(sealed.containsKey(key), isTrue);
         expect(
           (await store.load('conn-owned', sessionId, profile: owner)).text,
           text,
@@ -1427,7 +1403,7 @@ void main() {
 
     expect(restored.text, isEmpty);
     expect(
-      secureStore[ChatDraftStore.keyForTesting('conn-legacy', 'mobile-legacy')],
+      sealed[ChatDraftStore.keyForTesting('conn-legacy', 'mobile-legacy')],
       isNull,
     );
     expect(secureStore.containsKey(legacyKey), isTrue);
@@ -1448,7 +1424,7 @@ void main() {
     expect(entries, isEmpty);
     expect(secureStore[ambiguousKey], raw);
     expect(
-      secureStore[ChatDraftStore.keyForTesting('conn', 'a_session')],
+      sealed[ChatDraftStore.keyForTesting('conn', 'a_session')],
       isNull,
     );
   });
@@ -1510,7 +1486,7 @@ void main() {
     expect(room.text, isEmpty);
     expect(bot.text, isEmpty);
     expect(
-      secureStore[ChatDraftStore.keyForTesting(
+      sealed[ChatDraftStore.keyForTesting(
         'conn-legacy',
         'mob-room-room-1',
         profile: 'manager',
@@ -1518,7 +1494,7 @@ void main() {
       isNull,
     );
     expect(
-      secureStore[ChatDraftStore.keyForTesting(
+      sealed[ChatDraftStore.keyForTesting(
         'conn-legacy',
         'mob-bot-research',
         profile: 'research',
@@ -1542,7 +1518,7 @@ void main() {
     expect(restored.text, isEmpty);
     expect(prefs.getString('chat_draft_v1_conn-a_session-a'), isNotNull);
     expect(
-      secureStore[ChatDraftStore.keyForTesting('conn-a', 'session-a')],
+      sealed[ChatDraftStore.keyForTesting('conn-a', 'session-a')],
       isNull,
     );
   });
@@ -1570,7 +1546,7 @@ void main() {
       expect(restored.text, isEmpty);
       expect(prefs.getString('chat_draft_v1_conn-a_session-a'), raw);
       expect(
-        secureStore[ChatDraftStore.keyForTesting(
+        sealed[ChatDraftStore.keyForTesting(
           'conn-a',
           'session-a',
           profile: 'manager',
@@ -1923,7 +1899,7 @@ void main() {
 
       expect(removed, 2);
       expect(
-        secureStore.keys.where(
+        sealed.keys.where(
           (key) =>
               key.startsWith('chat_draft_v3.') &&
               key != ChatDraftStore.keyForTesting('conn-b', 'session-a'),
@@ -1931,7 +1907,7 @@ void main() {
         isEmpty,
       );
       expect(
-        secureStore[ChatDraftStore.keyForTesting('conn-b', 'session-a')],
+        sealed[ChatDraftStore.keyForTesting('conn-b', 'session-a')],
         isNotNull,
       );
       expect(prefs.getString('chat_draft_v1_conn-a_legacy'), 'legacy');
@@ -1958,7 +1934,7 @@ void main() {
 
       expect(removed, 1);
       expect(
-        secureStore[ChatDraftStore.keyForTesting('conn', 'owned')],
+        sealed[ChatDraftStore.keyForTesting('conn', 'owned')],
         isNull,
       );
       expect(secureStore[v2Foreign], raw);
@@ -2031,7 +2007,7 @@ void main() {
       expect(restored.last['content'], 'mensaje 1050');
       expect(
         utf8
-            .encode(secureStore[_transcriptKey('conn-a', 'session-bounded')]!)
+            .encode(sealed[_transcriptKey('conn-a', 'session-bounded')]!)
             .length,
         lessThanOrEqualTo(_maxLocalTranscriptEncodedBytes),
       );
@@ -2102,7 +2078,7 @@ void main() {
     expect(chat.hasEarlierMessages, isFalse);
 
     final envelope =
-        jsonDecode(secureStore[_transcriptKey('conn-count', 'session-count')]!)
+        jsonDecode(sealed[_transcriptKey('conn-count', 'session-count')]!)
             as Map<String, dynamic>;
     expect(envelope['older_history_truncated'], isFalse);
   });
@@ -2142,7 +2118,7 @@ void main() {
     expect(reopened.messages.last['content'], 'mensaje 1050');
     final envelope =
         jsonDecode(
-              secureStore[_transcriptKey(
+              sealed[_transcriptKey(
                 'conn-count-cap',
                 'session-count-cap',
               )]!,
@@ -2225,7 +2201,7 @@ void main() {
     expect(reopened.messages.last['content'], startsWith('mensaje-8:'));
     expect(
       utf8
-          .encode(secureStore[_transcriptKey('conn-bytes', 'session-bytes')]!)
+          .encode(sealed[_transcriptKey('conn-bytes', 'session-bytes')]!)
           .length,
       lessThanOrEqualTo(_maxLocalTranscriptEncodedBytes),
     );
@@ -2251,7 +2227,7 @@ void main() {
       stopwatch.stop();
       final encodedBytes = utf8
           .encode(
-            secureStore[_transcriptKey('conn-measure', 'session-measure')]!,
+            sealed[_transcriptKey('conn-measure', 'session-measure')]!,
           )
           .length;
       debugPrint(
@@ -2363,7 +2339,7 @@ void main() {
           'reasoning': '$commentary\n\n$analysis',
         },
       ]);
-      final raw = secureStore[_transcriptKey('conn-codex', 'session-sidecar')]!;
+      final raw = sealed[_transcriptKey('conn-codex', 'session-sidecar')]!;
       expect(raw, contains(commentary));
       expect(raw, contains(analysis));
       expect(raw, contains(reasoningOnly));
@@ -2398,7 +2374,7 @@ void main() {
       );
 
       final raw =
-          secureStore[_transcriptKey('conn-private', 'session-classified')]!;
+          sealed[_transcriptKey('conn-private', 'session-classified')]!;
       final restored = await LocalTranscriptStore.load(
         'conn-private',
         'session-classified',
@@ -2694,14 +2670,14 @@ void main() {
       isEmpty,
     );
     expect(
-      secureStore.keys.where(
+      [...secureStore.keys, ...sealed.keys].where(
         (key) => key.startsWith(
           'hermes.transcript.v3.${_hexTranscriptScope('conn-a')}.',
         ),
       ),
       isEmpty,
     );
-    expect(secureStore[_transcriptKey('conn-b', 'session-a')], isNotNull);
+    expect(sealed[_transcriptKey('conn-b', 'session-a')], isNotNull);
     expect(
       prefs.getString('local_transcript_conn-a_$_legacyTranscriptSession'),
       isNotNull,

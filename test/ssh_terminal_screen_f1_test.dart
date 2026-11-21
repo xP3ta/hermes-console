@@ -4,6 +4,7 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/floating.dart';
 import 'package:hermes_android/core/screens/ssh_terminal_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -28,13 +29,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xterm/xterm.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+
 import 'package:hermes_android/core/design/hicons.dart';
 
-typedef _OnConnect =
-    Future<SshTerminalSession> Function(
-      int attempt,
-      Future<bool> Function(SshHostKeyPrompt) onHostKey,
-    );
+typedef _OnConnect = Future<SshTerminalSession> Function(
+  int attempt,
+  Future<bool> Function(SshHostKeyPrompt) onHostKey,
+);
 
 /// Session service without sockets: the test decides what every connect
 /// returns and sees every host-key decision.
@@ -79,6 +80,64 @@ class _FakeSessions extends SshSessionService {
   }
 }
 
+// Used by the session switch test: listings are empty, attachments stay open
+// until the app leaves the PTY.
+class _SwitchChannel implements SSHSession {
+  _SwitchChannel({required this.pty});
+
+  final bool pty;
+  final _done = Completer<void>();
+  bool closed = false;
+
+  @override
+  Stream<Uint8List> get stdout => const Stream.empty();
+
+  @override
+  Stream<Uint8List> get stderr => const Stream.empty();
+
+  @override
+  Future<void> get done => pty ? _done.future : Future.value();
+
+  @override
+  int? get exitCode => pty ? null : 127;
+
+  @override
+  SSHSessionExitSignal? get exitSignal => null;
+
+  @override
+  void close() {
+    closed = true;
+    if (!_done.isCompleted) _done.complete();
+  }
+
+  @override
+  void resizeTerminal(
+    int width,
+    int height, [
+    int pixelWidth = 0,
+    int pixelHeight = 0,
+  ]) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _SwitchClient implements SSHClient {
+  @override
+  bool get isClosed => false;
+
+  @override
+  Future<SSHSession> execute(
+    String command, {
+    SSHPtyConfig? pty,
+    SSHX11Config? x11,
+    Map<String, String>? environment,
+  }) async => _SwitchChannel(pty: pty != null);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 const _connection = 'ssh-f1';
 
 class _Harness {
@@ -113,6 +172,7 @@ Future<_Harness> _open(
   ChatWorkspaceController? workspace,
   ValueNotifier<ChatWorkspaceToolbar>? paneToolbar,
   Widget Function(SavedConnection connection)? route,
+  SSHClient? client,
 }) async {
   final prefs = await SharedPreferences.getInstance();
   final manager = await ConnectionManager.create(prefs);
@@ -131,7 +191,7 @@ Future<_Harness> _open(
   final sent = <String>[];
   terminal.onOutput = sent.add;
   final harness = _Harness(sessions, terminal, sent);
-  sessions.live = harness.session(kind: kind);
+  sessions.live = harness.session(kind: kind)..client = client;
   final activeChats = ActiveChatService(
     compressionRestoreStore: testCompressionRestoreStore(),
   );
@@ -272,6 +332,13 @@ void main() {
     expect(find.byKey(const ValueKey('ssh-key-bar')), findsOneWidget);
     expect(_fontSize(tester), SshTerminalScreen.fontSize);
     expect(find.bySemanticsLabel('Expand terminal'), findsOneWidget);
+    expect(
+      tester
+          .getRect(find.byKey(_expand))
+          .overlaps(tester.getRect(find.byType(TerminalView))),
+      isFalse,
+      reason: 'Expand control must not overlap terminal text',
+    );
 
     await tester.tap(find.byKey(_expand));
     await tester.pump(const Duration(milliseconds: 300));
@@ -281,6 +348,13 @@ void main() {
     expect(find.byKey(const ValueKey('ssh-key-bar')), findsOneWidget);
     expect(_fontSize(tester), SshTerminalScreen.expandedFontSize);
     expect(find.bySemanticsLabel('Shrink terminal'), findsOneWidget);
+    expect(
+      tester
+          .getRect(find.byKey(_expand))
+          .overlaps(tester.getRect(find.byType(TerminalView))),
+      isFalse,
+      reason: 'Shrink control must not overlap terminal text',
+    );
     expect(
       identical(tester.state(find.byType(TerminalView)), terminalState),
       isTrue,
@@ -366,6 +440,62 @@ void main() {
     await _advance(tester, const Duration(seconds: 4));
     expect(find.byKey(_bar), findsNothing);
     expect(h.sessions.connects, 2);
+  });
+
+  testWidgets('the terminal Back and Sessions return to the same shell', (
+    tester,
+  ) async {
+    final h = await _open(tester, client: _SwitchClient());
+    final root = h.sessions.live!;
+    Future<_SwitchChannel> openHerdr() async {
+      expect(
+        await h.sessions.attachTerminal(root, SshSessionKind.herdr, 'herdr'),
+        isTrue,
+      );
+      await tester.pump();
+      expect(
+        tester.widget<TerminalView>(find.byType(TerminalView)).terminal,
+        same(root.visibleTerminal.terminal),
+      );
+      return root.visibleTerminal.shell! as _SwitchChannel;
+    }
+
+    void expectShell(_SwitchChannel channel) {
+      expect(channel.closed, isTrue);
+      expect(h.sessions.live, same(root));
+      expect(
+        tester.widget<TerminalView>(find.byType(TerminalView)).terminal,
+        same(h.terminal),
+      );
+    }
+
+    final first = await openHerdr();
+    await tester.tap(
+      find.byKey(const ValueKey('ssh-terminal-return-to-shell')),
+    );
+    await tester.pump();
+    expectShell(first);
+
+    Future<void> finishTransition() async {
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+    }
+
+    final second = await openHerdr();
+    await tester.tap(find.byKey(const ValueKey('ssh-terminal-menu')));
+    await finishTransition();
+    await tester.tap(find.byKey(const ValueKey('ssh-sessions-button')));
+    await finishTransition();
+    expect(find.text('Back to shell'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('ssh-sessions-shell')));
+    await finishTransition();
+    expectShell(second);
+
+    final third = await openHerdr();
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expectShell(third);
   });
 
   testWidgets('a dropped tmux session is reattached, not replaced', (
@@ -527,7 +657,12 @@ void main() {
     final h = await _open(tester);
     h.sessions.onConnect = (_, _) async => h.session();
 
-    await tester.tap(find.byTooltip('Close SSH session'));
+    // 1.4.3: herdr's header keeps its actions in «⋮».
+    await tester.tap(find.byKey(const ValueKey('ssh-terminal-menu')));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.text('Close SSH session'));
     for (var i = 0; i < 5; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
@@ -668,11 +803,13 @@ void main() {
       tester.getRect(find.byKey(pill)).top,
       greaterThanOrEqualTo(tester.getRect(find.byKey(card)).bottom),
     );
-    final pillBox = tester.widget<Container>(find.byKey(pill));
-    expect(
-      (pillBox.decoration! as ShapeDecoration).shape,
-      isA<StadiumBorder>(),
+    final pillSurface = tester.widget<HermesFloatingSurface>(
+      find.descendant(
+        of: find.byKey(pill),
+        matching: find.byType(HermesFloatingSurface),
+      ),
     );
+    expect(pillSurface.shape, isA<StadiumBorder>());
     // The composer keeps the keyboard beside it (review P2-F4-5).
     expect(
       tester.widget<TerminalView>(find.byType(TerminalView)).autofocus,
@@ -684,7 +821,9 @@ void main() {
     expect(tools.onToggleKeys, isNotNull);
     // A plain shell has no Herdr.
     expect(tools.onHerdr, isNull);
+    // 1.4.3: Compose first, the way to write from the pane's «⋯» too.
     expect(tools.menu.map((entry) => entry.label), [
+      'Compose',
       'Files (SFTP)',
       'Sessions',
       'Edit credentials',
@@ -698,7 +837,9 @@ void main() {
     expect(toolbar.value.keysShown, isFalse);
 
     // Files is the workspace's own tab, beside the terminal.
-    toolbar.value.menu.first.onSelected();
+    toolbar.value.menu
+        .firstWhere((entry) => entry.label == 'Files (SFTP)')
+        .onSelected();
     expect(workspace.active, ChatWorkspaceTab.files);
     expect(workspace.tabs, contains(ChatWorkspaceTab.terminal));
   });
@@ -775,7 +916,7 @@ void main() {
         );
         expect(
           tester.getSize(find.byKey(const ValueKey('ssh-key-bar'))).height,
-          SshTerminalKeyBar.denseHeight,
+          SshTerminalDock.keyHeight,
         );
 
         // Closed again: everything as it was.
@@ -793,8 +934,8 @@ void main() {
       });
     }
 
-    testWidgets('typing, the pane goes to the whole width and comes back '
-        'when the keyboard closes, the session kept', (tester) async {
+    testWidgets('manual fullscreen survives closing the keyboard and '
+        'restores the split without replacing the terminal', (tester) async {
       final (h, workspace) = await openInHost(tester, const Size(2048, 1546));
       final terminalState = tester.state(find.byType(TerminalView));
       await keyboard(tester, 800);
@@ -814,14 +955,15 @@ void main() {
       expect(workspace.mode, ChatWorkspaceMode.workspace);
       expect(tester.takeException(), isNull);
 
-      // Back to the split once the keyboard has closed: waited for (a few
-      // frames at most), then checked.
       await keyboard(tester, 0);
-      for (var frame = 0; frame < 10; frame++) {
-        if (workspace.mode == ChatWorkspaceMode.split) break;
-        await tester.pump();
-      }
+      expect(workspace.mode, ChatWorkspaceMode.workspace);
+      expect(workspace.fullscreen, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('chat-workspace-expand')));
+      await tester.pump();
+      await tester.pump(HermesMotion.base);
       expect(workspace.mode, ChatWorkspaceMode.split);
+      expect(workspace.fullscreen, isFalse);
       expect(
         identical(tester.state(find.byType(TerminalView)), terminalState),
         isTrue,

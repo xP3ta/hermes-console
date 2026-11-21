@@ -1,6 +1,6 @@
-// Settings offers who-may-message-the-bot (Security) to every connection and
-// the doctor and security audit (System) only to a writable one: they spawn
-// processes on the server.
+// Settings offers messaging setup and who-may-message-the-bot (Security) to
+// every connection and the doctor and security audit (System) only to a
+// writable one: they spawn processes on the server.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -65,6 +65,14 @@ void main() {
     tester,
   ) async {
     await pumpSettings(tester, readOnly: false);
+    await reveal(tester, find.byKey(const ValueKey('settings-messaging')));
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('settings-messaging')),
+        matching: find.text('Messaging'),
+      ),
+      findsOneWidget,
+    );
     await reveal(
       tester,
       find.byKey(const ValueKey('settings-messaging-pairing')),
@@ -81,6 +89,7 @@ void main() {
   testWidgets('a read-only connection keeps the pairing list, not the '
       'checks', (tester) async {
     await pumpSettings(tester, readOnly: true);
+    await reveal(tester, find.byKey(const ValueKey('settings-messaging')));
     await reveal(
       tester,
       find.byKey(const ValueKey('settings-messaging-pairing')),

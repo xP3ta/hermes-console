@@ -9,6 +9,7 @@ import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/services/attachment_uploader.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -16,6 +17,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 
 import 'session_authority_probe_test.dart' as helpers;
+import 'support/memory_sealed_files.dart';
 import 'support/official_resume_server.dart';
 
 void main() {
@@ -42,6 +44,12 @@ void main() {
       mutationNamespaceForTesting: files.path,
       deletePrivateCopy: erase,
     );
+    // Drafts, the outbox and transcripts are sealed files: their reads,
+    // writes and deletions are storage calls like the entries'.
+    HookedSealedFileIo.install((method, name) async {
+      if (method != 'read') mutations.add(method);
+      await hook?.call(MethodCall(method, {'key': name}));
+    });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -68,8 +76,15 @@ void main() {
         );
   });
   tearDown(() async {
+    MemorySealedFileIo.install();
     await files.delete(recursive: true);
   });
+
+  /// Nothing durable: no secure entry but the files' key, no sealed file.
+  void expectNothingStored() {
+    expect(secure.keys.toSet()..remove(SealedLocalFiles.keyKey), isEmpty);
+    expect(SealedValues(secure).keys, isEmpty);
+  }
   Future<AttachmentDraft> item([String id = 'owned']) async {
     final dir = await Directory('${files.path}/attachment_drafts').create();
     final file = File('${dir.path}/${id}_private.txt');
@@ -180,7 +195,7 @@ void main() {
         final existsAfterFailure = await File(a.localPath).exists();
         expect(outcome, isA<PlatformException>());
         expect(stillCurrent, isTrue);
-        expect(secure, isEmpty);
+        expectNothingStored();
         hook = null;
         await save();
         final attachments = kind == 'draft'
@@ -235,7 +250,9 @@ void main() {
       LocalConversationCleanupFence.endLifecycle(life);
       release.complete();
       expect(await saving, isNull);
-      expect(secure, hasLength(1));
+      // The delivered value is in its sealed file.
+      expect(SealedValues(secure).keys, hasLength(1));
+      expect(secure.keys, [SealedLocalFiles.keyKey]);
       if (kind != 'transcript') {
         expect(await File(a.localPath).exists(), isTrue);
       }
@@ -277,7 +294,7 @@ void main() {
               ? isA<PlatformException>()
               : isA<LocalConversationWriteRejected>(),
         );
-        expect(secure, isEmpty);
+        expectNothingStored();
         expect(AttachmentOwnershipCoordinator.hasPendingOwner(a), isFalse);
         expect(await File(a.localPath).exists(), isFalse);
       },
@@ -407,7 +424,7 @@ void main() {
         release.complete();
         expect(await saving, isA<LocalConversationWriteRejected>());
         expect(mutations, isEmpty);
-        expect(secure, isEmpty);
+        expectNothingStored();
       },
     );
   }
@@ -516,7 +533,10 @@ void main() {
         isEmpty,
       );
       expect(
-        secure.keys.where((key) => key.startsWith('hermes.transcript.v3.')),
+        [
+          ...secure.keys,
+          ...SealedValues(secure).keys,
+        ].where((key) => key.startsWith('hermes.transcript.v3.')),
         isEmpty,
       );
     }, createHttpClient: RealFixtureHttp().createHttpClient),

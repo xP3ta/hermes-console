@@ -60,6 +60,7 @@ internal object HermesRichNotifications {
     const val CH_APPROVALS = "hermes_approvals"
     const val REMOTE_INPUT_KEY = "hermes_reply_text"
     private const val TAG = "HermesRichNotif"
+    private const val NOTIFICATION_ICON_MAX_PX = 256
     private const val SELECT_NOTIFICATION = "SELECT_NOTIFICATION"
     private const val PAYLOAD = "payload"
     private const val NOTIFICATION_ID = "notificationId"
@@ -674,7 +675,18 @@ internal object HermesRichNotifications {
         if (path.isNullOrEmpty()) return null
         return try {
             val file = File(path)
-            if (!file.isFile || file.length() > 2_000_000) null else BitmapFactory.decodeFile(path)
+            if (!file.isFile) return null
+            file.inputStream().use { input ->
+                if (input.channel.size() > 2_000_000) return null
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFileDescriptor(input.fd, null, bounds)
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+                val edge = maxOf(bounds.outWidth, bounds.outHeight).toLong()
+                var sample = 1
+                while (edge > NOTIFICATION_ICON_MAX_PX.toLong() * sample) sample *= 2
+                val options = BitmapFactory.Options().apply { inSampleSize = sample }
+                BitmapFactory.decodeFileDescriptor(input.fd, null, options)
+            }
         } catch (_: Exception) {
             null
         }

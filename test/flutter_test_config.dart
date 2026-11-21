@@ -3,10 +3,13 @@ import 'dart:io';
 
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/config/feature_flags.dart';
+import 'package:hermes_android/core/services/cold_start_tail_cipher.dart';
 import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'package:hermes_android/core/widgets/mascot/mascot_sprite.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'support/memory_sealed_files.dart';
 
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   // Living bot faces animate continuously while visible; whole-screen tests
@@ -26,6 +29,14 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   FeatureFlags.instance.resetForTesting();
   // The Agents section is switched off in the app; its suites still test it.
   FeatureFlags.instance.agentsSection = true;
+  // Drafts, the outbox and the other sealed local files live in memory: a
+  // widget test's fake-async zone never completes real file I/O. Their key
+  // is in the mocked secure storage, so a test that resets it starts with
+  // no readable file.
+  MemorySealedFileIo.install();
+  // Large files too are sealed and opened on the test's own isolate: the
+  // fake-async zone of a widget test never sees another isolate answer.
+  ColdStartTailCipher.debugOnCallingIsolate = true;
   sqfliteFfiInit();
   final databaseDirectory = await Directory.systemTemp.createTemp(
     'hermes-sqflite-worker-',

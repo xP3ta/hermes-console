@@ -5,9 +5,16 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../browser/browser_loopback_reach.dart';
+import '../browser/open_web_link.dart';
 import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
+import '../services/ssh_profile_presence.dart';
+import '../services/ssh_session_service.dart' show SshSessionPhase;
+import '../widgets/ssh_host_key_dialog.dart';
 import '../theme/app_theme.dart';
+import '../theme/hermes_tokens.dart';
+import '../theme/terminal_palette.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart' show HermesEmptyState;
 import 'sftp_browser_screen.dart';
@@ -16,6 +23,7 @@ import 'ssh_terminal_screen.dart';
 import '../widgets/console_loader.dart';
 import '../widgets/workspace/chat_workspace_host.dart'
     show ChatWorkspaceMenuEntry, ChatWorkspacePaneScope, ChatWorkspaceToolbar;
+import '../widgets/workspace/workspace_panel_frame.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 import '../feedback/feedback_policy.dart';
@@ -26,7 +34,17 @@ class SshScreen extends StatefulWidget {
   /// Set when the hub was opened from a chat: Files gets a notch back to it.
   final VoidCallback? onBackToChat;
 
-  const SshScreen({required this.connection, this.onBackToChat, super.key});
+  /// A web link tapped inside the terminal. When set (such as from the chat's
+  /// Terminal workspace panel), links open in that host's browser; otherwise
+  /// they open in an in-app browser with SSH loopback reach for this host.
+  final ValueChanged<Uri>? onOpenLink;
+
+  const SshScreen({
+    required this.connection,
+    this.onBackToChat,
+    this.onOpenLink,
+    super.key,
+  });
 
   @override
   State<SshScreen> createState() => _SshScreenState();
@@ -83,9 +101,48 @@ class _SshScreenState extends State<SshScreen> {
     if (saved == true) _load();
   }
 
+  void _openTerminalLink(Uri uri) {
+    final open = widget.onOpenLink;
+    if (open != null) {
+      open(uri);
+      return;
+    }
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final id = widget.connection.id;
+    if (app == null || _config == null) {
+      openWebLinkInApp(context, uri);
+      return;
+    }
+    openWebLinkInApp(
+      context,
+      uri,
+      loopbackReach: () => BrowserLoopbackReach.overSsh(
+        live: () {
+          final session = app.sshSessions.of(id);
+          return session?.phase.value == SshSessionPhase.ready
+              ? session?.client
+              : null;
+        },
+        connect: () => app.sshManager.connect(
+          id,
+          onHostKey: (prompt) async =>
+              mounted && await showSshHostKeyDialog(context, prompt),
+        ),
+      ),
+      loopbackReachScope: () => _config == null
+          ? null
+          : '$id|${_config!.target}|${_config!.method.name}|'
+                '${SshProfilePresence.instance.revision.value}',
+      loopbackReachChanges: SshProfilePresence.instance.revision,
+    );
+  }
+
   void _terminal() => Navigator.of(context).push(
     MaterialPageRoute(
-      builder: (_) => SshTerminalScreen(connection: widget.connection),
+      builder: (_) => SshTerminalScreen(
+        connection: widget.connection,
+        onOpenLink: _openTerminalLink,
+      ),
     ),
   );
 
@@ -150,6 +207,7 @@ class _SshScreenState extends State<SshScreen> {
         key: ValueKey('ssh-pane-terminal-${config.target}'),
         connection: widget.connection,
         paneTitle: config.target,
+        onOpenLink: _openTerminalLink,
         paneMenu: [
           ChatWorkspaceMenuEntry(
             key: const ValueKey('ssh-pane-menu-credentials'),
@@ -180,6 +238,26 @@ class _SshScreenState extends State<SshScreen> {
           ChatWorkspacePaneScope.publish(context, ChatWorkspaceToolbar.none);
         }
       });
+      // 1.4.3: the panel keeps the Terminal's look (its context line, its
+      // card) before there is a terminal: loading, an unreadable profile
+      // and, without SSH, a prompt in the terminal's own colours with the
+      // one way on, instead of the SSH hub.
+      return ChatWorkspacePanel(
+        header: ChatWorkspacePanelHeader(
+          icon: HIcons.dns_outlined,
+          title: widget.connection.label,
+          mono: false,
+          tag: Strings.of(context).sshProtocolLabel,
+        ),
+        child: _loading
+            ? const Center(child: ConsoleLoader.large())
+            : _loadFailed
+            ? _loadError()
+            : _SshPanePrompt(
+                label: widget.connection.label,
+                onConfigure: _configure,
+              ),
+      );
     }
     return Scaffold(
       backgroundColor: ChatWorkspacePaneScope.backgroundOf(
@@ -192,22 +270,24 @@ class _SshScreenState extends State<SshScreen> {
       body: _loading
           ? const Center(child: ConsoleLoader.large())
           : _loadFailed
-          ? Center(
-              child: HermesEmptyState(
-                key: const ValueKey('ssh-hub-load-error'),
-                icon: HIcons.error_outline,
-                title: Strings.of(context).sftpUnreadableTitle,
-                body: Strings.of(context).sshHubLoadError,
-                primaryLabel: Strings.of(context).sftpTryAgain,
-                primaryIcon: HIcons.refresh,
-                onPrimary: _retryLoad,
-              ),
-            )
+          ? _loadError()
           : _config == null
           ? _empty(colors)
           : _configured(colors, _config!),
     );
   }
+
+  Widget _loadError() => Center(
+    child: HermesEmptyState(
+      key: const ValueKey('ssh-hub-load-error'),
+      icon: HIcons.error_outline,
+      title: Strings.of(context).sftpUnreadableTitle,
+      body: Strings.of(context).sshHubLoadError,
+      primaryLabel: Strings.of(context).sftpTryAgain,
+      primaryIcon: HIcons.refresh,
+      onPrimary: _retryLoad,
+    ),
+  );
 
   Widget _empty(HermesThemeColors colors) {
     return Center(
@@ -395,6 +475,70 @@ class _SshScreenState extends State<SshScreen> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The Terminal panel before the connection has an SSH profile (1.4.3):
+/// the terminal's own colours and type (`hermesTerminalTheme`, Desktop's
+/// palette), a prompt that says what is missing and the one way on.
+class _SshPanePrompt extends StatelessWidget {
+  const _SshPanePrompt({required this.label, required this.onConfigure});
+
+  final String label;
+  final VoidCallback onConfigure;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final terminal = hermesTerminalTheme(Theme.of(context));
+    final mono = HermesType.text.copyWith(
+      fontFamily: HermesType.monoFamily,
+      color: terminal.foreground,
+    );
+    return ColoredBox(
+      key: const ValueKey('ssh-pane-prompt'),
+      color: terminal.background,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(HermesSpace.x4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: '\$ ',
+                    style: mono.copyWith(color: terminal.green),
+                  ),
+                  TextSpan(text: strings.ssh2AccessTitle),
+                ],
+              ),
+              style: mono,
+            ),
+            const SizedBox(height: HermesSpace.x1),
+            Text(
+              strings.ssh2AccessBody(label),
+              style: mono.copyWith(color: terminal.brightBlack),
+            ),
+            const SizedBox(height: HermesSpace.x2),
+            ExcludeSemantics(
+              child: SizedBox(
+                width: HermesSpace.x2,
+                height: HermesSpace.x4,
+                child: ColoredBox(color: terminal.cursor),
+              ),
+            ),
+            const SizedBox(height: HermesSpace.x5),
+            FilledButton.icon(
+              key: const ValueKey('ssh-pane-add-profile'),
+              onPressed: onConfigure,
+              icon: const Icon(HIcons.settings_ethernet_rounded),
+              label: Text(strings.ssh2Configure),
+            ),
+          ],
         ),
       ),
     );

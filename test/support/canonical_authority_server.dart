@@ -618,6 +618,23 @@ class CanonicalAuthorityServer {
           'ref_text': '@file:attachments/note.txt',
           'uploaded': true,
         });
+      case 'spawn_tree.list':
+        // Control read outside the authority namespaces (the sidecar answers
+        // it): the saved spawn-tree snapshots behind the background-work
+        // strip. `SpawnTreeListParams`: all optional; none saved here.
+        if (!params.keys.every(
+          const {'session_id', 'cross_session', 'limit'}.contains,
+        )) {
+          return _error(id, 4001, 'invalid_params');
+        }
+        return ok({'entries': <Object>[]});
+      case 'session.control.read':
+        // The other read a settled turn can trigger: no goal, loop or
+        // heartbeat on this session.
+        if (!exact({'session_id'})) return _error(id, 4001, 'invalid_params');
+        return ok({
+          'control': {'revision': 'control-0'},
+        });
       case 'turn.status':
       case 'session.activate':
       case 'session.close':

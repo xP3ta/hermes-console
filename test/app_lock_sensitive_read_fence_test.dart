@@ -8,7 +8,10 @@ import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/app_lock_sensitive_read_fence.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/notifications/rich_notifications.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/memory_sealed_files.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +29,9 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       final lock = AppLockService(prefs);
       final store = ChatDraftStore(prefs);
+      // The drafts' sealed files: not one is touched either.
+      final files = MemorySealedFileIo.of(SealedLocalFiles.drafts)
+        ..resetHooks();
       var reads = 0;
       var mutations = 0;
       messenger.setMockMethodCallHandler(secure, (call) async {
@@ -54,6 +60,8 @@ void main() {
       }
       expect(reads, 0);
       expect(mutations, 0);
+      expect(files.reads, 0);
+      expect(files.writes, 0);
       expect(lock.locked.value, isTrue);
     },
   );
@@ -103,6 +111,8 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     final lock = AppLockService(prefs)..unlock();
     final wait = Completer<bool>();
+    final files = MemorySealedFileIo.of(SealedLocalFiles.drafts)
+      ..resetHooks();
     var reads = 0;
     messenger.setMockMethodCallHandler(secure, (call) async {
       if (call.method == 'read' &&
@@ -123,6 +133,8 @@ void main() {
     wait.complete(true);
     await assertion;
     expect(reads, 0);
+    expect(files.reads, 0);
+    expect(files.writes, 0);
   });
 
   test(

@@ -333,7 +333,12 @@ List<String> _flexOverflows(WidgetTester tester) {
         );
       }
     }
-    object.visitChildren(visit);
+    if (object is RenderSliverMultiBoxAdaptor) {
+      // A lazy list retains off-screen rows without laying them out.
+      object.visitChildrenForSemantics(visit);
+    } else {
+      object.visitChildren(visit);
+    }
   }
 
   visit(tester.binding.renderViews.first);

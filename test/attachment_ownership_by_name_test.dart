@@ -11,9 +11,13 @@ import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
+import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/memory_sealed_files.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -158,7 +162,8 @@ void main() {
 
     await drafts.clear('conn-own', 'session-a');
 
-    expect(secure.containsKey(draftKey('session-a')), isFalse);
+    expect(SealedValues(secure).containsKey(draftKey('session-a')), isFalse);
+    expect(SealedValues(secure).containsKey(draftKey('session-b')), isTrue);
     expect(File(shared.localPath).existsSync(), isTrue);
     expect(readAllCalls, 0);
   });
@@ -178,6 +183,49 @@ void main() {
     expect(File(shared.localPath).existsSync(), isTrue);
     expect(readAllCalls, 1);
   });
+
+  test(
+    'Android discovers older draft owners and seeds the index by key',
+    () async {
+      const keyChannel = MethodChannel('hermes/durable_secrets');
+      var listings = 0;
+      SecureStorage.androidKeysChannelForTesting = keyChannel;
+      messenger.setMockMethodCallHandler(keyChannel, (call) async {
+        expect(call.method, 'listKeys');
+        listings++;
+        return secure.keys.toList();
+      });
+      addTearDown(() {
+        SecureStorage.androidKeysChannelForTesting = null;
+        messenger.setMockMethodCallHandler(keyChannel, null);
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      final drafts = ChatDraftStore(prefs, deletePrivateCopy: deleteCopy);
+      final shared = copy('shared');
+      final legacyKey = draftKey('session-legacy');
+      secure[legacyKey] = jsonEncode({
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+        'text': 'older version',
+        'attachments': [shared.toJson()],
+      });
+      secure[unrelatedTail] = 'x' * 4096;
+      await drafts.save('conn-own', 'session-a', 'current', [shared]);
+      TurnOutboxStore.resetSerializationForTesting();
+      expect(secure, isNot(contains(indexKey)));
+
+      await drafts.clear('conn-own', 'session-a');
+      expect(File(shared.localPath).existsSync(), isTrue);
+      expect(reads, contains(legacyKey));
+
+      final entries = await drafts.listForConnection('conn-own');
+      expect(entries.map((entry) => entry.sessionId), ['session-legacy']);
+      expect(listings, greaterThan(0));
+      expect(readAllCalls, 0);
+      expect(reads, isNot(contains(unrelatedTail)));
+      expect(secure[unrelatedTail], 'x' * 4096);
+    },
+  );
 
   test('the index names legacy v2 drafts; their copies are kept', () async {
     final prefs = await SharedPreferences.getInstance();
@@ -200,8 +248,8 @@ void main() {
     expect(reads, contains('chat_draft_v2_conn-own_old'));
   });
 
-  test('an app lock that closes during the reads by name stops them and '
-      'proves no ownership', () async {
+  test('an app lock that closes during the reads of the draft files stops '
+      'them and proves no ownership', () async {
     SharedPreferences.setMockInitialValues({'app_lock_enabled': true});
     final prefs = await SharedPreferences.getInstance();
     final lock = AppLockService(prefs)..unlock();
@@ -209,14 +257,65 @@ void main() {
     await drafts.save('conn-own', 'session-a', 'first', const []);
     await drafts.save('conn-own', 'session-b', 'second', const []);
     await drafts.listForConnection('conn-own');
-    final names = (jsonDecode(secure[indexKey]!) as List).cast<String>();
-    expect(names, hasLength(2));
+    expect(
+      SealedValues(secure).keys,
+      {draftKey('session-a'), draftKey('session-b')},
+    );
     TurnOutboxStore.resetSerializationForTesting();
-    blockedRead = names.first;
+    final files = MemorySealedFileIo.of(SealedLocalFiles.drafts)
+      ..resetHooks();
+    addTearDown(files.resetHooks);
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    files.beforeRead = (_) async {
+      if (entered.isCompleted) return;
+      entered.complete();
+      await release.future;
+    };
+    reads.clear();
+    readAllCalls = 0;
+
+    final flight = AttachmentOwnershipCoordinator.loadDurableReferences(
+      const FlutterSecureStorage(),
+      preferences: prefs,
+    );
+    await entered.future;
+    lock.lockNow();
+    final readsAtRevocation = reads.length;
+    release.complete();
+
+    expect(await flight, isNull);
+    // The draft file in flight was the last read: not the other draft's
+    // file, not the outbox, not the index.
+    expect(files.reads, 1);
+    expect(reads.length, readsAtRevocation);
+    expect(readAllCalls, 0);
+  });
+
+  test('an app lock that closes during legacy v2 reads stops before the '
+      'next entry and vetoes deletion', () async {
+    SharedPreferences.setMockInitialValues({'app_lock_enabled': true});
+    final prefs = await SharedPreferences.getInstance();
+    final lock = AppLockService(prefs)..unlock();
+    addTearDown(lock.releaseDisclosure);
+    secure['chat_draft_v2_conn-own_first'] = jsonEncode({
+      'savedAt': DateTime.now().millisecondsSinceEpoch,
+      'text': 'first',
+      'attachments': [],
+    });
+    secure['chat_draft_v2_conn-own_second'] = jsonEncode({
+      'savedAt': DateTime.now().millisecondsSinceEpoch,
+      'text': 'second',
+      'attachments': [],
+    });
+    secure[indexKey] = jsonEncode([
+      'chat_draft_v2_conn-own_first',
+      'chat_draft_v2_conn-own_second',
+    ]);
+    blockedRead = 'chat_draft_v2_conn-own_first';
     readEntered = Completer<void>();
     releaseRead = Completer<void>();
     reads.clear();
-    readAllCalls = 0;
 
     final flight = AttachmentOwnershipCoordinator.loadDurableReferences(
       const FlutterSecureStorage(),
@@ -229,7 +328,45 @@ void main() {
 
     expect(await flight, isNull);
     expect(reads.length, readsAtRevocation);
-    expect(reads, isNot(contains(names.last)));
-    expect(readAllCalls, 0);
+    expect(reads, isNot(contains('chat_draft_v2_conn-own_second')));
+  });
+
+  test('an unreadable draft or outbox file vetoes attachment deletion, '
+      'and an unfinished draft write protects its copy', () async {
+    final prefs = await SharedPreferences.getInstance();
+    final drafts = ChatDraftStore(prefs, deletePrivateCopy: deleteCopy);
+    final shared = copy('shared-custody');
+    await drafts.save('conn-own', 'session-a', 'with a file', [shared]);
+    await drafts.save('conn-own', 'session-b', 'other', [shared]);
+    await drafts.listForConnection('conn-own');
+    // Turn session-b into an unfinished write (.part) only.
+    final draftIo = MemorySealedFileIo.of(SealedLocalFiles.drafts);
+    final bName = AttachmentOwnershipCoordinator.draftName(
+      draftKey('session-b'),
+    );
+    final bFile = await SealedLocalFiles(
+      SealedLocalFiles.drafts,
+    ).fileNameOf(bName);
+    draftIo.files['$bFile.part'] = draftIo.files.remove(bFile)!;
+
+    await drafts.clear('conn-own', 'session-a');
+    expect(File(shared.localPath).existsSync(), isTrue);
+
+    // Corrupt the remaining draft file so it cannot open: deletion is vetoed.
+    draftIo.files[bFile!] = Uint8List.fromList([1, 2, 3, 4]);
+    draftIo.files.remove('$bFile.part');
+    await drafts.retireAttachments([shared]);
+    expect(File(shared.localPath).existsSync(), isTrue);
+
+    // Remove the corrupt draft and corrupt the outbox file instead: vetoed.
+    draftIo.files.remove(bFile);
+    const outboxName = SealedName('chat_turn_outbox_v1');
+    final outboxFile = await SealedLocalFiles(
+      SealedLocalFiles.outbox,
+    ).fileNameOf(outboxName);
+    MemorySealedFileIo.of(SealedLocalFiles.outbox).files[outboxFile!] =
+        Uint8List.fromList([1, 2, 3, 4]);
+    await drafts.retireAttachments([shared]);
+    expect(File(shared.localPath).existsSync(), isTrue);
   });
 }

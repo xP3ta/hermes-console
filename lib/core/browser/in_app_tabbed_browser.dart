@@ -9,6 +9,7 @@
 // row; while the address is being typed the strip steps aside, so the page
 // keeps its room.
 import 'package:hermes_android/core/design/hicons.dart';
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,7 @@ import '../widgets/hermes_notice.dart' show HermesNoticeAction;
 import '../widgets/workspace/chat_workspace_host.dart'
     show ChatWorkspacePaneScope;
 import 'agent_browser_bridge.dart';
+import 'browser_loopback_reach.dart';
 import 'browser_tabs.dart';
 import 'in_app_browser_screen.dart';
 import 'webview_render_guard.dart' show WebViewRendererWatch;
@@ -59,11 +61,26 @@ class InAppTabbedBrowser extends StatefulWidget {
     this.launchExternal,
     this.backLabel,
     this.rendererWatch,
+    this.loopbackReach,
+    this.loopbackReachScope,
+    this.hiddenGraceDuration = const Duration(seconds: 60),
     super.key,
   });
 
   /// The chat's tabs; they outlive this widget.
   final BrowserTabs tabs;
+
+  /// Creates the SSH loopback reach for the authorized profile. Null when no
+  /// SSH profile is configured.
+  final BrowserLoopbackReach Function()? loopbackReach;
+
+  /// Immutable token identifying the authorized SSH profile; changing it or
+  /// clearing [loopbackReach] tears down active forwards immediately.
+  final Object? loopbackReachScope;
+
+  /// Bounded grace period while the panel is offstage or the app is in the
+  /// background before active forwards are suspended.
+  final Duration hiddenGraceDuration;
 
   /// The chat whose agent reaches the tabs (see [InAppBrowserScreen]).
   final String? agentConnectionId;
@@ -85,7 +102,8 @@ class InAppTabbedBrowser extends StatefulWidget {
   State<InAppTabbedBrowser> createState() => _InAppTabbedBrowserState();
 }
 
-class _InAppTabbedBrowserState extends State<InAppTabbedBrowser> {
+class _InAppTabbedBrowserState extends State<InAppTabbedBrowser>
+    with WidgetsBindingObserver {
   /// The view of every tab is open.
   bool _grid = false;
 
@@ -103,21 +121,111 @@ class _InAppTabbedBrowserState extends State<InAppTabbedBrowser> {
 
   BrowserTabs get _tabs => widget.tabs;
 
+  /// The forwards of this browser, scoped to the current SSH profile.
+  BrowserLoopbackReach? _reach;
+  bool _tickerEnabled = true;
+  bool _appInBackground = false;
+  Timer? _hiddenTimer;
+
+  static bool _isBackgroundState(AppLifecycleState? state) =>
+      state == AppLifecycleState.hidden ||
+      state == AppLifecycleState.paused ||
+      state == AppLifecycleState.detached;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _appInBackground = _isBackgroundState(
+      WidgetsBinding.instance.lifecycleState,
+    );
     _tabs.ensureOne();
+    _tabs.addListener(_reconcileForwardOwners);
+    _reach = widget.loopbackReach?.call();
+    _syncVisibilityTimer();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = TickerMode.valuesOf(context).enabled;
+    if (enabled != _tickerEnabled) {
+      _tickerEnabled = enabled;
+      _syncVisibilityTimer();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      _hiddenTimer?.cancel();
+      _hiddenTimer = null;
+      final reach = _reach;
+      if (reach != null) unawaited(reach.suspend());
+      return;
+    }
+    final background = _isBackgroundState(state);
+    if (background != _appInBackground) {
+      _appInBackground = background;
+      _syncVisibilityTimer();
+    }
   }
 
   @override
   void didUpdateWidget(InAppTabbedBrowser oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.tabs, widget.tabs)) widget.tabs.ensureOne();
+    if (!identical(oldWidget.tabs, widget.tabs)) {
+      oldWidget.tabs.removeListener(_reconcileForwardOwners);
+      widget.tabs.addListener(_reconcileForwardOwners);
+      widget.tabs.ensureOne();
+    }
+    final removed = widget.loopbackReach == null;
+    final scopeChanged =
+        widget.loopbackReachScope != oldWidget.loopbackReachScope;
+    if (removed || scopeChanged) {
+      final oldReach = _reach;
+      _reach = null;
+      if (oldReach != null) unawaited(oldReach.close());
+    }
+    if (!removed && _reach == null) {
+      _reach = widget.loopbackReach?.call();
+    }
+    _syncVisibilityTimer();
+    _reconcileForwardOwners();
+  }
+
+  void _syncVisibilityTimer() {
+    if (_tickerEnabled && !_appInBackground) {
+      _hiddenTimer?.cancel();
+      _hiddenTimer = null;
+      return;
+    }
+    if (_reach == null || _hiddenTimer != null) return;
+    _hiddenTimer = Timer(widget.hiddenGraceDuration, () {
+      _hiddenTimer = null;
+      if (!mounted || (_tickerEnabled && !_appInBackground)) return;
+      final reach = _reach;
+      if (reach != null) unawaited(reach.suspend());
+    });
+  }
+
+  void _reconcileForwardOwners() {
+    final reach = _reach;
+    if (reach == null) return;
+    unawaited(reach.retainOwners(_tabs.liveIds));
   }
 
   @override
   void dispose() {
+    _hiddenTimer?.cancel();
+    _hiddenTimer = null;
+    WidgetsBinding.instance.removeObserver(this);
+    _tabs.removeListener(_reconcileForwardOwners);
     _strip.dispose();
+    // The tab or the panel closed: no port stays open on the phone.
+    final reach = _reach;
+    _reach = null;
+    if (reach != null) unawaited(reach.close());
     super.dispose();
   }
 
@@ -252,7 +360,11 @@ class _InAppTabbedBrowserState extends State<InAppTabbedBrowser> {
     final colors = Theme.of(context).hermes;
     final typing = MediaQuery.viewInsetsOf(context).bottom > 0;
     final short = box.maxHeight < _inlineStripBelow;
-    final inline = box.maxWidth > box.maxHeight && short;
+    // 1.4.3: in the workspace pane the bar is the panel's one row over its
+    // card (the pane's own bar is above it): no strip of its own, the
+    // count of tabs in the bar opens them all (with «+» and every ×).
+    final inPane = ChatWorkspacePaneScope.isInPane(context);
+    final inline = !inPane && box.maxWidth > box.maxHeight && short;
     final tabs = _tabs.tabs;
     final active = _tabs.active;
     final live = _tabs.liveIds;
@@ -285,6 +397,14 @@ class _InAppTabbedBrowserState extends State<InAppTabbedBrowser> {
               inlineStrip: inline && !typing && tab.id == active?.id
                   ? strip()
                   : null,
+              barAction: inPane && tab.id == active?.id
+                  ? _CountButton(
+                      count: tabs.length,
+                      agent: tabs.any((tab) => tab.agent),
+                      live: working && tabs.any((tab) => tab.agent),
+                      onTap: _toggleGrid,
+                    )
+                  : null,
             ),
         if (_grid)
           _TabGrid(
@@ -312,7 +432,7 @@ class _InAppTabbedBrowserState extends State<InAppTabbedBrowser> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (!inline && !typing && !_grid) strip(),
+              if (!inPane && !inline && !typing && !_grid) strip(),
               Expanded(
                 child: MediaQuery.removePadding(
                   context: context,
@@ -332,6 +452,7 @@ class _InAppTabbedBrowserState extends State<InAppTabbedBrowser> {
     required bool front,
     required bool working,
     Widget? inlineStrip,
+    Widget? barAction,
   }) {
     final id = tab.id;
     return Offstage(
@@ -350,6 +471,7 @@ class _InAppTabbedBrowserState extends State<InAppTabbedBrowser> {
           launchExternal: widget.launchExternal,
           backLabel: widget.backLabel,
           rendererWatch: widget.rendererWatch,
+          loopbackReach: _reach,
           tab: InAppBrowserTabHooks(
             foreground: front,
             tabId: id,
@@ -367,6 +489,7 @@ class _InAppTabbedBrowserState extends State<InAppTabbedBrowser> {
             },
             belowBar: front ? _whoLine(tab, working) : null,
             barTrailing: inlineStrip,
+            barAction: barAction,
           ),
         ),
       ),

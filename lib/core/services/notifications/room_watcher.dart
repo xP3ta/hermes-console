@@ -631,6 +631,15 @@ class RoomWatcher {
   static const storageKey = 'bg_room_watch_v1';
 
   bool get anyWorking => _anyWorking;
+
+  /// Every room of the last successful pass said the backend pushes
+  /// `groups.changed` when it moves (`groups.state` `change_events`). Hermes
+  /// Desktop then reads an open room again on that push and keeps its poll
+  /// only as a backstop (`canonical-group-workspace.tsx`,
+  /// `ROOM_BACKSTOP_MS`). Older backends never say so.
+  bool get pushesChanges => _pushesChanges;
+  bool _pushesChanges = false;
+
   Duration? get retryAfter {
     final at = _retryAt;
     if (at == null) return null;
@@ -754,6 +763,7 @@ class RoomWatcher {
       ({HostedGroupRoom room, RoomDriverStatus? driverStatus}) state,
       List<HostedGroupEvent> events,
       int latest,
+      bool pushes,
     })
   >
   _readWatched(
@@ -768,10 +778,21 @@ class RoomWatcher {
         : RoomWatchState.fromJson(previousRaw);
     // Quiet rooms cost one `groups.state`; the log is read only when
     // the server says there is something past our cursor.
-    final state = await gateway.groupState(
-      listed.roomId,
-      generation: caps.generation,
-    );
+    final ({HostedGroupRoom room, RoomDriverStatus? driverStatus}) state;
+    var pushes = false;
+    if (gateway case final BotModeRoomEventsGateway withEvents) {
+      final read = await withEvents.groupStateWithEvents(
+        listed.roomId,
+        generation: caps.generation,
+      );
+      state = (room: read.room, driverStatus: read.driverStatus);
+      pushes = read.changeEvents;
+    } else {
+      state = await gateway.groupState(
+        listed.roomId,
+        generation: caps.generation,
+      );
+    }
     final room = state.room;
     var events = <HostedGroupEvent>[];
     var latest = room.latestSeq;
@@ -801,6 +822,7 @@ class RoomWatcher {
       state: state,
       events: events,
       latest: latest,
+      pushes: pushes,
     );
   }
 
@@ -864,13 +886,17 @@ class RoomWatcher {
           return null;
         }
       });
+      final pushes =
+          rooms.isNotEmpty &&
+          listing.unreadable.isEmpty &&
+          reads.every((read) => read?.pushes == true);
       for (var index = 0; index < rooms.length; index++) {
         final listed = rooms[index];
         final key = roomKey(connId, listed);
         seen.add(key);
         final read = reads[index];
         if (read == null) continue;
-        final (:previous, :state, :events, :latest) = read;
+        final (:previous, :state, :events, :latest, pushes: _) = read;
         final room = state.room;
         final level = await roomPrefs.notificationLevel(prefsRoomKey(room));
         final decision = decideRoomNotices(
@@ -923,11 +949,13 @@ class RoomWatcher {
       _failures = 0;
       _retryAt = null;
       _anyWorking = working;
+      _pushesChanges = pushes;
       return true;
     } catch (error) {
       if (kDebugMode) {
         debugPrint('[hermes-rooms] watch failed (${error.runtimeType})');
       }
+      _pushesChanges = false;
       _recordFailure();
       return false;
     }

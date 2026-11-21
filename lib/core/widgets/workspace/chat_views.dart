@@ -2,21 +2,19 @@
 // its own in the header, and it is ONLY how the screen is shared. A tap
 // opens a small vertical menu of circles with their names, «Chat ·
 // Dividido · Trabajo», the one in use in the accent. No panels here: they
-// are in Ajustes. Where nothing sits beside the chat (a phone, the Fold
-// held upright) only «Chat» can be chosen, with one line that says why.
-// Everything [ChatWorkspaceController] does stays as it was.
+// are in Ajustes. Everything [ChatWorkspaceController] does stays as it
+// was.
+//
+// A long press still opens the last-used panel.
 import 'package:hermes_android/core/design/hicons.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../design/hermes_design.dart'
-    show
-        HermesFloatingSurface,
-        HermesScrim,
-        hermesOriginOf,
-        showHermesSurface;
+    show HermesFloatingSurface, HermesScrim, hermesOriginOf, showHermesSurface;
 import '../../theme/app_theme.dart';
 import '../../theme/hermes_tokens.dart';
 import '../floating_chat_header.dart';
@@ -42,9 +40,10 @@ bool chatWorkspaceOpensOverChat(ChatWorkspaceController controller) =>
 bool chatWorkspaceShownBeside(ChatWorkspaceController controller) =>
     !chatWorkspaceOpensOverChat(controller) && controller.workspaceVisible;
 
-/// The chat's «Vistas»: a round header button that opens the layout menu.
-/// It shows when a panel is beside the chat (a soft accent face, the filled
-/// icon); its name says what is on screen.
+/// The chat's «Vistas»: a round header button that opens the layout menu
+/// on every screen size. It shows when a panel
+/// is beside the chat (a soft accent face, the filled icon); its name says
+/// what is on screen. A long press opens the panel last used.
 class ChatViewsButton extends StatelessWidget {
   const ChatViewsButton({
     required this.controller,
@@ -81,6 +80,7 @@ class ChatViewsButton extends StatelessWidget {
     listenable: controller,
     builder: (context, _) {
       final strings = Strings.of(context);
+      final last = chatWorkspaceTabFor(controller, availableTabs);
       return Builder(
         builder: (buttonContext) => FloatingHeaderButton(
           icon: HIcons.view_sidebar_outlined,
@@ -97,6 +97,16 @@ class ChatViewsButton extends StatelessWidget {
               availableTabs: availableTabs,
             ).whenComplete(closed.complete).ignore();
           },
+          // The panel last used, at once: beside the chat where it fits,
+          // over it otherwise.
+          onLongPress: last == null
+              ? null
+              : () {
+                  onUse?.call();
+                  controller.open(last);
+                },
+          longPressLabel: last == null ? null : strings.cwsOpenWorkspace,
+          showLongPressIndicator: false,
         ),
       );
     },
@@ -173,7 +183,7 @@ class _ViewsPanel extends StatelessWidget {
   void _layout(ChatWorkspaceMode mode) {
     final c = controller;
     if (mode == ChatWorkspaceMode.chat) {
-      c.setViewVisible(ChatWorkspaceView.workspace, false);
+      c.setMode(ChatWorkspaceMode.chat);
       return;
     }
     if (!c.workspaceVisible) {
@@ -193,17 +203,18 @@ class _ViewsPanel extends StatelessWidget {
       final strings = Strings.of(context);
       final colors = Theme.of(context).hermes;
       final c = controller;
-      final overChat = chatWorkspaceOpensOverChat(c);
+      final canSplit = !chatWorkspaceOpensOverChat(c);
       // Sharing the screen needs room beside the chat and a panel to show.
-      final canShare =
-          !overChat && (c.hasWorkspace || availableTabs.isNotEmpty);
-      final current = !overChat && c.workspaceVisible
+      final canShare = c.hasWorkspace || availableTabs.isNotEmpty;
+      final current = !c.workspaceVisible
+          ? ChatWorkspaceMode.chat
+          : canSplit
           ? c.mode
-          : ChatWorkspaceMode.chat;
-      final hint = overChat
-          ? strings.cwsViewsHintStacked
-          : !canShare
+          : ChatWorkspaceMode.workspace;
+      final hint = !canShare
           ? strings.cwsViewsHintNoPanel
+          : !canSplit
+          ? strings.wsPanelPickerHint
           : c.hasList && c.maxViews < ChatWorkspaceView.values.length
           ? strings.cwsViewsHintTwo
           : null;
@@ -211,6 +222,11 @@ class _ViewsPanel extends StatelessWidget {
         ChatWorkspaceMode.chat => strings.cwsViewChat,
         ChatWorkspaceMode.split => strings.cwsLayoutSplit,
         ChatWorkspaceMode.workspace => strings.cwsLayoutWork,
+      };
+      bool canChoose(ChatWorkspaceMode mode) => switch (mode) {
+        ChatWorkspaceMode.chat => true,
+        ChatWorkspaceMode.split => canShare && canSplit,
+        ChatWorkspaceMode.workspace => canShare,
       };
       return SingleChildScrollView(
         padding: const EdgeInsets.all(HermesSpace.x2),
@@ -225,7 +241,7 @@ class _ViewsPanel extends StatelessWidget {
                 icon: chatWorkspaceLayoutIcon(mode),
                 label: label(mode),
                 selected: mode == current,
-                onTap: mode == ChatWorkspaceMode.chat || canShare
+                onTap: canChoose(mode)
                     ? () {
                         _layout(mode);
                         onChosen();

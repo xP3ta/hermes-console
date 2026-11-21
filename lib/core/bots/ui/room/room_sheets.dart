@@ -397,6 +397,22 @@ Future<String?> showRoomThreadsSheet(
   );
 }
 
+/// One row of the Files sheet. A stored file opens here only when the
+/// server lists `groups.attachment.download`; otherwise it is named, as in
+/// its message.
+Widget _fileTile(
+  RoomAttachmentRef ref,
+  HostedGroupEvent event,
+  RoomAttachmentActions? actions,
+) {
+  final key = ValueKey('room-file-${event.eventId}-${ref.path}');
+  final stored = ref.stored;
+  if (stored != null && actions is! RoomStoredAttachmentActions) {
+    return RoomServerAttachmentChip(key: key, attachment: stored.attachment);
+  }
+  return RoomAttachmentCard(key: key, attachment: ref, actions: actions);
+}
+
 /// Room files (download/open/share through the attachment cards).
 Future<void> showRoomFilesSheet(
   BuildContext context, {
@@ -425,13 +441,7 @@ Future<void> showRoomFilesSheet(
                 for (final file in files)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
-                    child: RoomAttachmentCard(
-                      key: ValueKey(
-                        'room-file-${file.event.eventId}-${file.ref.path}',
-                      ),
-                      attachment: file.ref,
-                      actions: actions,
-                    ),
+                    child: _fileTile(file.ref, file.event, actions),
                   ),
               ],
             ),

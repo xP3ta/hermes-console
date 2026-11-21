@@ -5,9 +5,9 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/tool_steps_summary.dart';
-import 'package:hermes_android/core/widgets/chat/chat_live_icon.dart';
 import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart';
 import 'package:hermes_android/core/widgets/chat/turn_step_cards.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
@@ -222,22 +222,20 @@ void main() {
         find.descendant(of: _row('c'), matching: find.text('Fallido')),
         findsNothing,
       );
-      // One mark per step, from the chat's own outline icon family (the
-      // terminal for a command), never a filled badge.
-      expect(
-        find.descendant(of: _row('a'), matching: find.byType(LiveStepMark)),
-        findsOneWidget,
+      // One mark per step, the outline icon of its family (the terminal
+      // for a command), never a filled badge.
+      final mark = find.descendant(
+        of: _row('a'),
+        matching: find.byType(LiveStepMark),
       );
+      expect(mark, findsOneWidget);
       expect(
         tester
-            .widget<ChatLiveIcon>(
-              find.descendant(
-                of: _row('a'),
-                matching: find.byType(ChatLiveIcon),
-              ),
+            .widget<Icon>(
+              find.descendant(of: mark, matching: find.byType(Icon)),
             )
-            .glyph,
-        ChatLiveGlyph.terminalAgent,
+            .icon,
+        HIcons.terminal_rounded,
       );
       final node = tester.getSemantics(
         find

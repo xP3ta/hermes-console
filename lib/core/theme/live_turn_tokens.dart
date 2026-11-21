@@ -16,6 +16,19 @@ abstract final class HermesLiveTurn {
   /// The gap between two pills (the mock's `margin-top`).
   static const double rowGap = 5;
 
+  /// What an opened run unfolds, one level in: the same pill, a little
+  /// shorter and quieter (hairline outline and connector at [quietAlpha] of
+  /// their ink, a fainter fill), so what is unfolded reads as such.
+  static const double nestedRowHeight = 28;
+  static const double hairline = 0.5;
+  static const double quietAlpha = 0.5;
+
+  /// The selected turn's history forms one grid on a wide screen.
+  static const double historyWidth = 480;
+
+  /// The quieter fill and outline under a settled turn's summary.
+  static const double historyAlpha = 0.72;
+
   /// Glyph of the kind of tool, and the ring of its state.
   static const double glyphSize = 16;
   static const double ringSize = 15;

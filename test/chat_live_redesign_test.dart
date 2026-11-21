@@ -244,9 +244,16 @@ void main() {
           .getTopLeft(find.byKey(const ValueKey('reply-anchor')))
           .dy;
       await tester.pump(const Duration(milliseconds: 400));
-      // Opened, the whole list takes the window's place.
+      // Opened, the whole list takes the window's place: the two commands
+      // in a row are one row that opens to each of them.
       expect(middle, isNot(resting!.dy));
       expect(find.byKey(const ValueKey('live-turn-window')), findsNothing);
+      expect(
+        find.textContaining('Ejecutó ×2', findRichText: true),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('turn-feed-group-t0')));
+      await tester.pump(const Duration(milliseconds: 400));
       expect(find.byKey(const ValueKey('turn-step-card-t0')), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     },
@@ -435,6 +442,13 @@ void main() {
         lessThanOrEqualTo(before.dy),
       );
       await tester.tap(find.byKey(const ValueKey('chat-inline-activity')));
+      await tester.pump();
+      // The three commands are one row that opens to each of them.
+      expect(
+        find.textContaining('Ejecutó ×3', findRichText: true),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('turn-feed-group-t0')));
       await tester.pump();
       expect(find.byKey(const ValueKey('turn-step-card-t2')), findsOneWidget);
     },

@@ -29,12 +29,17 @@ typedef KanbanEventsOpen =
 ///
 /// The board must be read when no socket is up (first tick, a dropped
 /// socket, a server without the route), when an event past the last read
-/// arrived, or after [backstop] (Desktop keeps its board poll as the
-/// fallback of the socket; this is that fallback, slower).
+/// arrived, or after [backstop]. Desktop polls the board only while its page
+/// is on screen (`plugins/kanban/board.tsx`: `refetchInterval` 60 s, which
+/// react-query pauses in a hidden window); hidden, the socket alone keeps it
+/// current. Here the socket's 30 s ping ([KanbanClient.events]) ends a dead
+/// one within a minute, which drops the follow and reads on the next tick;
+/// [backstop] is the slow safety net behind both.
 class KanbanEventsFollower {
   KanbanEventsFollower({
     KanbanEventsOpen? open,
-    this.backstop = const Duration(minutes: 10),
+    this.backstop = const Duration(minutes: 30),
+    this.refusedRetry = const Duration(minutes: 10),
   }) : _open = open ?? _kanbanClientEvents;
 
   static Stream<KanbanEvent> _kanbanClientEvents(
@@ -50,6 +55,10 @@ class KanbanEventsFollower {
 
   final KanbanEventsOpen _open;
   final Duration backstop;
+
+  /// How long a server that refused the upgrade is left alone before the
+  /// socket is asked for again (its board is read on every tick meanwhile).
+  final Duration refusedRetry;
   final Map<String, _Follow> _follows = {};
 
   /// Whether the board of [key] (connection and board) has to be read now.
@@ -66,7 +75,7 @@ class KanbanEventsFollower {
   /// The board of [key] was just read at [latestEventId]: from now on an
   /// event past it is what makes it stale. Opens the stream at that cursor
   /// when none is open; a server that refuses the upgrade (no such route)
-  /// keeps the plain read on every tick, asking again after [backstop].
+  /// keeps the plain read on every tick, asking again after [refusedRetry].
   void boardRead(
     String key, {
     required SavedConnection connection,
@@ -80,7 +89,8 @@ class KanbanEventsFollower {
     if (follow.seen < latestEventId) follow.seen = latestEventId;
     if (follow.subscription != null) return;
     final refusedAt = follow.refusedAt;
-    if (refusedAt != null && clock.now().difference(refusedAt) < backstop) {
+    if (refusedAt != null &&
+        clock.now().difference(refusedAt) < refusedRetry) {
       return;
     }
     final generation = ++follow.generation;

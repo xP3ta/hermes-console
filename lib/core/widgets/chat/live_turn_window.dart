@@ -5,12 +5,19 @@ import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../models/activity_snapshot.dart'
-    show MemoryWrite, MemoryWriteAction, isMemoryTool, isSkillLoadTool;
+    show
+        MemoryWrite,
+        MemoryWriteAction,
+        isMemoryTool,
+        isSkillLoadTool,
+        measuredActivityDuration;
+import '../../design/gel_surface.dart' show HermesGelSurface;
 import '../../theme/app_theme.dart';
 import '../../theme/hermes_tokens.dart';
 import '../../theme/live_turn_tokens.dart';
 import '../activity_pill.dart' show ActivityTicker;
-import '../chat_turn_activity.dart' show LiveTurnScope, TurnType;
+import '../chat_turn_activity.dart'
+    show LiveTurnScope, TurnType, turnToolIconFor;
 import 'chat_live_icon.dart' show ChatLiveGlyph, chatLiveGlyphForTool;
 import 'tool_steps_summary.dart' show turnLineDuration;
 import 'turn_step_cards.dart' show TurnStepCardEntry;
@@ -53,13 +60,6 @@ LiveToolKind liveToolKind(String? tool) {
   return LiveToolKind.other;
 }
 
-IconData _glyphOf(LiveToolKind kind) => switch (kind) {
-  LiveToolKind.skill => HIcons.neurology,
-  LiveToolKind.file => HIcons.description_outlined,
-  LiveToolKind.terminal => HIcons.terminal_rounded,
-  LiveToolKind.other => HIcons.build_outlined,
-};
-
 /// One pill of the window: a step, or a run of consecutive steps of the same
 /// tool folded into one («Ejecutar comando ×20 · último comando»).
 @immutable
@@ -75,6 +75,7 @@ final class LiveTurnRow {
     required this.startedAt,
     required this.clock,
     this.memory,
+    this.duration,
   });
 
   factory LiveTurnRow.of(TurnStepCardEntry step) => LiveTurnRow(
@@ -88,6 +89,7 @@ final class LiveTurnRow {
     startedAt: step.startedAt,
     clock: step.clock,
     memory: step.memory,
+    duration: measuredActivityDuration(step.duration),
   );
 
   /// The first step's id: it does not change while the run grows.
@@ -103,6 +105,9 @@ final class LiveTurnRow {
 
   /// What a memory tool says it wrote, when this row is one.
   final MemoryWrite? memory;
+
+  /// How long the row's finished calls took together, when measured.
+  final Duration? duration;
 
   /// A memory tool (`memory`, the OMH plugin's `omh_remember`): its own
   /// brain row with the four states, never folded into a run.
@@ -134,6 +139,10 @@ final class LiveTurnRow {
     startedAt: step.startedAt,
     clock: step.clock ?? clock,
     memory: memory,
+    duration: switch ((duration, measuredActivityDuration(step.duration))) {
+      (final total?, final more?) => total + more,
+      (final total, final more) => total ?? more,
+    },
   );
 }
 
@@ -400,9 +409,77 @@ class _LiveRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = row.isMemory
+        ? liveMemoryLabel(Strings.of(context), row)
+        : row.name;
+    final opacity = row.running
+        ? 1.0
+        : HermesLiveTurn.ageOpacity[age.clamp(
+            0,
+            HermesLiveTurn.ageOpacity.length - 1,
+          )];
+    return Semantics(
+      key: ValueKey('live-turn-row-${row.id}'),
+      container: true,
+      label: [title, ?row.detail].join(', '),
+      excludeSemantics: true,
+      child: LiveTurnBranch(
+        paintKey: ValueKey('live-turn-elbow-${row.id}'),
+        last: last,
+        child: AnimatedOpacity(
+          opacity: opacity,
+          duration: HermesMotion.duration(context, HermesMotion.enter),
+          curve: HermesMotion.standard,
+          child: LiveTurnRowPill(row: row),
+        ),
+      ),
+    );
+  }
+}
+
+/// One step of the live turn as its own small outlined pill (the approved
+/// look of 9 nov, mock `turno3.html`): what the tool is, the verb in bold
+/// with «×N» when calls were folded, the target in the secondary ink, the
+/// clock of the call in hand and the state ring at the trailing end. The
+/// closed window and the opened list draw every step with it.
+class LiveTurnRowPill extends StatelessWidget {
+  const LiveTurnRowPill({
+    required this.row,
+    this.showTime = false,
+    this.open,
+    this.quiet = false,
+    this.progress,
+    this.markKey,
+    super.key,
+  });
+
+  final LiveTurnRow row;
+
+  /// The unfolded level of an opened run: the same pill, shorter and
+  /// quieter ([HermesLiveTurn.nestedRowHeight], hairline outline, fainter
+  /// fill, the verb in medium weight, the ring in the secondary ink).
+  final bool quiet;
+
+  /// A running call's live progress (`42% · refining mesh`), beside its
+  /// clock as Desktop's `ToolRunningMeta` says it.
+  final String? progress;
+
+  /// The key of the state ring (the opened list's rows are found by it).
+  final Key? markKey;
+
+  /// Also how long a finished row took (the opened list). The window says
+  /// only the clock of the call in hand.
+  final bool showTime;
+
+  /// Null: the row opens nothing. Otherwise its caret, open or closed.
+  final bool? open;
+
+  @override
+  Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final chrome = HermesChrome.of(colors);
     final s = row.running; // the one in hand
+    final history = showTime && !s;
     final memory = row.isMemory;
     final memState = row.memoryState;
     final strings = Strings.of(context);
@@ -413,16 +490,10 @@ class _LiveRow extends StatelessWidget {
         ? colors.warning
         : HermesLiveTurn.memory;
     final title = memory ? liveMemoryLabel(strings, row) : row.name;
-    final opacity = s
-        ? 1.0
-        : HermesLiveTurn.ageOpacity[age.clamp(
-            0,
-            HermesLiveTurn.ageOpacity.length - 1,
-          )];
     final detail = row.detail;
     final started = row.startedAt;
     final nameStyle = HermesType.support.copyWith(
-      fontWeight: FontWeight.w600,
+      fontWeight: quiet || history ? FontWeight.w500 : FontWeight.w600,
       color: colors.textPrimary,
     );
     final detailStyle = HermesType.support.copyWith(color: colors.textSecondary);
@@ -432,6 +503,20 @@ class _LiveRow extends StatelessWidget {
       color: colors.textSecondary,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
+    final took = showTime && !s ? turnLineDuration(row.duration) : null;
+    // Opened, a failure is said in words too, never by the colour alone.
+    final failure = showTime && row.failed && !memory
+        ? strings.stepsBarStatusFailed
+        : null;
+    final caret = open;
+    final quietInk = quiet ? colors.textSecondary : null;
+    final quietAlpha = quiet ? HermesLiveTurn.quietAlpha : 1.0;
+    final surfaceAlpha = history &&
+            !row.failed &&
+            !memory &&
+            !MediaQuery.highContrastOf(context)
+        ? HermesLiveTurn.historyAlpha * quietAlpha
+        : quietAlpha;
     final Widget mark = memory
         ? switch (memState) {
             LiveMemoryState.saving => LiveSpinnerRing(color: accent),
@@ -445,32 +530,41 @@ class _LiveRow extends StatelessWidget {
         : row.failed
         ? Icon(HIcons.error_outline_rounded, size: HermesLiveTurn.glyphSize, color: colors.error)
         : s
-        ? const LiveSpinnerRing()
-        : const LiveRingCheck();
-    final pill = DecoratedBox(
+        ? LiveSpinnerRing(color: quietInk)
+        : LiveRingCheck(color: quietInk);
+    final line = memory && memState != LiveMemoryState.unconfirmed
+        ? accent.withValues(alpha: 0.5)
+        : row.failed
+        ? colors.error.withValues(alpha: 0.5)
+        : s
+        ? colors.success.withValues(alpha: 0.5)
+        : chrome.line;
+    final fill = s || (memory && memState != LiveMemoryState.unconfirmed)
+        ? accent.withValues(alpha: 0.10)
+        : chrome.fill;
+    final surface = DecoratedBox(
       decoration: BoxDecoration(
-        color: s || (memory && memState != LiveMemoryState.unconfirmed)
-            ? accent.withValues(alpha: 0.10)
-            : chrome.fill,
+        color: fill.withValues(alpha: fill.a * surfaceAlpha),
         borderRadius: BorderRadius.circular(HermesRadius.tag),
         border: Border.all(
-          color: memory && memState != LiveMemoryState.unconfirmed
-              ? accent.withValues(alpha: 0.5)
-              : row.failed
-              ? colors.error.withValues(alpha: 0.5)
-              : s
-              ? colors.success.withValues(alpha: 0.5)
-              : chrome.line,
+          color: line.withValues(alpha: line.a * surfaceAlpha),
+          width: quiet ? HermesLiveTurn.hairline : 1,
         ),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: HermesLiveTurn.rowHeight),
+        constraints: BoxConstraints(
+          minHeight: quiet
+              ? HermesLiveTurn.nestedRowHeight
+              : HermesLiveTurn.rowHeight,
+        ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: HermesSpace.gap),
           child: Row(
             children: [
               Icon(
-                memory ? HIcons.bookmark_border_rounded : _glyphOf(row.kind),
+                memory
+                    ? HIcons.bookmark_border_rounded
+                    : turnToolIconFor(row.toolName ?? ''),
                 key: ValueKey(
                   memory ? 'live-turn-glyph-memory' : 'live-turn-glyph-${row.kind.name}',
                 ),
@@ -483,18 +577,55 @@ class _LiveRow extends StatelessWidget {
               ),
               const SizedBox(width: HermesSpace.x2),
               Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(text: title, style: nameStyle),
-                      if (detail != null && detail.isNotEmpty)
-                        TextSpan(text: '  $detail', style: detailStyle),
-                    ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) => Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(text: title, style: nameStyle),
+                        if (detail != null && detail.isNotEmpty)
+                          TextSpan(text: '  $detail', style: detailStyle),
+                      ],
+                    ),
+                    maxLines: !history || row.count > 1
+                        ? 1
+                        : detail == null
+                        ? 2
+                        : constraints.maxWidth >= HermesLiveTurn.metaWithWords
+                        ? 3
+                        : 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (caret != null) ...[
+                const SizedBox(width: HermesSpace.x1),
+                AnimatedRotation(
+                  turns: caret ? 0 : -0.25,
+                  duration: HermesMotion.duration(context, HermesMotion.fast),
+                  child: Icon(
+                    HIcons.expand_more,
+                    key: ValueKey('live-turn-caret-${row.id}'),
+                    size: HermesLiveTurn.glyphSize,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ],
+              if (progress != null && s) ...[
+                const SizedBox(width: HermesSpace.x2),
+                Flexible(
+                  child: Text(
+                    progress!,
+                    key: ValueKey('turn-step-progress-${row.id}'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: timeStyle,
+                  ),
+                ),
+              ],
+              if (failure != null) ...[
+                const SizedBox(width: HermesSpace.x2),
+                Text(failure, style: timeStyle),
+              ],
               if (s && started != null) ...[
                 const SizedBox(width: HermesSpace.x2),
                 ActivityTicker(
@@ -507,39 +638,96 @@ class _LiveRow extends StatelessWidget {
                         : Text(value, style: timeStyle);
                   },
                 ),
+              ] else if (took != null) ...[
+                const SizedBox(width: HermesSpace.x2),
+                Text(
+                  failure == null ? took : '· $took',
+                  key: ValueKey('live-turn-time-${row.id}'),
+                  style: timeStyle,
+                ),
               ],
               const SizedBox(width: HermesSpace.x2),
-              mark,
+              KeyedSubtree(key: markKey, child: mark),
             ],
           ),
         ),
       ),
     );
-    return Semantics(
-      key: ValueKey('live-turn-row-${row.id}'),
-      container: true,
-      label: [title, ?detail].join(', '),
-      excludeSemantics: true,
-      child: CustomPaint(
-        key: ValueKey('live-turn-elbow-${row.id}'),
-        painter: _ConnectorPainter(
-          color: HermesLiveTurn.connector,
-          last: last,
-          rtl: Directionality.of(context) == TextDirection.rtl,
-        ),
-        child: Padding(
-          padding: const EdgeInsetsDirectional.only(
-            start: HermesLiveTurn.gutter,
-            top: HermesLiveTurn.rowGap,
-          ),
-          child: AnimatedOpacity(
-            opacity: opacity,
-            duration: HermesMotion.duration(context, HermesMotion.enter),
-            curve: HermesMotion.standard,
-            child: pill,
-          ),
-        ),
+    return history && !quiet
+        ? HermesGelSurface(
+            shape: const StadiumBorder(),
+            pressable: false,
+            sheenScale: HermesGel.textSheenScale(colors),
+            child: surface,
+          )
+        : surface;
+  }
+}
+
+/// A row's piece of the connector that hangs from the «Trabajando» card:
+/// the vertical line down the side and the tick into [child] (see
+/// [_ConnectorPainter]). Without [tick] it is only the line, passing beside
+/// what a row opened under itself, and nothing at all under the last row.
+/// [elbow] puts the tick that far below the row's top, for a row taller
+/// than a pill; by default it meets the row at mid-height.
+class LiveTurnBranch extends StatelessWidget {
+  const LiveTurnBranch({
+    required this.child,
+    required this.last,
+    this.tick = true,
+    this.elbow,
+    this.paintKey,
+    this.quiet = false,
+    this.history = false,
+    super.key,
+  });
+
+  final Widget child;
+  final bool last;
+  final bool tick;
+  final double? elbow;
+
+  /// The unfolded level: a hairline connector at a lower contrast.
+  final bool quiet;
+
+  /// The expanded history uses shorter, quieter elbows than live work.
+  final bool history;
+
+  /// The key of the painted piece (the window's rows are found by it).
+  final Key? paintKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final gutter = history
+        ? HermesLiveTurn.connectorInset +
+            HermesLiveTurn.connectorWidth +
+            HermesSpace.x3
+        : HermesLiveTurn.gutter;
+    final color = history
+        ? Theme.of(context).hermes.textSecondary.withValues(alpha: 0.42)
+        : HermesLiveTurn.connector;
+    final body = Padding(
+      padding: EdgeInsetsDirectional.only(
+        start: gutter,
+        top: tick ? HermesLiveTurn.rowGap : 0,
       ),
+      child: child,
+    );
+    if (!tick && last) return body;
+    return CustomPaint(
+      key: paintKey,
+      painter: _ConnectorPainter(
+        color: quiet
+            ? color.withValues(alpha: color.a * HermesLiveTurn.quietAlpha)
+            : color,
+        gutter: gutter,
+        width: quiet ? HermesLiveTurn.hairline : HermesLiveTurn.connectorWidth,
+        last: last,
+        rtl: Directionality.of(context) == TextDirection.rtl,
+        tick: tick,
+        elbow: elbow,
+      ),
+      child: body,
     );
   }
 }
@@ -552,15 +740,23 @@ class _ConnectorPainter extends CustomPainter {
     required this.color,
     required this.last,
     required this.rtl,
+    required this.gutter,
+    this.width = HermesLiveTurn.connectorWidth,
+    this.tick = true,
+    this.elbow,
   });
 
   final Color color;
+  final double width;
   final bool last;
   final bool rtl;
+  final double gutter;
+  final bool tick;
+  final double? elbow;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final w = HermesLiveTurn.connectorWidth;
+    final w = width;
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
@@ -571,9 +767,17 @@ class _ConnectorPainter extends CustomPainter {
       canvas.scale(-1, 1);
     }
     final x = HermesLiveTurn.connectorInset + w / 2;
+    if (!tick) {
+      // Beside what a row opened: the line only, on to the next row.
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+      return;
+    }
     final y = HermesLiveTurn.rowGap +
-        (size.height - HermesLiveTurn.rowGap) / 2;
-    final end = HermesLiveTurn.gutter;
+        math.min(
+          elbow ?? double.infinity,
+          (size.height - HermesLiveTurn.rowGap) / 2,
+        );
+    final end = gutter;
     final r = math.min(HermesLiveTurn.corner, y);
     if (last) {
       canvas.drawPath(
@@ -592,7 +796,13 @@ class _ConnectorPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ConnectorPainter old) =>
-      old.color != color || old.last != last || old.rtl != rtl;
+      old.color != color ||
+      old.width != width ||
+      old.last != last ||
+      old.rtl != rtl ||
+      old.gutter != gutter ||
+      old.tick != tick ||
+      old.elbow != elbow;
 }
 
 /// The tail of the last line of what the model is thinking, as a quiet

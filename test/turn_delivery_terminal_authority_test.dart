@@ -13,7 +13,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+
+import 'support/memory_sealed_files.dart';
 
 class _Effect {
   _Effect(this.index, this.method, this.key, this.rows);
@@ -30,7 +33,7 @@ class _Effect {
 }
 
 Map<String, String> _rowStates(Map<String, String> secure) {
-  final raw = secure[TurnOutboxStore.storageKeyForTesting];
+  final raw = SealedValues(secure)[TurnOutboxStore.storageKeyForTesting];
   if (raw == null || raw.isEmpty) return <String, String>{};
   final decoded = jsonDecode(raw) as Map<String, dynamic>;
   return {
@@ -80,48 +83,42 @@ void main() {
     secure.clear();
     effects.clear();
     interceptor = null;
+    // The outbox is a sealed file: its writes and deletions are the effects.
+    ObservedSealedFileIo(
+      SealedLocalFiles.outbox,
+      onWrite: (name, bytes) => interceptor?.call(
+        'write',
+        SealedValues(secure).valueOfFile(name, bytes),
+      ),
+      afterWrite: (name) => effects.add(
+        _Effect(effects.length, 'write', name, _rowStates(secure)),
+      ),
+      onDelete: (name) => interceptor?.call('delete', null),
+      afterDelete: (name) => effects.add(
+        _Effect(effects.length, 'delete', name, <String, String>{}),
+      ),
+    ).install();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
           (call) async {
             final args = (call.arguments as Map).cast<String, dynamic>();
-            final isOutbox = args['key'] == TurnOutboxStore.storageKeyForTesting;
             switch (call.method) {
               case 'read':
                 return secure[args['key']];
               case 'readAll':
                 return Map<String, String>.of(secure);
               case 'write':
-                if (isOutbox) await interceptor?.call('write', args['value']);
                 secure[args['key']] = args['value'];
-                if (isOutbox) {
-                  effects.add(
-                    _Effect(
-                      effects.length,
-                      'write',
-                      '${args['key']}',
-                      _rowStates(secure),
-                    ),
-                  );
-                }
               case 'delete':
-                if (isOutbox) await interceptor?.call('delete', null);
                 secure.remove(args['key']);
-                if (isOutbox) {
-                  effects.add(
-                    _Effect(
-                      effects.length,
-                      'delete',
-                      '${args['key']}',
-                      <String, String>{},
-                    ),
-                  );
-                }
             }
             return null;
           },
         );
   });
+
+  tearDown(MemorySealedFileIo.install);
 
   List<String> trail(String needle, {int from = 0}) => [
     for (final e in effects.skip(from)) e.stateOf(needle),

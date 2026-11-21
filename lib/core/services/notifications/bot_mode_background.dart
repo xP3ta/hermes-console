@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:home_widget/home_widget.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../bots/data/bot_mode_repository.dart';
 import '../../bots/state/bot_presence.dart';
@@ -24,6 +25,7 @@ import '../bot_widget_activity.dart';
 import '../../widgets/bot_face_identity.dart';
 import 'bot_face_bitmap.dart';
 import 'bot_notification_presenter.dart';
+import 'gateway_change_follower.dart';
 import 'notification_event_ledger.dart';
 import 'notification_action_drain.dart';
 import 'notification_service.dart';
@@ -474,16 +476,19 @@ class BotModeBackgroundMonitor {
     SharedGatewayPool? pool,
     DateTime Function()? now,
     BotModeTickPolicy? policy,
-    Future<void> Function(BotModeWidgetSnapshot snapshot)? publish,
+    this.publish,
     BotModeGateway Function(TuiGatewayClient client)? gatewayFor,
+    TuiGatewayClient Function(SavedConnection connection)? gatewayClient,
     this.unreachableAfter = const Duration(minutes: 2),
   }) : _gatewayFor = gatewayFor ?? TuiBotModeGateway.new,
+       // An injected pool brings its own clients.
+       _gatewayClient =
+           gatewayClient ?? (pool == null ? listenerGatewayClient : null),
        _platform = platform ?? PlatformRichNotifications(),
        _faces = faces ?? BotFaceBitmapCache(),
        _pool = pool ?? SharedGatewayPool.instance,
        _now = now ?? DateTime.now,
-       _policy = policy ?? BotModeTickPolicy(),
-       _publish = publish ?? _discardBotModeWidgetSnapshot {
+       _policy = policy ?? BotModeTickPolicy() {
     _sink = sink ?? _platform;
   }
 
@@ -493,8 +498,43 @@ class BotModeBackgroundMonitor {
   final SharedGatewayPool _pool;
   final DateTime Function() _now;
   final BotModeTickPolicy _policy;
-  final Future<void> Function(BotModeWidgetSnapshot snapshot) _publish;
+
+  /// Where the Bots and Salas widget snapshot goes. Those home widgets were
+  /// retired in 1.4.0: in the listener nothing reads the snapshot, so it is
+  /// null and the pass that built it (`session.active_list`, every avatar
+  /// of the roster, face bitmaps) is not made at all. Callers that inject
+  /// one (e.g. [publishBotModeWidgetSnapshot]) still get it.
+  final Future<void> Function(BotModeWidgetSnapshot snapshot)? publish;
   final BotModeGateway Function(TuiGatewayClient client) _gatewayFor;
+  final TuiGatewayClient Function(SavedConnection connection)? _gatewayClient;
+
+  /// The `gateway.ping` cadence of the listener's socket. Desktop pings
+  /// every 15 s on screen, but a hidden window's timers fire 60 s apart
+  /// (Chromium intensive wake-up throttling, see `startHeartbeat` in
+  /// `apps/shared/src/json-rpc-channel.ts`), and a dead socket is then
+  /// declared after two unanswered ticks. The listener is never on screen,
+  /// so it pings at that hidden cadence with a deadline of two ticks plus a
+  /// margin. A dead link is still found sooner by the WebSocket's own 20 s
+  /// ping ([TuiGatewayClient]) and the server's 20 s ping
+  /// (`hermes_cli/web_server_lifecycle.py`, `dashboard.ws_ping_interval`).
+  static const listenerHeartbeatInterval = Duration(seconds: 60);
+  static const listenerHeartbeatDeadline = Duration(seconds: 135);
+
+  /// The client of the listener's socket; tests pass the transport.
+  static TuiGatewayClient listenerGatewayClient(
+    SavedConnection connection, {
+    DashboardClient? dashboard,
+    WebSocketChannel Function(Uri uri, Map<String, dynamic> headers)?
+    channelFactory,
+    DateTime Function()? now,
+  }) => TuiGatewayClient(
+    connection,
+    dashboard: dashboard,
+    channelFactory: channelFactory,
+    now: now,
+    heartbeatInterval: listenerHeartbeatInterval,
+    heartbeatDeadline: listenerHeartbeatDeadline,
+  );
 
   /// Beyond this without a successful pass, Live Updates are withdrawn.
   final Duration unreachableAfter;
@@ -526,7 +566,16 @@ class BotModeBackgroundMonitor {
     }
     current?.release();
     _leaseConnId = connection.id;
-    return _lease = _pool.acquire(connection);
+    return _lease = _pool.acquire(connection, factory: _gatewayClient);
+  }
+
+  /// The socket this listener keeps open to [connectionId] (its one lease),
+  /// whose broadcasts other passes of the tick follow; null when it holds
+  /// none for that connection.
+  TuiGatewayClient? keptGateway(String connectionId) {
+    final lease = _lease;
+    if (lease == null || _leaseConnId != connectionId) return null;
+    return lease.client.isClosed ? null : lease.client;
   }
 
   void _releaseLease() {
@@ -535,7 +584,24 @@ class BotModeBackgroundMonitor {
     _leaseConnId = null;
   }
 
+  /// Age at which a pass reads the roster again. It names and draws the
+  /// bots of room notices (and seeds the app's cold-start cache): 3 min
+  /// while a watched room works or waits for an approval, 30 min while
+  /// nothing happens. Desktop reads it for the Bots pane on screen
+  /// (`plugins/hermes-bots/roster-pane.tsx`, `$botsPaneVisible`), not
+  /// while hidden.
   static const _profilesTtl = Duration(minutes: 3);
+  static const _idleProfilesTtl = Duration(minutes: 30);
+
+  /// Rooms whose `groups.state` says the backend pushes `groups.changed`
+  /// are read again on that push, or after this backstop; Desktop's open
+  /// room keeps 15 s (`ROOM_BACKSTOP_MS`) while on screen. Kept short next
+  /// to the other backstops of the listener: a room may ask for approvals.
+  static const roomsBackstop = Duration(minutes: 10);
+  final GatewayChangeFollower _roomChanges = GatewayChangeFollower(
+    eventType: 'groups.changed',
+    backstop: roomsBackstop,
+  );
 
   bool get anyWorking => _watcher?.anyWorking ?? false;
 
@@ -662,6 +728,18 @@ class BotModeBackgroundMonitor {
     // One pooled socket held across passes (rooms, profiles, live list,
     // widgets): no handshake per tick.
     final lease = _leaseFor(connection);
+    // With nothing working or waiting, a backend that pushes `groups.changed`
+    // for every room says when they move: until then they are what the last
+    // pass saw, and the live socket proves the server reachable. Without
+    // those pushes (older servers) every tick reads, as before.
+    final readDue = _roomChanges.needsRead(connection.id, lease.client);
+    if (!readDue &&
+        watcher.pushesChanges &&
+        _policy.cadence == BotModeCadence.idle) {
+      _lastOkAt = now;
+      return false;
+    }
+    _roomChanges.reading(connection.id, lease.client);
     _avatarLoader = (profile) async =>
         (await lease.client.profileAvatar(profile))?.bytes;
     {
@@ -679,6 +757,7 @@ class BotModeBackgroundMonitor {
         // never evaluated again: withdraw their Live Update now.
         await presenter.cancelLiveExcept(live);
       } else {
+        _roomChanges.readFailed(connection.id);
         await _expireIfUnreachable(at);
       }
       _policy.record(
@@ -690,13 +769,17 @@ class BotModeBackgroundMonitor {
           (v) => v.driverStatus?.approvals.isNotEmpty == true,
         ),
       );
-      await _publishWidgets(
-        prefs,
-        connection,
-        gateway,
-        connected: ok,
-        avatar: _avatarLoader,
-      );
+      final widgets = publish;
+      if (widgets != null) {
+        await _publishWidgets(
+          prefs,
+          connection,
+          gateway,
+          widgets,
+          connected: ok,
+          avatar: _avatarLoader,
+        );
+      }
     }
     return _policy.cadence == BotModeCadence.active;
   }
@@ -713,7 +796,10 @@ class BotModeBackgroundMonitor {
     SavedConnection connection,
   ) async {
     final at = _profilesAt;
-    if (at != null && _now().difference(at) < _profilesTtl) return;
+    final ttl = _policy.cadence == BotModeCadence.active
+        ? _profilesTtl
+        : _idleProfilesTtl;
+    if (at != null && _now().difference(at) < ttl) return;
     try {
       final startedAt = _now();
       _profiles = await gateway.listProfiles();
@@ -734,7 +820,8 @@ class BotModeBackgroundMonitor {
   Future<void> _publishWidgets(
     SharedPreferences prefs,
     SavedConnection connection,
-    BotModeGateway gateway, {
+    BotModeGateway gateway,
+    Future<void> Function(BotModeWidgetSnapshot snapshot) publish, {
     required bool connected,
     Future<Uint8List?> Function(String profile)? avatar,
   }) async {
@@ -798,7 +885,7 @@ class BotModeBackgroundMonitor {
           image: photo,
         );
       }
-      await _publish(tracked.withFaces(faces));
+      await publish(tracked.withFaces(faces));
     } catch (error) {
       if (kDebugMode) {
         debugPrint('[hermes-widgets] publish (${error.runtimeType})');
@@ -822,6 +909,7 @@ class BotModeBackgroundMonitor {
   }
 
   Future<void> _dropWatcher() async {
+    _roomChanges.close();
     _releaseLease();
     _avatarLoader = null;
     try {
@@ -837,13 +925,6 @@ class BotModeBackgroundMonitor {
   /// Listener stopped: no Live Update may outlive it.
   Future<void> close() => _dropWatcher();
 }
-
-/// The Bots and Salas home widgets were retired in 1.4.0: nothing reads the
-/// snapshot any more, so the listener's room pass does not store or publish
-/// it. [publishBotModeWidgetSnapshot] stays for callers that inject it.
-Future<void> _discardBotModeWidgetSnapshot(
-  BotModeWidgetSnapshot snapshot,
-) async {}
 
 String? _lastPublished;
 int _lastPublishedAtMs = 0;

@@ -14,6 +14,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
@@ -28,6 +29,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 
 final _connection = SavedConnection(
@@ -259,6 +261,17 @@ void main() {
     TurnOutboxStore.resetSerializationForTesting();
     SharedPreferences.setMockInitialValues({'onboarding_done': true});
     final secure = <String, String>{};
+    // The outbox is a sealed file: the lifecycle ends right after it lands.
+    ObservedSealedFileIo(
+      SealedLocalFiles.outbox,
+      afterWrite: (_) {
+        if (!revokeAfterPreparedWrite) return;
+        preparedWrites++;
+        revokeAfterPreparedWrite = false;
+        LocalConversationCleanupFence.endLifecycle(_begin());
+      },
+    ).install();
+    addTearDown(MemorySealedFileIo.install);
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -269,12 +282,6 @@ void main() {
                 return secure[args['key']];
               case 'write':
                 secure[args['key'] as String] = args['value'] as String;
-                if (args['key'] == 'chat_turn_outbox_v1' &&
-                    revokeAfterPreparedWrite) {
-                  preparedWrites++;
-                  revokeAfterPreparedWrite = false;
-                  LocalConversationCleanupFence.endLifecycle(_begin());
-                }
               case 'delete':
                 secure.remove(args['key']);
               case 'readAll':

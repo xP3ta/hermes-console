@@ -31,6 +31,7 @@ import '../../utils/session_title.dart';
 import '../../utils/transport_privacy.dart';
 import 'bot_mode_background.dart';
 import 'cron_notice_policy.dart';
+import 'gateway_change_follower.dart';
 import 'kanban_events_follower.dart';
 import 'notification_delivery_store.dart';
 import 'notification_mute_store.dart';
@@ -1553,6 +1554,7 @@ class _HermesTaskHandler extends TaskHandler {
       BackgroundAutomationDiscovery(
         dashboardClients: _dashboardClients,
         discoveryBackoff: _discoveryBackoff,
+        keptGateway: _botMode.keptGateway,
       );
   int _targetRevision = -1;
   final BackgroundSignInWatch _signIns = BackgroundSignInWatch();
@@ -1956,8 +1958,49 @@ class BackgroundAutomationDiscovery {
     required this.discoveryBackoff,
     void Function(Object data)? sendToMain,
     KanbanEventsFollower? kanbanEvents,
+    TuiGatewayClient? Function(String connectionId)? keptGateway,
+    GatewayChangeFollower? cronChanges,
   }) : _sendToMain = sendToMain ?? FlutterForegroundTask.sendDataToMain,
-       _kanbanEvents = kanbanEvents ?? KanbanEventsFollower();
+       _kanbanEvents = kanbanEvents ?? KanbanEventsFollower(),
+       _keptGateway = keptGateway ?? _noKeptGateway,
+       _cronChanges = cronChanges ?? _cronFollower();
+
+  static TuiGatewayClient? _noKeptGateway(String connectionId) => null;
+
+  static GatewayChangeFollower _cronFollower() =>
+      GatewayChangeFollower(eventType: 'cron.changed', backstop: cronBackstop);
+
+  /// Desktop refreshes its cron list on `cron.changed` and keeps its timer
+  /// as a 5 min backstop only while its window is on screen
+  /// (`use-background-sync.ts` `CRON_BACKSTOP_INTERVAL_MS`, `visiblePoll`);
+  /// hidden, it does not poll. The listener keeps a slower backstop.
+  static const cronBackstop = Duration(minutes: 30);
+
+  /// The gateway socket the listener already keeps open to a connection
+  /// (Bot Mode's one lease), whose broadcasts include `cron.changed`.
+  final TuiGatewayClient? Function(String connectionId) _keptGateway;
+
+  /// Whether the jobs moved since the last read: `cron/jobs` and the cron
+  /// sessions are read again only then (`tui_gateway/change_watcher.py`
+  /// broadcasts `cron.changed` when `cron/jobs.json` moves, which a run's
+  /// start and end both do), on servers and sockets that carry it.
+  final GatewayChangeFollower _cronChanges;
+
+  /// What the last cron read of each connection showed, for the cadence of
+  /// the ticks that skip the read, and whether `cron.changed` covers it.
+  final Map<String, ({String signature, bool inFlight, bool signalled})>
+  _cronSeen = {};
+
+  /// `cron.changed` stats the `cron/jobs.json` of the gateway's own home
+  /// only (`tui_gateway/change_watcher.py`: `_home_mtime_ns` on
+  /// `_watcher_home()`), the default profile of a standard install. A job of
+  /// another profile (a bot's routines live in the bot's profile) moves no
+  /// signal, so a listing with any such job is read on every tick, as
+  /// before.
+  static bool _signalledProfile(String profile) {
+    final owner = profile.trim().toLowerCase();
+    return owner.isEmpty || owner == 'default';
+  }
 
   final BackgroundDashboardClientCache dashboardClients;
   final BackgroundDiscoveryBackoff discoveryBackoff;
@@ -1974,7 +2017,10 @@ class BackgroundAutomationDiscovery {
   final Map<String, ({String signature, bool inFlight})> _kanbanSeen = {};
 
   /// The service is going away: no socket outlives it.
-  void close() => _kanbanEvents.close();
+  void close() {
+    _kanbanEvents.close();
+    _cronChanges.close();
+  }
 
   /// Last observed Cron/Kanban state per connection, used only to decide the
   /// listener cadence (never delivery).
@@ -2019,10 +2065,17 @@ class BackgroundAutomationDiscovery {
     SharedPreferences prefs,
     List<SavedConnection> targets,
   ) async {
-    if (targets.isEmpty || !notif.notifyCronResults) return false;
+    if (targets.isEmpty || !notif.notifyCronResults) {
+      _cronChanges.close();
+      _cronSeen.clear();
+      return false;
+    }
     final uiForeground =
         prefs.getBool(BackgroundListener.uiForegroundKey) == true;
     final mutes = NotificationMuteStore(prefs);
+    final ids = {for (final connection in targets) connection.id};
+    _cronChanges.retain(ids);
+    _cronSeen.removeWhere((id, _) => !ids.contains(id));
     for (final connection in targets) {
       if (!_discoveryBackoff.allowsBackgroundAttempt(
         connection.id,
@@ -2030,6 +2083,22 @@ class BackgroundAutomationDiscovery {
       )) {
         continue;
       }
+      final gateway = _keptGateway(connection.id);
+      final readDue = _cronChanges.needsRead(connection.id, gateway);
+      final seen = _cronSeen[connection.id];
+      if (!readDue && seen != null && !seen.inFlight && seen.signalled) {
+        // No `cron.changed` on the live socket since the last read: the
+        // jobs, their notices and the Cron widget are what that read saw.
+        // A run in flight is still read on every tick.
+        _noteActivity(
+          '${connection.id}/cron',
+          seen.signature,
+          inFlight: seen.inFlight,
+        );
+        unawaited(LauncherWidgetCronPublisher.instance.renew(connection.id));
+        continue;
+      }
+      _cronChanges.reading(connection.id, gateway);
       final dashboard = _dashboardClients.clientFor(connection);
       List<CronExecutionSnapshot>? executions;
       try {
@@ -2039,6 +2108,7 @@ class BackgroundAutomationDiscovery {
         );
       } catch (error) {
         notifTrace(() => 'cron load error ${error.runtimeType}');
+        _cronChanges.readFailed(connection.id);
         _discoveryBackoff.recordFailure(
           connection.id,
           BackgroundDiscoveryCapability.cron,
@@ -2051,6 +2121,7 @@ class BackgroundAutomationDiscovery {
         continue;
       }
       if (executions == null) {
+        _cronChanges.readFailed(connection.id);
         _discoveryBackoff.recordFailure(
           connection.id,
           BackgroundDiscoveryCapability.cron,
@@ -2085,6 +2156,8 @@ class BackgroundAutomationDiscovery {
               .whereType<Session>()
               .toList(growable: false);
         } catch (error) {
+          // Read again next tick: the sessions name and preview results.
+          _cronChanges.readFailed(connection.id);
           if (kDebugMode) {
             debugPrint(
               '[hermes-notif] cron destinations falló '
@@ -2100,13 +2173,19 @@ class BackgroundAutomationDiscovery {
           sessions: sessions,
           strings: titleStrings,
         );
-        _noteActivity(
-          '${connection.id}/cron',
-          ([
+        final cronSeen = (
+          signature: ([
             for (final e in executions)
               '${e.jobKey}:${e.executionId}:${e.status}',
           ]..sort()).join('|'),
           inFlight: executions.any((e) => !e.terminal),
+          signalled: executions.every((e) => _signalledProfile(e.profile)),
+        );
+        _cronSeen[connection.id] = cronSeen;
+        _noteActivity(
+          '${connection.id}/cron',
+          cronSeen.signature,
+          inFlight: cronSeen.inFlight,
         );
 
         final groups = BackgroundCronWatch.discoveryGroups(executions);
@@ -2313,6 +2392,7 @@ class BackgroundAutomationDiscovery {
           );
         }
       } catch (error) {
+        _cronChanges.readFailed(connection.id);
         notifTrace(() => 'cron processing error ${error.runtimeType}');
         if (kDebugMode) {
           debugPrint(
@@ -2462,7 +2542,8 @@ class BackgroundAutomationDiscovery {
       }
       if (!_kanbanEvents.needsRead(followKey)) {
         // No event past the last read: the board, its notices and the
-        // Tareas widget are what that read saw. The cadence keeps it too.
+        // Tareas widget are what that read saw. The cadence keeps it too,
+        // and the widget is re-stamped with it, so it stays current.
         final seen = _kanbanSeen[followKey];
         if (seen != null) {
           _noteActivity(
@@ -2471,6 +2552,7 @@ class BackgroundAutomationDiscovery {
             inFlight: seen.inFlight,
           );
         }
+        unawaited(LauncherWidgetTasksPublisher.instance.renew(connection.id));
         continue;
       }
       final dashboard = _dashboardClients.clientFor(connection);

@@ -3,6 +3,8 @@ package com.hermesagent.hermes_android
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.it_nomads.fluttersecurestorage.FlutterSecureStorageConfig
+import com.it_nomads.fluttersecurestorage.NamespacedConfigSource
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.Executors
@@ -21,6 +23,11 @@ import java.util.concurrent.Executors
 object DurableSecretWriter {
     const val CHANNEL_NAME = "hermes/durable_secrets"
     private const val PREFS_NAME = "FlutterSecureStorage"
+    private val keyPrefix = FlutterSecureStorageConfig(emptyMap()).sharedPreferencesKeyPrefix + "_"
+    private val encryptedKeysets = setOf(
+        "__androidx_security_crypto_encrypted_prefs_key_keyset__",
+        "__androidx_security_crypto_encrypted_prefs_value_keyset__",
+    )
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
@@ -28,18 +35,41 @@ object DurableSecretWriter {
         val app = context.applicationContext
         return MethodChannel(messenger, CHANNEL_NAME).also { channel ->
             channel.setMethodCallHandler { call, result ->
-                if (call.method != "flush") return@setMethodCallHandler result.notImplemented()
-                io.execute {
-                    val flushed =
+                when (call.method) {
+                    "flush" -> io.execute {
+                        val flushed =
+                            try {
+                                app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().commit()
+                            } catch (_: Exception) {
+                                false
+                            }
+                        main.post { result.success(flushed) }
+                    }
+                    "listKeys" -> io.execute {
                         try {
-                            app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().commit()
+                            val keys = listKeys(app)
+                            main.post { result.success(keys) }
                         } catch (_: Exception) {
-                            false
+                            main.post { result.error("key_list_failed", "Could not list secure storage keys", null) }
                         }
-                    main.post { result.success(flushed) }
+                    }
+                    else -> result.notImplemented()
                 }
             }
         }
+    }
+
+    /** Lists the default backend's keys without decoding its encrypted values. */
+    private fun listKeys(context: Context): List<String>? {
+        val migrated =
+            NamespacedConfigSource(context, PREFS_NAME).getBoolean("ENCRYPTED_PREFERENCES_MIGRATED", false)
+        val keys = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).all.keys
+        // Older EncryptedSharedPreferences installs encrypt the names too.
+        // Let flutter_secure_storage handle their migration before listing.
+        if (!migrated && keys.any { !it.startsWith(keyPrefix) && it !in encryptedKeysets }) {
+            return null
+        }
+        return keys.filter { it.startsWith(keyPrefix) }.map { it.removePrefix(keyPrefix) }
     }
 
     fun detach(channel: MethodChannel) = channel.setMethodCallHandler(null)

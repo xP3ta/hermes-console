@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/hermes_design.dart' show HermesListRow;
+import 'package:hermes_android/core/design/hicons.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/models/subagent_steps.dart';
 import 'package:hermes_android/core/screens/subagent_detail_screen.dart';
@@ -91,14 +92,21 @@ void main() {
     await tester.pumpAndSettle();
 
     Finder row(String id) => find.byKey(ValueKey('turn-step-card-$id'));
-    final a = _iconIn(tester, row('a'));
-    final b = _iconIn(tester, row('b'));
-    final c = _iconIn(tester, row('c'));
+    Icon family(String id) => tester.widget<Icon>(
+      find.descendant(
+        of: find.byKey(ValueKey('turn-step-mark-$id')),
+        matching: find.byType(Icon),
+      ),
+    );
+    final a = family('a');
+    final b = family('b');
+    final c = family('c');
     final d = _iconIn(tester, row('d'));
-    // What the step was, as the live row and its pills say it.
-    expect(a.glyph, ChatLiveGlyph.terminalAgent);
-    expect(b.glyph, ChatLiveGlyph.toolCall);
-    expect(c.glyph, ChatLiveGlyph.toolCall);
+    // What the step was, by its family (Desktop's tool icons): the
+    // terminal, the file, the skill; one outline set, one size, one ink.
+    expect(a.icon, HIcons.terminal_rounded);
+    expect(b.icon, HIcons.description_outlined);
+    expect(c.icon, HIcons.auto_awesome_rounded);
     for (final icon in [a, b, c]) {
       expect(icon.color, _colors.textSecondary);
       expect(icon.size, HermesIcon.sm);
@@ -191,7 +199,7 @@ void main() {
     expect(_circles(find.byType(TurnStepCards)), findsNothing);
   });
 
-  testWidgets('the line\'s header: quiet ink settled, error ink failed', (
+  testWidgets('the activity capsule has distinct success and error glyphs', (
     tester,
   ) async {
     for (final failed in [false, true]) {
@@ -208,8 +216,8 @@ void main() {
           ),
         ),
       );
-      // A settled line is quiet: a small «·» lead and tertiary ink, 32 dp
-      // high, no ring and no check; a failed one keeps the outline error sign.
+      // A settled turn uses the glass capsule with its success check;
+      // a failed turn keeps the outline error glyph.
       if (failed) {
         final icon = tester.widget<ChatLiveIcon>(find.byType(ChatLiveIcon));
         expect(icon.glyph, ChatLiveGlyph.error);
@@ -217,19 +225,16 @@ void main() {
       } else {
         expect(find.byType(ChatLiveIcon), findsNothing);
         expect(find.byKey(const ValueKey('live-ring-check')), findsNothing);
-        final lead = tester.widget<Text>(
-          find.descendant(
-            of: find.byType(TurnInlineActivity),
-            matching: find.text('·'),
-          ),
-        );
-        expect(lead.style?.color, _colors.textTertiary);
+        final check = tester.widget<Icon>(find.byIcon(HIcons.done_rounded));
+        expect(check.color, _colors.success);
         final line = tester.widget<Text>(
           find.byKey(const ValueKey('chat-inline-activity-text')),
         );
-        expect(line.style?.color, _colors.textTertiary);
-        expect(line.style?.fontSize, 13);
-        expect(tester.getSize(find.byType(TurnInlineActivity)).height, 32);
+        expect(line.style?.color, _colors.textPrimary);
+        expect(
+          tester.getSize(find.byType(TurnInlineActivity)).height,
+          greaterThanOrEqualTo(HermesSpace.tap),
+        );
       }
     }
   });

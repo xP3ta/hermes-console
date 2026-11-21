@@ -12,10 +12,13 @@ import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/cold_start_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/diagnostic_bundle_service.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/widgets/diagnostic_bundle_tile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/memory_sealed_files.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -136,24 +139,37 @@ void main() {
       profile: 'default',
       attachments: const [],
     );
-    fails = (method, key) =>
-        method == 'write' && key == 'chat_turn_outbox_v1';
-    await expectLater(outbox.save(turn), throwsA(isA<PlatformException>()));
-    fails = (method, key) => method == 'read' && key == 'chat_turn_outbox_v1';
+    // The outbox is a sealed file: the disk refuses it.
+    final files = MemorySealedFileIo.of(SealedLocalFiles.outbox)..resetHooks();
+    addTearDown(files.resetHooks);
+    Never refuse(String _) =>
+        throw const FileSystemException(privateDetail, '/private/path');
+    files.beforeWrite = (name) async => refuse(name);
+    await expectLater(outbox.save(turn), throwsA(isA<FileSystemException>()));
+    files.beforeWrite = null;
+    files.beforeRead = (name) async => refuse(name);
     await expectLater(
       outbox.loadAllForChat(
         'conn-private',
         'session-private',
         profile: 'default',
       ),
-      throwsA(isA<PlatformException>()),
+      throwsA(isA<FileSystemException>()),
     );
+    files.beforeRead = null;
 
     final preview = await export();
 
-    expect(failureOf(preview, 'outboxSave')['errorType'], 'PlatformException');
-    expect(failureOf(preview, 'outboxRead')['errorType'], 'PlatformException');
+    expect(
+      failureOf(preview, 'outboxSave')['errorType'],
+      'FileSystemException',
+    );
+    expect(
+      failureOf(preview, 'outboxRead')['errorType'],
+      'FileSystemException',
+    );
     expectNothingPrivate(preview);
+    expect(preview, isNot(contains('/private/path')));
   });
 
   test('a cold start whose index cannot be read is exported', () async {

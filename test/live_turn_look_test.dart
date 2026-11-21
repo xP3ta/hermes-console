@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/floating.dart';
 import 'package:hermes_android/core/models/agent_task_list.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/theme/hermes_tokens.dart';
 import 'package:hermes_android/core/theme/live_turn_tokens.dart';
 import 'package:hermes_android/core/widgets/chat/live_turn_window.dart';
+import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart';
 import 'package:hermes_android/core/widgets/chat/turn_step_cards.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
@@ -20,7 +23,7 @@ final _now = _start.add(const Duration(seconds: 75));
 
 const _names = ['terminal', 'read_file', 'skill_view', 'web_search'];
 
-Widget _host(Widget child, {bool reduced = true, double scale = 1}) =>
+Widget _host(Widget child, {bool reduced = true, double scale = 1, double width = 380}) =>
     MaterialApp(
       locale: const Locale('es'),
       localizationsDelegates: Strings.localizationsDelegates,
@@ -36,7 +39,7 @@ Widget _host(Widget child, {bool reduced = true, double scale = 1}) =>
       home: Scaffold(
         body: Align(
           alignment: Alignment.topLeft,
-          child: SizedBox(width: 380, child: SingleChildScrollView(child: child)),
+          child: SizedBox(width: width, child: SingleChildScrollView(child: child)),
         ),
       ),
     );
@@ -422,25 +425,17 @@ void main() {
     });
   });
 
-  testWidgets('a settled turn keeps its one quiet line, without ring or check', (
+  testWidgets('a settled turn keeps a compact capsule with a full tap target', (
     tester,
   ) async {
     await tester.pumpWidget(
       _host(
-        LiveTurnScope(
-          inlineActivity: true,
-          status: LiveTurnStatus.idle,
-          clock: () => _now,
-          child: ThinkingTraceCard(
-            active: false,
-            stepCards: true,
-            events: _events(3, running: false),
-            duration: const Duration(seconds: 75),
-            headerBuilder: (_, summary, details) => Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [summary, details],
-            ),
-          ),
+        TurnInlineActivity(
+          label: 'Trabajó 59 s',
+          live: false,
+          steps: 8,
+          open: false,
+          onTap: () {},
         ),
       ),
     );
@@ -450,14 +445,75 @@ void main() {
     final line = find.byKey(const ValueKey('chat-inline-activity'));
     expect(line, findsOneWidget);
     expect(
-      find.descendant(of: line, matching: find.text('·')),
+      find.descendant(of: line, matching: find.byIcon(HIcons.done_rounded)),
       findsOneWidget,
-      reason: 'the small lead of the quiet line',
     );
-    expect(tester.getSize(line).height, 32);
+    final surface = find.byKey(const ValueKey('chat-inline-activity-surface'));
+    expect(tester.widget<HermesFloatingSurface>(surface).shape, isA<StadiumBorder>());
+    expect(tester.getSize(line).height, greaterThanOrEqualTo(HermesSpace.tap));
+    expect(tester.getSize(surface).height, lessThan(tester.getSize(line).height));
+    expect(tester.getSize(surface).width, lessThan(380));
     final text = tester.widget<Text>(
       find.byKey(const ValueKey('chat-inline-activity-text')),
     );
     expect(text.style?.fontSize, 13);
   });
+
+  for (final (width, scale) in [(660.0, 1.0), (360.0, 2.0)]) {
+    testWidgets('the footer keeps summary and history aligned at $width / $scale',
+        (tester) async {
+      tester.view
+        ..physicalSize = Size(width, 840)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        _host(
+          LiveTurnScope(
+            inlineActivity: true,
+            status: LiveTurnStatus.idle,
+            clock: () => _now,
+            child: ThinkingTraceCard(
+              active: false,
+              stepCards: true,
+              events: _events(3, running: false),
+              duration: const Duration(seconds: 59),
+              headerBuilder: (_, summary, details) => TurnActivityFooter(
+                summary: summary,
+                details: details,
+                actions: List.generate(
+                  3,
+                  (_) => const SizedBox.square(dimension: HermesSpace.tap),
+                ),
+              ),
+            ),
+          ),
+          scale: scale,
+          width: width,
+        ),
+      );
+      final summary = find.byKey(const ValueKey('chat-inline-activity'));
+      final surface = find.byKey(const ValueKey('chat-inline-activity-surface'));
+      final actions = find.byKey(const ValueKey('assistant-footer-actions'));
+      await tester.tap(summary);
+      await tester.pump();
+      final rows = find.byKey(const ValueKey('turn-line-group'));
+      expect(tester.getRect(rows).left, tester.getRect(surface).left);
+      expect(
+        tester.getRect(rows).top,
+        closeTo(tester.getRect(summary).bottom, 0.01),
+      );
+      expect(
+        tester.getRect(surface).center.dy,
+        closeTo(tester.getRect(summary).center.dy, 0.01),
+      );
+      expect(tester.getSize(rows).width, lessThanOrEqualTo(HermesLiveTurn.historyWidth));
+      if (width == 660) {
+        expect(tester.getRect(surface).right, lessThan(tester.getRect(actions).left));
+      } else {
+        expect(tester.getRect(actions).bottom, lessThanOrEqualTo(tester.getRect(summary).top));
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
 }

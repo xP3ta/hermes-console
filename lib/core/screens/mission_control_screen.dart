@@ -1221,6 +1221,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 rooms[index],
                 capabilities,
               ),
+              fileStore: enabled
+                  ? _roomFileStore(rooms[index], capabilities)
+                  : null,
               canSend:
                   enabled &&
                   (capabilities?.supports(GroupMethod.send) ?? false),
@@ -2832,6 +2835,44 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       room,
       eventId: eventId,
       attachment: attachment,
+    );
+  }
+
+  /// The room's own file store when the server lists
+  /// `groups.attachment.upload`, as Desktop gates it (`offersGroupMethod(
+  /// methods, 'groups.attachment.upload')`). Null keeps the Dashboard path.
+  RoomFileStore? _roomFileStore(
+    HostedGroupRoom room,
+    GroupsCapabilities? capabilities,
+  ) {
+    final source = _dataSource;
+    if (source is! MissionHostedGroupsUploadDataSource ||
+        !(capabilities?.supports(GroupMethod.attachmentUpload) ?? false)) {
+      return null;
+    }
+    final files = source as MissionHostedGroupsUploadDataSource;
+    return CallbackRoomFileStore(
+      onUpload: (uploadId, kind, name, mime, bytes) =>
+          files.uploadHostedGroupAttachment(
+            room,
+            uploadId: uploadId,
+            kind: kind,
+            name: name,
+            mime: mime,
+            bytes: bytes,
+          ),
+      onSend: (text, attachments, attempt) => _kickRoomWatchAfter(
+        _mutateHostedGroup(
+          room,
+          (_, current, generation) => files.sendHostedGroupMessage(
+            current,
+            text: text,
+            attachments: attachments,
+            attempt: attempt,
+            generation: generation,
+          ),
+        ),
+      ),
     );
   }
 
@@ -4590,6 +4631,10 @@ class _HostedRoomWorkspace extends StatefulWidget {
   /// list `groups.attachment.download`.
   final RoomStoredFileDownload? onDownloadAttachment;
 
+  /// Sends files through the room's own store; null when the server does
+  /// not list `groups.attachment.upload`.
+  final RoomFileStore? fileStore;
+
   const _HostedRoomWorkspace({
     required this.identityFor,
     required this.draftScope,
@@ -4607,6 +4652,7 @@ class _HostedRoomWorkspace extends StatefulWidget {
     required this.onOpenMember,
     this.onOpenMemberSession,
     this.onDownloadAttachment,
+    this.fileStore,
     required this.canSend,
     required this.canRename,
     required this.canStop,
@@ -4772,6 +4818,7 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
             'mob-room-${base64Url.encode(utf8.encode(jsonEncode([widget.room.authorityGatewayId, widget.room.roomId])))}',
       ),
       uploader: writable ? DashboardRoomAttachmentUploader(connection) : null,
+      fileStore: writable ? widget.fileStore : null,
       attachmentActions: _attachmentActions(connection, scope),
       dictation: _dictation,
       displayName: identity?.name,

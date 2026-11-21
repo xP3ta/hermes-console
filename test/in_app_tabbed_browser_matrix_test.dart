@@ -20,6 +20,11 @@ import 'support/fake_webview_platform.dart';
 /// The card margin of the page (`HermesSpace.x2` each side).
 const double _margin = 8;
 
+/// 1.4.3: in the workspace pane the page is the panel's card, as the
+/// Terminal's: `ChatWorkspaceTokens.inset` at its sides, `HermesSpace.x1`
+/// over it and `HermesSpace.x2` under it.
+const double _paneMargin = ChatWorkspaceTokens.inset;
+
 /// Where the browser lives in a case: the whole window, or the open Fold's
 /// work pane beside the chat.
 const double _paneWidth = 440;
@@ -129,21 +134,40 @@ void main() {
 
           // The strip: in its own row, or in the bar's on a phone on its
           // side; «+», the count and every × are whole 48 dp targets.
-          final strip = tester.getRect(
-            find.byKey(const ValueKey('browser-tab-strip')),
-          );
-          expect(strip.height, kBrowserTabStripHeight);
-          expect(strip.left, greaterThanOrEqualTo(area.left));
-          expect(strip.right, lessThanOrEqualTo(area.right + 0.5));
-          final add = find.byKey(const ValueKey('browser-tab-new'));
+          // 1.4.3 (rewritten for the pane): in the work pane there is no
+          // second row under the pane's bar; the count, in the browser's
+          // bar, opens every tab (with «+» and each ×).
           final count = find.byKey(const ValueKey('browser-tab-count'));
-          _expectTarget(tester, add, '+');
           _expectTarget(tester, count, 'count');
           expect(tester.getRect(count).right, lessThanOrEqualTo(area.right));
-          for (final tab in tabs.tabs) {
-            final close = find.byKey(ValueKey('browser-tab-close-${tab.id}'));
-            if (close.evaluate().isEmpty) continue; // scrolled away
-            _expectTarget(tester, close, '× ${tab.id}');
+          if (pane) {
+            expect(
+              find.byKey(const ValueKey('browser-tab-strip')),
+              findsNothing,
+            );
+            expect(
+              find.descendant(
+                of: find.byKey(const ValueKey('in-app-browser-bar')),
+                matching: count,
+              ),
+              findsOneWidget,
+            );
+          } else {
+            final strip = tester.getRect(
+              find.byKey(const ValueKey('browser-tab-strip')),
+            );
+            expect(strip.height, kBrowserTabStripHeight);
+            expect(strip.left, greaterThanOrEqualTo(area.left));
+            expect(strip.right, lessThanOrEqualTo(area.right + 0.5));
+            final add = find.byKey(const ValueKey('browser-tab-new'));
+            _expectTarget(tester, add, '+');
+            for (final tab in tabs.tabs) {
+              final close = find.byKey(
+                ValueKey('browser-tab-close-${tab.id}'),
+              );
+              if (close.evaluate().isEmpty) continue; // scrolled away
+              _expectTarget(tester, close, '× ${tab.id}');
+            }
           }
 
           // The page: the whole width but its card margin, and all the
@@ -154,8 +178,9 @@ void main() {
           final page = tester.getRect(
             find.byKey(const ValueKey('in-app-browser-webview')),
           );
-          expect(page.left, closeTo(area.left + _margin, 1));
-          expect(page.right, closeTo(area.right - _margin, 1));
+          final margin = pane ? _paneMargin : _margin;
+          expect(page.left, closeTo(area.left + margin, 1));
+          expect(page.right, closeTo(area.right - margin, 1));
           final bar = tester.getRect(
             find.byKey(const ValueKey('in-app-browser-bar')),
           );
@@ -164,14 +189,17 @@ void main() {
           );
           final inline = area.width > area.height && area.height < 480;
           final row = inline ? kBrowserTabStripHeight : HermesSpace.tap;
-          expect(page.top, closeTo(bar.bottom, 1));
+          expect(
+            page.top,
+            closeTo(bar.bottom + (pane ? HermesSpace.x1 : 0), 1),
+          );
           expect(bar.height, closeTo(row + 2 * HermesSpace.x1, 1));
           expect(address.top, greaterThanOrEqualTo(bar.top));
           expect(address.bottom, lessThanOrEqualTo(bar.bottom));
           final notch = find.byKey(const ValueKey('in-app-browser-notch'));
           if (pane) {
             expect(notch, findsNothing);
-            expect(page.bottom, closeTo(area.bottom - _margin, 1));
+            expect(page.bottom, closeTo(area.bottom - HermesSpace.x2, 1));
           } else {
             expect(page.bottom, closeTo(tester.getRect(notch).top, 1));
           }

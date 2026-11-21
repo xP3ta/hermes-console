@@ -242,7 +242,9 @@ void main() {
     expect(find.text('Open terminal'), findsNothing);
     expect(find.byType(HermesAppBar), findsNothing);
     expect(find.text('demo@example.invalid:22 · Remote'), findsOneWidget);
+    // 1.4.3: Compose first, the way to write from the pane's «⋯» too.
     expect(toolbar.value.menu.map((entry) => entry.label), [
+      'Compose',
       'Files (SFTP)',
       'Sessions',
       'Edit credentials',
@@ -270,6 +272,28 @@ void main() {
     // Back to the setup, still without a header of its own.
     expect(find.text('Configure SSH'), findsOneWidget);
     expect(find.byType(HermesAppBar), findsNothing);
+    // 1.4.3: in the pane the setup is the Terminal's prompt in its card,
+    // under the Terminal's context line, not the SSH hub.
+    final prompt = find.byKey(const ValueKey('ssh-pane-prompt'));
+    expect(prompt, findsOneWidget);
+    expect(
+      find.ancestor(
+        of: prompt,
+        matching: find.byKey(const ValueKey('workspace-panel-card')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: prompt,
+        matching: find.byKey(const ValueKey('ssh-pane-add-profile')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('workspace-panel-header')),
+      findsOneWidget,
+    );
     expect(toolbar.value, ChatWorkspaceToolbar.none);
     expect(tester.takeException(), isNull);
   });

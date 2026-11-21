@@ -4,18 +4,29 @@
 // 1.4.0 (F1): terminal agrandable, fila de teclas auxiliares y reconexión
 // automática acotada tras una caída de red. El terminal es un shell normal:
 // sin banner ni panel de agentes (los agentes viven en su propia sección).
+// 1.4.3: a terminal a phone can work in (SshTerminalSurface): selection and
+// copy by touch, Paste and Compose, sticky Ctrl/Alt, a pinch for the font
+// size (kept on this device), tappable links, answers to a waiting y/n
+// question. An open terminal is never closed for being idle.
 import 'package:hermes_android/core/design/hicons.dart';
+
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:xterm/xterm.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../bots/ui/room/room_dictation.dart';
+import '../browser/open_web_link.dart';
+import '../config/flavor.dart' show kVoiceRuntimeEnabled;
+import '../design/modal.dart' show HermesAction, HermesMenuButton;
 import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
 import '../services/ssh_reconnect.dart';
 import '../services/ssh_session_service.dart';
+import '../services/ssh_terminal_input.dart';
 import '../services/ssh_working_directory.dart';
 import '../services/terminal_sessions.dart';
 import '../screens/lock_screen.dart';
@@ -26,7 +37,9 @@ import '../utils/ssh_error.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 import '../widgets/ssh_sessions_sheet.dart';
+import '../widgets/ssh_terminal_compose.dart';
 import '../widgets/ssh_terminal_controls.dart';
+import '../widgets/ssh_terminal_surface.dart';
 import '../widgets/workspace/chat_workspace.dart' show ChatWorkspaceTab;
 import '../widgets/workspace/chat_workspace_host.dart'
     show
@@ -54,17 +67,37 @@ class SshTerminalScreen extends StatefulWidget {
   /// ids and names the app validated (see `TerminalAttach`).
   final String? initialCommand;
 
+  /// A web address tapped in the terminal. The workspace can send it to
+  /// its own browser tab; without it, the in-app browser opens over the
+  /// screen ([openWebLinkInApp]).
+  final ValueChanged<Uri>? onOpenLink;
+
+  /// Where Compose's attachments come from: the platform's camera, photo
+  /// library and files when null.
+  final SshComposePicker? composePicker;
+
+  /// Compose's microphone: the chat composer's dictation when null (and
+  /// voice is part of this build).
+  final RoomDictation? composeDictation;
+
   const SshTerminalScreen({
     required this.connection,
     this.paneTitle,
     this.paneMenu = const [],
     this.initialCommand,
+    this.onOpenLink,
+    this.composePicker,
+    this.composeDictation,
     super.key,
   });
 
-  /// Terminal font size; one point larger while expanded.
+  /// Terminal font size; one point larger while expanded. A pinch changes
+  /// it, kept on this device under [fontSizePrefsKey].
   static const double fontSize = 13;
   static const double expandedFontSize = fontSize + 1;
+
+  /// Where the size a pinch chose is kept (the size when not expanded).
+  static const String fontSizePrefsKey = 'ssh_terminal_font_size';
 
   @override
   State<SshTerminalScreen> createState() => _SshTerminalScreenState();
@@ -111,12 +144,61 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
   /// that is seen.
   bool _visible = true;
 
+  /// The touch layer of the terminal: its selection, its paste.
+  GlobalKey<SshTerminalSurfaceState> _surface =
+      GlobalKey<SshTerminalSurfaceState>();
+
+  /// The device's preferences (font size, key row); read once.
+  SharedPreferences? _prefs;
+
+  /// The font size when not expanded: the default, or the one a pinch
+  /// chose before.
+  double _baseFont = SshTerminalScreen.fontSize;
+
+  /// The Compose card is open over the dock.
+  bool _composeOpen = false;
+
+  /// The dock's arrow pad (✥) is open above it.
+  final ValueNotifier<bool> _arrowsOpen = ValueNotifier<bool>(false);
+
+  /// Compose's microphone ([SshTerminalScreen.composeDictation], else the
+  /// chat composer's engine, made when Compose first opens).
+  RoomDictation? _dictation;
+  bool _ownDictation = false;
+
+  /// The shell's window title and the server, for the header.
+  String? _sshHost;
+
+  /// The service this screen attaches to while visible and in the foreground.
+  SshSessionService? _viewing;
+  bool _viewAttached = false;
+  bool _resumed = true;
+
   SshSessionService get _svc =>
       context.findAncestorStateOfType<HermesAppState>()!.sshSessions;
+
+  SshTerminalSession? get _visibleTerminal => _session?.visibleTerminal;
+  bool get _canReturnToShell => _session?.attachment.value != null;
+
+  void _syncViewing() {
+    final viewing = _viewing;
+    if (viewing == null) return;
+    final active = _visible && _resumed;
+    if (active == _viewAttached) return;
+    if (active) {
+      viewing.attachView(widget.connection.id);
+    } else {
+      viewing.detachView(widget.connection.id);
+    }
+    _viewAttached = active;
+  }
 
   @override
   void initState() {
     super.initState();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _resumed = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    _foreground = _resumed || lifecycle == AppLifecycleState.inactive;
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _init());
   }
@@ -124,23 +206,192 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_viewing == null) {
+      final app = context.findAncestorStateOfType<HermesAppState>()!;
+      _viewing = app.sshSessions;
+      final prefs = app.connManager.prefs;
+      _prefs = prefs;
+      final stored = prefs.getDouble(SshTerminalScreen.fontSizePrefsKey);
+      _baseFont = _clampFont(stored ?? SshTerminalScreen.fontSize);
+      unawaited(_loadHost(app));
+    }
     _inPane = ChatWorkspacePaneScope.isInPane(context);
     final visible =
         TickerMode.valuesOf(context).enabled &&
         (ModalRoute.of(context)?.isCurrent ?? true);
-    if (visible == _visible) return;
+    final changed = visible != _visible;
     _visible = visible;
+    _syncViewing();
+    if (!changed) return;
     _syncReconnect();
     // A drop that happened while this screen was not seen reconnects now.
     if (visible) _onPhase();
   }
 
   @override
+  void didUpdateWidget(SshTerminalScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.connection.id != widget.connection.id && _viewAttached) {
+      _viewing?.detachView(oldWidget.connection.id);
+      _viewAttached = false;
+      _syncViewing();
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _session?.phase.removeListener(_onPhase);
+    _session?.attachment.removeListener(_onAttachment);
     _reconnect.dispose();
+    if (_viewAttached) {
+      _viewing?.detachView(widget.connection.id);
+      _viewAttached = false;
+    }
+    _arrowsOpen.dispose();
+    if (_ownDictation) _dictation?.dispose();
     super.dispose();
+  }
+
+  /// The server's address for the header's second line (herdr's `name ·
+  /// host`); nothing when the profile has no SSH settings yet.
+  Future<void> _loadHost(HermesAppState app) async {
+    try {
+      final config = await app.sshManager.loadConfig(widget.connection.id);
+      if (!mounted || config == null) return;
+      setState(() => _sshHost = config.host);
+    } on Object catch (error) {
+      debugPrint('[ssh] header host not read (${error.runtimeType})');
+    }
+  }
+
+  /// The font size the terminal is drawn at.
+  double get _fontSize => _baseFont + (_expanded ? 1 : 0);
+
+  static double _clampFont(double size) {
+    const min = SshTerminalSurface.minFontSize;
+    const max = SshTerminalSurface.maxFontSize;
+    return size.clamp(min, max).toDouble();
+  }
+
+  /// A pinch chose [size] (as drawn): kept as the size when not expanded.
+  void _setFontSize(double size) {
+    final base = _clampFont(size - (_expanded ? 1 : 0));
+    if (base == _baseFont) return;
+    setState(() => _baseFont = base);
+    unawaited(_prefs?.setDouble(SshTerminalScreen.fontSizePrefsKey, base));
+  }
+
+  /// A web address the user tapped: the workspace's browser when it gave
+  /// one, else the in-app browser (http and https only are detected).
+  void _openLink(Uri uri) {
+    final open = widget.onOpenLink;
+    if (open != null) {
+      open(uri);
+      return;
+    }
+    openWebLinkInApp(context, uri);
+  }
+
+  /// The key row's Paste: the clipboard into the shell.
+  void _paste() {
+    final surface = _surface.currentState;
+    if (surface != null) {
+      unawaited(surface.paste());
+      return;
+    }
+    final session = _visibleTerminal;
+    if (session == null || session.phase.value != SshSessionPhase.ready) {
+      return;
+    }
+    unawaited(
+      sshPasteClipboard(session.terminal, modifiers: session.modifiers),
+    );
+  }
+
+  /// The pencil: opens the Compose card over the dock, or closes it. Its
+  /// draft is kept in memory for this connection until it is sent
+  /// ([SshSessionService.composeDraft]), so closing loses nothing.
+  void _compose() {
+    final open = !_composeOpen;
+    if (open) {
+      _arrowsOpen.value = false;
+      _surface.currentState?.hideKeyboard();
+      _dictation ??= _makeDictation();
+    } else {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+    setState(() => _composeOpen = open);
+  }
+
+  RoomDictation? _makeDictation() {
+    final given = widget.composeDictation;
+    if (given != null) return given;
+    if (!kVoiceRuntimeEnabled) return null;
+    final app = context.findAncestorStateOfType<HermesAppState>()!;
+    _ownDictation = true;
+    return VoiceRoomDictation(
+      voice: app.voice,
+      connection: widget.connection,
+      profile: app.connManager.activeProfileFor(widget.connection.id),
+    );
+  }
+
+  /// The dock's keyboard key: the keyboard for typing straight into the
+  /// terminal (Compose steps aside), or, up already, it goes down.
+  void _keyboard({required bool up}) {
+    final surface = _surface.currentState;
+    if (up) {
+      surface?.hideKeyboard();
+      return;
+    }
+    if (_composeOpen) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      setState(() => _composeOpen = false);
+    }
+    surface?.showKeyboard();
+  }
+
+  /// Why Compose cannot attach files now: they go up over this
+  /// connection, so it must be connected and allowed to write.
+  String? _attachUnavailable() {
+    final strings = Strings.of(context);
+    final app = context.findAncestorStateOfType<HermesAppState>()!;
+    if (app.sshManager.isReadOnly(widget.connection.id)) {
+      return strings.termUxAttachReadOnly;
+    }
+    final session = _session;
+    if (session == null ||
+        session.phase.value != SshSessionPhase.ready ||
+        session.client == null) {
+      return strings.termUxAttachOffline;
+    }
+    return null;
+  }
+
+  /// Writes Compose's [text] into the shell in one go: one (bracketed)
+  /// paste, Enter after it when [enter]. False, with nothing written, when
+  /// the session is not ready or the write fails: the sheet keeps the text.
+  bool _sendComposed(String text, {required bool enter}) {
+    final session = _visibleTerminal;
+    if (session == null ||
+        session.phase.value != SshSessionPhase.ready ||
+        session.isClientClosed) {
+      return false;
+    }
+    final terminal = session.terminal;
+    final payload = sshPastePayload(terminal, text, enter: enter);
+    try {
+      session.modifiers.unmodified(() => terminal.textInput(payload));
+    } on Object catch (error) {
+      debugPrint('[ssh] compose not sent (${error.runtimeType})');
+      return false;
+    }
+    _svc.rememberComposed(widget.connection.id, text);
+    _svc.composeDraft(widget.connection.id).markQueuedSend(text);
+    // The card lists what was sent this session: it is one more now.
+    setState(() {});
+    return true;
   }
 
   /// In the pane, puts this terminal's controls on the floating bar after
@@ -162,6 +413,15 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
         keysShown: ready ? _keysShown : null,
         onToggleKeys: ready ? _toggleKeys : null,
         menu: [
+          if (ready)
+            ChatWorkspaceMenuEntry(
+              key: const ValueKey('ssh-pane-menu-compose'),
+              label: strings.termUxCompose,
+              icon: HIcons.edit_note_outlined,
+              onSelected: () {
+                if (!_composeOpen) _compose();
+              },
+            ),
           ChatWorkspaceMenuEntry(
             key: const ValueKey('ssh-pane-menu-files'),
             label: strings.sshFilesSftp,
@@ -174,6 +434,13 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
               label: strings.hdpSessionsTitle,
               icon: HIcons.view_list_outlined,
               onSelected: _openSessions,
+            ),
+          if (_canReturnToShell)
+            ChatWorkspaceMenuEntry(
+              key: const ValueKey('ssh-pane-return-to-shell'),
+              label: strings.hdpReturnToShell,
+              icon: HIcons.arrow_back_rounded,
+              onSelected: _returnToShell,
             ),
           ...widget.paneMenu,
           if (_session != null)
@@ -194,6 +461,8 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _resumed = state == AppLifecycleState.resumed;
+    _syncViewing();
     switch (state) {
       case AppLifecycleState.resumed:
         _foreground = true;
@@ -239,9 +508,27 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
   /// Watches [session] instead of the previous one. Call inside setState.
   void _adopt(SshTerminalSession session) {
     if (identical(_session, session)) return;
+    if (!identical(
+      _visibleTerminal?.terminal,
+      session.visibleTerminal.terminal,
+    )) {
+      _surface = GlobalKey<SshTerminalSurfaceState>();
+    }
     _session?.phase.removeListener(_onPhase);
+    _session?.attachment.removeListener(_onAttachment);
     _session = session;
     session.phase.addListener(_onPhase);
+    session.attachment.addListener(_onAttachment);
+  }
+
+  void _onAttachment() {
+    _arrowsOpen.value = false;
+    if (_composeOpen) FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _composeOpen = false;
+      // A selection and scroll position belong to this PTY's own buffer.
+      _surface = GlobalKey<SshTerminalSurfaceState>();
+    });
   }
 
   /// The automatic attempts run only while this screen is seen and the app
@@ -269,6 +556,11 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
   void _onPhase() {
     final session = _session;
     if (session == null || !mounted) return;
+    if ((session.phase.value == SshSessionPhase.closed &&
+            session.end == SshSessionEnd.connectionLost) ||
+        session.phase.value == SshSessionPhase.error) {
+      _svc.composeDraftIfPresent(widget.connection.id)?.recoverUncertainSend();
+    }
     // Only the screen that is seen reconnects: an off-screen tab or a
     // covered route on the same session would retry (and announce the
     // fresh shell) a second time (review P1-F4-1).
@@ -318,30 +610,21 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
     _svc.send(widget.connection.id, '$line\n');
   }
 
-  /// «Sessions»: tmux and Herdr sessions of the server, to attach this
-  /// terminal to one of them. Typed only when the user picks a row.
   Future<void> _openSessions() async {
     final session = _session;
-    final client = session?.client;
-    if (session == null ||
-        client == null ||
-        session.phase.value != SshSessionPhase.ready) {
-      return;
-    }
+    if (session == null) return;
     final app = context.findAncestorStateOfType<HermesAppState>()!;
-    final recents = TerminalRecentStore(
-      app.connManager.prefs,
-      widget.connection.id,
-    );
-    final choice = await showSshSessionsSheet(
+    await chooseSshTerminalSession(
       context,
-      run: (command) => SshSessionService.runRemote(client, command),
-      recents: recents,
+      service: _svc,
+      session: session,
+      recents: TerminalRecentStore(app.connManager.prefs, widget.connection.id),
     );
-    if (choice == null || !mounted) return;
-    await recents.add(choice.recent);
-    if (session.phase.value != SshSessionPhase.ready) return;
-    _svc.send(widget.connection.id, '${choice.line}\n');
+  }
+
+  void _returnToShell() {
+    final session = _session;
+    if (session != null) _svc.showPlainShell(session);
   }
 
   /// One automatic attempt. It never trusts a host key on its own: a new or
@@ -424,43 +707,52 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
     final colors = Theme.of(context).hermes;
     _schedulePaneToolbar();
     return PopScope(
-      // Atrás con el terminal agrandado primero lo reduce.
-      canPop: !_expanded,
+      canPop: !_expanded && !_composeOpen && !_canReturnToShell,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _expanded) _toggleExpanded();
+        if (didPop) return;
+        if (_composeOpen) {
+          _compose();
+        } else if (_expanded) {
+          _toggleExpanded();
+        } else if (_canReturnToShell) {
+          _returnToShell();
+        }
       },
       child: Scaffold(
         // In the pane the pane's own surface shows (audit T1).
+        // Full screen, the page is the terminal's own surface (herdr: the
+        // dock floats over the terminal, a shade darker).
         backgroundColor: ChatWorkspacePaneScope.backgroundOf(
           context,
-          colors.background,
+          colors.surface,
         ),
         appBar: _expanded || _inPane
             ? null
             : HermesAppBar(
                 // No glass (Q9-CRISTAL): nothing scrolls under it.
                 glass: false,
-                centerTitle: false,
-                title: Text(Strings.of(context).sshTitle),
+                // herdr's header: the shell's window title, and under it,
+                // dim, the profile and the server; the rest in «⋮».
+                title: _headerTitle(colors),
+                leading: _canReturnToShell
+                    ? IconButton(
+                        key: const ValueKey('ssh-terminal-return-to-shell'),
+                        tooltip: Strings.of(context).hdpReturnToShell,
+                        icon: const Icon(HIcons.arrow_back_rounded),
+                        onPressed: _returnToShell,
+                      )
+                    : null,
                 actions: [
-                  if (_session?.phase.value == SshSessionPhase.ready)
-                    IconButton(
-                      key: const ValueKey('ssh-sessions-button'),
-                      tooltip: Strings.of(context).hdpSessionsTitle,
-                      icon: const Icon(HIcons.view_list_outlined),
-                      onPressed: _openSessions,
-                    ),
                   IconButton(
-                    tooltip: Strings.of(context).sshFilesSftp,
-                    icon: const Icon(HIcons.folder_open_outlined),
-                    onPressed: _openSftp,
-                  ),
-                  if (_session != null)
-                    IconButton(
-                      tooltip: Strings.of(context).sshCloseSession,
-                      icon: const Icon(HIcons.power_settings_new),
-                      onPressed: _closeSession,
+                    key: const ValueKey('ssh-terminal-expand'),
+                    tooltip: Strings.of(context).sshExpandTerminal,
+                    icon: Icon(
+                      HIcons.open_in_full,
+                      semanticLabel: Strings.of(context).sshExpandTerminal,
                     ),
+                    onPressed: _toggleExpanded,
+                  ),
+                  _headerMenu(),
                 ],
               ),
         // Sin cabecera, el terminal agrandado respeta la barra de estado.
@@ -476,6 +768,86 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
     );
   }
 
+  /// The shell's window title (as the shell sets it, `user@host: ~`), the
+  /// profile's name until it does; the profile and the server under it.
+  Widget _headerTitle(HermesThemeColors colors) {
+    final strings = Strings.of(context);
+    final session = _visibleTerminal;
+    final host = _sshHost;
+    final label = widget.connection.label;
+    final fallbackTitle = _canReturnToShell ? session?.kind.programName : null;
+    // Two lines in the bar's height: past 1.3x they would not fit it.
+    Widget lines(String? title) => MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.3,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            title ??
+                fallbackTitle ??
+                (label.isEmpty ? strings.sshTitle : label),
+            key: const ValueKey('ssh-terminal-title'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            host == null || host.isEmpty ? label : '$label · $host',
+            key: const ValueKey('ssh-terminal-subtitle'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: HermesType.support.copyWith(color: colors.textSecondary),
+          ),
+        ],
+      ),
+    );
+    if (session == null) return lines(null);
+    return ValueListenableBuilder<String?>(
+      valueListenable: session.windowTitle,
+      builder: (context, title, _) => lines(title),
+    );
+  }
+
+  /// «⋮»: Sessions, Files (SFTP), Compose and closing the session.
+  Widget _headerMenu() {
+    final strings = Strings.of(context);
+    return HermesMenuButton<VoidCallback>(
+      key: const ValueKey('ssh-terminal-menu'),
+      tooltip: strings.commonMoreOptions,
+      onSelected: (action) => action(),
+      actions: (_) {
+        final ready = _session?.phase.value == SshSessionPhase.ready;
+        return [
+          if (ready)
+            HermesAction(
+              key: const ValueKey('ssh-sessions-button'),
+              value: _openSessions,
+              label: strings.hdpSessionsTitle,
+            ),
+          if (_canReturnToShell)
+            HermesAction(
+              key: const ValueKey('ssh-menu-return-to-shell'),
+              value: _returnToShell,
+              label: strings.hdpReturnToShell,
+            ),
+          HermesAction(value: _openSftp, label: strings.sshFilesSftp),
+          if (ready)
+            HermesAction(
+              value: () {
+                if (!_composeOpen) _compose();
+              },
+              label: strings.termUxCompose,
+            ),
+          if (_session != null)
+            HermesAction(
+              value: _closeSession,
+              label: strings.sshCloseSession,
+              destructive: true,
+            ),
+        ];
+      },
+    );
+  }
+
   Widget _body(HermesThemeColors colors) {
     final session = _session;
     if (_preparing || session == null) {
@@ -487,7 +859,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
           ValueListenableBuilder<SshReconnectStatus>(
             valueListenable: _reconnect.status,
             builder: (context, status, _) =>
-                _sessionBody(colors, session, phase, status),
+                _sessionBody(colors, session.visibleTerminal, phase, status),
           ),
     );
   }
@@ -526,6 +898,18 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
                 icon: const Icon(HIcons.refresh, size: 16),
                 label: Text(Strings.of(context).sshRetry),
               ),
+              if (_expanded && !_inPane) ...[
+                const SizedBox(height: HermesSpace.x2),
+                TextButton.icon(
+                  key: const ValueKey('ssh-terminal-expand'),
+                  onPressed: _toggleExpanded,
+                  icon: const Icon(
+                    HIcons.close_fullscreen,
+                    size: HermesIcon.md,
+                  ),
+                  label: Text(Strings.of(context).sshShrinkTerminal),
+                ),
+              ],
             ],
           ),
         ),
@@ -538,46 +922,54 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
     // terminal had one line left. Its host line steps
     // aside and the keys keep one thin row (their slots stay, so the
     // terminal is not rebuilt).
-    final typingInPane = _inPane && MediaQuery.viewInsetsOf(context).bottom > 0;
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final typingInPane = _inPane && keyboard;
     final terminal = Stack(
       children: [
         Positioned.fill(
-          child: TerminalView(
-            session.terminal,
-            // Desktop: light or dark palette with the app.
-            theme: hermesTerminalTheme(Theme.of(context)),
-            textStyle: TerminalStyle(
-              fontSize: _expanded
-                  ? SshTerminalScreen.expandedFontSize
-                  : SshTerminalScreen.fontSize,
+          // A touch on the terminal closes the arrow pad.
+          child: Listener(
+            onPointerDown: (_) => _arrowsOpen.value = false,
+            child: SshTerminalSurface(
+              key: _surface,
+              terminal: session.terminal,
+              // Desktop: light or dark palette with the app.
+              theme: hermesTerminalTheme(Theme.of(context)),
+              fontSize: _fontSize,
+              modifiers: session.modifiers,
+              onFontSize: _setFontSize,
+              onOpenLink: _openLink,
+              // In the workspace pane beside the chat the composer keeps the
+              // focus (review P2-F4-5); full screen, the terminal takes it as
+              // before.
+              autofocus: !_inPane,
+              readOnly: !ready,
             ),
-            padding: const EdgeInsets.all(8),
-            // In the workspace pane beside the chat the composer keeps the
-            // focus (review P2-F4-5); full screen, the terminal takes it as
-            // before.
-            autofocus: !_inPane,
-            readOnly: !ready,
-            // U-03 (spec 028): con IME software (Gboard) el default
-            // deleteDetection=false deja el editing state vacío y el
-            // backspace nunca llega al terminal; y el keyboardType
-            // emailAddress activa composición/autocorrección que corta la
-            // entrada. visiblePassword = sin sugerencias (tradeoff: sin
-            // swipe-typing, aceptable en un terminal).
-            deleteDetection: true,
-            keyboardType: TextInputType.visiblePassword,
           ),
         ),
-        // In the pane the floating bar's «Ampliar» does this job.
-        if (!_inPane)
-          PositionedDirectional(
-            end: 4,
-            bottom: 4,
-            child: SshTerminalExpandButton(
-              key: const ValueKey('ssh-terminal-expand'),
-              expanded: _expanded,
-              onPressed: _toggleExpanded,
-            ),
-          ),
+
+        // ✥'s arrow pad, just above the dock at its end; it floats, so the
+        // terminal does not resize.
+        ValueListenableBuilder<bool>(
+          valueListenable: _arrowsOpen,
+          // Always a positioned child: a plain one would size the stack.
+          builder: (context, open, _) => !open || !ready
+              ? const PositionedDirectional(
+                  end: 0,
+                  bottom: 0,
+                  child: SizedBox.shrink(),
+                )
+              : PositionedDirectional(
+                  end: HermesSpace.x2,
+                  bottom: HermesSpace.x2,
+                  child: SshDockEntrance(
+                    child: SshTerminalArrowPad(
+                      terminal: session.terminal,
+                      modifiers: session.modifiers,
+                    ),
+                  ),
+                ),
+        ),
       ],
     );
     final reconnect = <Widget>[
@@ -588,72 +980,128 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
     // gone; the commands saved per server stay stored, untouched. Mock 136
     // v2-A (Cadu's look): the keys are one rounded pill under the terminal,
     // with air around it.
-    final keys = <Widget>[
-      if (ready && (!_inPane || _keysShown))
-        Padding(
-          padding: typingInPane
-              ? const EdgeInsets.fromLTRB(4, 0, 4, 4)
-              : const EdgeInsets.fromLTRB(
-                  ChatWorkspaceTokens.inset,
-                  0,
-                  ChatWorkspaceTokens.inset,
-                  ChatWorkspaceTokens.inset,
-                ),
-          child: SshTerminalKeyBar(
-            terminal: session.terminal,
-            ctrlArmed: session.ctrlArmed,
-            dense: typingInPane,
-            pill: true,
-          ),
-        ),
-    ];
-    return Column(
-      children: [
-        if (_inPane && widget.paneTitle != null)
-          typingInPane ? const SizedBox.shrink() : _paneHeader(colors, session),
-        if (_inPane) ...[
-          // Mock 136 v2-A: the terminal in a rounded card with its own
-          // margin, and the keys in a pill under it.
-          Expanded(
-            child: Padding(
-              padding: typingInPane
-                  ? const EdgeInsets.fromLTRB(4, 2, 4, 4)
-                  : const EdgeInsets.fromLTRB(
-                      ChatWorkspaceTokens.inset,
-                      4,
-                      ChatWorkspaceTokens.inset,
-                      8,
-                    ),
-              child: DecoratedBox(
-                key: const ValueKey('ssh-terminal-pane-card'),
-                position: DecorationPosition.foreground,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(
-                    ChatWorkspaceTokens.cardRadius,
-                  ),
-                  border: Border.all(color: HermesChrome.of(colors).line),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(
-                    ChatWorkspaceTokens.cardRadius,
-                  ),
-                  child: Column(
-                    children: [
-                      Expanded(child: terminal),
-                      ...reconnect,
-                    ],
-                  ),
+    final dockShown = ready && (!_inPane || _keysShown);
+    final svc = _svc;
+    final id = widget.connection.id;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bodyHeight = constraints.maxHeight;
+        final tightCompose = _composeOpen && bodyHeight <= 360;
+        final dockGap = typingInPane || tightCompose
+            ? HermesSpace.x1
+            : ChatWorkspaceTokens.inset;
+        final dockReserve = dockShown
+            ? SshTerminalDock.keyHeight + dockGap
+            : 0.0;
+        final aboveDock = math.max(0.0, bodyHeight - dockReserve);
+        final composeGap = tightCompose ? HermesSpace.x1 : HermesSpace.x2;
+        final composeSide = typingInPane
+            ? HermesSpace.x1
+            : ChatWorkspaceTokens.inset;
+        // Measure Compose against the actual panel height above the dock so
+        // narrow or compact viewports preserve terminal context and let long
+        // multiline drafts scroll inside the pill.
+        final composeCap = tightCompose ? 104.0 : aboveDock * 0.42;
+        final composeShare = bodyHeight < 220 ? 0.44 : 0.42;
+        final composeMaxHeight = math.max(
+          0.0,
+          math.min(aboveDock, math.min(aboveDock * composeShare, composeCap)),
+        );
+        final keys = <Widget>[
+          if (ready && _composeOpen)
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                composeSide,
+                0,
+                composeSide,
+                composeGap,
+              ),
+              child: SshDockEntrance(
+                child: SshComposeCard(
+                  draft: svc.composeDraft(id),
+                  history: svc.composeHistory(id),
+                  attachUnavailable: _attachUnavailable(),
+                  pick: widget.composePicker,
+                  dictation: _dictation,
+                  send: _sendComposed,
+                  maxHeight: composeMaxHeight,
                 ),
               ),
             ),
-          ),
-          ...keys,
-        ] else ...[
-          Expanded(child: terminal),
-          ...reconnect,
-          ...keys,
-        ],
-      ],
+          if (dockShown)
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                composeSide,
+                0,
+                composeSide,
+                dockGap,
+              ),
+              child: SshTerminalDock(
+                terminal: session.terminal,
+                ctrlArmed: session.ctrlArmed,
+                modifiers: session.modifiers,
+                arrowsOpen: _arrowsOpen,
+                onPaste: _paste,
+                onCompose: _compose,
+                onKeyboard: () => _keyboard(up: keyboard && !_composeOpen),
+                onShrink: _expanded && !_inPane ? _toggleExpanded : null,
+                composeOpen: _composeOpen,
+                keyboardUp: keyboard && !_composeOpen,
+                dense: typingInPane || tightCompose,
+              ),
+            ),
+        ];
+        return Column(
+          children: [
+            if (_inPane && widget.paneTitle != null)
+              typingInPane
+                  ? const SizedBox.shrink()
+                  : _paneHeader(colors, session),
+            if (_inPane) ...[
+              // Mock 136 v2-A: the terminal in a rounded card with its own
+              // margin, and the keys in a pill under it.
+              Expanded(
+                child: Padding(
+                  padding: typingInPane
+                      ? const EdgeInsets.fromLTRB(4, 2, 4, 4)
+                      : const EdgeInsets.fromLTRB(
+                          ChatWorkspaceTokens.inset,
+                          4,
+                          ChatWorkspaceTokens.inset,
+                          8,
+                        ),
+                  child: DecoratedBox(
+                    key: const ValueKey('ssh-terminal-pane-card'),
+                    position: DecorationPosition.foreground,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(
+                        ChatWorkspaceTokens.cardRadius,
+                      ),
+                      border: Border.all(color: HermesChrome.of(colors).line),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        ChatWorkspaceTokens.cardRadius,
+                      ),
+                      child: Column(
+                        children: [
+                          Expanded(child: terminal),
+                          ...reconnect,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              ...keys,
+            ] else ...[
+              Expanded(child: terminal),
+              ...reconnect,
+              ...keys,
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -826,6 +1274,17 @@ class _SshTerminalScreenState extends State<SshTerminalScreen>
                 style: FilledButton.styleFrom(
                   visualDensity: VisualDensity.compact,
                 ),
+              ),
+            if (_expanded && !_inPane && !ready)
+              IconButton(
+                key: const ValueKey('ssh-terminal-expand'),
+                tooltip: strings.sshShrinkTerminal,
+                icon: Icon(
+                  HIcons.close_fullscreen,
+                  size: HermesIcon.md,
+                  semanticLabel: strings.sshShrinkTerminal,
+                ),
+                onPressed: _toggleExpanded,
               ),
           ],
         ),

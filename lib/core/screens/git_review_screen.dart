@@ -216,9 +216,13 @@ class _GitReviewScreenState extends State<GitReviewScreen> {
       case GitReviewPhase.loading:
         return const Center(child: ConsoleLoader.medium());
       case GitReviewPhase.notRepo:
+        // Desktop's review pane opens on any folder and says so inside: the
+        // folder is named, and a retry reads it again (after `git init`).
         return GitStateMessage(
           key: const ValueKey('git-state-not-repo'),
-          text: strings.gitNotRepo,
+          icon: HIcons.folder_off_outlined,
+          title: strings.gitNotRepo,
+          text: widget.repoPath,
           onRetry: controller.refresh,
         );
       case GitReviewPhase.unsupported:

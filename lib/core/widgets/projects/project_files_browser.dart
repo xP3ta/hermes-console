@@ -1,4 +1,5 @@
 import 'package:hermes_android/core/design/hicons.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -6,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
+
 import 'package:file_picker/file_picker.dart';
 
 import '../../design/list.dart' show HermesListGroup, HermesListRow;
@@ -88,6 +90,62 @@ String? validProjectEntryName(String raw, {String? parent}) {
 /// `childPath` from Desktop's remote picker.
 String projectChildPath(String parent, String name) =>
     serverPathChild(parent, name);
+
+/// Name dialog shared by "Nueva carpeta" and "Nuevo archivo": live
+/// validation like Desktop, "Crear" disabled until the name is usable.
+Future<String?> showProjectEntryNameDialog(
+  BuildContext context, {
+  required String parent,
+  required bool Function(String name) nameTaken,
+  required String title,
+  required String label,
+}) async {
+  final strings = Strings.of(context);
+  var text = '';
+  String? errorFor(String raw) {
+    if (raw.trim().isEmpty) return null;
+    final name = validProjectEntryName(raw, parent: parent);
+    if (name == null) return strings.pw1215InvalidName;
+    if (nameTaken(name)) return strings.pw1215NameTaken;
+    return null;
+  }
+
+  bool usable(String raw) {
+    final name = validProjectEntryName(raw, parent: parent);
+    return name != null && !nameTaken(name);
+  }
+
+  final ok = await showHermesFormDialog<bool>(
+    context: context,
+    title: title,
+    surfaceKey: const ValueKey('pw1215-name-dialog'),
+    enabled: (value) => !value || usable(text),
+    // The field owns its controller, so it outlives the closing animation.
+    body: (context, setState) => _NameField(
+      label: label,
+      errorText: errorFor(text),
+      onChanged: (value) => setState(() => text = value),
+      onSubmitted: () {
+        if (usable(text)) Navigator.of(context).pop(true);
+      },
+    ),
+    actions: [
+      HermesDialogAction(
+        label: strings.commonCancel,
+        value: false,
+        style: HermesDialogActionStyle.cancel,
+      ),
+      HermesDialogAction(
+        key: const ValueKey('pw1215-name-create'),
+        label: strings.pw1215Create,
+        value: true,
+      ),
+    ],
+  );
+  if (ok != true) return null;
+  final name = validProjectEntryName(text, parent: parent);
+  return name == null || nameTaken(name) ? null : name;
+}
 
 /// Where the read-only browser of one project currently is. Owned by the
 /// project screen so the folder survives switching between Chats and
@@ -260,11 +318,15 @@ class ProjectFilesBrowser extends StatefulWidget {
     required this.failureText,
     this.uploadPicker,
     this.onOpenFile,
+    this.showListSurface = true,
     super.key,
   });
 
   final ProjectFilesController controller;
   final String Function(Object failure) failureText;
+
+  /// The enclosing view can supply the list's background.
+  final bool showListSurface;
 
   /// Shows a file the user tapped, in place of the project viewer (a folder
   /// opened from a chat reply reads files its own, guarded way). Null keeps
@@ -327,9 +389,8 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
 
   void _snack(String text, {HermesNoticeKind? kind}) {
     if (!mounted) return;
-    HermesNotice.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(text)), kind: kind);
+    HermesNotice.of(context)
+        .showSnackBar(SnackBar(content: Text(text)), kind: kind);
   }
 
   Future<void> _openFile(ProjectFsEntry entry) async {
@@ -444,58 +505,14 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
     });
   }
 
-  /// Name dialog shared by "Nueva carpeta" and "Nuevo archivo": live
-  /// validation like Desktop, "Crear" disabled until the name is usable.
-  Future<String?> _askName({
-    required String title,
-    required String label,
-  }) async {
-    final strings = Strings.of(context);
-    var text = '';
-    String? errorFor(String raw) {
-      if (raw.trim().isEmpty) return null;
-      final name = validProjectEntryName(raw, parent: widget.controller.path);
-      if (name == null) return strings.pw1215InvalidName;
-      if (_nameTaken(name)) return strings.pw1215NameTaken;
-      return null;
-    }
-
-    bool usable(String raw) {
-      final name = validProjectEntryName(raw, parent: widget.controller.path);
-      return name != null && !_nameTaken(name);
-    }
-
-    final ok = await showHermesFormDialog<bool>(
-      context: context,
-      title: title,
-      surfaceKey: const ValueKey('pw1215-name-dialog'),
-      enabled: (value) => !value || usable(text),
-      // The field owns its controller, so it outlives the closing animation.
-      body: (context, setState) => _NameField(
+  Future<String?> _askName({required String title, required String label}) =>
+      showProjectEntryNameDialog(
+        context,
+        parent: widget.controller.path,
+        nameTaken: _nameTaken,
+        title: title,
         label: label,
-        errorText: errorFor(text),
-        onChanged: (value) => setState(() => text = value),
-        onSubmitted: () {
-          if (usable(text)) Navigator.of(context).pop(true);
-        },
-      ),
-      actions: [
-        HermesDialogAction(
-          label: strings.commonCancel,
-          value: false,
-          style: HermesDialogActionStyle.cancel,
-        ),
-        HermesDialogAction(
-          key: const ValueKey('pw1215-name-create'),
-          label: strings.pw1215Create,
-          value: true,
-        ),
-      ],
-    );
-    if (ok != true) return null;
-    final name = validProjectEntryName(text, parent: widget.controller.path);
-    return name == null || _nameTaken(name) ? null : name;
-  }
+      );
 
   Future<void> _runWrite(Future<void> Function() body) async {
     if (_busy) return;
@@ -551,7 +568,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
     var created = false;
     await _runWrite(() async {
       try {
-        await writes.writeProjectFileText(path, '');
+        await writes.createProjectFile(path);
         created = true;
         _snack(strings.pw1215FileCreated, kind: HermesNoticeKind.success);
         await controller.reload(parent);
@@ -873,6 +890,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
       final deletable = controller.canWrite(ProjectFileWriteAction.delete);
       children.add(
         HermesListGroup(
+          showSurface: widget.showListSurface,
           children: [
             for (final entry in listing.entries)
               HermesListRow(

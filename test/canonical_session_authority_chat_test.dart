@@ -16,12 +16,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
 import 'support/canonical_authority_server.dart';
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 
 class _RealHttp extends HttpOverrides {}
@@ -157,7 +159,7 @@ Future<_Rig> _rig(
 /// Turn ids currently held by the encrypted outbox (discard tombstones are
 /// not turns).
 Set<String> _outboxIds(Map<String, String> secure) {
-  final raw = secure[TurnOutboxStore.storageKeyForTesting];
+  final raw = SealedValues(secure)[TurnOutboxStore.storageKeyForTesting];
   if (raw == null || raw.isEmpty) return <String>{};
   final decoded = jsonDecode(raw) as Map<String, dynamic>;
   return {
@@ -187,7 +189,7 @@ class _OutboxEffect {
 }
 
 Map<String, String> _outboxRowStates(Map<String, String> secure) {
-  final raw = secure[TurnOutboxStore.storageKeyForTesting];
+  final raw = SealedValues(secure)[TurnOutboxStore.storageKeyForTesting];
   if (raw == null || raw.isEmpty) return <String, String>{};
   final decoded = jsonDecode(raw) as Map<String, dynamic>;
   return {
@@ -267,6 +269,37 @@ void main() {
     outboxHistory.clear();
     outboxEffects.clear();
     outboxInterceptor = null;
+    // The outbox is a sealed file: its writes and deletions are the effects.
+    ObservedSealedFileIo(
+      SealedLocalFiles.outbox,
+      onWrite: (name, bytes) => outboxInterceptor?.call(
+        'write',
+        SealedValues(secure).valueOfFile(name, bytes),
+      ),
+      afterWrite: (name) {
+        outboxHistory.add(_outboxIds(secure));
+        outboxEffects.add(
+          _OutboxEffect(
+            outboxEffects.length,
+            'write',
+            name,
+            _outboxRowStates(secure),
+          ),
+        );
+      },
+      onDelete: (name) => outboxInterceptor?.call('delete', null),
+      afterDelete: (name) {
+        outboxHistory.add(<String>{});
+        outboxEffects.add(
+          _OutboxEffect(
+            outboxEffects.length,
+            'delete',
+            name,
+            <String, String>{},
+          ),
+        );
+      },
+    ).install();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -278,42 +311,16 @@ void main() {
               case 'readAll':
                 return Map<String, String>.of(secure);
               case 'write':
-                if (args['key'] == TurnOutboxStore.storageKeyForTesting) {
-                  await outboxInterceptor?.call('write', args['value']);
-                }
                 secure[args['key']] = args['value'];
-                if (args['key'] == TurnOutboxStore.storageKeyForTesting) {
-                  outboxHistory.add(_outboxIds(secure));
-                  outboxEffects.add(
-                    _OutboxEffect(
-                      outboxEffects.length,
-                      'write',
-                      '${args['key']}',
-                      _outboxRowStates(secure),
-                    ),
-                  );
-                }
               case 'delete':
-                if (args['key'] == TurnOutboxStore.storageKeyForTesting) {
-                  await outboxInterceptor?.call('delete', null);
-                }
                 secure.remove(args['key']);
-                if (args['key'] == TurnOutboxStore.storageKeyForTesting) {
-                  outboxHistory.add(<String>{});
-                  outboxEffects.add(
-                    _OutboxEffect(
-                      outboxEffects.length,
-                      'delete',
-                      '${args['key']}',
-                      <String, String>{},
-                    ),
-                  );
-                }
             }
             return null;
           },
         );
   });
+
+  tearDown(MemorySealedFileIo.install);
 
   Future<void> withServer(
     Object? advertise,
@@ -357,6 +364,31 @@ void main() {
         // One durable final: no duplicate bubble, no second turn appended.
         expect(_countText(rig.chat, 'reply'), 1);
         expect(_countText(rig.chat, 'hello'), 1);
+      }),
+    );
+
+    // Every turn that ends makes the service read the snapshot behind the
+    // background-work strip (`spawn_tree.list` and `process.list`, from
+    // `_onChatTerminal`), and a goal or process update reads the session
+    // control. Whether the chat has re-bound its runtime by then depends on
+    // how fast the runner is, so a reconnect test either sent them or not:
+    // the fake must answer all of them, or `unmodelled` fails whichever test
+    // the read lands in.
+    test(
+      'the reads a settled turn triggers are answered, not unmodelled',
+      () => withServer(true, (server) async {
+        final rig = await _rig(server);
+        addTearDown(rig.dispose);
+        expect(await rig.send('hello'), isTrue);
+        server.startTurn(admission: 'adm-1', gen: 4);
+        server.completeTurn(text: 'reply', admission: 'adm-1', gen: 4);
+        await _until(() => rig.doneCount == 1, what: 'done');
+        await rig.chat.refreshBackgroundProcesses();
+        await rig.chat.refreshSessionControl();
+        expect(server.framesOf('spawn_tree.list'), isNotEmpty);
+        expect(server.framesOf('process.list'), isNotEmpty);
+        expect(server.framesOf('session.control.read'), isNotEmpty);
+        expect(rig.chat.isStreaming, isFalse);
       }),
     );
 

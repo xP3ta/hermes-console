@@ -143,7 +143,9 @@ final class GlobalActivityAggregate extends ChangeNotifier {
   final Map<String, GlobalActivity> _byDurable = {};
   final Map<String, int> _terminalRosterGeneration = {};
   final Map<String, int> _rosterGeneration = {};
-  final Map<String, int> _nonBusyRosterStreak = {};
+  int _mutationSeq = 0;
+  final Map<String, int> _requestMutationSeq = {};
+  final Map<String, int> _liveMutationSeq = {};
   static const staleLivenessCeiling = Duration(minutes: 1);
   // Only `markTransportStale` (a transport-level disconnect) or a terminal
   // event ever set `stale`. A session whose backend went quiet without
@@ -179,8 +181,18 @@ final class GlobalActivityAggregate extends ChangeNotifier {
 
   int beginRosterRequest(String connectionId, String profile) {
     final key = _ownerKey(connectionId, profile);
-    return _rosterGeneration[key] = (_rosterGeneration[key] ?? 0) + 1;
+    final generation = _rosterGeneration[key] =
+        (_rosterGeneration[key] ?? 0) + 1;
+    _requestMutationSeq[key] = _mutationSeq;
+    return generation;
   }
+
+  Set<String> trackedDurableIds(String connectionId, String profile) => {
+    for (final activity in _byDurable.values)
+      if (activity.scope.connectionId == connectionId &&
+          activity.scope.profile == profile)
+        activity.scope.durableSessionId,
+  };
 
   GlobalActivity? activityFor(
     String connectionId,
@@ -216,6 +228,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       markTransportStale(connectionId, profile);
       return;
     }
+    final requestSeq = _requestMutationSeq[owner] ?? 0;
     final now = _now().toUtc();
     final rowsByDurable = <String, DesktopActiveSession>{};
     for (final row in roster.sessions) {
@@ -243,7 +256,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       if (terminalGeneration != null &&
           requestGeneration <= terminalGeneration) {
         _byDurable.remove(scope.durableKey);
-        _nonBusyRosterStreak.remove(scope.durableKey);
+        _liveMutationSeq.remove(scope.durableKey);
         continue;
       }
       if (terminalGeneration != null) {
@@ -282,10 +295,12 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       final prior = _byDurable[scope.durableKey];
       final sameIncarnation = prior?.scope.exactKey == scope.exactKey;
       if (!rosterStatusIsBusy(row.status)) {
-        _recordNonBusyRoster(scope.durableKey);
+        if (!_updatedAfterRequest(scope.durableKey, requestSeq)) {
+          _byDurable.remove(scope.durableKey);
+          _liveMutationSeq.remove(scope.durableKey);
+        }
         continue;
       }
-      _nonBusyRosterStreak.remove(scope.durableKey);
       // A roster proves liveness, but never downgrades newer exact-incarnation
       // event detail. A recycled runtime starts from the general public phase.
       if (sameIncarnation &&
@@ -314,8 +329,10 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       final activity = entry.value;
       if (activity.scope.connectionId == connectionId &&
           activity.scope.profile == profile &&
-          !observed.contains(entry.key)) {
-        _recordNonBusyRoster(entry.key);
+          !observed.contains(entry.key) &&
+          !_updatedAfterRequest(entry.key, requestSeq)) {
+        _byDurable.remove(entry.key);
+        _liveMutationSeq.remove(entry.key);
       }
     }
     _changed();
@@ -358,7 +375,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       final current = _byDurable[durableKey];
       if (current == null || current.observedAt.isAfter(endedAt)) continue;
       _byDurable.remove(durableKey);
-      _nonBusyRosterStreak.remove(durableKey);
+      _liveMutationSeq.remove(durableKey);
       changed = true;
     }
     if (changed) _changed();
@@ -375,19 +392,8 @@ final class GlobalActivityAggregate extends ChangeNotifier {
   final Map<String, DateTime> _rosterLastActive = {};
   static const ownTurnEndGrace = Duration(seconds: 10);
 
-  void _recordNonBusyRoster(String durableKey) {
-    if (!_byDurable.containsKey(durableKey) &&
-        !_nonBusyRosterStreak.containsKey(durableKey)) {
-      return;
-    }
-    final streak = (_nonBusyRosterStreak[durableKey] ?? 0) + 1;
-    if (streak < 2) {
-      _nonBusyRosterStreak[durableKey] = streak;
-      return;
-    }
-    _nonBusyRosterStreak.remove(durableKey);
-    _byDurable.remove(durableKey);
-  }
+  bool _updatedAfterRequest(String durableKey, int requestSeq) =>
+      (_liveMutationSeq[durableKey] ?? 0) > requestSeq;
 
   void observeEvent({
     required GlobalActivityScope scope,
@@ -404,7 +410,6 @@ final class GlobalActivityAggregate extends ChangeNotifier {
     }
     final reduction = _reduceEvent(event.type, event.payload, current);
     if (reduction == null) return;
-    _nonBusyRosterStreak.remove(scope.durableKey);
     if (reduction.terminal) {
       // Terminal evidence is absorbing for this incarnation and must not be
       // persisted or revived by an older roster/journal.
@@ -414,6 +419,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
         _terminalRosterGeneration.remove(_terminalRosterGeneration.keys.first);
       }
       _byDurable.remove(scope.durableKey);
+      _liveMutationSeq.remove(scope.durableKey);
       // Only a proven busy→terminal transition is notify-worthy; a terminal
       // event with no prior tracked activity (already removed, or one we
       // never saw as busy) carries nothing new to tell the user.
@@ -421,6 +427,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       _changed();
       return;
     }
+    _liveMutationSeq[scope.durableKey] = ++_mutationSeq;
     _byDurable[scope.durableKey] = GlobalActivity(
       scope: scope,
       phase: reduction.phase,
@@ -474,7 +481,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       clearSession(scope.connectionId, scope.profile, scope.durableSessionId);
       return;
     }
-    _nonBusyRosterStreak.remove(scope.durableKey);
+    _liveMutationSeq[scope.durableKey] = ++_mutationSeq;
     // Un replay truncado pierde el detalle, pero una fila busy del roster ya
     // prueba la fase general (trabajando/esperando), como el sidebar de
     // Desktop. Sin roster busy, la fase queda `unknown`.
@@ -548,7 +555,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       replayEpoch: '',
     ).durableKey;
     final removed = _byDurable.remove(durableKey);
-    _nonBusyRosterStreak.remove(durableKey);
+    _liveMutationSeq.remove(durableKey);
     _terminalRosterGeneration.removeWhere(
       (key, _) =>
           key.startsWith('$connectionId\u0000$profile\u0000$durableId\u0000'),
@@ -566,7 +573,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
     _terminalRosterGeneration.removeWhere(
       (key, _) => key.startsWith('$connectionId\u0000$profile\u0000'),
     );
-    _nonBusyRosterStreak.removeWhere(
+    _liveMutationSeq.removeWhere(
       (key, _) => key.startsWith('$connectionId\u0000$profile\u0000'),
     );
     if (before != _byDurable.length) _changed();
@@ -872,6 +879,21 @@ _EventReduction? _reduceEvent(
           ? GlobalActivityPhase.interrupted
           : GlobalActivityPhase.completed,
     ),
+    'session.info' => () {
+      final rawInfo = payload['info'];
+      final info = rawInfo is Map ? rawInfo : payload;
+      if (info['pending_approval'] != null || info['pending_request'] != null) {
+        return live(GlobalActivityPhase.waitingForUser, action: true);
+      }
+      if (info['running'] == false) {
+        return terminal(
+          info['execution_state'] == 'error'
+              ? GlobalActivityPhase.failed
+              : GlobalActivityPhase.completed,
+        );
+      }
+      return null;
+    }(),
     'error' => terminal(GlobalActivityPhase.failed),
     _ => null,
   };

@@ -95,10 +95,14 @@ jobs:
           test ! -s "$RUNNER_TEMP/trufflehog.jsonl"
 
       - name: Verify Gradle wrapper and checked-in SBOMs
+        env:
+          # Flutter 3.47.1's engine artifact hash used by the release build.
+          FLUTTER_PREBUILT_ENGINE_VERSION: '11d79658c444477b06513d32b52c8c4ccb7276b0'
         run: |
           set -Eeuo pipefail
           echo "76805e32c009c0cf0dd5d206bddc9fb22ea42e84db904b764f3047de095493f3  android/gradle/wrapper/gradle-wrapper.jar" \
             | sha256sum --strict -c -
+          flutter --version
           ./tool/sbom/generate.sh
           git diff --exit-code -- sbom
 

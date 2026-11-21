@@ -11,6 +11,7 @@ import 'package:hermes_android/core/screens/settings_screen.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -18,6 +19,7 @@ import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 import 'package:hermes_android/core/design/hicons.dart';
 
@@ -30,7 +32,8 @@ void main() {
   final secureValues = <String, String>{};
   Completer<void>? blockedWriteEntered;
   Completer<void>? releaseBlockedWrite;
-  bool Function(String key)? shouldBlockWrite;
+  // Drafts and transcripts are sealed files: a write is held there.
+  bool Function(String family, String file)? shouldBlockWrite;
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -40,6 +43,14 @@ void main() {
     blockedWriteEntered = null;
     releaseBlockedWrite = null;
     shouldBlockWrite = null;
+    for (final family in SealedLocalFiles.families) {
+      MemorySealedFileIo.of(family).beforeWrite = (file) async {
+        if (shouldBlockWrite?.call(family, file) ?? false) {
+          blockedWriteEntered?.complete();
+          await releaseBlockedWrite?.future;
+        }
+      };
+    }
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secureChannel, (call) async {
           final args = call.arguments is Map
@@ -48,10 +59,6 @@ void main() {
           switch (call.method) {
             case 'write':
               final key = args['key'] as String;
-              if (shouldBlockWrite?.call(key) ?? false) {
-                blockedWriteEntered?.complete();
-                await releaseBlockedWrite?.future;
-              }
               secureValues[key] = args['value'] as String;
               return null;
             case 'read':
@@ -67,9 +74,13 @@ void main() {
   });
 
   tearDown(() {
+    MemorySealedFileIo.install();
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secureChannel, null);
   });
+
+  bool isDraftFile(String key, String file) =>
+      file == SealedValues(secureValues).fileNameOf(key);
 
   Widget wrap(Widget child) => MaterialApp(
     locale: const Locale('es'),
@@ -364,7 +375,7 @@ void main() {
       );
       blockedWriteEntered = Completer<void>();
       releaseBlockedWrite = Completer<void>();
-      shouldBlockWrite = (key) => key == draftKey;
+      shouldBlockWrite = (_, file) => isDraftFile(draftKey, file);
 
       final admitted = drafts.save(
         'instance-a',
@@ -404,6 +415,7 @@ void main() {
       await late;
       expect(summary.allSucceeded, isTrue);
       expect(secureValues.containsKey(draftKey), isFalse);
+      expect(SealedValues(secureValues).containsKey(draftKey), isFalse);
     },
   );
 
@@ -418,7 +430,7 @@ void main() {
       expect(LocalConversationCleanupFence.rehydrate(lifecycle), isTrue);
       blockedWriteEntered = Completer<void>();
       releaseBlockedWrite = Completer<void>();
-      shouldBlockWrite = (key) => key.startsWith('hermes.transcript.v3.');
+      shouldBlockWrite = (family, _) => family == SealedLocalFiles.transcripts;
 
       final admitted = LocalTranscriptStore.saveFromNewestFirst(
         'instance-a',
@@ -486,7 +498,7 @@ void main() {
       );
       blockedWriteEntered = Completer<void>();
       releaseBlockedWrite = Completer<void>();
-      shouldBlockWrite = (key) => key == draftKey;
+      shouldBlockWrite = (_, file) => isDraftFile(draftKey, file);
 
       final admitted = drafts.save(
         'instance-a',
@@ -516,6 +528,7 @@ void main() {
       expect(await cleanup, 1);
       await late;
       expect(secureValues.containsKey(draftKey), isFalse);
+      expect(SealedValues(secureValues).containsKey(draftKey), isFalse);
     },
   );
 

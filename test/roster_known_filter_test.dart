@@ -109,6 +109,18 @@ void main() {
     expect(_apply(roster, known)?.phase, isNotNull);
   });
 
+  test('tracked profile activity ids stay known before list loads', () {
+    final known = knownSessionIds(
+      sessions: const [],
+      pinnedIds: const [],
+      roster: DesktopActiveSessionList(sessions: [_row('mine'), _row('other')]),
+      hasLocalChat: (_) => false,
+      trackedIds: const ['mine'],
+    );
+    expect(known, contains('mine'));
+    expect(known, isNot(contains('other')));
+  });
+
   test('control: without the filter the foreign row is stamped', () {
     expect(_apply(roster, {'mine'}, filter: false), isNotNull);
   });

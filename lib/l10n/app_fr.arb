@@ -8772,6 +8772,9 @@
   "hdpTabRecent": "Récents",
   "hdpShellRow": "Shell normal",
   "hdpShellBody": "Le terminal reste tel quel.",
+  "hdpReturnToShell": "Revenir au shell",
+  "hdpReturnToShellBody": "La session reste ouverte sur le serveur.",
+  "hdpOpenSessionFailed": "Impossible d’ouvrir la session.",
   "hdpNoSessions": "Aucune session pour l’instant.",
   "hdpNoRecent": "Rien de récent qui existe encore.",
   "hdpSessionWindows": "{count, plural, =1{1 fenêtre} other{{count} fenêtres}}",
@@ -9645,5 +9648,511 @@
   "srvCheckStillRunning": "Toujours en cours ; le suivi a été arrêté",
   "srvCheckUnavailable": "Ce serveur ne peut pas l'exécuter.",
   "srvCheckStartFailed": "Impossible de le démarrer.",
-  "srvCheckLost": "Impossible de suivre l'exécution. Relancez-la pour voir sa sortie."
+  "srvCheckLost": "Impossible de suivre l'exécution. Relancez-la pour voir sa sortie.",
+  "roomFilesCountLimit": "Vous pouvez joindre jusqu'à {count} fichiers par message.",
+  "@roomFilesCountLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatTitle": "Messagerie",
+  "msgPlatSubtitle": "Configurez Telegram, Discord, Slack et d'autres plateformes",
+  "msgPlatIntro": "Les plateformes sur lesquelles le bot de ce profil est joignable. Ouvrez-en une pour la configurer, l'activer ou la désactiver et choisir qui peut lui écrire.",
+  "msgPlatTooOldTitle": "Serveur trop ancien",
+  "msgPlatTooOld": "Votre serveur Hermes est trop ancien pour la configuration de la messagerie. Mettez Hermes à jour pour configurer les plateformes d'ici.",
+  "msgPlatLoadFailed": "Impossible de charger les plateformes de messagerie",
+  "msgPlatEmpty": "Ce serveur ne propose aucune plateforme de messagerie.",
+  "msgPlatSearch": "Rechercher dans la messagerie",
+  "msgPlatNoMatches": "Aucune plateforme ne correspond.",
+  "msgPlatFilterAll": "Toutes",
+  "msgPlatFilterBad": "Erreurs",
+  "msgPlatFilterGood": "Connectées",
+  "msgPlatFilterMuted": "Inactives",
+  "msgPlatFilterWarn": "À vérifier",
+  "msgPlatPendingCount": "{count, plural, =1{1 demande d'appairage en attente} other{{count} demandes d'appairage en attente}}",
+  "@msgPlatPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatStateConnected": "Connectée",
+  "msgPlatStateConnecting": "Connexion…",
+  "msgPlatStateDisabled": "Désactivée",
+  "msgPlatStateFatal": "Erreur",
+  "msgPlatStateGatewayStopped": "Passerelle de messagerie arrêtée",
+  "msgPlatStateNotConfigured": "Configuration requise",
+  "msgPlatStatePendingRestart": "Redémarrage requis",
+  "msgPlatStateRetrying": "Nouvelle tentative…",
+  "msgPlatStateStartupFailed": "Échec du démarrage",
+  "msgPlatStateUnknown": "Inconnu",
+  "msgPlatReadOnly": "Cette connexion est en lecture seule : les plateformes peuvent être consultées mais pas modifiées.",
+  "msgPlatRestartNeeded": "Enregistré. Redémarrez la passerelle de messagerie pour que les nouveaux réglages prennent effet.",
+  "msgPlatRestartNow": "Redémarrer maintenant",
+  "msgPlatRestarting": "Redémarrage…",
+  "msgPlatRestartFailed": "Hermes n'a pas pu redémarrer pour appliquer vos réglages de messagerie. Réessayez ; si l'échec persiste, consultez les journaux du serveur.",
+  "msgPlatHintPendingRestart": "Redémarrez la passerelle de messagerie pour appliquer cette modification.",
+  "msgPlatHintGatewayStopped": "Démarrez la passerelle de messagerie pour vous connecter.",
+  "msgPlatSharedListener": "Servi sur l'écouteur de la passerelle partagée à l'adresse {url}",
+  "@msgPlatSharedListener": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatEnabled": "Activée",
+  "msgPlatDisabled": "Désactivée",
+  "msgPlatPlatformEnabled": "{name} activée",
+  "@msgPlatPlatformEnabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatPlatformDisabled": "{name} désactivée",
+  "@msgPlatPlatformDisabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRestartToApply": "Cette modification prend effet après un redémarrage de la passerelle.",
+  "msgPlatAppliedLive": "Appliqué à la passerelle en cours d'exécution.",
+  "msgPlatSetupSaved": "Configuration de {name} enregistrée",
+  "@msgPlatSetupSaved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRestartToReconnect": "Les nouveaux identifiants prennent effet après un redémarrage de la passerelle.",
+  "msgPlatConnectingLive": "La passerelle en cours d'exécution se connecte avec les nouveaux identifiants.",
+  "msgPlatKeyCleared": "{key} effacé",
+  "@msgPlatKeyCleared": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedUpdate": "Échec de la mise à jour de {name}",
+  "@msgPlatFailedUpdate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedSave": "Échec de l'enregistrement de {name}",
+  "@msgPlatFailedSave": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedClear": "Échec de l'effacement de {key}",
+  "@msgPlatFailedClear": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedDetail": "{message} : {detail}",
+  "@msgPlatFailedDetail": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      },
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatGetCredentials": "Obtenir vos identifiants",
+  "msgPlatOpenSetupGuide": "Ouvrir le guide de configuration",
+  "msgPlatRequired": "Obligatoire",
+  "msgPlatRecommended": "Recommandé",
+  "msgPlatAdvanced": "Avancé ({count})",
+  "@msgPlatAdvanced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatNoTokenNeeded": "Cette plateforme n'a pas besoin de token ici. Suivez le guide de configuration ci-dessus, puis activez-la.",
+  "msgPlatUnsavedChanges": "Modifications non enregistrées",
+  "msgPlatSaving": "Enregistrement…",
+  "msgPlatSaveChanges": "Enregistrer les modifications",
+  "msgPlatSaved": "Enregistré",
+  "msgPlatReplaceValue": "Remplacer la valeur actuelle",
+  "msgPlatOpenDocs": "Ouvrir la documentation",
+  "msgPlatClearField": "Effacer {key}",
+  "@msgPlatClearField": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatAddEntry": "Ajouter un autre",
+  "msgPlatRemoveEntry": "Retirer",
+  "msgPlatEntryPlaceholder": "Saisissez un ID",
+  "msgPlatEntryLabel": "{label} {index}",
+  "@msgPlatEntryLabel": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatTest": "Tester la connexion",
+  "msgPlatTesting": "Test en cours…",
+  "msgPlatTestResult": "{name} : {message}",
+  "@msgPlatTestResult": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTestFailed": "Impossible de tester le canal",
+  "msgPlatOpenFailed": "Impossible d'ouvrir le lien.",
+  "msgPlatHandle": "@{name}",
+  "@msgPlatHandle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayTitle": "Team Gateway",
+  "msgPlatRelayBadge": "Aucun token de bot requis",
+  "msgPlatRelayIntro": "{platform} joint cet agent via le bot Hermes partagé. Associez-y votre compte {platform} et écrivez au bot pour parler à votre agent.",
+  "@msgPlatRelayIntro": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLink": "Associer {platform}",
+  "@msgPlatRelayLink": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLinkAnother": "Associer un autre compte {platform}",
+  "@msgPlatRelayLinkAnother": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLinkedAccounts": "Comptes associés",
+  "msgPlatRelayUnlink": "Dissocier",
+  "msgPlatRelayUnlinkFailed": "Impossible de dissocier ce compte",
+  "msgPlatRelayStepOpen": "1. Ouvrez le bot dans {platform}.",
+  "@msgPlatRelayStepOpen": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayStepSend": "2. Envoyez ce message au bot depuis le compte que vous voulez associer :",
+  "msgPlatRelayOpen": "Ouvrir {platform}",
+  "@msgPlatRelayOpen": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayCopy": "Copier le message",
+  "msgPlatRelayCopied": "Copié",
+  "msgPlatRelayWaiting": "En attente que le bot voie votre message. Le code ne fonctionne qu'une fois.",
+  "msgPlatRelayLinked": "Compte {platform} associé. Écrivez au bot pour parler à votre agent.",
+  "@msgPlatRelayLinked": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayExpired": "Ce code a expiré avant d'être utilisé. Obtenez-en un nouveau et réessayez.",
+  "msgPlatRelayRefused": "{platform} a refusé l'association. Obtenez un nouveau code et réessayez.",
+  "@msgPlatRelayRefused": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayManaged": "Géré par Team Gateway",
+  "msgPlatRelayManagedNote": "Team Gateway assure la messagerie sur ce déploiement : la passerelle désactive donc la connexion directe à {platform} à chaque démarrage. Pour l'utiliser en parallèle du relais, définissez GATEWAY_RELAY_ALLOW_DIRECT_PLATFORMS=true dans l'environnement de la passerelle (une connexion directe empêche l'instance de descendre à zéro et peut remettre les messages en double).",
+  "@msgPlatRelayManagedNote": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayManagedIntro": "Les comptes de cet agent sont associés depuis Nous Portal.",
+  "msgPlatRelayOpenPortal": "Associer des comptes dans Nous Portal",
+  "msgPlatRelayNoNewAccount": "Le code n'est plus actif et aucun nouveau compte n'est apparu. Si votre compte {platform} n'est pas listé, obtenez un nouveau code et réessayez.",
+  "@msgPlatRelayNoNewAccount": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayUnavailable": "L'association de comptes Team Gateway n'est pas disponible sur ce serveur.",
+  "msgPlatRelayFailed": "La passerelle n'a pas répondu. Réessayez.",
+  "msgPlatTgQuickSetup": "Configuration rapide",
+  "msgPlatTgQuickHelp": "Confirmez dans Telegram : Hermes crée le bot et détecte automatiquement votre ID utilisateur Telegram.",
+  "msgPlatTgCreate": "Créer avec Telegram",
+  "msgPlatTgStarting": "Démarrage…",
+  "msgPlatTgReplaceWarning": "Des identifiants Telegram sont déjà configurés. Une nouvelle configuration rapide ou un nouveau token de bot remplacera le bot actuel à l'enregistrement.",
+  "msgPlatTgOpenHint": "Ouvrez Telegram et confirmez-y le nouveau bot.",
+  "msgPlatTgWaiting": "En attente de Telegram…",
+  "msgPlatTgExpiresIn": "Expire dans {remaining}",
+  "@msgPlatTgExpiresIn": {
+    "placeholders": {
+      "remaining": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTgExpired": "Expiré",
+  "msgPlatTgOpenTelegram": "Ouvrir Telegram",
+  "msgPlatTgReady": "Bot créé",
+  "msgPlatTgAllowedUsers": "Utilisateurs autorisés",
+  "msgPlatTgOwnerDetected": "Propriétaire détecté",
+  "msgPlatTgAddAtLeastOne": "Ajoutez au moins un ID utilisateur Telegram.",
+  "msgPlatTgUserIdLabel": "ID utilisateur Telegram",
+  "msgPlatTgAdd": "Ajouter",
+  "msgPlatTgRemoveId": "Retirer {id}",
+  "@msgPlatTgRemoveId": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTgNumericOnly": "Les ID utilisateur Telegram autorisés doivent être numériques.",
+  "msgPlatTgSaveAndRestart": "Enregistrer et redémarrer",
+  "msgPlatTgPairingExpired": "L'appairage Telegram a expiré. Lancez une nouvelle configuration rapide pour réessayer.",
+  "msgPlatTgStillWaiting": "Toujours en attente de Telegram. Nouvelle tentative…",
+  "msgPlatTgSavedRestarting": "Telegram enregistré ; redémarrage de la passerelle…",
+  "msgPlatTgSavedRestartFailed": "Telegram enregistré ; échec du redémarrage de la passerelle",
+  "msgPlatTgStartFailed": "Impossible de lancer la configuration rapide de Telegram.",
+  "msgPlatTgUnavailable": "Ce serveur ne peut pas créer de bot Telegram pour vous. Collez plutôt un token de bot ci-dessous.",
+  "msgPlatFTelegramBotTokenLabel": "Token du bot",
+  "msgPlatFTelegramBotTokenHelp": "Créez un bot avec @BotFather, puis collez le token qu'il vous donne.",
+  "msgPlatFTelegramBotTokenHint": "Coller le token du bot Telegram",
+  "msgPlatFTelegramAllowedUsersLabel": "ID utilisateur Telegram autorisés",
+  "msgPlatFTelegramAllowedUsersHelp": "Recommandé. ID numériques obtenus via @userinfobot, un par champ. Sans cela, n'importe qui peut envoyer un DM à votre bot.",
+  "msgPlatFTelegramProxyLabel": "URL du proxy",
+  "msgPlatFTelegramProxyHelp": "Nécessaire uniquement sur les réseaux où Telegram est bloqué.",
+  "msgPlatFDiscordBotTokenLabel": "Token du bot",
+  "msgPlatFDiscordBotTokenHelp": "Créez une application dans le Discord Developer Portal, ajoutez un bot, puis collez son token.",
+  "msgPlatFDiscordAllowedUsersLabel": "ID utilisateur Discord autorisés",
+  "msgPlatFDiscordAllowedUsersHelp": "Recommandé. ID utilisateur Discord, un par champ.",
+  "msgPlatFDiscordReplyToModeLabel": "Style de réponse",
+  "msgPlatFDiscordReplyToModeHelp": "first, all ou off.",
+  "msgPlatFDiscordAllowAllUsersLabel": "Autoriser tous les utilisateurs Discord",
+  "msgDiscordEveryoneHelp": "Développement uniquement. Si true, n'importe qui peut envoyer un DM au bot sans allowlist.",
+  "msgPlatFDiscordHomeChannelLabel": "ID du canal principal",
+  "msgPlatFDiscordHomeChannelHelp": "Canal où le bot envoie des messages proactifs (sorties cron, rappels).",
+  "msgPlatFDiscordHomeChannelNameLabel": "Nom du canal principal",
+  "msgPlatFDiscordHomeChannelNameHelp": "Nom d'affichage du canal principal dans les journaux et la sortie d'état.",
+  "msgPlatFBluebubblesAllowAllUsersLabel": "Autoriser tous les utilisateurs iMessage",
+  "msgPlatFBluebubblesAllowAllUsersHelp": "Si true, ignore l'allowlist de BlueBubbles.",
+  "msgPlatFMattermostAllowAllUsersLabel": "Autoriser tous les utilisateurs Mattermost",
+  "msgPlatFMattermostHomeChannelLabel": "Canal principal",
+  "msgPlatFQqAllowAllUsersLabel": "Autoriser tous les utilisateurs QQ",
+  "msgPlatFQqbotHomeChannelLabel": "Canal principal QQ",
+  "msgPlatFQqbotHomeChannelHelp": "Canal ou groupe par défaut pour la livraison cron.",
+  "msgPlatFQqbotHomeChannelNameLabel": "Nom du canal principal QQ",
+  "msgPlatFSlackBotTokenLabel": "Token du bot Slack",
+  "msgPlatFSlackBotTokenHelp": "Utilisez le token du bot dans OAuth & Permissions après l'installation de votre app Slack.",
+  "msgPlatFSlackBotTokenHint": "Coller le token du bot Slack",
+  "msgPlatFSlackAppTokenLabel": "Token d'app Slack",
+  "msgPlatFSlackAppTokenHelp": "Utilisez le token de niveau app requis pour Socket Mode.",
+  "msgPlatFSlackAppTokenHint": "Coller le token d'app Slack",
+  "msgPlatFSlackAllowedUsersLabel": "ID utilisateur Slack autorisés",
+  "msgPlatFSlackAllowedUsersHelp": "Recommandé. ID utilisateur Slack, un par champ.",
+  "msgPlatFMattermostUrlLabel": "URL du serveur",
+  "msgPlatFMattermostUrlHint": "https://mattermost.example.com",
+  "msgPlatFMattermostTokenLabel": "Token du bot",
+  "msgPlatFMattermostAllowedUsersLabel": "ID utilisateur autorisés",
+  "msgPlatFMattermostAllowedUsersHelp": "Recommandé. ID utilisateur Mattermost, un par champ.",
+  "msgPlatFMatrixHomeserverLabel": "URL du homeserver",
+  "msgPlatFMatrixHomeserverHint": "https://matrix.org",
+  "msgPlatFMatrixAccessTokenLabel": "Token d'accès",
+  "msgPlatFMatrixUserIdLabel": "ID utilisateur du bot",
+  "msgPlatFMatrixUserIdHint": "@hermes:example.org",
+  "msgPlatFMatrixAllowedUsersLabel": "ID utilisateur Matrix autorisés",
+  "msgPlatFMatrixAllowedUsersHelp": "Recommandé. ID utilisateur au format @user:server, un par champ.",
+  "msgPlatFSignalHttpUrlLabel": "URL du pont Signal",
+  "msgPlatFSignalHttpUrlHelp": "URL d'un pont REST signal-cli en cours d'exécution.",
+  "msgPlatFSignalHttpUrlHint": "http://127.0.0.1:8080",
+  "msgPlatFSignalAccountLabel": "Numéro de téléphone",
+  "msgPlatFSignalAccountHelp": "Le numéro enregistré auprès de votre pont signal-cli.",
+  "msgPlatFSignalAllowedUsersLabel": "Utilisateurs Signal autorisés",
+  "msgPlatFSignalAllowedUsersHelp": "Recommandé. Identifiants Signal, un par champ.",
+  "msgPlatFWhatsappEnabledLabel": "Activer le pont WhatsApp",
+  "msgPlatFWhatsappEnabledHelp": "Défini automatiquement par l'interrupteur Activée. N'y touchez pas sauf si vous savez que vous en avez besoin.",
+  "msgPlatFWhatsappModeLabel": "Mode du pont",
+  "msgPlatFWhatsappAllowedUsersLabel": "Utilisateurs WhatsApp autorisés",
+  "msgPlatFWhatsappAllowedUsersHelp": "Recommandé. Numéros de téléphone ou ID WhatsApp, un par champ.",
+  "msgPlatIntroTelegram": "Dans Telegram, parlez à @BotFather, exécutez /newbot et copiez le token qu'il vous donne. Récupérez ensuite votre ID utilisateur numérique auprès de @userinfobot.",
+  "msgPlatIntroDiscord": "Ouvrez le Discord Developer Portal, créez une application, ajoutez un bot, puis copiez son token. Invitez le bot sur votre serveur avec les bonnes autorisations.",
+  "msgPlatIntroSlack": "Créez une app Slack, activez Socket Mode, installez-la dans votre espace de travail, puis copiez le token du bot et le token de niveau app.",
+  "msgPlatIntroMattermost": "Sur votre serveur Mattermost, créez un compte de bot ou un token d'accès personnel, puis collez ici l'URL du serveur et le token.",
+  "msgPlatIntroMatrix": "Connectez-vous à votre homeserver avec le compte du bot, puis copiez le token d'accès, l'ID utilisateur et l'URL du homeserver.",
+  "msgPlatIntroSignal": "Lancez un pont REST signal-cli quelque part d'accessible, puis indiquez à Hermes l'URL et le numéro de téléphone enregistré.",
+  "msgPlatIntroWhatsapp": "Démarrez le pont WhatsApp fourni avec Hermes, scannez le code QR au premier lancement, puis activez la plateforme.",
+  "msgPlatIntroBluebubbles": "Lancez BlueBubbles Server sur un Mac avec iMessage, exposez son API, puis indiquez à Hermes l'URL avec le mot de passe du serveur.",
+  "msgPlatIntroHomeassistant": "Dans Home Assistant, ouvrez votre profil et créez un token d'accès longue durée. Collez-le ici avec l'URL de votre HA.",
+  "msgPlatIntroEmail": "Utilisez une boîte mail dédiée. Pour Gmail/Workspace, créez un mot de passe d'application et utilisez imap.gmail.com / smtp.gmail.com.",
+  "msgPlatIntroSms": "Récupérez l'Account SID et l'Auth Token Twilio dans la console Twilio, ainsi qu'un numéro de téléphone capable d'envoyer des SMS.",
+  "msgPlatIntroDingtalk": "Créez une app DingTalk dans la console développeur, puis copiez ici le Client ID (App key) et le Client Secret.",
+  "msgPlatIntroFeishu": "Créez une app Feishu / Lark, configurez la capacité de bot, puis copiez l'App ID, l'App secret et les clés de chiffrement des événements.",
+  "msgPlatIntroWecom": "Ajoutez un robot de groupe dans WeCom et copiez sa clé de webhook comme WECOM_BOT_ID. Envoi seul — utilisez l'option WeCom (app) pour le bidirectionnel.",
+  "msgPlatIntroWecomCallback": "Configurez une app WeCom auto-développée, exposez son URL de callback et fournissez le corp ID, le secret, l'agent ID et la clé AES.",
+  "msgPlatIntroWeixin": "Exécutez `hermes gateway setup`, choisissez Weixin, puis scannez et confirmez le code QR avec un compte WeChat personnel. Hermes se connecte via l'iLink Bot API de Tencent et enregistre les identifiants.",
+  "msgPlatIntroQqbot": "Enregistrez une app sur la QQ Open Platform (q.qq.com) et copiez l'App ID et le Client Secret.",
+  "msgPlatIntroApiServer": "Exposez Hermes comme une API compatible OpenAI. Définissez une clé d'authentification, puis pointez Open WebUI / LobeChat / etc. vers hôte:port.",
+  "msgPlatIntroWebhook": "Lancez un serveur HTTP auquel d'autres outils (GitHub, GitLab, apps personnalisées) peuvent envoyer des POST. Utilisez le secret pour vérifier les signatures.",
+  "botDelivTitle": "En attente des coéquipiers",
+  "botDelivQueued": "En file d'attente",
+  "botDelivClaimed": "Pris en charge",
+  "botDelivWorking": "En cours",
+  "botDelivWaitingClarify": "Attend votre réponse à sa question",
+  "botDelivWaitingApproval": "Attend votre feu vert : approuvez ou refusez",
+  "botDelivFailed": "Échec : {reason}",
+  "@botDelivFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "botDelivUnknownOutcome": "Résultat inconnu",
+  "botDelivOpen": "Ouvrir",
+  "botDelivDismiss": "Ignorer",
+  "botDelivNeverResent": "Rien ici n'est jamais renvoyé. Un résultat inconnu signifie que le coéquipier a peut-être déjà agi — ouvrez son chat avant de redemander.",
+  "botDelivStale": "Actualisation impossible — dernier état connu affiché.",
+  "botDelivReasonProviderAuth": "son fournisseur de modèle a rejeté la clé",
+  "botDelivReasonProviderQuota": "son fournisseur n'a plus de crédits",
+  "botDelivReasonProviderRateLimit": "son fournisseur limite le débit",
+  "botDelivReasonProviderServer": "son fournisseur est injoignable",
+  "botDelivReasonMissingConfig": "aucun modèle n'est configuré",
+  "botDelivReasonModelUnavailable": "son modèle est indisponible",
+  "botDelivReasonContextOverflow": "son contexte est plein",
+  "botDelivReasonRuntimeOffline": "il est hors ligne",
+  "botDelivReasonQueuedExpired": "il ne l'a jamais pris en charge",
+  "botDelivReasonTimeout": "délai dépassé",
+  "botDelivReasonBlocked": "il est bloqué",
+  "botDelivReasonCancelled": "annulé",
+  "botDelivReasonUnknown": "erreur inconnue",
+  "turnFeedSkillsLoaded": "{count, plural, =1{1 skill chargé} other{{count} skills chargés}}",
+  "turnFeedSkillResourcesRead": "{count, plural, =1{1 ressource de skill lue} other{{count} ressources de skill lues}}",
+  "turnFeedRepeated": "{count, plural, =1{{tool}} other{{tool} · {count} fois}}",
+  "wsPanelTagSftp": "SFTP",
+  "wsPanelTagServer": "Serveur",
+  "wsPanelFilesUnavailable": "Fichiers a besoin d'un profil SSH ou d'un dossier de discussion que le serveur peut lister.",
+  "wsPanelPickerHint": "Sur cet écran, un panneau s'ouvre par-dessus la discussion.",
+  "wsPanelNeedsSsh": "Nécessite un profil SSH",
+  "wsPanelNeedsSshOrFolder": "Nécessite un profil SSH ou un dossier de discussion",
+  "wsPanelNoFolder": "Cette discussion n'a pas encore de dossier",
+  "termUxCopied": "Copié",
+  "termUxCopyScreen": "Copier l'écran",
+  "termUxCopyLink": "Copier le lien",
+  "termUxOpenLink": "Ouvrir le lien",
+  "termUxJumpToBottom": "Aller en bas",
+  "termUxPromptSend": "Envoyer {answer}",
+  "@termUxPromptSend": {
+    "placeholders": {
+      "answer": {
+        "type": "String"
+      }
+    }
+  },
+  "termUxKeyEscape": "Échap",
+  "termUxKeyTab": "Tabulation",
+  "termUxKeyBackTab": "Maj et tabulation",
+  "termUxKeyControl": "Contrôle",
+  "termUxKeyControlNext": "Contrôle, pour la touche suivante",
+  "termUxKeyControlLocked": "Contrôle, verrouillé",
+  "termUxKeyAlt": "Alt",
+  "termUxKeyAltNext": "Alt, pour la touche suivante",
+  "termUxKeyAltLocked": "Alt, verrouillé",
+  "termUxKeyHome": "Début",
+  "termUxKeyEnd": "Fin",
+  "termUxKeyPageUp": "Page précédente",
+  "termUxKeyPageDown": "Page suivante",
+  "termUxKeyBackspace": "Retour arrière",
+  "termUxKeyEnter": "Entrée",
+  "termUxKeySlash": "Barre oblique",
+  "termUxKeyHyphen": "Trait d’union",
+  "termUxKeyUnderscore": "Tiret bas",
+  "termUxKeyColon": "Deux-points",
+  "termUxCompose": "Rédiger",
+  "termUxComposeHint": "Message ou commande",
+  "termUxComposeSend": "Envoyer",
+  "termUxComposeHistory": "Envoyé dans cette session",
+  "termUxComposeNotSent": "Non envoyé : la connexion n’est pas prête. Votre texte est conservé.",
+  "termUxAttach": "Joindre",
+  "termUxAttachReadOnly": "Cette connexion est en lecture seule : impossible d’envoyer des fichiers.",
+  "termUxAttachOffline": "Connectez-vous d’abord : les fichiers passent par cette connexion SSH.",
+  "termUxUploading": "Envoi en cours",
+  "termUxUploaded": "Envoyé",
+  "termUxUploadFailed": "Échec de l’envoi",
+  "termUxRemoveAttachment": "Retirer la pièce jointe",
+  "termUxComposeInsertHint": "Appui long pour insérer sans Entrée",
+  "termUxDictate": "Dicter",
+  "termUxDictateStop": "Arrêter la dictée",
+  "termUxDictationUnavailable": "La dictée n’est pas disponible pour le moment.",
+  "termUxKeyArrows": "Flèches",
+  "termUxKeySuspend": "Contrôle Z, suspendre",
+  "termUxKeyClear": "Contrôle L, effacer l’écran",
+  "termUxKeyboardShow": "Clavier",
+  "termUxKeyboardHide": "Masquer le clavier",
+  "termUxKeyPage": "Touches, page {page} sur {count}",
+  "@termUxKeyPage": {
+    "placeholders": {
+      "page": {
+        "type": "String"
+      },
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "tg143ComposeDeliveryUncertain": "La connexion a été coupée juste après l’envoi. Vérifiez le terminal avant de renvoyer.",
+  "bg143LoopbackHttpsTitle": "Aperçu HTTPS sur localhost indisponible",
+  "bg143LoopbackHttpsBody": "Android ne peut pas isoler une redirection HTTPS de bouclage via SSH sans affaiblir TLS. Utilisez http:// via le tunnel SSH ou un nom d’hôte avec un certificat valide.",
+  "bg143LoopbackUnavailableBody": "Impossible d’ouvrir le tunnel SSH de l’aperçu. Réessayez ou vérifiez votre profil SSH."
 }

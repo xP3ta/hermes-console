@@ -265,26 +265,41 @@ void main() {
     // All the room: app bar + key row + keyboard take the rest.
     expect(terminal.height, greaterThan(300));
 
-    // The row shows a fade where more keys wait, and they all arrive.
-    expect(find.byKey(const ValueKey('ssh-key-bar-fade-end')), findsOneWidget);
-    final bar = find.byKey(const ValueKey('ssh-key-bar'));
-    for (final cap in sshTerminalKeyCaps) {
-      await tester.scrollUntilVisible(
-        find.byKey(ValueKey('ssh-key-$cap')),
-        60,
-        scrollable: find.descendant(of: bar, matching: find.byType(Scrollable)),
-      );
-      expect(find.byKey(ValueKey('ssh-key-$cap')), findsOneWidget);
+    // 1.4.3 (herdr's dock): the strip's pages are swiped and every key
+    // arrives on one of them; the arrows are in the pad ✥ opens.
+    final strip = find.byKey(const ValueKey('ssh-key-bar'));
+    final all = sshTerminalKeyPages.expand((page) => page).toSet();
+    final seen = <String>{};
+    for (var i = 0; i < 16 && seen.length < all.length; i++) {
+      for (final cap in all) {
+        final key = find.byKey(ValueKey('ssh-key-$cap')).hitTestable();
+        if (key.evaluate().isNotEmpty) seen.add(cap);
+      }
+      await tester.drag(strip, Offset(-tester.getSize(strip).width * 0.9, 0));
+      for (var f = 0; f < 6; f++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
     }
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(find.byKey(const ValueKey('ssh-key-bar-fade-end')), findsNothing);
-    expect(
-      find.byKey(const ValueKey('ssh-key-bar-fade-start')),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const ValueKey('ssh-key-→')));
-    await tester.tap(find.byKey(const ValueKey('ssh-key-↑')));
+    expect(seen, all);
+    for (var i = 0; i < 16; i++) {
+      await tester.drag(strip, Offset(tester.getSize(strip).width * 0.9, 0));
+      for (var f = 0; f < 6; f++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+    // ✥ is on the first page or, on a strip this narrow, the next one.
+    final pad = find.byKey(const ValueKey('ssh-key-✥'));
+    for (var i = 0; i < 4 && pad.hitTestable().evaluate().isEmpty; i++) {
+      await tester.drag(strip, Offset(-tester.getSize(strip).width * 0.9, 0));
+      for (var f = 0; f < 15; f++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+    await tester.tap(pad);
+    await tester.pump();
+    for (final arrow in ['→', '↑']) {
+      await tester.tap(find.byKey(ValueKey('ssh-key-$arrow')));
+    }
     await tester.pump();
     expect(h.sent, ['\x1b[C', '\x1b[A']);
     expect(tester.takeException(), isNull);

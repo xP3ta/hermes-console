@@ -83,6 +83,10 @@ abstract final class HermesMotion {
   /// lands on the content with no flash of placeholder shapes.
   static const Duration skeletonGrace = Duration(milliseconds: 180);
 
+  /// A held arrow or backspace of the terminal's key row: one more key
+  /// every this long once the long press starts.
+  static const Duration keyRepeat = Duration(milliseconds: 70);
+
   /// What comes in: v25's `cubic-bezier(.2, .8, .2, 1)`.
   static const Curve emphasized = Cubic(0.2, 0.8, 0.2, 1);
 

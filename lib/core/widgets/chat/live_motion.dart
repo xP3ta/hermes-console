@@ -118,12 +118,14 @@ class LiveResultMark extends StatelessWidget {
 /// was ([glyph]: the terminal for a command, the wrench for another tool),
 /// in the quiet ink; a failed one the outline error sign in the error ink; a
 /// running one the thin ring, turning in the same quiet ink. Without a
-/// [glyph] a settled step shows the outline check.
+/// [glyph] a settled step shows the outline check. [icon] (the opened
+/// list's rows) wins over [glyph]: the tool's family in the app's icon set.
 class LiveStepMark extends StatelessWidget {
   const LiveStepMark({
     required this.state,
     required this.seconds,
     this.glyph,
+    this.icon,
     this.size = HermesIcon.sm,
     super.key,
   });
@@ -131,12 +133,14 @@ class LiveStepMark extends StatelessWidget {
   final LiveMarkState state;
   final Animation<double>? seconds;
   final ChatLiveGlyph? glyph;
+  final IconData? icon;
   final double size;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final kind = glyph;
+    final family = icon;
     return switch (state) {
       LiveMarkState.queued => LiveRing(
         running: false,
@@ -146,6 +150,11 @@ class LiveStepMark extends StatelessWidget {
       LiveMarkState.running => LiveRing(
         running: true,
         seconds: seconds,
+        size: size,
+        color: colors.textSecondary,
+      ),
+      LiveMarkState.ok when family != null => Icon(
+        family,
         size: size,
         color: colors.textSecondary,
       ),

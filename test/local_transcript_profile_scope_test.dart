@@ -1,13 +1,17 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/local_transcript_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // ignore: depend_on_referenced_packages
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+
+import 'support/memory_sealed_files.dart';
 
 class _FailingPrefs extends InMemorySharedPreferencesStore {
   _FailingPrefs(Map<String, Object> values)
@@ -54,6 +58,8 @@ const _message = <String, dynamic>{
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secure = <String, String>{};
+  // Transcripts are sealed files; their values by key.
+  final sealed = SealedValues(secure);
   String? failingReadKey;
   String? failingWriteKey;
   String? failingDeleteKey;
@@ -185,7 +191,7 @@ void main() {
           await LocalTranscriptStore.saveFromNewestFirst('a', 's_t', const [
             _message,
           ]);
-          expect(secure[_v3Key('a', 'default', 's_t')], isNotNull);
+          expect(sealed[_v3Key('a', 'default', 's_t')], isNotNull);
           expect(secure[_collisionKey], beforeSecure[_collisionKey]);
           expect(
             (await plainState())[_collisionKey],
@@ -199,7 +205,12 @@ void main() {
           );
           expect(await LocalTranscriptStore.deleteForProfile('a', ''), 0);
           expect(await LocalTranscriptStore.deleteForConnection('a'), 0);
-          expect(secure, beforeSecure);
+          // Only the key of the sealed files was added.
+          expect(
+            Map.of(secure)..remove(SealedLocalFiles.keyKey),
+            beforeSecure,
+          );
+          expect(sealed.keys, isEmpty);
           expect(await plainState(), beforePlain);
         }
       }
@@ -303,7 +314,8 @@ void main() {
       }
       expect(expected, hasLength(2028));
       expect(keys, hasLength(2028));
-      expect(secure.keys.toSet(), keys);
+      expect(sealed.keys, keys);
+      expect(secure.keys, [SealedLocalFiles.keyKey]);
       final recovered = <(String, String, String)>{};
       for (final connection in values) {
         for (final session in await LocalTranscriptStore.listForConnection(
@@ -452,8 +464,11 @@ void main() {
         )).single['content'],
         'secure wins',
       );
+      // Moved into its sealed file by that read; the file wins from then on,
+      // empty or corrupt.
+      expect(secure.containsKey(key), isFalse);
       for (final secureRaw in ['', 'not-json']) {
-        secure[key] = secureRaw;
+        sealed[key] = secureRaw;
         expect(
           await LocalTranscriptStore.load('precedence', 'session'),
           isEmpty,
@@ -482,7 +497,7 @@ void main() {
           {'role': 'assistant', 'content': 'new'},
         ],
       );
-      final envelope = jsonDecode(secure[key]!) as Map<String, dynamic>;
+      final envelope = jsonDecode(sealed[key]!) as Map<String, dynamic>;
       expect(envelope['older_history_truncated'], isTrue);
       expect(prefs.getString(key), raw);
     });
@@ -498,15 +513,20 @@ void main() {
         throwsA(isA<PlatformException>()),
       );
       failingReadKey = null;
-      failingWriteKey = key;
+      // The transcript is a sealed file: the disk refuses it.
+      final files = MemorySealedFileIo.of(SealedLocalFiles.transcripts);
+      addTearDown(files.resetHooks);
+      files.beforeWrite = (_) async =>
+          throw const FileSystemException('write-failure');
       await expectLater(
         LocalTranscriptStore.saveFromNewestFirst('failure', 'session', const [
           _message,
         ]),
-        throwsA(isA<PlatformException>()),
+        throwsA(isA<FileSystemException>()),
       );
       expect(prefs.getString(key), raw);
       expect(secure[key], isNull);
+      expect(sealed[key], isNull);
     });
   });
 
@@ -689,11 +709,12 @@ void main() {
         const [_message],
       );
       final key = _v3Key(connection.id, 'default', 'session_with_underscores');
-      expect(secure[key], isNotNull);
+      expect(sealed[key], isNotNull);
 
       await manager.deleteConnection(connection.id);
 
       expect(secure[key], isNull);
+      expect(sealed[key], isNull);
     });
 
     test(
@@ -716,12 +737,13 @@ void main() {
           const [_message],
         );
         final key = _v3Key(connection.id, 'default', 'session_after_failure');
-        expect(secure[key], isNotNull);
+        expect(sealed[key], isNotNull);
         failingReadKey = 'chat_turn_outbox_v1';
 
         await manager.deleteConnection(connection.id);
 
         expect(secure[key], isNull);
+        expect(sealed[key], isNull);
       },
     );
 
