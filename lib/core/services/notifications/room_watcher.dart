@@ -764,6 +764,7 @@ class RoomWatcher {
       List<HostedGroupEvent> events,
       int latest,
       bool pushes,
+      bool backlog,
     })
   >
   _readWatched(
@@ -823,6 +824,8 @@ class RoomWatcher {
       events: events,
       latest: latest,
       pushes: pushes,
+      // The page budget ran out before the head the server reported.
+      backlog: previous != null && latest < room.latestSeq,
     );
   }
 
@@ -889,14 +892,19 @@ class RoomWatcher {
       final pushes =
           rooms.isNotEmpty &&
           listing.unreadable.isEmpty &&
-          reads.every((read) => read?.pushes == true);
+          reads.every((read) => read?.pushes == true) &&
+          // A room with pages still unread is not idle: no push will come
+          // for events the server already reported, so the next tick reads
+          // on from the cursor.
+          !reads.any((read) => read?.backlog == true);
       for (var index = 0; index < rooms.length; index++) {
         final listed = rooms[index];
         final key = roomKey(connId, listed);
         seen.add(key);
         final read = reads[index];
         if (read == null) continue;
-        final (:previous, :state, :events, :latest, pushes: _) = read;
+        final (:previous, :state, :events, :latest, pushes: _, backlog: _) =
+            read;
         final room = state.room;
         final level = await roomPrefs.notificationLevel(prefsRoomKey(room));
         final decision = decideRoomNotices(
