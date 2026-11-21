@@ -19,6 +19,7 @@ import 'attachment_card.dart';
 import 'attachment_preview.dart';
 import 'hermes_app_bar.dart';
 import 'hermes_notice.dart';
+import 'save_to_device_feedback.dart';
 import 'console_loader.dart';
 
 @visibleForTesting
@@ -143,11 +144,22 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
     }
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => AttachmentBytesPreviewScreen(
+        builder: (routeContext) => AttachmentBytesPreviewScreen(
           name: widget.name,
           sizeLabel: widget.sizeLabel,
           reference: widget.reference,
           file: file,
+          // A document the app cannot draw (docx, zip, a PDF its renderer
+          // rejects) is never a dead end: it can leave by Share or Save.
+          onShare: () => unawaited(shareMediaFile(file)),
+          onSave: () => unawaited(
+            saveFileToDevice(
+              routeContext,
+              file,
+              name: widget.name,
+              source: 'attachment_history',
+            ),
+          ),
         ),
       ),
     );
