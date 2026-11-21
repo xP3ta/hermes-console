@@ -86,6 +86,8 @@ class _MessagingPlatformDetailScreenState
           ? s.msgPlatAppliedLive
           : s.msgPlatRestartToApply;
       _say('$title. $detail');
+    } on MessagingBusy {
+      // Another write is pending; its own outcome is the one reported.
     } catch (error) {
       _say(
         _failure(s, s.msgPlatFailedUpdate(platform.name), error),
@@ -105,6 +107,8 @@ class _MessagingPlatformDetailScreenState
           ? s.msgPlatConnectingLive
           : s.msgPlatRestartToReconnect;
       _say('${s.msgPlatSetupSaved(platform.name)}. $detail');
+    } on MessagingBusy {
+      // Another write is pending; its own outcome is the one reported.
     } catch (error) {
       _say(_failure(s, s.msgPlatFailedSave(platform.name), error), error: true);
     }
@@ -116,6 +120,8 @@ class _MessagingPlatformDetailScreenState
     try {
       await _c.clear(platform, key);
       _say(s.msgPlatKeyCleared(key));
+    } on MessagingBusy {
+      // Another write is pending; its own outcome is the one reported.
     } catch (error) {
       _say(_failure(s, s.msgPlatFailedClear(key), error), error: true);
     }
@@ -130,6 +136,8 @@ class _MessagingPlatformDetailScreenState
           ? messagingStateLabel(s, platform.state)
           : result.message;
       _say(s.msgPlatTestResult(platform.name, message), error: !result.ok);
+    } on MessagingBusy {
+      // Another write is pending; its own outcome is the one reported.
     } catch (error) {
       _say(_failure(s, s.msgPlatTestFailed, error), error: true);
     }
@@ -167,6 +175,8 @@ class _MessagingPlatformDetailScreenState
       _say(s.msgPairApprovedDone(entry.label));
     } on PairingLockedOut {
       _say(s.msgPairLockedOut, error: true);
+    } on MessagingBusy {
+      // Another write is pending.
     } catch (_) {
       _say(s.msgPairApproveFailed(entry.label), error: true);
     }
@@ -204,6 +214,8 @@ class _MessagingPlatformDetailScreenState
     try {
       await _c.revoke(entry);
       _say(s.msgPairRevokedDone(entry.label));
+    } on MessagingBusy {
+      // Another write is pending.
     } catch (_) {
       _say(s.msgPairRevokeFailed(entry.label), error: true);
     }
@@ -327,7 +339,7 @@ class _MessagingPlatformDetailScreenState
             onChanged:
                 widget.readOnly ||
                     platform.disabledByRelay ||
-                    busy == 'enabled:${platform.id}'
+                    busy != null
                 ? null
                 : (on) => unawaited(_toggle(platform, on)),
           ),
@@ -336,7 +348,9 @@ class _MessagingPlatformDetailScreenState
             icon: HIcons.send_rounded,
             title: testing ? s.msgPlatTesting : s.msgPlatTest,
             showChevron: false,
-            onTap: testing ? null : () => unawaited(_test(platform)),
+            // Not while anything is being written: a save in flight owns
+            // the form until it settles.
+            onTap: busy != null ? null : () => unawaited(_test(platform)),
           ),
         ],
       ),
@@ -415,7 +429,9 @@ class _MessagingPlatformDetailScreenState
     final placeholder =
         messagingFieldHint(s, field.key) ??
         (field.prompt.isEmpty ? null : field.prompt);
-    final writable = !widget.readOnly && _c.busy != 'env:${platform.id}';
+    // Read-only while anything is being written, the save of this form
+    // included: an edit made then could not be told from what was sent.
+    final writable = !widget.readOnly && _c.busy == null;
     final clearing = _c.busy == 'clear:${platform.id}:${field.key}';
     final tools = <Widget>[
       if (field.isSet)
@@ -596,7 +612,7 @@ class _MessagingPlatformDetailScreenState
                 primary: true,
                 icon: HIcons.check_rounded,
                 label: saving ? s.msgPlatSaving : s.msgPlatSaveChanges,
-                onPressed: !changes || saving
+                onPressed: !changes || saving || _c.busy != null
                     ? null
                     : () => unawaited(_save(platform)),
               ),

@@ -41,6 +41,11 @@ Future<bool> openMessagingUrl(String url) async {
   }
 }
 
+/// A write was asked for while another one is pending.
+class MessagingBusy implements Exception {
+  const MessagingBusy();
+}
+
 /// The state Desktop's Messaging page keeps for one profile
 /// (`app/messaging/index.tsx` `MessagingView`): the platforms, who is
 /// waiting or approved on each, the unsaved edits of every platform and
@@ -129,9 +134,25 @@ class MessagingSetupController extends ChangeNotifier {
   /// Desktop `refreshPlatforms`. A silent read (the poll, the re-read after
   /// a live change) never reports a failure; once the route is known to be
   /// missing it does not ask again.
-  Future<void> refresh({bool silent = false}) async {
-    if (silent && _routeMissing) return;
+  ///
+  /// A silent read never starts while another read is on the wire: on a
+  /// link slower than the poll, each tick used to supersede the read before
+  /// it, every answer was discarded and the screen never loaded.
+  Future<void> refresh({bool silent = false}) {
+    if (silent && _routeMissing) return Future<void>.value();
+    final running = _refreshing;
+    if (silent && running != null) return running;
     final generation = ++_generation;
+    late final Future<void> read;
+    read = _read(generation, silent: silent).whenComplete(() {
+      if (identical(_refreshing, read)) _refreshing = null;
+    });
+    return _refreshing = read;
+  }
+
+  Future<void>? _refreshing;
+
+  Future<void> _read(int generation, {required bool silent}) async {
     try {
       final rows = await client.load(profile);
       if (_disposed || generation != _generation) return;
@@ -179,7 +200,11 @@ class MessagingSetupController extends ChangeNotifier {
     _settle = Timer(settleDelay, () => unawaited(refresh(silent: true)));
   }
 
+  /// One write at a time. A second one started while the first is pending
+  /// used to replace [busy], which made the form of a platform being saved
+  /// writable again.
   Future<T> _write<T>(String busy, Future<T> Function() write) async {
+    if (_busy != null) throw const MessagingBusy();
     _busy = busy;
     _changed();
     try {
@@ -212,10 +237,19 @@ class MessagingSetupController extends ChangeNotifier {
   Future<MessagingUpdateResult?> save(MessagingPlatform platform) async {
     final update = changesOf(platform);
     if (!update.hasChanges) return null;
+    // What this save sends, field by field: only these edits are dropped
+    // afterwards, and only where the field still holds what was sent.
+    final sent = Map<String, String>.of(
+      _drafts[platform.id] ?? const <String, String>{},
+    );
     return _write('env:${platform.id}', () async {
       final result = await client.update(platform.id, update, profile);
       await refresh();
-      _drafts.remove(platform.id);
+      final draft = _drafts[platform.id];
+      if (draft != null) {
+        draft.removeWhere((key, value) => sent[key] == value);
+        if (draft.isEmpty) _drafts.remove(platform.id);
+      }
       _settleAfter(result.hotServed);
       return result;
     });
