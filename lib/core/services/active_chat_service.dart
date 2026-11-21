@@ -10221,6 +10221,12 @@ class ActiveChat with WidgetsBindingObserver {
         // step of the reconnect replay (session.events.since) is in no
         // other frame.
         break;
+      case 'moa.reference' || 'moa.progress' || 'moa.phase':
+        // Neither does the snapshot carry the mixture-of-agents blocks
+        // (`tui_gateway/session_auto_continue.py`, in-flight snapshot): a
+        // reference that arrives before the resumed runtime is adopted is
+        // in no later frame either.
+        break;
       default:
         return;
     }

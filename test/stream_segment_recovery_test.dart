@@ -257,6 +257,7 @@ void main() {
     List<String> applied,
     String inflight, {
     List<String> lostInCut = const [],
+    List<(String, Map<String, dynamic>)> lostEvents = const [],
   }) async {
     await chat.send(fullText: 'hola', model: 'hermes-agent', history: const []);
     await _until(() => gateway.rpcCount('prompt.submit') == 1);
@@ -275,6 +276,9 @@ void main() {
     for (final text in lostInCut) {
       gateway.lost('message.delta', seq++, delta(text, offset));
       offset += text.length;
+    }
+    for (final (type, payload) in lostEvents) {
+      gateway.lost(type, seq++, payload);
     }
     gateway.inflightAssistant = inflight;
     final resumes = gateway.rpcCount('session.resume');
@@ -326,6 +330,35 @@ void main() {
     gateway.event('message.delta', seq, delta('ZQXc ', 10));
     await Future<void>.delayed(const Duration(milliseconds: 600));
     expect(count('ZQXc'), 1, reason: shown());
+  });
+
+  test('a mixture-of-agents reference sent during the cut is shown after '
+      'the recovery: the snapshot carries no MoA block', () async {
+    await open();
+    await streamThenCut(
+      ['ZQXa '],
+      'ZQXa ',
+      lostEvents: [
+        (
+          'moa.reference',
+          {
+            'turn_id': 'turn-a1',
+            'label': 'Beta',
+            'text': 'Beta says ZQXmoa',
+            'index': 2,
+            'count': 3,
+          },
+        ),
+      ],
+    );
+    String reasoning() => chat.messages
+        .map((row) => '${row['reasoning'] ?? ''}')
+        .join('\n');
+    await _until(
+      () => reasoning().contains('Beta says ZQXmoa'),
+      reason: 'reasoning shown: ${reasoning()}',
+    );
+    expect(reasoning(), contains('Reference 2/3 — Beta'));
   });
 
   test('[CONTROL A1-4] new text after the recovery is applied', () async {
