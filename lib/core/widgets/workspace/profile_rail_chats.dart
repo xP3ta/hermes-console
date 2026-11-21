@@ -11,9 +11,20 @@
 // a few failures in a row (the server is down) end the sweep. Values live
 // in memory only (titles never touch the disk) and are painted at once when
 // the rail is built again. Nothing is read while App Lock is on.
+//
+// 1.4.4: a sweep publishes ONCE, when it ends. Each page used to notify on
+// its own, so the faces' counts popped in one by one and every arrival
+// re-sorted the strip («va cargando poco a poco»). What IS kept between
+// runs is a hint per profile and scope: how many chats it listed, whether
+// there were more, and when its newest was active. Three numbers, no title
+// and no id: a new process draws the strip with its last counts and order
+// at once, and the sweep only changes what really changed.
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/session.dart';
 
@@ -33,6 +44,36 @@ final class ProfileRailPage {
   final bool more;
 }
 
+/// What the strip last showed for one profile under one scope: numbers
+/// only, kept between runs.
+@immutable
+final class ProfileRailHint {
+  const ProfileRailHint({
+    required this.count,
+    required this.more,
+    required this.newestAt,
+  });
+
+  /// Chats the panel listed for the profile.
+  final int count;
+
+  /// Whether the server had more than were listed («N+»).
+  final bool more;
+
+  /// When its newest chat was active (seconds since the epoch; 0: none).
+  final double newestAt;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ProfileRailHint &&
+      other.count == count &&
+      other.more == more &&
+      other.newestAt == newestAt;
+
+  @override
+  int get hashCode => Object.hash(count, more, newestAt);
+}
+
 typedef ProfileRailPageLoader =
     Future<ProfileRailPage> Function(String profileOwner);
 
@@ -42,8 +83,111 @@ final class ProfileRailChats extends ChangeNotifier {
     this.ttl = const Duration(minutes: 1),
     this.spacing = const Duration(milliseconds: 300),
     this.maxProfiles = 16,
+    this.connectionId,
     DateTime Function()? now,
-  }) : _now = now ?? DateTime.now;
+  }) : _now = now ?? DateTime.now {
+    if (connectionId != null) unawaited(_loadHints());
+  }
+
+  /// The connection whose hints are kept between runs; null keeps none
+  /// (tests, a cache of no connection).
+  final String? connectionId;
+
+  /// Scopes whose hints are kept (the most recently shown).
+  static const int maxHintScopes = 4;
+
+  static String hintsKey(String connectionId) =>
+      'profile_rail_hints_v1.$connectionId';
+
+  /// Forgets what is kept between runs for [connectionId] (it was removed).
+  static Future<void> forgetConnection(String connectionId) async {
+    _shared.remove(connectionId)?.cancel();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(hintsKey(connectionId));
+    } catch (_) {
+      // Counts only; nothing to protect.
+    }
+  }
+
+  /// Hints by scope digest, then by profile owner; insertion order is use
+  /// order (the last is the most recent).
+  final Map<String, Map<String, ProfileRailHint>> _hints = {};
+  bool _hintsLoaded = false;
+
+  /// A scope names the list's category and view; only its digest is kept.
+  static String _digest(String scope) =>
+      sha1.convert(utf8.encode(scope)).toString().substring(0, 16);
+
+  /// What the strip last showed for [owner] under [scope], if kept.
+  ProfileRailHint? hint(String scope, String owner) =>
+      _hints[_digest(scope)]?[owner];
+
+  /// Keeps what the strip shows now under [scope]. Never notifies: the
+  /// caller already draws these values.
+  void rememberHints(String scope, Map<String, ProfileRailHint> shown) {
+    if (connectionId == null || !_hintsLoaded || shown.isEmpty) return;
+    final digest = _digest(scope);
+    final known = _hints[digest];
+    final next = {...?known, ...shown};
+    if (known != null && mapEquals(known, next)) return;
+    _hints.remove(digest);
+    _hints[digest] = next;
+    while (_hints.length > maxHintScopes) {
+      _hints.remove(_hints.keys.first);
+    }
+    unawaited(_saveHints());
+  }
+
+  Future<void> _loadHints() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(hintsKey(connectionId!));
+      if (raw != null) {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          for (final MapEntry(key: scope, value: owners) in decoded.entries) {
+            if (scope is! String || owners is! Map) continue;
+            final hints = <String, ProfileRailHint>{};
+            for (final MapEntry(key: owner, value: row) in owners.entries) {
+              if (owner is! String || row is! List || row.length != 3) continue;
+              final count = row[0], more = row[1], newest = row[2];
+              if (count is! int || more is! bool || newest is! num) continue;
+              hints[owner] = ProfileRailHint(
+                count: count,
+                more: more,
+                newestAt: newest.toDouble(),
+              );
+            }
+            // What this run already remembered wins.
+            _hints.putIfAbsent(scope, () => hints);
+          }
+        }
+      }
+    } catch (_) {
+      // A damaged value is no hints: the sweep fills the strip as before.
+    }
+    _hintsLoaded = true;
+    if (_hints.isNotEmpty) notifyListeners();
+  }
+
+  Future<void> _saveHints() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        hintsKey(connectionId!),
+        jsonEncode({
+          for (final MapEntry(key: scope, value: owners) in _hints.entries)
+            scope: {
+              for (final MapEntry(key: owner, value: hint) in owners.entries)
+                owner: [hint.count, hint.more, hint.newestAt],
+            },
+        }),
+      );
+    } catch (_) {
+      // Kept in memory; the next change writes again.
+    }
+  }
 
   /// Shortest time between two sweeps of the same scope.
   final Duration ttl;
@@ -62,8 +206,10 @@ final class ProfileRailChats extends ChangeNotifier {
   static final Map<String, ProfileRailChats> _shared = {};
 
   /// The cache of [connectionId], shared by every Chats screen of it.
-  static ProfileRailChats of(String connectionId) =>
-      _shared.putIfAbsent(connectionId, ProfileRailChats.new);
+  static ProfileRailChats of(String connectionId) => _shared.putIfAbsent(
+    connectionId,
+    () => ProfileRailChats(connectionId: connectionId),
+  );
 
   @visibleForTesting
   static void debugReset() {
@@ -189,30 +335,42 @@ final class ProfileRailChats extends ChangeNotifier {
     await previous;
     bool live() =>
         generation == _generation && scope == _scope && locked?.value != true;
+    // Read first, shown together: one notification for the whole sweep, so
+    // the counts arrive at once and the strip is sorted once.
+    final staged = <String, ProfileRailPage>{};
+    void publish() {
+      // A sweep cut short keeps what it read, as long as the scope is the
+      // one it was read for.
+      if (staged.isEmpty || scope != _scope) return;
+      _pages.addAll(staged);
+      staged.clear();
+      notifyListeners();
+    }
+
     var failures = 0;
     for (var i = 0; i < owners.length; i++) {
       if (i > 0 && spacing > Duration.zero) await _pause();
-      if (!live()) return;
+      if (!live()) return publish();
       final ProfileRailPage page;
       try {
         debugRequests++;
         page = await load(owners[i]);
       } catch (_) {
-        if (!live()) return;
+        if (!live()) return publish();
         // This profile keeps what was read before; the others are still
         // read. Several in a row: the server is down, ask after [ttl].
         if (++failures >= maxConsecutiveFailures) {
           _sweptAt = _now();
-          return;
+          return publish();
         }
         continue;
       }
-      if (!live()) return;
+      if (!live()) return publish();
       failures = 0;
       _sweptAt = _now();
-      _pages[owners[i]] = page;
-      notifyListeners();
+      staged[owners[i]] = page;
     }
+    publish();
     // Ended on its own (even with no page): the next one waits for [ttl].
     if (live()) _sweptAt = _now();
   }

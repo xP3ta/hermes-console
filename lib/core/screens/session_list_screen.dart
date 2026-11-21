@@ -3586,17 +3586,74 @@ class _SessionListScreenState extends State<SessionListScreen>
     BotRosterStore roster,
     Map<String, List<Session>> byOwner,
   ) {
-    final owners = byOwner.keys.toList()
-      ..sort(
-        (a, b) => byOwner[b]!.first.lastActivityAt.compareTo(
-          byOwner[a]!.first.lastActivityAt,
-        ),
-      );
+    // A profile whose page has not been read yet in this run keeps the
+    // place its last known newest chat gives it ([ProfileRailChats.hint]):
+    // the strip does not start in the roster's order and jump when the
+    // sweep lands.
+    final scope = _railScope;
+    final newest = <String, double>{
+      for (final MapEntry(key: owner, value: chats) in byOwner.entries)
+        owner: chats.first.lastActivityAt,
+    };
     for (final profile in roster.profiles) {
       final owner = _profileOwner(profile);
-      if (!byOwner.containsKey(owner)) owners.add(owner);
+      if (newest.containsKey(owner)) continue;
+      if (_railChats.page(scope, owner) != null) continue;
+      final hint = _railChats.hint(scope, owner);
+      if (hint != null && hint.count > 0) newest[owner] = hint.newestAt;
+    }
+    final owners = newest.keys.toList()
+      ..sort((a, b) => newest[b]!.compareTo(newest[a]!));
+    for (final profile in roster.profiles) {
+      final owner = _profileOwner(profile);
+      if (!newest.containsKey(owner)) owners.add(owner);
     }
     return owners;
+  }
+
+  /// What the strip shows for [owner]: the chats the rail lists for it, or,
+  /// until its page is read in this run, what it showed last time.
+  ({int count, bool more}) _stripCount(
+    ({Map<String, List<Session>> byOwner, Map<String, bool> more}) chats,
+    String owner,
+  ) {
+    final listed = chats.byOwner[owner];
+    if (listed != null) {
+      return (count: listed.length, more: chats.more[owner] ?? false);
+    }
+    final scope = _railScope;
+    if (_railChats.page(scope, owner) == null) {
+      final hint = _railChats.hint(scope, owner);
+      if (hint != null) return (count: hint.count, more: hint.more);
+    }
+    return (count: 0, more: chats.more[owner] ?? false);
+  }
+
+  /// Keeps, for the next launch, what the strip shows for every profile
+  /// whose chats are known in this run.
+  void _rememberStripCounts(
+    BotRosterStore roster,
+    ({Map<String, List<Session>> byOwner, Map<String, bool> more}) chats,
+  ) {
+    final scope = _railScope;
+    final active = Session.profileOwner(_profileScope.name);
+    final shown = <String, ProfileRailHint>{};
+    for (final profile in roster.profiles) {
+      final owner = _profileOwner(profile);
+      final known = owner == active
+          ? !_loading
+          : _railChats.page(scope, owner) != null;
+      if (!known) continue;
+      final listed = chats.byOwner[owner];
+      shown[owner] = ProfileRailHint(
+        count: listed?.length ?? 0,
+        more: chats.more[owner] ?? false,
+        newestAt: listed == null || listed.isEmpty
+            ? 0
+            : listed.first.lastActivityAt,
+      );
+    }
+    _railChats.rememberHints(scope, shown);
   }
 
   /// The rail's agents: those with chats in the list, newest chat first,
@@ -4031,6 +4088,9 @@ class _SessionListScreenState extends State<SessionListScreen>
                   if (byOwner[owner] != null) byOwner[owner]!,
               ];
         if (counted) _scheduleRailRead(roster);
+        if (counts != null && !_railChats.sweeping) {
+          _rememberStripCounts(roster, counts);
+        }
         return Padding(
           padding: const EdgeInsets.only(bottom: HermesSpace.x2),
           child: Semantics(
@@ -4045,12 +4105,17 @@ class _SessionListScreenState extends State<SessionListScreen>
                 children: [
                   for (final profile in ordered)
                     _BotFilterChip(
+                      // The chip follows its profile when the order changes:
+                      // its face is not rebuilt from nothing.
+                      key: ValueKey('bot-chip-${_profileOwner(profile)}'),
                       profile: profile,
                       label: profileDisplayLabel(s, profile),
                       count: counts == null
                           ? null
-                          : counts.byOwner[_profileOwner(profile)]?.length ?? 0,
-                      more: counts?.more[_profileOwner(profile)] ?? false,
+                          : _stripCount(counts, _profileOwner(profile)).count,
+                      more: counts == null
+                          ? false
+                          : _stripCount(counts, _profileOwner(profile)).more,
                       cache: faces,
                       selected: _profileOwner(profile) == _profileScope.owner,
                       onTap: () => unawaited(
@@ -4282,6 +4347,7 @@ class _BotFilterChip extends StatelessWidget {
     required this.onTap,
     this.count,
     this.more = false,
+    super.key,
   });
 
   /// The face of the strip, a touch smaller than a row's tap target.
@@ -4342,18 +4408,19 @@ class _BotFilterChip extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (count == null || count == 0)
-                  face
-                else
-                  // The badge stays within the face's height (the name
+                // Always the same tree around the face: a count arriving
+                // (0 → 3) used to swap `face` for `Stack(face, badge)`,
+                // which rebuilt the face from nothing and it blinked.
+                // The badge stays within the face's height (the name
                   // sits 2 px under it) and leans out of the face's corner
                   // by 10 dp: no wider than the face and the chip's padding
                   // (a «10+» in large text over a short name's chip shrinks
                   // rather than cover the next face).
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      face,
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    face,
+                    if (count != null && count > 0)
                       Positioned(
                         // On the face's top corner and leaning out of it:
                         // the face and the name under it stay whole.

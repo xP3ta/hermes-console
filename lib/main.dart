@@ -31,6 +31,7 @@ import 'core/characters/bot_motion.dart';
 import 'core/characters/character_library.dart';
 import 'core/services/release_log.dart';
 import 'core/services/local_transcript_store.dart';
+import 'core/widgets/workspace/profile_rail_chats.dart';
 import 'core/services/message_reaction_prefs.dart';
 import 'core/services/pinned_prompt_prefs.dart';
 import 'core/services/release_logging.dart';
@@ -384,6 +385,7 @@ Future<Widget> bootstrapHermesApp() async {
       // cs1215: the connection's cached tails and remembered route go too.
       await (coldStartOwner?.forgetColdStartConnection(connectionId) ??
           coldStartStore.forgetScope(connectionId).catchError((_) {}));
+      await ProfileRailChats.forgetConnection(connectionId);
       if (firstError != null) {
         Error.throwWithStackTrace(firstError, firstStack!);
       }

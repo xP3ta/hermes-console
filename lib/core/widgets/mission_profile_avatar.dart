@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/agent_profile.dart';
@@ -40,12 +41,36 @@ final class MissionProfileAvatarCache {
     String? connectionId,
     int maxEntries = 64,
     int maxConcurrent = 4,
-  }) => MissionProfileAvatarCache._(
-    loader,
-    maxEntries,
-    maxConcurrent,
-    connectionId,
-  );
+    MissionProfileAvatarCache? previous,
+  }) {
+    final cache = MissionProfileAvatarCache._(
+      loader,
+      maxEntries,
+      maxConcurrent,
+      connectionId,
+    );
+    if (previous != null) cache._standIns.addAll(previous._resolved);
+    return cache;
+  }
+
+  /// What the cache this one replaces had read: shown while each photo is
+  /// read again, so renewing the cache (the roster was re-read) does not
+  /// blank every photo back to its seeded face for a moment. A photo that
+  /// comes back the same keeps the very same bytes, so nothing repaints.
+  final Map<String, AgentProfileAvatar?> _standIns = {};
+
+  /// The photo last known for [profileName] before this cache, if any.
+  AgentProfileAvatar? standIn(String profileName) =>
+      _resolved[profileName.trim()] ?? _standIns[profileName.trim()];
+
+  AgentProfileAvatar? _sameAsBefore(String profile, AgentProfileAvatar? read) {
+    final before = _standIns[profile];
+    if (read == null || before == null) return read;
+    return before.mimeType == read.mimeType &&
+            listEquals(before.bytes, read.bytes)
+        ? before
+        : read;
+  }
 
   MissionProfileAvatarCache._(
     this._loader,
@@ -128,6 +153,7 @@ final class MissionProfileAvatarCache {
     _afterFrame.clear();
     _entries.clear();
     _resolved.clear();
+    _standIns.clear();
   }
 
   void _evict(String profile) {
@@ -142,7 +168,9 @@ final class MissionProfileAvatarCache {
       _active++;
       Future<AgentProfileAvatar?>.sync(() => _loader(job.profileName))
           .then(
-            job.completer.complete,
+            (avatar) => job.completer.complete(
+              _sameAsBefore(job.profileName, avatar),
+            ),
             onError: (_) => job.completer.complete(),
           )
           .whenComplete(() {
@@ -270,6 +298,7 @@ class MissionProfileAvatar extends StatelessWidget {
     } else {
       content = FutureBuilder<AgentProfileAvatar?>(
         future: avatarCache.loadAfterFrame(profileName),
+        initialData: avatarCache.standIn(profileName),
         builder: (context, snapshot) => _AvatarFace(
           profileName: profileName,
           size: size,

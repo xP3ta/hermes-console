@@ -71,6 +71,8 @@ class ProfileFace extends StatelessWidget {
       connectionId: connection.id,
       maxEntries: 32,
       loader: loader ?? (name) => _gatewayAvatar(connection, name),
+      // The photos already read stay on screen while they are read again.
+      previous: entry?.cache,
     );
     _caches[connection.id] = (ticket: rosterTicket, cache: cache);
     return cache;
