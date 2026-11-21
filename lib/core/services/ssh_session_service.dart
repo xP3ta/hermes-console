@@ -563,11 +563,13 @@ class SshSessionService {
     return true;
   }
 
-  /// Leave an attached client and keep the original login shell alive. A
-  /// user who goes back to it also stays in it on this terminal's reconnect.
+  /// Leave an attached client and keep the original login shell alive, for
+  /// as long as this connection lives. Going back is a look at the shell,
+  /// not a change of the profile: the next connection opens what the
+  /// profile says again (a program that EXITED is different, see
+  /// [attachTerminal]: reopening it on every reconnect would undo the exit).
   void showPlainShell(SshTerminalSession session) {
     if (!identical(of(session.connectionId), session)) return;
-    session._keepPlainShell = true;
     session.kind = SshSessionKind.shell;
     session._attachmentRevision++;
     _detachTerminal(session);
