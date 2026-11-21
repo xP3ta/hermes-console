@@ -323,4 +323,37 @@ void main() {
     expect(created.single.isClosed, isTrue);
     await tester.runAsync(() => _expectPortRefuses(loaded!.port));
   });
+
+  // A13: a terminal pushed without the hook opened `localhost` links on the
+  // phone's own loopback instead of the server's.
+  test('every terminal the app opens is given the link hook', () {
+    final construct = RegExp(r'\bSshTerminalScreen\(');
+    final missing = <String>[];
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      final source = entity.readAsStringSync();
+      for (final match in construct.allMatches(source)) {
+        // The constructor's own declaration is not a call.
+        final before = source.substring(
+          match.start < 6 ? 0 : match.start - 6,
+          match.start,
+        );
+        if (before.endsWith('const ')) continue;
+        var depth = 0;
+        var end = match.end;
+        for (; end < source.length; end++) {
+          final char = source[end];
+          if (char == '(') depth++;
+          if (char == ')') {
+            if (depth == 0) break;
+            depth--;
+          }
+        }
+        if (!source.substring(match.end, end).contains('onOpenLink:')) {
+          missing.add(entity.path);
+        }
+      }
+    }
+    expect(missing, isEmpty);
+  });
 }
