@@ -214,6 +214,93 @@ void main() {
     expect(tracked.cancelled, isTrue);
   });
 
+  group('a body that stops arriving', () {
+    late Duration previous;
+    setUp(() {
+      previous = DashboardClient.bodyIdleTimeout;
+      DashboardClient.bodyIdleTimeout = const Duration(milliseconds: 80);
+    });
+    tearDown(() => DashboardClient.bodyIdleTimeout = previous);
+
+    /// A few bytes, then silence for ever (a half-open connection).
+    ({Stream<List<int>> stream, bool Function() cancelled}) stalled() {
+      var cancelled = false;
+      final controller = StreamController<List<int>>(
+        onCancel: () => cancelled = true,
+      );
+      controller.add(const [1, 2, 3]);
+      return (stream: controller.stream, cancelled: () => cancelled);
+    }
+
+    test('a file download gives up, deletes its partial file and frees the '
+        'connection', () async {
+      final temp = await Directory.systemTemp.createTemp('dashboard-stall-');
+      addTearDown(() => temp.delete(recursive: true));
+      final target = File('${temp.path}/picture.png');
+      final body = stalled();
+      final client = dashboard(
+        _StreamingClient(
+          (_, _) async =>
+              http.StreamedResponse(body.stream, 200, contentLength: 1000),
+        ),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client
+            .apiDownloadToFile('files/download', target, maxBytes: 5000)
+            .timeout(const Duration(seconds: 5)),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(await target.exists(), isFalse);
+      expect(body.cancelled(), isTrue);
+    });
+
+    test('an in-memory download gives up too', () async {
+      final body = stalled();
+      final client = dashboard(
+        _StreamingClient(
+          (_, _) async => http.StreamedResponse(body.stream, 200),
+        ),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client
+            .apiDownload('plugins/kanban/attachments/1', maxBytes: 5000)
+            .timeout(const Duration(seconds: 5)),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(body.cancelled(), isTrue);
+    });
+
+    test('a slow download that keeps arriving is not cut', () async {
+      // Six pauses of a fifth of the limit: the whole body takes longer
+      // than the limit, and no pause comes near it on a loaded machine.
+      DashboardClient.bodyIdleTimeout = const Duration(seconds: 1);
+      final temp = await Directory.systemTemp.createTemp('dashboard-slow-');
+      addTearDown(() => temp.delete(recursive: true));
+      final target = File('${temp.path}/slow.bin');
+      Stream<List<int>> trickle() async* {
+        for (var i = 0; i < 6; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+          yield [i];
+        }
+      }
+
+      final client = dashboard(
+        _StreamingClient(
+          (_, _) async =>
+              http.StreamedResponse(trickle(), 200, contentLength: 6),
+        ),
+      );
+      addTearDown(client.close);
+
+      await client.apiDownloadToFile('files/download', target, maxBytes: 100);
+      expect(await target.readAsBytes(), [0, 1, 2, 3, 4, 5]);
+    });
+  });
+
   test('descarga informa progreso determinista con Content-Length', () async {
     final temp = await Directory.systemTemp.createTemp('dashboard-progress-');
     addTearDown(() => temp.delete(recursive: true));
