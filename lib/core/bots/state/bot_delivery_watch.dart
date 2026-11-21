@@ -30,14 +30,19 @@ abstract interface class BotDeliveryDismissals {
 }
 
 final class PrefsBotDeliveryDismissals implements BotDeliveryDismissals {
-  const PrefsBotDeliveryDismissals();
+  const PrefsBotDeliveryDismissals({this.profile = ''});
 
+  /// The sender bot these dismissals belong to. Each bot keeps its own
+  /// set: a bot's watch prunes ids its own delivery list no longer has, and
+  /// with one shared set that pruning threw away the other bots' dismissals.
+  final String profile;
+
+  /// The shared set of earlier versions: still honoured, never written.
   static const key = 'bot_delivery_dismissed';
 
-  @override
-  Future<Set<String>> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(key);
+  String get _ownKey => '$key.${profile.trim().isEmpty ? 'default' : profile.trim()}';
+
+  static Set<String> _decode(String? raw) {
     if (raw == null) return <String>{};
     try {
       final decoded = jsonDecode(raw);
@@ -53,9 +58,22 @@ final class PrefsBotDeliveryDismissals implements BotDeliveryDismissals {
   }
 
   @override
+  Future<Set<String>> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    return {
+      ..._decode(prefs.getString(key)),
+      ..._decode(prefs.getString(_ownKey)),
+    };
+  }
+
+  @override
   Future<void> save(Set<String> ids) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(key, jsonEncode(ids.toList()..sort()));
+    if (ids.isEmpty) {
+      await prefs.remove(_ownKey);
+      return;
+    }
+    await prefs.setString(_ownKey, jsonEncode(ids.toList()..sort()));
   }
 }
 
@@ -69,8 +87,9 @@ final class BotDeliveryWatch extends ChangeNotifier {
     required this.profile,
     this.interval = const Duration(seconds: 5),
     DateTime Function()? clock,
-    this.dismissals = const PrefsBotDeliveryDismissals(),
-  }) : _clock = clock ?? DateTime.now;
+    BotDeliveryDismissals? dismissals,
+  }) : _clock = clock ?? DateTime.now,
+       dismissals = dismissals ?? PrefsBotDeliveryDismissals(profile: profile);
 
   /// The gateway the owner's chat rides now, or null while it has none.
   final BotDeliveryGateway? Function() gateway;
