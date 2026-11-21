@@ -31,7 +31,8 @@ class MessagingPairingScreen extends StatefulWidget {
 
   final SavedConnection connection;
 
-  /// The profile whose store is read and written (`default` included).
+  /// The profile whose store is read and written; empty = the server's
+  /// own profile.
   final String profile;
 
   // Seams for tests; the defaults are the real Dashboard and App Lock.

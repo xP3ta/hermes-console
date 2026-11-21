@@ -141,6 +141,25 @@ void main() {
       });
     });
 
+    test('no selected profile travels unnamed, on the read and in the '
+        'bodies', () async {
+      final server = _Server();
+      final client = _dashboard(server);
+      addTearDown(client.close);
+      final pairing = MessagingPairingClient(client);
+      final snapshot = await pairing.load('');
+      await pairing.approve(snapshot.pending.first, '');
+      await pairing.revoke(snapshot.approved.single, '');
+
+      expect(server.requests.first.url.queryParameters, isEmpty);
+      for (final request in server.requests.skip(1)) {
+        expect(
+          (jsonDecode(request.body) as Map).containsKey('profile'),
+          isFalse,
+        );
+      }
+    });
+
     test('approving sends the request id, never a code', () async {
       final server = _Server();
       final client = _dashboard(server);

@@ -398,9 +398,11 @@ enum RelayLinkState { pending, inactive, refused }
 /// Messaging platform setup: `/api/messaging/platforms`, its update and
 /// test, Telegram's QR onboarding, Team Gateway account links and the
 /// gateway restart (Desktop `api/messaging.ts`, `api/system.ts`
-/// `restartGateway` / `getActionStatus`). Every call names the profile,
-/// `default` included, the way the webhooks and pairing calls do: an unnamed
-/// call acts on the profile the server was started as.
+/// `restartGateway` / `getActionStatus`). A selected profile is named on
+/// every call. An empty one travels unnamed, and the server then acts on the
+/// profile it was launched for: naming `default` instead would read and write
+/// the installation root's credentials on a Dashboard that serves a named
+/// profile.
 class MessagingPlatformsClient {
   MessagingPlatformsClient(
     this._dashboard, {
@@ -411,8 +413,9 @@ class MessagingPlatformsClient {
   final Future<void> Function(Duration) _sleep;
 
   static String _scoped(String endpoint, String profile) {
+    final named = profile.trim();
+    if (named.isEmpty) return endpoint;
     final separator = endpoint.contains('?') ? '&' : '?';
-    final named = profile.trim().isEmpty ? 'default' : profile.trim();
     return '$endpoint${separator}profile=${Uri.encodeQueryComponent(named)}';
   }
 
@@ -542,13 +545,16 @@ class MessagingPlatformsClient {
     List<String> allowedUserIds,
     String profile,
   ) => _guard(() async {
-    final named = profile.trim().isEmpty ? 'default' : profile.trim();
+    final named = profile.trim();
     final answer = await _dashboard.apiPost(
       _scoped(
         'messaging/telegram/onboarding/${_segment(pairingId)}/apply',
         profile,
       ),
-      body: {'allowed_user_ids': allowedUserIds, 'profile': named},
+      body: {
+        'allowed_user_ids': allowedUserIds,
+        if (named.isNotEmpty) 'profile': named,
+      },
     );
     return TelegramOnboardingApplied(
       botUsername: _text(answer['bot_username']),

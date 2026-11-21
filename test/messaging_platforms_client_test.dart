@@ -204,11 +204,28 @@ void main() {
     expect(telegram.envVars[2].isAdvanced, isTrue);
   });
 
-  test('the default profile is named on every call too', () async {
+  test('a picked default profile is named; no selection travels unnamed, so '
+      'a Dashboard serving a named profile keeps its own credentials', () async {
     server.routes['GET /api/messaging/platforms'] = (200, _platformsJson());
-    await real(() => client.load('default'));
+    server.routes['PUT /api/messaging/platforms/telegram'] = (
+      200,
+      {'ok': true, 'platform': 'telegram', 'hot_served': false},
+    );
+    final telegram = (await real(() => client.load('default'))).first;
     await real(() => client.load(''));
-    expect(server.seen.map((r) => r.query['profile']), ['default', 'default']);
+    await real(
+      () => client.update(
+        'telegram',
+        messagingChanges(telegram, {'TELEGRAM_PROXY': 'socks5://p.test:1'}),
+        '',
+      ),
+    );
+    expect(server.seen.map((r) => r.query.containsKey('profile')), [
+      true,
+      false,
+      false,
+    ]);
+    expect(server.seen.first.query['profile'], 'default');
   });
 
   test('saving sends only what was typed: never a saved secret, never its '

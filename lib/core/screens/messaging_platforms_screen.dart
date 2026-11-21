@@ -58,7 +58,7 @@ class MessagingSetupController extends ChangeNotifier {
   final MessagingPlatformsClient client;
   final MessagingPairingClient pairingClient;
 
-  /// The profile every call names (`default` included).
+  /// The profile every call names; empty = the server's own profile.
   final String profile;
 
   /// Desktop's wait before re-reading the status of a platform the running
@@ -431,7 +431,8 @@ class MessagingPlatformsScreen extends StatefulWidget {
 
   final SavedConnection connection;
 
-  /// The profile whose platforms are read and written (`default` included).
+  /// The profile whose platforms are read and written; empty = the
+  /// server's own profile.
   final String profile;
 
   // Seams for tests; the defaults are the real Dashboard, App Lock and the

@@ -67,9 +67,9 @@ class PairingLockedOut implements Exception {
 
 /// Who may message the bot: `/api/pairing`, `/approve` and `/revoke`
 /// (Desktop `api/messaging.ts` `getPairing`, `approvePairing`,
-/// `revokePairing`). The profile is always named, `default` included: the
-/// approve and revoke routes read it from the body, and without it the grant
-/// would land in the wrong profile's store.
+/// `revokePairing`). A selected profile is named on every call; the approve
+/// and revoke routes read it from the body. An empty profile travels
+/// unnamed, which the server resolves to the profile it was launched for.
 class MessagingPairingClient {
   MessagingPairingClient(this._dashboard);
 
@@ -78,8 +78,11 @@ class MessagingPairingClient {
   Future<PairingSnapshot> load(String profile) async {
     final Map<String, dynamic> answer;
     try {
+      final named = profile.trim();
       answer = await _dashboard.apiGet(
-        'pairing?profile=${Uri.encodeQueryComponent(profile)}',
+        named.isEmpty
+            ? 'pairing'
+            : 'pairing?profile=${Uri.encodeQueryComponent(named)}',
       );
     } on DashboardHttpException catch (error) {
       if (error.statusCode == 404 || error.statusCode == 405) {
@@ -109,7 +112,7 @@ class MessagingPairingClient {
         body: {
           'platform': entry.platform,
           'request_id': entry.requestId,
-          'profile': profile,
+          if (profile.trim().isNotEmpty) 'profile': profile.trim(),
         },
       );
     } on DashboardHttpException catch (error) {
@@ -124,7 +127,7 @@ class MessagingPairingClient {
       body: {
         'platform': entry.platform,
         'user_id': entry.userId,
-        'profile': profile,
+        if (profile.trim().isNotEmpty) 'profile': profile.trim(),
       },
     );
   }

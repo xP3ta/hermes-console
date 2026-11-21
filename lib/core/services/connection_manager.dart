@@ -170,6 +170,22 @@ class ConnectionManager {
   String activeProfileFor(String connId) =>
       prefs.getString(_activeProfileKey(connId)) ?? '';
 
+  static String _explicitDefaultKey(String connId) =>
+      'active_profile_default_$connId';
+
+  /// The profile a credential write for [connId] names: the selected one,
+  /// `default` once the user picked the default profile themselves, and
+  /// empty while nothing was ever picked. An empty answer must travel as an
+  /// unnamed request, which the server resolves to the profile it was
+  /// launched for; naming `default` there reaches the installation root even
+  /// on a Dashboard that serves a named profile (Desktop
+  /// `store/settings-scope.ts` `$settingsRequestProfile`).
+  String credentialProfileFor(String connId) {
+    final selected = activeProfileFor(connId).trim();
+    if (selected.isNotEmpty) return selected;
+    return prefs.getBool(_explicitDefaultKey(connId)) == true ? 'default' : '';
+  }
+
   void _ensureNotDisposed() {
     if (_disposed) throw StateError('ConnectionManager has been disposed');
   }
@@ -278,6 +294,13 @@ class ConnectionManager {
       await prefs.remove(_activeProfileKey(connId));
     } else {
       await prefs.setString(_activeProfileKey(connId), normalized);
+    }
+    // Only a literal `default` is the user's own pick of the default
+    // profile; an empty name is "no selection".
+    if (profile.trim() == 'default') {
+      await prefs.setBool(_explicitDefaultKey(connId), true);
+    } else {
+      await prefs.remove(_explicitDefaultKey(connId));
     }
     if (changed) {
       PrivateRenderCaches.clearAll();
