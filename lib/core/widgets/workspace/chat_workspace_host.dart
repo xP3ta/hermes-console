@@ -104,10 +104,33 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
 
   ChatWorkspaceController get _controller => widget.controller;
 
+  /// Screens of each tab holding work the user has not saved
+  /// ([ChatWorkspacePaneScope.holdUnsaved]).
+  final Map<ChatWorkspaceTab, ValueNotifier<int>> _unsaved = {};
+
+  ValueNotifier<int> _unsavedFor(ChatWorkspaceTab tab) =>
+      _unsaved.putIfAbsent(tab, () {
+        final holds = ValueNotifier<int>(0);
+        holds.addListener(() {
+          if (holds.value != 0) return;
+          // The last hold may go while the tree is being torn down: the
+          // route stack waiting behind it is replaced on the next frame.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() {});
+          });
+          WidgetsBinding.instance.ensureVisualUpdate();
+        });
+        return holds;
+      });
+
   GlobalKey<NavigatorState> _navigatorFor(ChatWorkspaceTab tab) {
     final scope = widget.tabRouteScope?.call(tab);
     final current = _navigators[tab];
     if (current != null && current.scope == scope) return current.key;
+    // Another folder or session id replaces the tab's routes, pushed
+    // editors included. One with unsaved text is never thrown away under
+    // the user: the routes stay until it is saved or discarded there.
+    if (current != null && (_unsaved[tab]?.value ?? 0) > 0) return current.key;
     final key = GlobalKey<NavigatorState>(debugLabel: 'workspace-${tab.name}');
     _navigators[tab] = (scope: scope, key: key);
     _observers.remove(tab);
@@ -378,6 +401,9 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
     FocusManager.instance.removeListener(_onFocusMoved);
     _chatFocus.dispose();
     _workspaceFocus.dispose();
+    for (final holds in _unsaved.values) {
+      holds.dispose();
+    }
     for (final toolbar in _toolbars.values) {
       toolbar.dispose();
     }
@@ -508,6 +534,7 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
           navigatorFor: _navigatorFor,
           observerFor: _observerFor,
           toolbarFor: _toolbarFor,
+          unsavedFor: _unsavedFor,
           hidden: hidden,
           compact: !fits || fullscreen,
         ),
@@ -1227,6 +1254,7 @@ class _WorkspacePane extends StatelessWidget {
     required this.navigatorFor,
     required this.observerFor,
     required this.toolbarFor,
+    required this.unsavedFor,
     required this.hidden,
     required this.compact,
   });
@@ -1240,6 +1268,7 @@ class _WorkspacePane extends StatelessWidget {
   final _TabRootObserver Function(ChatWorkspaceTab) observerFor;
   final ValueNotifier<ChatWorkspaceToolbar> Function(ChatWorkspaceTab)
   toolbarFor;
+  final ValueNotifier<int> Function(ChatWorkspaceTab) unsavedFor;
 
   /// Mounted out of sight (chat only): no tab takes Back, and the Terminal
   /// is not built at all (see [ChatWorkspaceHost]).
@@ -1331,6 +1360,7 @@ class _WorkspacePane extends StatelessWidget {
                                 tab: tab,
                                 controller: controller,
                                 toolbar: toolbarFor(tab),
+                                unsaved: unsavedFor(tab),
                                 child: Navigator(
                                   key: navigatorFor(tab),
                                   observers: [observerFor(tab)],
@@ -2448,12 +2478,32 @@ class ChatWorkspacePaneScope extends InheritedWidget {
     this.tab,
     this.controller,
     this.toolbar,
+    this.unsaved,
     super.key,
   });
 
   final ChatWorkspaceTab? tab;
   final ChatWorkspaceController? controller;
   final ValueNotifier<ChatWorkspaceToolbar>? toolbar;
+
+  /// How many screens of this tab hold unsaved work ([holdUnsaved]).
+  final ValueNotifier<int>? unsaved;
+
+  /// Says a screen pushed in this pane has work the user has not saved:
+  /// until the returned callback is called, the pane keeps its routes even
+  /// if what the tab shows changes underneath (another folder, a new
+  /// session id). Outside a pane it does nothing. Call it outside build.
+  static VoidCallback holdUnsaved(BuildContext context) {
+    final holds = _of(context)?.unsaved;
+    if (holds == null) return () {};
+    holds.value++;
+    var released = false;
+    return () {
+      if (released) return;
+      released = true;
+      holds.value--;
+    };
+  }
 
   static ChatWorkspacePaneScope? _of(BuildContext context) =>
       context

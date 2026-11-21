@@ -10,6 +10,7 @@ import '../../services/desktop_control_gateway.dart';
 import '../../theme/app_theme.dart';
 import '../hermes_app_bar.dart';
 import '../hermes_notice.dart';
+import '../workspace/chat_workspace_host.dart' show ChatWorkspacePaneScope;
 
 /// Server cap of `POST /api/fs/write-text` (`_FS_TEXT_WRITE_MAX_BYTES`).
 const int projectTextWriteMaxBytes = 8 * 1024 * 1024;
@@ -58,10 +59,31 @@ class _ProjectTextEditorScreenState extends State<ProjectTextEditorScreen> {
     _text.addListener(_onChanged);
   }
 
-  void _onChanged() => setState(() {});
+  /// Set while there is unsaved text and the editor sits in a workspace
+  /// pane: the pane does not replace its routes under it (the agent moving
+  /// to another folder, or the session getting a new id, used to close the
+  /// editor without a word and the edits were lost).
+  VoidCallback? _releaseHold;
+
+  void _syncHold() {
+    final dirty = _dirty;
+    if (dirty && _releaseHold == null) {
+      _releaseHold = ChatWorkspacePaneScope.holdUnsaved(context);
+    } else if (!dirty && _releaseHold != null) {
+      _releaseHold!();
+      _releaseHold = null;
+    }
+  }
+
+  void _onChanged() {
+    _syncHold();
+    setState(() {});
+  }
 
   @override
   void dispose() {
+    _releaseHold?.call();
+    _releaseHold = null;
     _text.removeListener(_onChanged);
     _text.dispose();
     super.dispose();
@@ -132,6 +154,7 @@ class _ProjectTextEditorScreenState extends State<ProjectTextEditorScreen> {
       await widget.writes.writeProjectFileText(widget.path, draft);
       if (!mounted) return;
       _baseline = draft;
+      _syncHold();
       _leaving = true;
       notice.showSnackBar(
         SnackBar(content: Text(strings.pw1215Saved)),
