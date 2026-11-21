@@ -90,13 +90,42 @@ class TeammateWaitsStrip extends StatefulWidget {
 
 class _TeammateWaitsStripState extends State<TeammateWaitsStrip>
     with WidgetsBindingObserver {
+  bool _resumed = true;
+
+  /// The chat that owns the strip is the route on top. A teammate chat
+  /// pushed over it keeps this widget alive underneath: nobody is looking
+  /// at it, so it does not ask.
+  bool _onTop = true;
+
+  bool get _watching => _resumed && _onTop;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
+    _resumed = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final wasWatching = _watching;
+    // Registers on the route: this runs again when it is covered or shown.
+    _onTop = ModalRoute.of(context)?.isCurrent ?? true;
+    _sync(wasWatching: wasWatching, first: !_synced);
+    _synced = true;
+  }
+
+  bool _synced = false;
+
+  void _sync({required bool wasWatching, bool first = false}) {
+    if (_watching) {
       widget.watch.start();
+      // Back on screen: ask at once, the rows may be minutes old.
+      if (!wasWatching && !first) unawaited(widget.watch.refresh());
+    } else {
+      widget.watch.pause();
     }
   }
 
@@ -105,7 +134,7 @@ class _TeammateWaitsStripState extends State<TeammateWaitsStrip>
     super.didUpdateWidget(old);
     if (!identical(old.watch, widget.watch)) {
       old.watch.pause();
-      widget.watch.start();
+      if (_watching) widget.watch.start();
     }
   }
 
@@ -114,12 +143,9 @@ class _TeammateWaitsStripState extends State<TeammateWaitsStrip>
   /// Desktop) and asks again at once on the way back.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      widget.watch.start();
-      unawaited(widget.watch.refresh());
-    } else {
-      widget.watch.pause();
-    }
+    final wasWatching = _watching;
+    _resumed = state == AppLifecycleState.resumed;
+    _sync(wasWatching: wasWatching);
   }
 
   @override

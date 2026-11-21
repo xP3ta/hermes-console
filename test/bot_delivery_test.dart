@@ -349,6 +349,44 @@ void main() {
       expect(await const PrefsBotDeliveryDismissals().load(), {'a', 'b'});
     });
 
+    test('one bot pruning its settled failures keeps the other bots\' '
+        'dismissals', () async {
+      SharedPreferences.setMockInitialValues({});
+      final ana = _FakeGateway()..rows = [_row('a1', 'failed')];
+      final anaWatch = BotDeliveryWatch(gateway: () => ana, profile: 'ana');
+      addTearDown(anaWatch.dispose);
+      await anaWatch.refresh();
+      await anaWatch.dismiss('a1');
+
+      // Another bot's chat opens: its list has none of ana's deliveries.
+      final bob = _FakeGateway()..rows = [_row('b1', 'failed')];
+      final bobWatch = BotDeliveryWatch(gateway: () => bob, profile: 'bob');
+      addTearDown(bobWatch.dispose);
+      await bobWatch.refresh();
+      await bobWatch.dismiss('b1');
+      bob.rows = const [];
+      await bobWatch.refresh();
+
+      expect(
+        await const PrefsBotDeliveryDismissals(profile: 'ana').load(),
+        {'a1'},
+      );
+      final again = BotDeliveryWatch(gateway: () => ana, profile: 'ana');
+      addTearDown(again.dispose);
+      await again.refresh();
+      expect(again.rows, isEmpty, reason: 'the dismissed failure stays out');
+    });
+
+    test('a dismissal stored by an earlier version is still honoured', () async {
+      SharedPreferences.setMockInitialValues({
+        PrefsBotDeliveryDismissals.key: '["old"]',
+      });
+      expect(
+        await const PrefsBotDeliveryDismissals(profile: 'ana').load(),
+        {'old'},
+      );
+    });
+
     test('a damaged value is an empty set', () async {
       SharedPreferences.setMockInitialValues({
         PrefsBotDeliveryDismissals.key: '{not json',
@@ -417,6 +455,40 @@ void main() {
       gateway.rows = [_row('d1', 'queued')];
       await mount(tester);
       expect(gateway.profiles, ['ana']);
+      await unmount(tester);
+    });
+
+    testWidgets('a chat covered by another route stops asking, and asks at '
+        'once when it is back on top', (tester) async {
+      gateway.rows = [_row('d1', 'queued')];
+      await mount(tester);
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      unawaited(
+        navigator.push(
+          PageRouteBuilder<void>(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (_, _, _) => const Scaffold(body: Text('teammate')),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      final asked = gateway.profiles.length;
+
+      await elapse(tester, const Duration(seconds: 30));
+      expect(
+        gateway.profiles,
+        hasLength(asked),
+        reason: 'nobody is looking at the covered chat',
+      );
+
+      navigator.pop();
+      await tester.pump();
+      await tester.pump();
+      expect(gateway.profiles, hasLength(asked + 1));
+      await elapse(tester, const Duration(seconds: 5));
+      expect(gateway.profiles, hasLength(asked + 2), reason: 'polling again');
       await unmount(tester);
     });
 
