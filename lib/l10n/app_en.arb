@@ -538,6 +538,26 @@
   "brwOpenExternal": "Open in browser",
   "brwNotShownTitle": "This file can't be shown here",
   "brwNotShownBody": "Console's browser shows web pages. Open it in your browser to view or download it.",
+  "brwServerAskTitle": "Open an address on your server?",
+  "brwServerAskBody": "{page} wants to open {address}. That address is on your server and is reached over SSH. Continue only if you expected it.",
+  "@brwServerAskBody": {
+    "placeholders": {
+      "page": {
+        "type": "String"
+      },
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "brwServerAskBodyNoPage": "A page wants to open {address}. That address is on your server and is reached over SSH. Continue only if you expected it.",
+  "@brwServerAskBodyNoPage": {
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
   "brwServerNotFound": "Server not found",
   "brwFailedToLoad": "The page failed to load",
   "brwUnreachable": "The page could not be reached.",

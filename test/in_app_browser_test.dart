@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/browser/browser_loopback_reach.dart';
 import 'package:hermes_android/core/browser/in_app_browser_download.dart';
 import 'package:hermes_android/core/browser/in_app_browser_policy.dart';
 import 'package:hermes_android/core/browser/in_app_browser_screen.dart';
@@ -217,6 +218,7 @@ void main() {
       double textScale = 1,
       Uri? initialUrl,
       InAppBrowserDownloadProber? probe,
+      BrowserLoopbackReach? reach,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -242,6 +244,7 @@ void main() {
             settingsFor: (_) => settings,
             probeDownload: probe,
             pdfPageRenderer: (_, _) async => null,
+            loopbackReach: reach,
           ),
         ),
       );
@@ -568,6 +571,62 @@ void main() {
       );
       await tester.pump();
       expect(find.text(s.brwServerNotFound), findsOneWidget);
+    });
+
+    testWidgets('with an SSH reach, a page from elsewhere cannot send the '
+        'browser to the server\'s loopback without the user saying so', (
+      tester,
+    ) async {
+      final reach = BrowserLoopbackReach(
+        dial: (_, _) async => throw StateError('never dialled in this test'),
+      );
+      addTearDown(reach.close);
+      await pumpBrowser(
+        tester,
+        initialUrl: Uri.parse('https://elsewhere.example/'),
+        reach: reach,
+      );
+      delegate().load('https://elsewhere.example/');
+      await tester.pump();
+      final loads = web.last.loadedRequests.length;
+
+      // A redirect or a script of that page.
+      expect(
+        await delegate().request('http://localhost:8000/admin/reset'),
+        NavigationDecision.prevent,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final s = strings(tester);
+      expect(find.text(s.brwServerAskTitle), findsOneWidget);
+      expect(
+        find.text(
+          s.brwServerAskBody(
+            'elsewhere.example',
+            'http://localhost:8000/admin/reset',
+          ),
+        ),
+        findsOneWidget,
+      );
+      // Asking again while the question is up adds no second dialog.
+      await delegate().request('http://localhost:8000/admin/reset');
+      await tester.pump();
+      expect(find.text(s.brwServerAskTitle), findsOneWidget);
+
+      await tester.tap(find.text(s.commonCancel));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text(s.brwServerAskTitle), findsNothing);
+      expect(web.last.loadedRequests, hasLength(loads));
+      expect(reach.activeForwardCount, 0, reason: 'nothing was forwarded');
+
+      // A frame of that page is refused outright, as before.
+      expect(
+        await delegate().request('http://localhost:8000/x', mainFrame: false),
+        NavigationDecision.prevent,
+      );
+      await tester.pump();
+      expect(find.text(s.brwServerAskTitle), findsNothing);
     });
 
     group('a file the WebView hands off as a download (#232)', () {

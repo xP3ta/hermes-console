@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../design/modal.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 import '../design/tokens.dart';
 import '../feedback/feedback_policy.dart';
 import '../theme/app_theme.dart';
@@ -538,7 +540,14 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
       if (browserLoopbackTarget(uri) != null) {
         if (request.isMainFrame) {
           if (_agentReads == 0) _setAgentOwned(false);
-          _navigate(uri);
+          if (_onServerPage) {
+            _navigate(uri);
+          } else {
+            // A page from anywhere else sending the browser to the
+            // server's loopback: it cannot read the answer, but the
+            // request would reach a local port there. The user decides.
+            unawaited(_askServerAddress(uri));
+          }
         }
         return NavigationDecision.prevent;
       }
@@ -629,6 +638,48 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
         );
       });
     }());
+  }
+
+  /// The page on screen is itself on the server's loopback (shown as the
+  /// address the user asked for): its links and redirects to loopback are
+  /// the dev server moving around its own pages.
+  bool get _onServerPage {
+    final current = Uri.tryParse(_url);
+    return current != null && browserLoopbackTarget(current) != null;
+  }
+
+  bool _askingServerAddress = false;
+
+  /// Asks before a page that is NOT the server's sends the browser to a
+  /// loopback address reached over SSH. One question at a time: a page
+  /// that keeps trying gets no pile of dialogs.
+  Future<void> _askServerAddress(Uri uri) async {
+    if (_askingServerAddress || !mounted) return;
+    _askingServerAddress = true;
+    final strings = Strings.of(context);
+    final from = Uri.tryParse(_url)?.host ?? '';
+    final shown = browserDisplayUrl(uri.toString());
+    bool? open;
+    try {
+      open = await showHermesDialog<bool>(
+        context: context,
+        title: strings.brwServerAskTitle,
+        message: from.isEmpty
+            ? strings.brwServerAskBodyNoPage(shown)
+            : strings.brwServerAskBody(from, shown),
+        actions: [
+          HermesDialogAction(
+            label: strings.commonCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(label: strings.commonOpen, value: true),
+        ],
+      );
+    } finally {
+      _askingServerAddress = false;
+    }
+    if (open == true && mounted) _navigate(uri);
   }
 
   void _releaseForwardIfOffOrigin(String rawUrl) {

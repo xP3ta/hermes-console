@@ -749,6 +749,26 @@
   "brwOpenExternal": "Abrir en el navegador",
   "brwNotShownTitle": "Este archivo no se puede mostrar aquí",
   "brwNotShownBody": "El navegador de Console muestra páginas web. Ábrelo en tu navegador para verlo o descargarlo.",
+  "brwServerAskTitle": "¿Abrir una dirección de tu servidor?",
+  "brwServerAskBody": "{page} quiere abrir {address}. Esa dirección está en tu servidor y se alcanza por SSH. Continúa solo si lo esperabas.",
+  "@brwServerAskBody": {
+    "placeholders": {
+      "page": {
+        "type": "String"
+      },
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "brwServerAskBodyNoPage": "Una página quiere abrir {address}. Esa dirección está en tu servidor y se alcanza por SSH. Continúa solo si lo esperabas.",
+  "@brwServerAskBodyNoPage": {
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
   "brwServerNotFound": "Servidor no encontrado",
   "brwFailedToLoad": "No se pudo cargar la página",
   "brwUnreachable": "No se pudo acceder a la página.",
