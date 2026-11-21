@@ -28,6 +28,9 @@ void main() {
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
           (call) async {
             if (call.method == 'readAll') return Map<String, String>.of(secure);
+            if (call.method == 'read') {
+              return secure[(call.arguments as Map)['key']];
+            }
             return null;
           },
         );

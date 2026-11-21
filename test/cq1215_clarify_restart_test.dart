@@ -27,6 +27,7 @@ class _Gateway {
   final sockets = <WebSocket>[];
   final frames = <Map<String, dynamic>>[];
   final _frames = StreamController<Map<String, dynamic>>.broadcast();
+  Future<void>? _nextSocketGate;
   Map<String, dynamic> Function(Map<String, dynamic> frame) resumeResult =
       (_) => {'session_id': 'live-s', 'stored_session_id': 'stored-1'};
   Map<String, dynamic> Function(Map<String, dynamic> frame) activeListResult =
@@ -42,6 +43,9 @@ class _Gateway {
 
   _Gateway._(this.server) {
     server.listen((request) async {
+      final gate = _nextSocketGate;
+      _nextSocketGate = null;
+      if (gate != null) await gate;
       final socket = await WebSocketTransformer.upgrade(request);
       sockets.add(socket);
       sendReady(socket);
@@ -87,6 +91,19 @@ class _Gateway {
 
   Iterable<Map<String, dynamic>> rpcCalls(String method) =>
       frames.where((frame) => frame['method'] == method);
+
+  Future<void> dropSocketWhile(Future<void> Function() check) async {
+    // With zero reconnect backoff the next socket can open before close()
+    // completes. Keep the fixture disconnected until the test observes it.
+    final allowReconnect = Completer<void>();
+    _nextSocketGate = allowReconnect.future;
+    try {
+      await sockets.single.close(1001);
+      await check();
+    } finally {
+      allowReconnect.complete();
+    }
+  }
 
   Future<void> close() async {
     await _frames.close();
@@ -308,10 +325,11 @@ void main() {
     expect(chat.observesRemoteTurnAfterReconnect, isFalse);
 
     final resumesBefore = gateway.rpcCalls('session.resume').length;
-    await gateway.sockets.single.close(1001);
-    // While the socket is down the chat really is reconnecting.
-    await _waitUntil(() => !chat.transportStatus.isConnected);
-    expect(chat.observesRemoteTurnAfterReconnect, isFalse);
+    await gateway.dropSocketWhile(() async {
+      // While the socket is down the chat really is reconnecting.
+      await _waitUntil(() => !chat.transportStatus.isConnected);
+      expect(chat.observesRemoteTurnAfterReconnect, isFalse);
+    });
     await _waitUntil(
       () => gateway.rpcCalls('session.resume').length > resumesBefore,
       timeout: const Duration(seconds: 20),
@@ -347,8 +365,9 @@ void main() {
       'status': 'idle',
     };
     final resumesBefore = gateway.rpcCalls('session.resume').length;
-    await gateway.sockets.single.close(1001);
-    await _waitUntil(() => !chat.transportStatus.isConnected);
+    await gateway.dropSocketWhile(
+      () => _waitUntil(() => !chat.transportStatus.isConnected),
+    );
     await _waitUntil(
       () => gateway.rpcCalls('session.resume').length > resumesBefore,
       timeout: const Duration(seconds: 20),
