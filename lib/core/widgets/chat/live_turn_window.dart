@@ -169,6 +169,15 @@ String liveMemoryLabel(Strings s, LiveTurnRow row) {
   };
 }
 
+/// A `skill_view` either loads a skill or reads one of its files (its
+/// detail is then «skill → file», `skillStepTitle`). They are worded apart,
+/// so a file read is never counted into a run of loads, nor the reverse.
+bool _sameSkillStep(String tool, String? before, String? now) {
+  if (!isSkillLoadTool(tool)) return true;
+  bool resource(String? detail) => detail != null && detail.contains(' → ');
+  return resource(before) == resource(now);
+}
+
 /// The rows of the window for [tools], oldest first: consecutive steps of
 /// the same tool are one row (a failed step is never folded into a run, so
 /// a failure is always seen on its own row).
@@ -181,6 +190,7 @@ List<LiveTurnRow> liveTurnRows(Iterable<TurnStepCardEntry> tools) {
         tool != null &&
         tool == last.toolName &&
         !isMemoryTool(tool) &&
+        _sameSkillStep(tool, last.detail, step.detail) &&
         !step.failed &&
         !last.failed &&
         !last.running) {

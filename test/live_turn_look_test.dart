@@ -250,6 +250,29 @@ void main() {
       expect(rows.first.id, 'c0');
     });
 
+    test('a skill file read is not counted into a run of skill loads', () {
+      TurnStepCardEntry step(String id, String title, String detail) =>
+          TurnStepCardEntry(
+            id: id,
+            kind: TurnStepCardKind.tool,
+            title: title,
+            detail: detail,
+            toolName: 'skill_view',
+            semanticsLabel: id,
+          );
+      final rows = liveTurnRows([
+        step('a', 'Skill loaded', 'pdf'),
+        step('b', 'Skill loaded', 'docx'),
+        step('c', 'Read skill file', 'pdf → references/forms.md'),
+        step('d', 'Read skill file', 'pdf → scripts/fill.py'),
+        step('e', 'Skill loaded', 'xlsx'),
+      ]);
+      expect(
+        [for (final row in rows) row.name],
+        ['Skill loaded ×2', 'Read skill file ×2', 'Skill loaded'],
+      );
+    });
+
     test('a failed step is never folded into a run', () {
       TurnStepCardEntry step(String id, {bool failed = false}) =>
           TurnStepCardEntry(
