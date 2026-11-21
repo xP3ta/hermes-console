@@ -458,6 +458,8 @@ class SshSessionService {
     final stderrText = Utf8ChunkDecoder(terminal.write);
     void output(Utf8ChunkDecoder text, Uint8List chunk) {
       touch();
+      // The link answered: what Compose wrote before this did get out.
+      _drafts[session.connectionId]?.noteRemoteOutput();
       text.add(chunk);
     }
 

@@ -677,9 +677,12 @@ class SshComposeDraft {
   /// delivery to the remote shell cannot be confirmed.
   final ValueNotifier<bool> deliveryUncertain = ValueNotifier<bool>(false);
 
-  /// Window after a queued write during which a sudden link drop marks
-  /// delivery as uncertain and restores the sent copy into an empty draft.
-  static const Duration defaultUncertainWindow = Duration(seconds: 5);
+  /// How long after a queued write a link that drops WITHOUT the server
+  /// having answered anything in between still counts as «not known to have
+  /// arrived». A link that died silently is only noticed by the keep-alive
+  /// (one probe a minute and its timeout), so the window covers that; five
+  /// seconds, as it was, almost never did.
+  static const Duration defaultUncertainWindow = Duration(seconds: 90);
 
   String? _lastQueuedText;
   DateTime? _lastQueuedAt;
@@ -691,6 +694,15 @@ class SshComposeDraft {
     _lastQueuedText = sent;
     _lastQueuedAt = at ?? DateTime.now();
     deliveryUncertain.value = false;
+  }
+
+  /// The server sent something after the write was queued: the link was
+  /// alive past it, so the write is not in doubt any more (its echo is the
+  /// usual proof). Keeps the long window from flagging writes that arrived.
+  void noteRemoteOutput() {
+    if (_lastQueuedAt == null) return;
+    _lastQueuedText = null;
+    _lastQueuedAt = null;
   }
 
   /// Clears any pending uncertainty notice and queued recovery copy.
