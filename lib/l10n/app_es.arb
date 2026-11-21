@@ -747,6 +747,8 @@
   "brwAddressPlaceholder": "Introduce una dirección",
   "brwBlankPage": "Escribe una dirección arriba para navegar.",
   "brwOpenExternal": "Abrir en el navegador",
+  "brwNotShownTitle": "Este archivo no se puede mostrar aquí",
+  "brwNotShownBody": "El navegador de Console muestra páginas web. Ábrelo en tu navegador para verlo o descargarlo.",
   "brwServerNotFound": "Servidor no encontrado",
   "brwFailedToLoad": "No se pudo cargar la página",
   "brwUnreachable": "No se pudo acceder a la página.",

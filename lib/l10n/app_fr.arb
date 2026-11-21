@@ -463,6 +463,8 @@
   "brwAddressPlaceholder": "Saisir une adresse",
   "brwBlankPage": "Saisis une adresse ci-dessus pour naviguer.",
   "brwOpenExternal": "Ouvrir dans le navigateur",
+  "brwNotShownTitle": "Ce fichier ne peut pas être affiché ici",
+  "brwNotShownBody": "Le navigateur de Console affiche des pages web. Ouvrez-le dans votre navigateur pour le consulter ou le télécharger.",
   "brwServerNotFound": "Serveur non trouvé",
   "brwFailedToLoad": "Échec du chargement de la page",
   "brwUnreachable": "La page n’a pas pu être atteinte.",

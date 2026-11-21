@@ -536,6 +536,8 @@
   "brwAddressPlaceholder": "Enter address",
   "brwBlankPage": "Type an address above to browse.",
   "brwOpenExternal": "Open in browser",
+  "brwNotShownTitle": "This file can't be shown here",
+  "brwNotShownBody": "Console's browser shows web pages. Open it in your browser to view or download it.",
   "brwServerNotFound": "Server not found",
   "brwFailedToLoad": "The page failed to load",
   "brwUnreachable": "The page could not be reached.",

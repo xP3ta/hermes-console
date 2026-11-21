@@ -463,6 +463,8 @@
   "brwAddressPlaceholder": "アドレスを入力",
   "brwBlankPage": "上のアドレス欄に入力して閲覧を始めてください。",
   "brwOpenExternal": "ブラウザーで開く",
+  "brwNotShownTitle": "このファイルはここでは表示できません",
+  "brwNotShownBody": "Console のブラウザはウェブページを表示します。表示またはダウンロードするには、ブラウザで開いてください。",
   "brwServerNotFound": "サーバーが見つかりません",
   "brwFailedToLoad": "ページの読み込みに失敗しました",
   "brwUnreachable": "ページに到達できませんでした。",

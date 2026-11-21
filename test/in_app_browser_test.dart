@@ -1,9 +1,13 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/browser/in_app_browser_download.dart';
 import 'package:hermes_android/core/browser/in_app_browser_policy.dart';
 import 'package:hermes_android/core/browser/in_app_browser_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/artifact_viewer/artifact_html_policy.dart';
+import 'package:hermes_android/core/widgets/artifact_viewer/pdf_document_view.dart';
 import 'package:hermes_android/core/widgets/workspace/chat_workspace.dart';
 import 'package:hermes_android/core/widgets/workspace/chat_workspace_host.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -212,6 +216,7 @@ void main() {
       AppThemeMode mode = AppThemeMode.dark,
       double textScale = 1,
       Uri? initialUrl,
+      InAppBrowserDownloadProber? probe,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -235,6 +240,8 @@ void main() {
             initialUrl: initialUrl,
             launchExternal: launch,
             settingsFor: (_) => settings,
+            probeDownload: probe,
+            pdfPageRenderer: (_, _) async => null,
           ),
         ),
       );
@@ -561,6 +568,181 @@ void main() {
       );
       await tester.pump();
       expect(find.text(s.brwServerNotFound), findsOneWidget);
+    });
+
+    group('a file the WebView hands off as a download (#232)', () {
+      final pdf = Uri.parse('https://files.example/report.pdf');
+      final notShown = find.byKey(const ValueKey('in-app-browser-not-shown'));
+      const loading = ValueKey('in-app-browser-loading');
+      const external = 'in-app-browser-open-external';
+
+      testWidgets('the way out works while the first page is on its way', (
+        tester,
+      ) async {
+        await pumpBrowser(tester, initialUrl: pdf);
+        expect(find.byKey(loading), findsOneWidget);
+        expect(enabled(tester, external), isTrue);
+        expect(enabled(tester, 'in-app-browser-reload'), isTrue);
+        await tester.tap(find.byKey(const ValueKey(external)));
+        await tester.pump();
+        expect(launched, [pdf]);
+      });
+
+      testWidgets('the repeated request is refused and the spinner ends in '
+          '«cannot be shown here» with the way out', (tester) async {
+        final probed = <Uri>[];
+        await pumpBrowser(
+          tester,
+          initialUrl: Uri.parse('https://files.example/bundle.zip'),
+          probe: (uri) async {
+            probed.add(uri);
+            return const InAppBrowserDownloadProbe(
+              InAppBrowserDownloadKind.other,
+            );
+          },
+        );
+        final loads = web.last.loadedRequests.length;
+        // The plugin reports the download as a navigation request for the
+        // address it is already loading.
+        expect(
+          await delegate().request('https://files.example/bundle.zip'),
+          NavigationDecision.prevent,
+          reason: 'navigate would load it again, and download it again',
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(probed, [Uri.parse('https://files.example/bundle.zip')]);
+        expect(web.last.loadedRequests, hasLength(loads));
+        expect(find.byKey(loading), findsNothing);
+        expect(notShown, findsOneWidget);
+        expect(find.text(strings(tester).brwNotShownTitle), findsOneWidget);
+
+        await tester.tap(
+          find.byKey(const ValueKey('in-app-browser-download-open-external')),
+        );
+        await tester.pump();
+        expect(launched, [Uri.parse('https://files.example/bundle.zip')]);
+
+        // «Reintentar» asks once more; the same hand-off ends the same way.
+        await tester.tap(
+          find.byKey(const ValueKey('in-app-browser-download-retry')),
+        );
+        await tester.pump();
+        expect(web.last.loadedRequests, hasLength(loads + 1));
+        expect(
+          await delegate().request('https://files.example/bundle.zip'),
+          NavigationDecision.prevent,
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(notShown, findsOneWidget);
+      });
+
+      testWidgets('a PDF opens in the app\'s own viewer', (tester) async {
+        final bytes = Uint8List.fromList('%PDF-1.7 test'.codeUnits);
+        await pumpBrowser(
+          tester,
+          initialUrl: pdf,
+          probe: (_) async => InAppBrowserDownloadProbe(
+            InAppBrowserDownloadKind.pdf,
+            bytes: bytes,
+          ),
+        );
+        expect(await delegate().request('$pdf'), NavigationDecision.prevent);
+        await tester.pump();
+        await tester.pump();
+        final viewer = tester.widget<PdfDocumentView>(
+          find.byKey(const ValueKey('in-app-browser-pdf')),
+        );
+        expect(viewer.bytes, bytes);
+        expect(find.byKey(loading), findsNothing);
+        // A document its renderer rejects falls back to the way out.
+        await tester.pump();
+        await tester.pump();
+        expect(notShown, findsOneWidget);
+        expect(enabled(tester, external), isTrue);
+      });
+
+      testWidgets('an address that is a page after all is asked for once '
+          'more, and only once', (tester) async {
+        final page = Uri.parse('https://login.example/start');
+        await pumpBrowser(
+          tester,
+          initialUrl: page,
+          probe: (_) async =>
+              const InAppBrowserDownloadProbe(InAppBrowserDownloadKind.page),
+        );
+        final loads = web.last.loadedRequests.length;
+        expect(await delegate().request('$page'), NavigationDecision.prevent);
+        await tester.pump();
+        await tester.pump();
+        expect(web.last.loadedRequests, hasLength(loads + 1));
+        expect(notShown, findsNothing);
+
+        expect(await delegate().request('$page'), NavigationDecision.prevent);
+        await tester.pump();
+        await tester.pump();
+        expect(web.last.loadedRequests, hasLength(loads + 1));
+        expect(notShown, findsOneWidget);
+      });
+
+      testWidgets('a probe that fails still ends the spinner', (tester) async {
+        await pumpBrowser(
+          tester,
+          initialUrl: pdf,
+          probe: (_) async => throw const FormatException('boom'),
+        );
+        await delegate().request('$pdf');
+        await tester.pump();
+        await tester.pump();
+        expect(find.byKey(loading), findsNothing);
+        expect(notShown, findsOneWidget);
+      });
+
+      testWidgets('Back from a file opened from a page returns to that page', (
+        tester,
+      ) async {
+        await pumpBrowser(
+          tester,
+          initialUrl: Uri.parse('https://docs.example/'),
+          probe: (_) async =>
+              const InAppBrowserDownloadProbe(InAppBrowserDownloadKind.other),
+        );
+        delegate().load('https://docs.example/');
+        await tester.pump();
+        // A link on the page: the tap, then the download hand-off.
+        expect(await delegate().request('$pdf'), NavigationDecision.navigate);
+        expect(await delegate().request('$pdf'), NavigationDecision.prevent);
+        await tester.pump();
+        await tester.pump();
+        expect(notShown, findsOneWidget);
+        expect(enabled(tester, 'in-app-browser-back'), isTrue);
+
+        await tester.tap(find.byKey(const ValueKey('in-app-browser-back')));
+        await tester.pump();
+        expect(notShown, findsNothing);
+        expect(
+          tester.widget<TextField>(address).controller!.text,
+          contains('docs.example'),
+        );
+      });
+
+      testWidgets('a link to another page is still followed', (tester) async {
+        await pumpBrowser(tester, initialUrl: Uri.parse('https://a.example/'));
+        delegate().load('https://a.example/');
+        await tester.pump();
+        expect(
+          await delegate().request('https://a.example/next'),
+          NavigationDecision.navigate,
+        );
+        delegate().load('https://a.example/next');
+        await tester.pump();
+        expect(
+          await delegate().request('https://a.example/next'),
+          NavigationDecision.navigate,
+          reason: 'the same link tapped again after the page finished',
+        );
+      });
     });
 
     testWidgets('a failing frame inside a healthy page changes nothing', (

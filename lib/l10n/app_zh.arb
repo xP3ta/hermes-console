@@ -463,6 +463,8 @@
   "brwAddressPlaceholder": "输入地址",
   "brwBlankPage": "在上方输入地址开始浏览。",
   "brwOpenExternal": "在浏览器中打开",
+  "brwNotShownTitle": "此文件无法在这里显示",
+  "brwNotShownBody": "Console 的浏览器用于显示网页。请在浏览器中打开以查看或下载。",
   "brwServerNotFound": "未找到服务器",
   "brwFailedToLoad": "页面加载失败",
   "brwUnreachable": "无法访问该页面。",

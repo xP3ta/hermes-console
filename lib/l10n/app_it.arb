@@ -463,6 +463,8 @@
   "brwAddressPlaceholder": "Inserisci un indirizzo",
   "brwBlankPage": "Scrivi un indirizzo qui sopra per navigare.",
   "brwOpenExternal": "Apri nel browser",
+  "brwNotShownTitle": "Questo file non può essere mostrato qui",
+  "brwNotShownBody": "Il browser di Console mostra pagine web. Aprilo nel tuo browser per vederlo o scaricarlo.",
   "brwServerNotFound": "Server non trovato",
   "brwFailedToLoad": "Impossibile caricare la pagina",
   "brwUnreachable": "Impossibile raggiungere la pagina.",
