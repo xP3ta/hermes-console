@@ -30,6 +30,7 @@ import 'core/services/bot_roster_store.dart';
 import 'core/characters/bot_motion.dart';
 import 'core/characters/character_library.dart';
 import 'core/services/release_log.dart';
+import 'core/services/local_transcript_store.dart';
 import 'core/services/message_reaction_prefs.dart';
 import 'core/services/pinned_prompt_prefs.dart';
 import 'core/services/release_logging.dart';
@@ -2558,7 +2559,22 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _openCatalogLinks();
     unawaited(_openVoiceOwnerChatIfReady());
     unawaited(_startupDestinationRun = _openConfiguredStartupDestination());
+    // Well after the launch work: older transcripts still in secure storage
+    // move to their sealed files without waiting for their chats to open.
+    _legacyTranscriptSweep = Timer(const Duration(seconds: 45), () {
+      unawaited(
+        LocalTranscriptStore.migrateLegacyEntries(
+          mayContinue: () =>
+              mounted &&
+              !widget.appLock.locked.value &&
+              WidgetsBinding.instance.lifecycleState ==
+                  AppLifecycleState.resumed,
+        ),
+      );
+    });
   }
+
+  Timer? _legacyTranscriptSweep;
 
   Future<void>? _startupDestinationRun;
 
@@ -3380,6 +3396,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _legacyTranscriptSweep?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_networkAvailabilityListener?.dispose());
     widget.appLock.locked.removeListener(_releaseHomeOnUnlock);
