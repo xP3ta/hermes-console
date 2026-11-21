@@ -378,6 +378,49 @@ void main() {
       expect(server.seenHeaders.last['cookie'], 'dev_sid=xyz');
     });
 
+    test('a multipart upload sent while the SSH channel is still opening '
+        'reaches the server byte for byte', () async {
+      // The channel takes a while: the whole body arrives before it opens.
+      final slow = BrowserLoopbackReach(
+        dial: (host, port) async {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          return dialer.call(host, port);
+        },
+      );
+      addTearDown(slow.close);
+      final res = await slow.resolve(Uri.parse('http://localhost:5173/upload'));
+      final hostHeader = '${res.localHost}:${res.localPort}';
+      final bootstrap = res.headers[kBrowserForwardAuthHeader]!;
+      // Parts are separated by blank lines, the very thing a head ends with,
+      // and the file is larger than any head may be.
+      final filler = List.filled(96 * 1024, 'x').join();
+      final body =
+          '--edge\r\n'
+          'Content-Disposition: form-data; name="title"\r\n'
+          '\r\n'
+          'first part\r\n'
+          '--edge\r\n'
+          'Content-Disposition: form-data; name="file"; filename="a.txt"\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          '$filler\r\n'
+          '--edge--\r\n';
+      final response = await _rawHttp(
+        res.localPort!,
+        'POST /upload HTTP/1.1\r\n'
+        'Host: $hostHeader\r\n'
+        'Origin: http://$hostHeader\r\n'
+        '$kBrowserForwardAuthHeader: $bootstrap\r\n'
+        'Content-Type: multipart/form-data; boundary=edge\r\n'
+        'Content-Length: ${body.length}\r\n'
+        '\r\n'
+        '$body',
+      );
+      expect(response, startsWith('HTTP/1.1 200 OK'));
+      expect(server.seenBodies.last.length, body.length);
+      expect(server.seenBodies.last, body);
+    });
+
     test('WebSocket upgrade requires session cookie and relays frames', () async {
       final wsNonce = base64Encode(List<int>.filled(16, 42));
       final res = await reach.resolve(Uri.parse('http://localhost:5173/'));
