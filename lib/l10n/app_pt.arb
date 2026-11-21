@@ -5578,6 +5578,7 @@
       }
     }
   },
+  "roomAttachLost": "{names} já não está neste dispositivo. Anexe-o novamente antes de enviar.",
   "roomFileDownload": "Baixar",
   "roomFileOpen": "Abrir",
   "roomFileShare": "Compartilhar",

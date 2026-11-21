@@ -3125,6 +3125,7 @@
   "roomAttachUnavailable": "이 연결은 서버에 파일을 업로드할 수 없습니다.",
   "roomAttachTypeBlocked": "프로그램이나 설치 파일은 업로드할 수 없습니다: {names}",
   "roomAttachFailed": "{name}을 업로드하지 못했습니다",
+  "roomAttachLost": "{names}이(가) 더 이상 이 기기에 없습니다. 보내기 전에 다시 첨부하세요.",
   "roomFileDownload": "다운로드",
   "roomFileOpen": "열기",
   "roomFileShare": "공유",

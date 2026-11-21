@@ -3125,6 +3125,7 @@
   "roomAttachUnavailable": "此连接无法向服务器上传文件。",
   "roomAttachTypeBlocked": "无法上传程序和安装包：{names}",
   "roomAttachFailed": "无法上传 {name}",
+  "roomAttachLost": "{names} 已不在此设备上。请在发送前重新添加。",
   "roomFileDownload": "下载",
   "roomFileOpen": "打开",
   "roomFileShare": "分享",

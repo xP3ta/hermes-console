@@ -3125,6 +3125,7 @@
   "roomAttachUnavailable": "この接続ではサーバーにファイルをアップロードできません。",
   "roomAttachTypeBlocked": "プログラムやインストーラーはアップロードできません: {names}",
   "roomAttachFailed": "{name}をアップロードできませんでした",
+  "roomAttachLost": "{names}はこのデバイスにもうありません。送信前にもう一度添付してください。",
   "roomFileDownload": "ダウンロード",
   "roomFileOpen": "開く",
   "roomFileShare": "共有",

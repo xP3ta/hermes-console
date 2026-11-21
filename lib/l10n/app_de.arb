@@ -3125,6 +3125,7 @@
   "roomAttachUnavailable": "Diese Verbindung kann keine Dateien auf den Server hochladen.",
   "roomAttachTypeBlocked": "Programme und Installationsdateien können nicht hochgeladen werden: {names}",
   "roomAttachFailed": "{name} konnte nicht hochgeladen werden",
+  "roomAttachLost": "{names} ist nicht mehr auf diesem Gerät. Hänge es vor dem Senden erneut an.",
   "roomFileDownload": "Herunterladen",
   "roomFileOpen": "Öffnen",
   "roomFileShare": "Teilen",

@@ -69,6 +69,9 @@ final class FakeRoomGateway implements RoomGateway {
   /// acknowledged the answer but still lists the approval).
   bool approveKeepsStatus = false;
 
+  /// How many of the next sends fail before reaching the room.
+  int sendFailures = 0;
+
   FakeRoomGateway({required this.room, required this.log, this.status});
 
   HostedGroupWorkspaceReadback get _readback => HostedGroupWorkspaceReadback(
@@ -90,6 +93,10 @@ final class FakeRoomGateway implements RoomGateway {
     required String text,
     required HostedGroupSendAttempt attempt,
   }) async {
+    if (sendFailures > 0) {
+      sendFailures--;
+      throw StateError('send failed');
+    }
     calls.add(('send', {'text': text, 'thread': attempt.threadId}));
     return _readback;
   }
@@ -2782,8 +2789,8 @@ void main() {
       return store;
     }
 
-    testWidgets('[RED] its text and file come back after a restart and the '
-        'upload keeps its id', (tester) async {
+    testWidgets('its text and file come back after a restart as a message '
+        'that was not sent, and Retry keeps the upload id', (tester) async {
       await realDrafts();
       _mockPathProvider();
       final first = await sendFailing(tester);
@@ -2808,19 +2815,23 @@ void main() {
       );
       await _settlePaste(
         tester,
-        until: () => _roomComposerCards(tester).isNotEmpty,
+        until: () => retryButton().evaluate().isNotEmpty,
       );
-      expect(_roomField(tester).controller!.text, 'see the plan');
-      expect(_roomComposerCards(tester).single.name, 'plan.pdf');
+      await tester.pump();
+      // The message is in the transcript again, not in the composer.
+      expect(retryButton(), findsOneWidget);
+      expect(find.text('see the plan'), findsOneWidget);
+      expect(_roomField(tester).controller!.text, isEmpty);
+      expect(_roomComposerCards(tester), isEmpty);
+      expect(second.sends, isEmpty, reason: 'never sent on its own');
 
-      await tester.tap(
-        find.byKey(const ValueKey('composer-primary-action-switcher')),
-      );
+      await tester.tap(retryButton());
       await _settlePaste(tester, until: () => second.sends.isNotEmpty);
       await tester.pumpAndSettle();
       expect(second.uploads.single.uploadId, uploadId);
       expect(second.sends.single.text, 'see the plan');
       expect(second.sends.single.files, [_FakeFileStore.idOf(1)]);
+      expect(retryButton(), findsNothing);
     });
 
     testWidgets('[RED] one that landed before the restart is not offered '
@@ -2855,16 +2866,18 @@ void main() {
       expect(second.uploads, isEmpty);
     });
 
-    testWidgets('[RED] a failed message keeps its file through later draft '
-        'saves; Retry still uploads it', (tester) async {
+    testWidgets('a failed message survives later draft saves and a restart: '
+        'the typed text is the draft, the message is still queued with its '
+        'file', (tester) async {
       await realDrafts();
       _mockPathProvider();
-      final store = await sendFailing(tester);
+      await sendFailing(tester);
       final path =
           ((stored()['attachments'] as List).single as Map)['local_path']
               as String;
 
-      // Typing replaces the stored draft: the sent file is no longer in it.
+      // Typing replaces the composer's stored draft: the sent file is no
+      // longer in that record.
       await tester.enterText(
         find.descendant(
           of: find.byType(ConsoleComposer),
@@ -2881,12 +2894,291 @@ void main() {
       await _settlePaste(tester);
       expect(File(path).existsSync(), isTrue);
 
+      // The app goes away. Before the fix the message existed nowhere now.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _settlePaste(tester);
+      expect(File(path).existsSync(), isTrue);
+      late _FakeFileStore second;
+      await _pump(
+        tester,
+        events: const [],
+        drafts: drafts(),
+        fileStore: (g) => second = _FakeFileStore(g),
+      );
+      await _settlePaste(
+        tester,
+        until: () => retryButton().evaluate().isNotEmpty,
+      );
+      await tester.pump();
+      expect(_roomField(tester).controller!.text, 'next');
+      expect(retryButton(), findsOneWidget);
+
       await tester.tap(retryButton());
-      await _settlePaste(tester, until: () => store.sends.isNotEmpty);
+      await _settlePaste(tester, until: () => second.sends.isNotEmpty);
+      await tester.pumpAndSettle();
+      expect(second.uploads.single.size, 2048);
+      expect(second.sends.single.text, 'see the plan');
+      expect(second.sends.single.files, [_FakeFileStore.idOf(1)]);
+      // Delivered: its record and its private copy are gone, the typed
+      // draft is not.
+      await _settlePaste(tester, until: () => !File(path).existsSync());
+      expect(File(path).existsSync(), isFalse);
+      expect(_roomField(tester).controller!.text, 'next');
+    });
+
+    testWidgets('two messages queued one behind the other both come back '
+        'after a restart, in order', (tester) async {
+      await realDrafts();
+      _mockPathProvider();
+      final first = await sendFailing(tester);
+      // A second message while the first has not gone out; it does not go
+      // out either.
+      first.gateway.sendFailures = 1;
+      await _sendRoomComposer(tester, 'and one more thing');
+      await _settlePaste(
+        tester,
+        until: () => retryButton().evaluate().length == 2,
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _settlePaste(tester);
+      late _FakeFileStore second;
+      final gateway = await _pump(
+        tester,
+        events: const [],
+        drafts: drafts(),
+        fileStore: (g) => second = _FakeFileStore(g),
+      );
+      await _settlePaste(
+        tester,
+        until: () => retryButton().evaluate().length == 2,
+      );
+      await tester.pump();
+      expect(retryButton(), findsNWidgets(2));
+      expect(_roomField(tester).controller!.text, isEmpty);
+
+      await tester.tap(retryButton().first);
+      await _settlePaste(tester, until: () => second.sends.isNotEmpty);
+      await tester.pumpAndSettle();
+      await tester.tap(retryButton().first);
+      await _settlePaste(
+        tester,
+        until: () => gateway.calls.any((c) => c.$1 == 'send'),
+      );
+      await tester.pumpAndSettle();
+      expect(second.sends.single.text, 'see the plan');
+      expect(
+        gateway.calls.where((c) => c.$1 == 'send').single.$2['text'],
+        'and one more thing',
+      );
+      expect(retryButton(), findsNothing);
+    });
+
+    testWidgets('Edit takes a message that was not sent back to the '
+        'composer with its file, and it is not queued any more', (
+      tester,
+    ) async {
+      await realDrafts();
+      _mockPathProvider();
+      await sendFailing(tester);
+      final edit = find.byWidgetPredicate(
+        (w) =>
+            w.key is ValueKey<String> &&
+            (w.key! as ValueKey<String>).value.startsWith('room-pending-edit-'),
+      );
+      await tester.tap(edit);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(retryButton(), findsNothing);
+      expect(_roomField(tester).controller!.text, 'see the plan');
+      expect(_roomComposerCards(tester).single.name, 'plan.pdf');
+
+      await _settlePaste(tester);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _settlePaste(tester);
+      await _pump(
+        tester,
+        events: const [],
+        drafts: drafts(),
+        fileStore: _FakeFileStore.new,
+      );
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      expect(retryButton(), findsNothing);
+      expect(_roomField(tester).controller!.text, 'see the plan');
+      expect(_roomComposerCards(tester).single.name, 'plan.pdf');
+    });
+
+    testWidgets('a queued message whose file is gone from the device goes '
+        'back to the composer and says so; it is never sent without it', (
+      tester,
+    ) async {
+      await realDrafts();
+      _mockPathProvider();
+      await sendFailing(tester);
+      final path =
+          ((stored()['attachments'] as List).single as Map)['local_path']
+              as String;
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _settlePaste(tester);
+      File(path).deleteSync();
+
+      late _FakeFileStore second;
+      final gateway = await _pump(
+        tester,
+        events: const [],
+        drafts: drafts(),
+        fileStore: (g) => second = _FakeFileStore(g),
+      );
+      await _settlePaste(
+        tester,
+        until: () => _roomField(tester).controller!.text.isNotEmpty,
+      );
+      await tester.pump();
+      expect(retryButton(), findsNothing);
+      expect(_roomField(tester).controller!.text, 'see the plan');
+      expect(_roomComposerCards(tester), isEmpty);
+      expect(
+        find.text(
+          'plan.pdf is no longer on this device. Attach it again before '
+          'sending.',
+        ),
+        findsWidgets,
+      );
+      expect(second.sends, isEmpty);
+      expect(gateway.calls.where((c) => c.$1 == 'send'), isEmpty);
+    });
+  });
+
+  group('room send retries', () {
+    Finder retryButton() => find.byWidgetPredicate(
+      (w) =>
+          w.key is ValueKey<String> &&
+          (w.key! as ValueKey<String>).value.startsWith('room-pending-retry-'),
+    );
+
+    Future<void> attachAndSend(WidgetTester tester, String text) async {
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      await _sendRoomComposer(tester, text);
+    }
+
+    testWidgets('a receipt the server no longer has is uploaded again on '
+        'Retry, under the same upload id, and the message goes out', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('plan.pdf', 2048)]);
+      late _FakeFileStore store;
+      await _pump(
+        tester,
+        events: const [],
+        fileStore: (g) {
+          store = _FakeFileStore(g);
+          // The upload lands; the send's connection drops; an hour later
+          // the server has dropped the uncommitted upload.
+          store.sendOutcomes.addAll([
+            StateError('connection lost'),
+            const TuiGatewayRpcError(
+              'groups.send',
+              'attachment has expired',
+              code: -32004,
+            ),
+          ]);
+          return store;
+        },
+      );
+      await attachAndSend(tester, 'see the plan');
+      await _settlePaste(
+        tester,
+        until: () => retryButton().evaluate().isNotEmpty,
+      );
+      expect(store.uploads, hasLength(1));
+
+      await tester.tap(retryButton());
+      await _settlePaste(tester, until: () => store.sends.length == 3);
       await tester.pumpAndSettle();
       expect(store.uploads, hasLength(2));
-      expect(store.uploads[1].size, 2048);
-      expect(store.sends.single.files, [_FakeFileStore.idOf(1)]);
+      expect(store.uploads[1].uploadId, store.uploads[0].uploadId);
+      expect(store.sends, hasLength(3));
+      expect(retryButton(), findsNothing);
+    });
+
+    testWidgets('the Dashboard fallback uploads each file once: Retry after '
+        'a failed send reuses the path it already has', (tester) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('notes.md', 1024)]);
+      final uploader = _FlakyUploader();
+      final gateway = await _pump(
+        tester,
+        events: const [],
+        uploader: uploader,
+      );
+      gateway.sendFailures = 1;
+      await attachAndSend(tester, 'read this');
+      await _settlePaste(
+        tester,
+        until: () => retryButton().evaluate().isNotEmpty,
+      );
+      expect(uploader.uploaded, hasLength(1));
+
+      await tester.tap(retryButton());
+      await _settlePaste(tester, until: () => retryButton().evaluate().isEmpty);
+      await tester.pumpAndSettle();
+      expect(uploader.uploaded, hasLength(1), reason: 'not uploaded twice');
+      expect(
+        gateway.calls.where((c) => c.$1 == 'send').last.$2['text'],
+        endsWith('notes.md → @file:/srv/uploads/notes.md'),
+      );
+    });
+
+    testWidgets('a cross-gateway room on a server without the store method '
+        'refuses the file on the first attempt and on Retry', (tester) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('notes.md', 1024)]);
+      final uploader = _FlakyUploader();
+      late _FakeFileStore store;
+      final gateway = await _pump(
+        tester,
+        events: const [],
+        uploader: uploader,
+        room: buildRoom(
+          members: [
+            memberJson('m-builder', 'builder'),
+            memberJson('m-peer', 'peerbot', peer: 'peer-1'),
+          ],
+        ),
+        fileStore: (g) {
+          store = _FakeFileStore(g);
+          store.uploadOutcomes.add(
+            const TuiGatewayRpcError(
+              'groups.attachment.upload',
+              'Group operation is unavailable',
+              code: -32601,
+            ),
+          );
+          return store;
+        },
+      );
+      await attachAndSend(tester, 'read this');
+      await _settlePaste(
+        tester,
+        until: () => retryButton().evaluate().isNotEmpty,
+      );
+      await tester.tap(retryButton());
+      await _settlePaste(tester);
+      await tester.pumpAndSettle();
+      expect(retryButton(), findsOneWidget);
+      expect(uploader.uploaded, isEmpty);
+      expect(gateway.calls.where((c) => c.$1 == 'send'), isEmpty);
     });
   });
 

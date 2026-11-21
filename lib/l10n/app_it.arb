@@ -3125,6 +3125,7 @@
   "roomAttachUnavailable": "Questa connessione non può caricare file sul server.",
   "roomAttachTypeBlocked": "Non è possibile caricare programmi o installer: {names}",
   "roomAttachFailed": "Impossibile caricare {name}",
+  "roomAttachLost": "{names} non è più su questo dispositivo. Allegalo di nuovo prima di inviare.",
   "roomFileDownload": "Scarica",
   "roomFileOpen": "Apri",
   "roomFileShare": "Condividi",

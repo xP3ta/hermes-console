@@ -3125,6 +3125,7 @@
   "roomAttachUnavailable": "Cette connexion ne peut pas envoyer de fichiers au serveur.",
   "roomAttachTypeBlocked": "Impossible d’envoyer des programmes ou installateurs : {names}",
   "roomAttachFailed": "Impossible d’envoyer {name}",
+  "roomAttachLost": "{names} n’est plus sur cet appareil. Joignez-le à nouveau avant d’envoyer.",
   "roomFileDownload": "Télécharger",
   "roomFileOpen": "Ouvrir",
   "roomFileShare": "Partager",

@@ -78,6 +78,38 @@ typedef RoomDraft = ({
   String? preparedId,
   String? preparedText,
   List<AttachmentDraft> files,
+
+  /// Names of stored files whose private copy is gone.
+  List<String> missingFiles,
+});
+
+/// The room's durable outbox: every message the user sent that the server
+/// has not acknowledged, each in its own record, oldest first. The
+/// composer's draft is a single slot that the next save replaces, so a
+/// queued message and its files never live only there. A draft store that
+/// also implements this keeps queued messages across a restart.
+abstract interface class RoomOutboxStore {
+  /// Resolves once [id] is stored: its text, its thread and the names,
+  /// sizes, ids and private-copy paths of [files], never their bytes.
+  Future<void> enqueue(
+    String id,
+    String text, {
+    required String threadId,
+    List<AttachmentDraft> files = const [],
+  });
+
+  Future<List<RoomQueuedSend>> queued();
+
+  /// [id] was acknowledged, or the user took it back.
+  Future<void> dequeue(String id);
+}
+
+typedef RoomQueuedSend = ({
+  String id,
+  String text,
+  String threadId,
+  List<AttachmentDraft> files,
+  List<String> missingFiles,
 });
 
 /// A stored draft bound to a send: [sent] is that send's own text, the
@@ -413,6 +445,20 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   /// for their outcome instead of reading a log that predates them.
   static final Map<String, Future<bool>> _inFlightSends = {};
 
+  /// Ids of the queued messages some screen of this app holds in its
+  /// outbox right now. A stored message is put back in an outbox only
+  /// while no screen holds it, so one message is never delivered by two.
+  static final Set<String> _liveQueued = {};
+
+  /// Moves when a closed screen lets go of messages it could not deliver:
+  /// the open screen of that room takes them over.
+  static final ValueNotifier<int> _queueReleased = ValueNotifier<int>(0);
+
+  RoomOutboxStore? get _queue {
+    final Object? store = widget.drafts;
+    return store is RoomOutboxStore ? store : null;
+  }
+
   /// A stored draft bound to a send attempt, kept out of the composer until
   /// the room proves whether that send landed: a sent text must never come
   /// back as a draft, and an unsent one must never be lost.
@@ -480,6 +526,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     // Text, focus and dictation rebuild only the composer area (a
     // ListenableBuilder in build), never the whole screen.
     _composer.addListener(_onComposerChanged);
+    _queueReleased.addListener(_onQueueReleased);
     unawaited(_loadLocal());
     unawaited(_restoreDraft());
     unawaited(_probePrompts());
@@ -853,8 +900,20 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       return;
     }
     try {
+      // The queued messages first: a stored draft bound to one of them is
+      // that message's own text, and the queue delivers it.
+      final queued = await _restoreQueue(applyReturned: false);
+      if (!mounted || !ticket.isCurrent) return;
       final draft = await store.load();
       if (!mounted || !ticket.isCurrent) return;
+      if (draft.missingFiles.isNotEmpty) {
+        // Said once, and the draft stored again without them: the text is
+        // never sent as if it still carried its files.
+        _notice(
+          Strings.of(context).roomAttachLost(draft.missingFiles.join(', ')),
+          kind: HermesNoticeKind.warning,
+        );
+      }
       // A draft bound to a send attempt is that send's text, kept until the
       // server acknowledged it. The log this screen opened with may predate
       // the send (or the send may still be in flight from the screen the
@@ -865,16 +924,24 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       if (prepared != null &&
           (draft.text.isNotEmpty || draft.files.isNotEmpty)) {
         _heldDisclosureTicket = ticket;
-        _heldDraft = (
+        final held = (
           text: draft.text,
           sent: draft.preparedText ?? draft.text,
           threadId: draft.threadId,
           preparedId: prepared,
           files: draft.files,
         );
+        _heldDraft = held;
+        if (queued.contains(prepared)) {
+          // The outbox holds that send: only what was typed after it is
+          // still a draft.
+          _resolveHeldDraft(held, published: true);
+          return;
+        }
         await _settleHeldDraft();
         return;
       }
+      final lostFiles = draft.missingFiles.isNotEmpty;
       if (_draftDirty) return;
       _restoringDraft = true;
       _threadId = draft.threadId;
@@ -889,10 +956,18 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             ..addAll(draft.files);
         });
       }
+      // Stored again without the files that are gone.
+      if (lostFiles) {
+        _draftDirty = true;
+        _flushDraft();
+      }
     } catch (_) {
       // Never overwrite an unreadable draft.
     } finally {
       _draftRestoreRunning = false;
+      // After the stored draft is in place, never before: it would be
+      // taken for typed text and replace that draft.
+      if (mounted) _applyReturnedQueue();
       if (!ticket.isCurrent &&
           AppLockSensitiveReadFence.capture().isCurrent &&
           mounted) {
@@ -1121,8 +1196,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     // Failed messages are not sent after the screen closes: their files
     // stay only where a stored draft still names them.
     for (final message in _outbox) {
-      if (message.failed) _releaseFiles(message);
+      if (message.failed) _abandonQueued(message);
     }
+    _queueReleased.removeListener(_onQueueReleased);
     _markSeen();
     _composer.removeListener(_onComposerChanged);
     _composer.dispose();
@@ -1173,8 +1249,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     ];
     if (landed.isEmpty) return;
     for (final m in landed) {
-      _outbox.remove(m);
-      _releaseFiles(m);
+      _retireQueued(m);
       unawaited(
         widget.drafts
                 ?.clear(preparedId: m.attempt.clientEventId)
@@ -1585,6 +1660,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       // outbox (the chat composer's `retainProducer` path).
       owner: AttachmentOwnershipCoordinator.retainProducer(drafts),
     );
+    // Its own durable record first: the composer's stored draft is a single
+    // slot that the next send or the next keystroke replaces. Delivery
+    // waits for this write.
+    _liveQueued.add(message.attempt.clientEventId);
+    message.persisted = _persistQueued(message);
     // Until the server acknowledges it, the sent text stays in the stored
     // draft bound to this attempt; the acknowledgement retires exactly it.
     _draftTimer?.cancel();
@@ -1625,6 +1705,207 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     unawaited(_drain());
   }
 
+  /// Writes [message] to the room's durable outbox. A storage failure is
+  /// not a reason to hold the message back: it is then delivered from
+  /// memory, as before.
+  Future<void> _persistQueued(_OutgoingMessage message) async {
+    final queue = _queue;
+    if (queue == null) return;
+    try {
+      await queue.enqueue(
+        message.attempt.clientEventId,
+        message.text,
+        threadId: message.attempt.threadId,
+        files: message.attachments,
+      );
+    } catch (_) {
+      // Delivered from memory.
+    }
+  }
+
+  /// [message] left the outbox for good (acknowledged, found in the log or
+  /// taken back): its durable record goes first, then the private copies
+  /// of its files, which that record would otherwise keep alive.
+  void _retireQueued(_OutgoingMessage message, {bool keepFiles = false}) {
+    _outbox.remove(message);
+    final id = message.attempt.clientEventId;
+    _liveQueued.remove(id);
+    final queue = _queue;
+    if (queue == null) {
+      if (!keepFiles) _releaseFiles(message);
+      return;
+    }
+    unawaited(
+      (message.persisted ?? Future<void>.value())
+          .then((_) => queue.dequeue(id))
+          .then<void>((_) {}, onError: (Object _) {})
+          .whenComplete(() {
+            if (!keepFiles) _releaseFiles(message);
+          }),
+    );
+  }
+
+  /// A closed screen cannot retry [message]: it stays in the durable
+  /// outbox and the next visit, or the screen open now, shows it again.
+  void _abandonQueued(_OutgoingMessage message) {
+    _releaseFiles(message);
+    if (_liveQueued.remove(message.attempt.clientEventId)) {
+      _queueReleased.value++;
+    }
+  }
+
+  /// "Edit" on a message that was not sent: its text and files go back to
+  /// the composer and it leaves the outbox.
+  void _takeBackSend(_OutgoingMessage message) {
+    if (!message.failed || !_outbox.contains(message)) return;
+    final typed = _composer.text;
+    setState(() {
+      for (final file in message.attachments) {
+        if (!_attachments.any((a) => a.localId == file.localId)) {
+          _attachments.add(file);
+        }
+      }
+      _restoringDraft = true;
+      _composer.text = _joinDraft(message.text, typed);
+      _restoringDraft = false;
+      // The composer's stored draft names the files before the outbox
+      // record that kept them is dropped.
+      _draftDirty = true;
+      _flushDraft();
+      _retireQueued(message, keepFiles: true);
+      _outboxVersion++;
+    });
+    // The composer owns the copies now; only the outbox's hold is dropped.
+    final owner = message.owner;
+    if (owner != null) {
+      message.owner = null;
+      unawaited(
+        AttachmentOwnershipCoordinator.releaseProducer(
+          owner,
+          (_) async {},
+        ).then<void>((_) {}, onError: (Object _) {}),
+      );
+    }
+    unawaited(
+      widget.drafts
+              ?.clear(preparedId: message.attempt.clientEventId)
+              .then<void>((_) {}, onError: (Object _) {}) ??
+          Future<void>.value(),
+    );
+  }
+
+  bool _queueRestoreRunning = false;
+
+  /// Puts the stored messages no screen holds back in the outbox, marked
+  /// "Not sent": the user retries or edits each one. One whose file is gone
+  /// from the device goes back to the composer instead, and says so: it is
+  /// never sent without that file. Answers the ids the queue owns.
+  Future<Set<String>> _restoreQueue({bool applyReturned = true}) async {
+    final queue = _queue;
+    if (queue == null) return const {};
+    if (_queueRestoreRunning) return {..._liveQueued};
+    _queueRestoreRunning = true;
+    try {
+      final List<RoomQueuedSend> entries;
+      try {
+        entries = await queue.queued();
+      } catch (_) {
+        return {..._liveQueued};
+      }
+      final owned = <String>{..._liveQueued};
+      if (!mounted) return owned;
+      final restored = <_OutgoingMessage>[];
+      final returned = <RoomQueuedSend>[];
+      for (final entry in entries) {
+        if (_liveQueued.contains(entry.id)) continue;
+        owned.add(entry.id);
+        if (entry.missingFiles.isNotEmpty) {
+          returned.add(entry);
+          continue;
+        }
+        final HostedGroupSendAttempt attempt;
+        try {
+          attempt = HostedGroupSendAttempt.forClientEvent(
+            entry.id,
+            threadId: entry.threadId,
+          );
+        } catch (_) {
+          returned.add(entry);
+          continue;
+        }
+        _liveQueued.add(entry.id);
+        restored.add(
+          _OutgoingMessage(
+              attempt: attempt,
+              text: entry.text,
+              attachments: List.unmodifiable(entry.files),
+              owner: AttachmentOwnershipCoordinator.retainProducer(entry.files),
+            )
+            ..failed = true
+            ..persisted = Future<void>.value(),
+        );
+      }
+      if (restored.isEmpty && returned.isEmpty) return owned;
+      setState(() {
+        _outbox.addAll(restored);
+        _outboxVersion++;
+      });
+      _returnedQueue.addAll(returned);
+      if (applyReturned) _applyReturnedQueue();
+      // One that did land while the app was away is dropped from the log.
+      _retirePublishedOutbox();
+      return owned;
+    } finally {
+      _queueRestoreRunning = false;
+    }
+  }
+
+  /// Stored messages that cannot be delivered as they were (a file of
+  /// theirs is gone from the device): back to the composer, said once.
+  final List<RoomQueuedSend> _returnedQueue = [];
+
+  void _applyReturnedQueue() {
+    if (_returnedQueue.isEmpty) return;
+    final returned = List.of(_returnedQueue);
+    _returnedQueue.clear();
+    final lost = [for (final entry in returned) ...entry.missingFiles];
+    setState(() {
+      for (final entry in returned) {
+        for (final file in entry.files) {
+          if (!_attachments.any((a) => a.localId == file.localId)) {
+            _attachments.add(file);
+          }
+        }
+        if (entry.text.isNotEmpty) {
+          _restoringDraft = true;
+          _composer.text = _joinDraft(_composer.text, entry.text);
+          _restoringDraft = false;
+        }
+      }
+    });
+    // The composer's stored draft names the text and the files before the
+    // queue records that kept them are dropped.
+    _draftDirty = true;
+    _flushDraft();
+    final queue = _queue;
+    for (final entry in returned) {
+      unawaited(
+        queue?.dequeue(entry.id).then<void>((_) {}, onError: (Object _) {}) ??
+            Future<void>.value(),
+      );
+    }
+    if (lost.isNotEmpty) {
+      _notice(
+        Strings.of(context).roomAttachLost(lost.join(', ')),
+        kind: HermesNoticeKind.warning,
+      );
+    }
+  }
+
+  void _onQueueReleased() {
+    if (mounted) unawaited(_restoreQueue());
+  }
+
   /// Delivers queued messages one at a time, oldest first. Keeps running
   /// after the screen closes so nothing already sent is dropped.
   Future<void> _drain() async {
@@ -1657,8 +1938,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                     .then<void>((_) {}, onError: (Object _) {}) ??
                 Future<void>.value(),
           );
-          _outbox.remove(message);
-          _releaseFiles(message);
+          _retireQueued(message);
           _outboxVersion++;
           if (!mounted) continue;
           _apply(result);
@@ -1668,7 +1948,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           final from = _outbox.indexOf(message);
           for (final m in _outbox.skip(from < 0 ? 0 : from)) {
             m.failed = true;
-            if (!mounted) _releaseFiles(m);
+            if (!mounted) _abandonQueued(m);
           }
           _outboxVersion++;
           if (mounted) setState(() {});
@@ -1703,36 +1983,70 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   Future<HostedGroupWorkspaceReadback> _deliver(
     _OutgoingMessage message,
   ) async {
+    // Never on its way before its durable record settled.
+    await message.persisted;
     final store = widget.fileStore;
     if (message.attachments.isNotEmpty && store != null && !_storeMissing) {
+      // Receipts kept from an earlier attempt may have expired on the
+      // server by now (it drops an upload no message committed).
+      final reused = message.uploaded.isNotEmpty;
       final manifest = await _uploadToStore(store, message);
       if (manifest != null) {
-        return store.send(
-          _room,
-          text: message.text,
-          attachments: manifest,
-          attempt: message.attempt,
-        );
+        try {
+          return await store.send(
+            _room,
+            text: message.text,
+            attachments: manifest,
+            attempt: message.attempt,
+          );
+        } on TuiGatewayRpcError {
+          // The server answered and refused. With receipts of this very
+          // attempt that is final for now; kept ones are uploaded again
+          // (same upload ids, so a row that still exists is not copied)
+          // and the send is tried once more.
+          message.uploaded.clear();
+          if (!reused) rethrow;
+          final fresh = await _uploadToStore(store, message);
+          if (fresh == null) rethrow;
+          try {
+            return await store.send(
+              _room,
+              text: message.text,
+              attachments: fresh,
+              attempt: message.attempt,
+            );
+          } on TuiGatewayRpcError {
+            message.uploaded.clear();
+            rethrow;
+          }
+        }
       }
       // No `groups.attachment.upload` on this server after all: the
       // Dashboard path, where its gate allows it.
-      if (_dashboardBlock == RoomAttachBlock.crossGateway) {
-        if (mounted) {
-          _notice(
-            Strings.of(context).roomAttachCrossGateway,
-            kind: HermesNoticeKind.warning,
-          );
-        }
-        throw StateError('attachment upload failed');
+    }
+    // The Dashboard path's own gate, on the first attempt and on every
+    // retry: a staged path is unreadable for a member on another gateway.
+    if (message.attachments.isNotEmpty &&
+        _dashboardBlock == RoomAttachBlock.crossGateway) {
+      if (mounted) {
+        _notice(
+          Strings.of(context).roomAttachCrossGateway,
+          kind: HermesNoticeKind.warning,
+        );
       }
+      throw StateError('attachment upload failed');
     }
     final refs = <RoomAttachmentRef>[];
     for (final draft in message.attachments) {
-      final path = await widget.uploader?.upload(draft);
+      // Uploaded once per message: a retry reuses the path it got.
+      final path =
+          message.dashboardPaths[draft.localId] ??
+          await widget.uploader?.upload(draft);
       if (path == null) {
         if (mounted) _notice(Strings.of(context).roomAttachFailed(draft.name));
         throw StateError('attachment upload failed');
       }
+      message.dashboardPaths[draft.localId] = path;
       refs.add(RoomAttachmentRef(name: draft.name, path: path));
     }
     return widget.gateway.send(
@@ -3409,6 +3723,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             attachments: message.attachments,
             failed: message.failed,
             onRetry: () => _retrySend(message),
+            onEdit: () => _takeBackSend(message),
           ),
         ),
       for (final card in _inlineCards())
@@ -4011,6 +4326,14 @@ final class _OutgoingMessage {
   /// Retention of [attachments]' private copies while the message is in
   /// the outbox (`AttachmentOwnershipCoordinator.retainProducer`).
   int? owner;
+
+  /// Settles once the message is in the room's durable outbox (or that
+  /// write failed); never throws.
+  Future<void>? persisted;
+
+  /// Managed paths of the files already uploaded through the Dashboard, by
+  /// draft id: a retry never uploads them again under a new name.
+  final Map<String, String> dashboardPaths = {};
 
   _OutgoingMessage({
     required this.attempt,

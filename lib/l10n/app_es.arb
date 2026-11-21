@@ -5906,6 +5906,14 @@
       }
     }
   },
+  "roomAttachLost": "{names} ya no está en este dispositivo. Adjúntalo de nuevo antes de enviar.",
+  "@roomAttachLost": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
   "roomFileDownload": "Descargar",
   "roomFileOpen": "Abrir",
   "roomFileShare": "Compartir",
