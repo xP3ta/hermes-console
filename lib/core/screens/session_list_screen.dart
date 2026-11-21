@@ -349,6 +349,8 @@ class _SessionListScreenState extends State<SessionListScreen>
   /// A roster refresh was skipped while the list sat under another route; it
   /// runs once in [didPopNext].
   bool _remoteActivityDirty = false;
+  bool _activityRefreshInFlight = false;
+  bool _activityRefreshPending = false;
 
   /// Runtimes whose first unrouted event already forced a discovery read; the
   /// rest of their events wait for the coalesced refresh.
@@ -488,7 +490,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         unawaited(_checkHealth());
       }
       unawaited(_fetchSessions(showLoader: false));
-      if (_remoteActivityDirty) {
+      if (_remoteActivityDirty || _listHasLiveActivity) {
         _remoteActivityDirty = false;
         unawaited(_refreshRemoteActivity());
       }
@@ -915,11 +917,15 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
     if (!isSessionLibraryRefreshEvent(event)) return;
     _sessionChangeEpoch += 1;
-    if (!_foreground) return;
+    if (!_foreground) {
+      _remoteActivityDirty = true;
+      return;
+    }
     if (!_listVisible) {
       _remoteActivityDirty = true;
       return;
     }
+    unawaited(_refreshRemoteActivity());
     final now = DateTime.now();
     final last = _lastEventRefreshAt;
     final elapsed = last == null
@@ -1038,6 +1044,12 @@ class _SessionListScreenState extends State<SessionListScreen>
                 () => _ownedActivityClient!.listActiveSessions(),
               ));
     if (aggregate == null || loader == null) return false;
+    if (_activityRefreshInFlight) {
+      _activityRefreshPending = true;
+      return true;
+    }
+    _activityRefreshInFlight = true;
+    _activityRefreshPending = false;
     _lastActivityRefreshAt = DateTime.now();
     final profile = Session.profileOwner(_libraryQuery.profile);
     final generation = aggregate.beginRosterRequest(
@@ -1047,6 +1059,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     try {
       final fullRoster = await loader();
       if (!mounted) return false;
+      final previouslyActive = aggregate.trackedDurableIds(
+        widget.connection.id,
+        profile,
+      );
       // The roster has no profile field: only rows this profile knows may
       // become activity (Desktop never builds rows from the roster).
       final roster = filterRosterToKnown(
@@ -1058,9 +1074,11 @@ class _SessionListScreenState extends State<SessionListScreen>
           hasLocalChat: (id) =>
               _activeChats?.of(widget.connection.id, id, profile: profile) !=
               null,
+          trackedIds: previouslyActive,
         ),
       );
       _rosterRowsDeferred = roster.sessions.length < fullRoster.sessions.length;
+      final wasRecovering = _recoveringTransport;
       aggregate.applyRoster(
         connectionId: widget.connection.id,
         profile: profile,
@@ -1068,6 +1086,9 @@ class _SessionListScreenState extends State<SessionListScreen>
         requestGeneration: generation,
         roster: roster,
       );
+      if (!roster.hasMalformedRows) {
+        _recoveringTransport = false;
+      }
       _staleExpiryTimer?.cancel();
       _staleExpiryTimer = null;
       final client = _ownedActivityClient;
@@ -1090,10 +1111,11 @@ class _SessionListScreenState extends State<SessionListScreen>
         for (final row in roster.sessions) {
           final durable = row.storedSessionId;
           if (durable == null) continue;
-          // Only a busy row or one with live processes already known can
-          // change; probing every idle row was most of the list's traffic.
+          // Only a busy row, a row transitioning from active, or one with
+          // live processes already known can change.
           if (!rosterStatusIsBusy(row.status) &&
               !_rowsWithLiveProcesses.contains(durable) &&
+              !previouslyActive.contains(durable) &&
               !aggregate.isActive(widget.connection.id, profile, durable)) {
             continue;
           }
@@ -1102,6 +1124,7 @@ class _SessionListScreenState extends State<SessionListScreen>
               aggregate: aggregate,
               loadSnapshot: processLoader,
               rosterStatus: row.status,
+              wasRecovering: wasRecovering,
               scope: GlobalActivityScope(
                 connectionId: widget.connection.id,
                 profile: profile,
@@ -1112,7 +1135,7 @@ class _SessionListScreenState extends State<SessionListScreen>
             ),
           );
         }
-      } else if (_recoveringTransport && !roster.hasMalformedRows) {
+      } else if (wasRecovering && !roster.hasMalformedRows) {
         for (final row in roster.sessions) {
           final durable = row.storedSessionId;
           if (durable == null || !rosterStatusIsBusy(row.status)) continue;
@@ -1138,7 +1161,14 @@ class _SessionListScreenState extends State<SessionListScreen>
       _scheduleStaleExpiry();
       return false;
     } finally {
-      _scheduleActivityPoll();
+      _activityRefreshInFlight = false;
+      final rerun = _activityRefreshPending;
+      _activityRefreshPending = false;
+      if (rerun && mounted && _foreground && _listVisible) {
+        unawaited(_refreshRemoteActivity());
+      } else {
+        _scheduleActivityPoll();
+      }
     }
   }
 
@@ -1147,6 +1177,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     required Future<AgentCenterSnapshot> Function(String runtimeSessionId)
     loadSnapshot,
     required String? rosterStatus,
+    required bool wasRecovering,
     required GlobalActivityScope scope,
   }) async {
     final rosterBusy = rosterStatusIsBusy(rosterStatus);
@@ -1186,20 +1217,22 @@ class _SessionListScreenState extends State<SessionListScreen>
         );
         return;
       }
-      if (_recoveringTransport) {
+      if (wasRecovering) {
         final current = aggregate.activityFor(
           scope.connectionId,
           scope.profile,
           scope.durableSessionId,
         );
-        aggregate.applyRecoverySnapshot(
-          scope: scope,
-          running: true,
-          waitingForUser: current?.requiresAction == true,
-          replayTruncated: true,
-          processCount: activeProcessCount,
-          rosterStatus: rosterStatus,
-        );
+        if (current != null && current.scope.exactKey == scope.exactKey) {
+          aggregate.applyRecoverySnapshot(
+            scope: scope,
+            running: true,
+            waitingForUser: current.requiresAction,
+            replayTruncated: true,
+            processCount: activeProcessCount,
+            rosterStatus: rosterStatus,
+          );
+        }
       } else {
         aggregate.applyProcessList(
           scope: scope,
@@ -1227,7 +1260,6 @@ class _SessionListScreenState extends State<SessionListScreen>
         _foreground &&
         _appliedSessionChangeEpoch < _sessionChangeEpoch) {
       await _fetchSessions(showLoader: false);
-      await _refreshRemoteActivityIfVisible();
     }
   }
 
@@ -3117,7 +3149,11 @@ class _SessionListScreenState extends State<SessionListScreen>
   /// state, which the screen's own rebuilds do not carry.
   Widget _buildHeaderTitle(Strings s, HermesThemeColors colors) =>
       ListenableBuilder(
-        listenable: Listenable.merge([_activeIdsGate, _liveStatusGate]),
+        listenable: Listenable.merge([
+          _activeIdsGate,
+          _liveStatusGate,
+          ?_globalActivity,
+        ]),
         builder: (context, _) {
           final title = Text(
             s.drawerSessions,

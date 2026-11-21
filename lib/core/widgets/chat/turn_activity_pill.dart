@@ -2,6 +2,8 @@ import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../design/floating.dart' show HermesFloatingSurface;
+import '../../design/gel_surface.dart' show HermesGelSurface;
 import '../../theme/app_theme.dart';
 import '../../theme/hermes_tokens.dart';
 import '../activity_pill.dart' show ActivityTicker;
@@ -15,8 +17,8 @@ import '../../feedback/haptics.dart';
 /// One 48 dp target. Live, it paints the «Trabajando» card of the look
 /// approved on 9 nov (mock `turno3.html`): ring, word, the turn's clock and
 /// the tool count, always visible (the earlier v4 video showed only a count;
-/// the approved mock supersedes it). Settled, a thin unboxed row with the green
-/// ring and its check. Only the live text repaints with the sheen.
+/// the approved mock supersedes it). A settled turn uses a compact capsule
+/// that opens the tool history. Only the live text repaints with the sheen.
 const bool kInlineActivityShowsClock = true;
 
 /// The tests that pin the clock's behaviour (QA 9715: it survives leaving the
@@ -81,164 +83,264 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
-    final live = widget.live;
-    final text = Text(
-      widget.label,
-      key: const ValueKey('chat-inline-activity-text'),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        fontSize: live ? TurnType.row : 13,
-        height: 1.3,
-        // Live: the «Trabajando» card of the approved look, in bold.
-        fontWeight: live ? FontWeight.w600 : null,
-        color: live ? colors.textPrimary : colors.textTertiary,
-      ),
-    );
-    final metaStyle = TextStyle(
-      fontSize: 12,
-      color: live ? colors.success : colors.textTertiary,
-      fontFeatures: const [FontFeature.tabularFigures()],
-    );
-    Widget rowFor(double room) {
-      // The meta shrinks with the room it has: «1:15 · 12 herramientas», then
-      // «1:15 · 12», then only the number (a narrow header never overflows).
-      final scaled = room / MediaQuery.textScalerOf(context).scale(1);
-      final showClock =
-          (kInlineActivityShowsClock || widget.open || debugInlineClockWhenFolded) &&
-          live &&
-          widget.startedAt != null &&
-          scaled >= HermesLiveTurn.metaWithClock;
-      final countWords = scaled >= HermesLiveTurn.metaWithWords;
-      return Row(
-      children: [
-        if (live)
-          const LiveSpinnerRing()
-        else
-          widget.failed
-              ? ChatLiveIcon(
-                  ChatLiveGlyph.error,
-                  size: 18,
-                  color: colors.error,
-                )
-              // A settled turn: the green ring with its check inside.
-              // A settled turn: one thin check, as quiet as its line.
-              : Text(
-                  '·',
-                  style: TextStyle(fontSize: 13, color: colors.textTertiary),
-                ),
-        SizedBox(width: live ? HermesSpace.x2 : 6),
-        Expanded(
-          child: RepaintBoundary(
-            child: live
-                ? LiveSheen(
-                    seconds: liveSeconds,
-                    base: colors.textPrimary.withValues(alpha: 0.8),
-                    peak: colors.textPrimary,
-                    child: text,
-                  )
-                : text,
-          ),
-        ),
-        if (live || showClock)
-          // The clock and the count are one group that can never be wider
-          // than 60% of the row: with a wide font or a long translation it
-          // scales down instead of pushing the label and the chevron out.
-          ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: room * 0.6),
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: AlignmentDirectional.centerEnd,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (showClock) ...[
-                    const SizedBox(width: HermesSpace.x2),
-                    ActivityTicker(
-                      active: true,
-                      clock: widget.clock,
-                      builder: (context, now) => Text(
-                        formatTurnClock(now.difference(widget.startedAt!)),
-                        key: const ValueKey('chat-inline-activity-clock'),
-                        style: metaStyle,
-                      ),
-                    ),
-                  ],
-                  if (live) ...[
-                    if (showClock) Text(' · ', style: metaStyle),
-                    Text(
-                      countWords
-                          ? s.tk140ToolsCount(widget.steps)
-                          : '${widget.steps}',
-                      key: const ValueKey('chat-inline-activity-count'),
-                      style: metaStyle,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        const SizedBox(width: HermesSpace.x2),
-        AnimatedRotation(
-          turns: widget.open ? .5 : 0,
-          duration: HermesMotion.duration(context, HermesMotion.fast),
-          child: Icon(
-            HIcons.expand_more_rounded,
-            size: 13,
-            color: live ? colors.success : colors.textTertiary,
-          ),
-        ),
-      ],
-    );
-    }
-
-    final row = LayoutBuilder(
-      builder: (context, constraints) => rowFor(constraints.maxWidth),
-    );
     return Semantics(
       key: const ValueKey('chat-inline-activity'),
       container: true,
       button: true,
       expanded: widget.open,
       liveRegion: widget.live,
-      label: '${widget.spokenLabel ?? widget.label}, ${s.chatLiveSteps(widget.steps)}',
-      onTap: widget.onTap,
+      label:
+          '${widget.spokenLabel ?? widget.label}, ${s.chatLiveSteps(widget.steps)}',
+      onTap: _tap,
       onTapHint: widget.open ? s.stepsBarWorkedHide : s.stepsBarWorkedShow,
       excludeSemantics: true,
-      child: InkWell(
-        onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(HermesRadius.control),
-        child: SizedBox(
-          height: live ? HermesSpace.tap : 32,
-          child: live
-              // The 48 dp target stays; only the card is painted, hugging
-              // the bottom so the connector hangs straight from it.
-              ? Padding(
-                  padding: const EdgeInsets.only(
-                    top: HermesSpace.tap - HermesLiveTurn.cardHeight,
-                  ),
-                  child: DecoratedBox(
-                    key: const ValueKey('live-turn-card'),
-                    decoration: BoxDecoration(
-                      color: colors.success.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(HermesRadius.tag),
-                      border: Border.all(
-                        color: colors.success.withValues(alpha: 0.45),
+      child: widget.live ? _runningCard(context) : _settledCapsule(context),
+    );
+  }
+
+  void _tap() {
+    HermesHaptics.selection();
+    widget.onTap();
+  }
+
+  Widget _caret(BuildContext context, Color color, {double size = 13}) =>
+      AnimatedRotation(
+        turns: widget.open ? .5 : 0,
+        duration: HermesMotion.duration(context, HermesMotion.fast),
+        child: Icon(HIcons.expand_more_rounded, size: size, color: color),
+      );
+
+  Widget _settledCapsule(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final chrome = HermesChrome.of(colors);
+    return InkWell(
+      onTap: _tap,
+      customBorder: const StadiumBorder(),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: HermesSpace.tap),
+        child: Align(
+          alignment: AlignmentDirectional.centerStart,
+          widthFactor: 1,
+          heightFactor: 1,
+          child: HermesGelSurface(
+            shape: const StadiumBorder(),
+            pressable: false,
+            sheenScale: HermesGel.textSheenScale(colors),
+            child: HermesFloatingSurface(
+              key: const ValueKey('chat-inline-activity-surface'),
+              fill: chrome.opaque,
+              shadow: false,
+              padding: const EdgeInsetsDirectional.fromSTEB(
+                HermesSpace.gap,
+                6,
+                HermesSpace.x2,
+                6,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.failed)
+                    ChatLiveIcon(
+                      ChatLiveGlyph.error,
+                      size: HermesIcon.sm,
+                      color: colors.error,
+                    )
+                  else
+                    Icon(
+                      HIcons.done_rounded,
+                      size: HermesIcon.sm,
+                      color: colors.success,
+                    ),
+                  const SizedBox(width: HermesSpace.x2),
+                  Flexible(
+                    child: Text(
+                      widget.label,
+                      key: const ValueKey('chat-inline-activity-text'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: HermesType.support.copyWith(
+                        fontSize: TurnType.status,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
                       ),
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: HermesSpace.x3,
-                      ),
-                      child: row,
-                    ),
                   ),
-                )
-              : row,
+                  const SizedBox(width: HermesSpace.x2),
+                  _caret(context, colors.textSecondary, size: HermesIcon.sm),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _runningCard(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final metaStyle = TextStyle(
+      fontSize: 12,
+      color: colors.success,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    return InkWell(
+      onTap: _tap,
+      borderRadius: BorderRadius.circular(HermesRadius.control),
+      child: SizedBox(
+        height: HermesSpace.tap,
+        child: Padding(
+          // The painted card hugs the bottom of the touch target.
+          padding: const EdgeInsets.only(
+            top: HermesSpace.tap - HermesLiveTurn.cardHeight,
+          ),
+          child: DecoratedBox(
+            key: const ValueKey('live-turn-card'),
+            decoration: BoxDecoration(
+              color: colors.success.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(HermesRadius.tag),
+              border: Border.all(color: colors.success.withValues(alpha: 0.45)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x3),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final room = constraints.maxWidth;
+                  final scaled =
+                      room / MediaQuery.textScalerOf(context).scale(1);
+                  final showClock =
+                      (kInlineActivityShowsClock ||
+                          widget.open ||
+                          debugInlineClockWhenFolded) &&
+                      widget.startedAt != null &&
+                      scaled >= HermesLiveTurn.metaWithClock;
+                  return Row(
+                    children: [
+                      const LiveSpinnerRing(),
+                      const SizedBox(width: HermesSpace.x2),
+                      Expanded(
+                        child: RepaintBoundary(
+                          child: LiveSheen(
+                            seconds: liveSeconds,
+                            base: colors.textPrimary.withValues(alpha: 0.8),
+                            peak: colors.textPrimary,
+                            child: Text(
+                              widget.label,
+                              key: const ValueKey('chat-inline-activity-text'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: TurnType.row,
+                                height: 1.3,
+                                fontWeight: FontWeight.w600,
+                                color: colors.textPrimary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Clock and count may take at most 60% of the card.
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: room * 0.6),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (showClock) ...[
+                                const SizedBox(width: HermesSpace.x2),
+                                ActivityTicker(
+                                  active: true,
+                                  clock: widget.clock,
+                                  builder: (context, now) => Text(
+                                    formatTurnClock(
+                                      now.difference(widget.startedAt!),
+                                    ),
+                                    key: const ValueKey(
+                                      'chat-inline-activity-clock',
+                                    ),
+                                    style: metaStyle,
+                                  ),
+                                ),
+                                Text(' · ', style: metaStyle),
+                              ],
+                              Text(
+                                scaled >= HermesLiveTurn.metaWithWords
+                                    ? s.tk140ToolsCount(widget.steps)
+                                    : '${widget.steps}',
+                                key: const ValueKey(
+                                  'chat-inline-activity-count',
+                                ),
+                                style: metaStyle,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: HermesSpace.x2),
+                      _caret(context, colors.success),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// At the end of an answer, keep the history at the message's leading
+/// edge. On small screens the actions move above it, leaving the summary
+/// directly over its tool list.
+class TurnActivityFooter extends StatelessWidget {
+  const TurnActivityFooter({
+    required this.summary,
+    required this.details,
+    required this.actions,
+    super.key,
+  });
+
+  final Widget summary;
+  final Widget details;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final controls = Row(
+      key: const ValueKey('assistant-footer-actions'),
+      mainAxisSize: MainAxisSize.min,
+      children: actions,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide =
+            constraints.maxWidth >=
+            344 * MediaQuery.textScalerOf(context).scale(1);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (wide)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(child: summary),
+                  const SizedBox(width: HermesSpace.x2),
+                  controls,
+                ],
+              )
+            else ...[
+              controls,
+              summary,
+            ],
+            details,
+          ],
+        );
+      },
     );
   }
 }

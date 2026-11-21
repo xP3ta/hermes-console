@@ -180,14 +180,16 @@ void main() {
         'synthetic-conn',
         'mob-synthetic',
       );
+      final draft = jsonEncode({
+        'text': 'SYNTHETIC_PUBLIC_CONTROL',
+        'attachments': [],
+      });
       messenger.setMockMethodCallHandler(channel, (call) async {
         if (call.method == 'readAll') {
-          return <String, String>{
-            key: jsonEncode({
-              'text': 'SYNTHETIC_PUBLIC_CONTROL',
-              'attachments': [],
-            }),
-          };
+          return <String, String>{key: draft};
+        }
+        if (call.method == 'read' && (call.arguments as Map)['key'] == key) {
+          return draft;
         }
         return null;
       });

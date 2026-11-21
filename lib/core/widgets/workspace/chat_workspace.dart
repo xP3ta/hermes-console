@@ -150,6 +150,8 @@ class ChatWorkspaceController extends ChangeNotifier {
 
   // ── Views (list · chat · workspace) ──────────────────────────────────────
 
+  ChatWorkspaceMode? _restoreAfterFullscreen;
+
   late bool _listOpen;
   bool _listOverlay = false;
   ChatWorkspaceTab? _preferredTab;
@@ -177,15 +179,19 @@ class ChatWorkspaceController extends ChangeNotifier {
   }
 
   /// The list as a column beside the chat.
-  bool get listVisible => hasList && _listOpen && !stacked;
+  bool get listVisible => hasList && _listOpen && !stacked && !fullscreen;
 
   /// The list shown over the chat and the workspace without taking a
   /// column (the chat's list button when two views already fill the
   /// screen, mock 134 state C; always when [stacked]). Gone at the next
   /// choice.
-  bool get listOverlay => hasList && _listOverlay && (stacked || !_listOpen);
+  bool get listOverlay =>
+      hasList && _listOverlay && !fullscreen && (stacked || !_listOpen);
 
   bool get workspaceVisible => hasWorkspace && _mode != ChatWorkspaceMode.chat;
+
+  /// The panel is using the whole window until the previous mode is restored.
+  bool get fullscreen => _restoreAfterFullscreen != null;
 
   /// The chat hides only while the workspace shows («Solo trabajo»).
   bool get chatVisible =>
@@ -250,6 +256,7 @@ class ChatWorkspaceController extends ChangeNotifier {
           _listOverlay = false;
         case ChatWorkspaceView.chat:
           if (chatVisible) return;
+          _restoreAfterFullscreen = null;
           _mode = ChatWorkspaceMode.split;
         case ChatWorkspaceView.workspace:
           final target = tab ?? preferredTab;
@@ -349,6 +356,7 @@ class ChatWorkspaceController extends ChangeNotifier {
       case ChatWorkspaceView.chat:
         _mode = ChatWorkspaceMode.workspace;
       case ChatWorkspaceView.workspace:
+        _restoreAfterFullscreen = null;
         _mode = ChatWorkspaceMode.chat;
     }
   }
@@ -413,14 +421,18 @@ class ChatWorkspaceController extends ChangeNotifier {
     if (_active == tab) {
       _active = _tabs.isEmpty ? null : _tabs[math.min(index, _tabs.length - 1)];
     }
-    if (_tabs.isEmpty) _mode = ChatWorkspaceMode.chat;
+    if (_tabs.isEmpty) {
+      _restoreAfterFullscreen = null;
+      _mode = ChatWorkspaceMode.chat;
+    }
     notifyListeners();
   }
 
   void setMode(ChatWorkspaceMode mode) {
     if (mode != ChatWorkspaceMode.chat && _tabs.isEmpty) return;
-    if (_mode == mode) return;
+    if (_mode == mode && !fullscreen) return;
     final chatBack = !chatVisible;
+    _restoreAfterFullscreen = null;
     _mode = mode;
     // What the mode turns on is the newest view: back to the split from
     // «Solo trabajo», the chat; otherwise the workspace.
@@ -434,12 +446,18 @@ class ChatWorkspaceController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The pane's expand button: workspace only ⇄ split.
-  void toggleExpanded() => setMode(
-    _mode == ChatWorkspaceMode.workspace
-        ? ChatWorkspaceMode.split
-        : ChatWorkspaceMode.workspace,
-  );
+  void toggleExpanded() {
+    if (!workspaceVisible) return;
+    final previous = _restoreAfterFullscreen;
+    if (previous != null) {
+      setMode(previous);
+      return;
+    }
+    _restoreAfterFullscreen = _mode;
+    _listOverlay = false;
+    _mode = ChatWorkspaceMode.workspace;
+    notifyListeners();
+  }
 
   /// While dragging: not saved until [commitRatio]. Applies to the active
   /// panel's kind.

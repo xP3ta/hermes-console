@@ -8772,6 +8772,9 @@
   "hdpTabRecent": "최근",
   "hdpShellRow": "일반 셸",
   "hdpShellBody": "터미널은 그대로 유지됩니다.",
+  "hdpReturnToShell": "셸로 돌아가기",
+  "hdpReturnToShellBody": "서버의 세션은 열린 상태로 유지됩니다.",
+  "hdpOpenSessionFailed": "세션을 열 수 없습니다.",
   "hdpNoSessions": "아직 세션이 없습니다.",
   "hdpNoRecent": "아직 남아 있는 최근 항목이 없습니다.",
   "hdpSessionWindows": "{count, plural, other{창 {count}개}}",
@@ -9645,5 +9648,511 @@
   "srvCheckStillRunning": "아직 실행 중이에요. 추적을 중단했어요",
   "srvCheckUnavailable": "이 서버에서는 실행할 수 없어요.",
   "srvCheckStartFailed": "시작하지 못했어요.",
-  "srvCheckLost": "실행을 추적하지 못했어요. 다시 실행하면 출력을 볼 수 있어요."
+  "srvCheckLost": "실행을 추적하지 못했어요. 다시 실행하면 출력을 볼 수 있어요.",
+  "roomFilesCountLimit": "메시지 하나에 파일을 최대 {count}개까지 첨부할 수 있어요.",
+  "@roomFilesCountLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatTitle": "메신저",
+  "msgPlatSubtitle": "Telegram, Discord, Slack 등 플랫폼을 설정해요",
+  "msgPlatIntro": "이 프로필의 bot과 대화할 수 있는 플랫폼이에요. 플랫폼을 열어 설정하고, 켜거나 끄고, 누가 메시지를 보낼 수 있는지 정하세요.",
+  "msgPlatTooOldTitle": "서버 버전이 너무 낮아요",
+  "msgPlatTooOld": "Hermes 서버 버전이 낮아 메신저 설정을 지원하지 않아요. 여기서 플랫폼을 설정하려면 Hermes를 업데이트하세요.",
+  "msgPlatLoadFailed": "메신저 플랫폼을 불러오지 못했어요",
+  "msgPlatEmpty": "이 서버는 메신저 플랫폼을 제공하지 않아요.",
+  "msgPlatSearch": "메신저 검색",
+  "msgPlatNoMatches": "일치하는 플랫폼이 없어요.",
+  "msgPlatFilterAll": "전체",
+  "msgPlatFilterBad": "오류",
+  "msgPlatFilterGood": "연결됨",
+  "msgPlatFilterMuted": "비활성",
+  "msgPlatFilterWarn": "확인 필요",
+  "msgPlatPendingCount": "{count, plural, =1{대기 중인 페어링 요청 1건} other{대기 중인 페어링 요청 {count}건}}",
+  "@msgPlatPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatStateConnected": "연결됨",
+  "msgPlatStateConnecting": "연결 중",
+  "msgPlatStateDisabled": "비활성화됨",
+  "msgPlatStateFatal": "오류",
+  "msgPlatStateGatewayStopped": "메신저 게이트웨이가 중지됨",
+  "msgPlatStateNotConfigured": "설정 필요",
+  "msgPlatStatePendingRestart": "다시 시작 필요",
+  "msgPlatStateRetrying": "다시 시도 중",
+  "msgPlatStateStartupFailed": "시작 실패",
+  "msgPlatStateUnknown": "알 수 없음",
+  "msgPlatReadOnly": "이 연결은 읽기 전용이에요. 플랫폼을 볼 수는 있지만 변경할 수는 없어요.",
+  "msgPlatRestartNeeded": "저장했어요. 새 설정을 적용하려면 메신저 게이트웨이를 다시 시작하세요.",
+  "msgPlatRestartNow": "지금 다시 시작",
+  "msgPlatRestarting": "다시 시작하는 중…",
+  "msgPlatRestartFailed": "Hermes가 메신저 설정을 적용하려고 다시 시작하지 못했어요. 다시 시도하고, 계속 실패하면 서버 로그를 확인하세요.",
+  "msgPlatHintPendingRestart": "이 변경 사항을 적용하려면 메신저 게이트웨이를 다시 시작하세요.",
+  "msgPlatHintGatewayStopped": "연결하려면 메신저 게이트웨이를 시작하세요.",
+  "msgPlatSharedListener": "{url}의 공유 게이트웨이 리스너에서 제공돼요",
+  "@msgPlatSharedListener": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatEnabled": "사용",
+  "msgPlatDisabled": "사용 안 함",
+  "msgPlatPlatformEnabled": "{name} 사용 설정됨",
+  "@msgPlatPlatformEnabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatPlatformDisabled": "{name} 사용 안 함으로 설정됨",
+  "@msgPlatPlatformDisabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRestartToApply": "이 변경 사항은 게이트웨이를 다시 시작한 후 적용돼요.",
+  "msgPlatAppliedLive": "실행 중인 게이트웨이에 적용했어요.",
+  "msgPlatSetupSaved": "{name} 설정을 저장했어요",
+  "@msgPlatSetupSaved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRestartToReconnect": "새 자격 증명은 게이트웨이를 다시 시작한 후 적용돼요.",
+  "msgPlatConnectingLive": "실행 중인 게이트웨이가 새 자격 증명으로 연결하고 있어요.",
+  "msgPlatKeyCleared": "{key} 지움",
+  "@msgPlatKeyCleared": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedUpdate": "{name}을(를) 업데이트하지 못했어요",
+  "@msgPlatFailedUpdate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedSave": "{name}을(를) 저장하지 못했어요",
+  "@msgPlatFailedSave": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedClear": "{key}을(를) 지우지 못했어요",
+  "@msgPlatFailedClear": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedDetail": "{message}: {detail}",
+  "@msgPlatFailedDetail": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      },
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatGetCredentials": "자격 증명 받기",
+  "msgPlatOpenSetupGuide": "설정 가이드 열기",
+  "msgPlatRequired": "필수",
+  "msgPlatRecommended": "권장",
+  "msgPlatAdvanced": "고급 ({count})",
+  "@msgPlatAdvanced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatNoTokenNeeded": "이 플랫폼은 여기서 토큰이 필요하지 않아요. 위의 설정 가이드를 따른 다음 사용 설정하세요.",
+  "msgPlatUnsavedChanges": "저장하지 않은 변경 사항",
+  "msgPlatSaving": "저장하는 중…",
+  "msgPlatSaveChanges": "변경 사항 저장",
+  "msgPlatSaved": "저장됨",
+  "msgPlatReplaceValue": "현재 값 바꾸기",
+  "msgPlatOpenDocs": "문서 열기",
+  "msgPlatClearField": "{key} 지우기",
+  "@msgPlatClearField": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatAddEntry": "하나 더 추가",
+  "msgPlatRemoveEntry": "제거",
+  "msgPlatEntryPlaceholder": "ID 입력",
+  "msgPlatEntryLabel": "{label} {index}",
+  "@msgPlatEntryLabel": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatTest": "연결 테스트",
+  "msgPlatTesting": "테스트하는 중…",
+  "msgPlatTestResult": "{name}: {message}",
+  "@msgPlatTestResult": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTestFailed": "채널을 테스트하지 못했어요",
+  "msgPlatOpenFailed": "링크를 열지 못했어요.",
+  "msgPlatHandle": "@{name}",
+  "@msgPlatHandle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayTitle": "Team Gateway",
+  "msgPlatRelayBadge": "bot 토큰이 필요 없어요",
+  "msgPlatRelayIntro": "{platform}은(는) 공유 Hermes bot을 통해 이 에이전트에 연결돼요. {platform} 계정을 연결하고 bot에게 메시지를 보내 에이전트와 대화하세요.",
+  "@msgPlatRelayIntro": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLink": "{platform} 연결",
+  "@msgPlatRelayLink": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLinkAnother": "다른 {platform} 계정 연결",
+  "@msgPlatRelayLinkAnother": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLinkedAccounts": "연결된 계정",
+  "msgPlatRelayUnlink": "연결 해제",
+  "msgPlatRelayUnlinkFailed": "해당 계정의 연결을 해제하지 못했어요",
+  "msgPlatRelayStepOpen": "1. {platform}에서 bot을 여세요.",
+  "@msgPlatRelayStepOpen": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayStepSend": "2. 연결하려는 계정에서 bot에게 다음 메시지를 보내세요:",
+  "msgPlatRelayOpen": "{platform} 열기",
+  "@msgPlatRelayOpen": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayCopy": "메시지 복사",
+  "msgPlatRelayCopied": "복사됨",
+  "msgPlatRelayWaiting": "bot이 메시지를 확인하기를 기다리는 중이에요. 코드는 한 번만 사용할 수 있어요.",
+  "msgPlatRelayLinked": "{platform} 계정을 연결했어요. bot에게 메시지를 보내 에이전트와 대화하세요.",
+  "@msgPlatRelayLinked": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayExpired": "코드를 사용하기 전에 만료됐어요. 새 코드를 받아 다시 시도하세요.",
+  "msgPlatRelayRefused": "{platform}이(가) 연결을 거부했어요. 새 코드를 받아 다시 시도하세요.",
+  "@msgPlatRelayRefused": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayManaged": "Team Gateway에서 관리",
+  "msgPlatRelayManagedNote": "이 배포에서는 Team Gateway가 메시지를 처리하므로 게이트웨이가 시작할 때마다 {platform} 직접 연결을 꺼요. 릴레이와 함께 사용하려면 게이트웨이 환경에 GATEWAY_RELAY_ALLOW_DIRECT_PLATFORMS=true를 설정하세요 (직접 연결이 있으면 인스턴스가 0으로 축소되지 못하고 메시지가 두 번 전달될 수 있어요).",
+  "@msgPlatRelayManagedNote": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayManagedIntro": "이 에이전트의 계정은 Nous Portal에서 연결해요.",
+  "msgPlatRelayOpenPortal": "Nous Portal에서 계정 연결",
+  "msgPlatRelayNoNewAccount": "코드가 더 이상 유효하지 않고 새 계정도 나타나지 않았어요. {platform} 계정이 목록에 없으면 새 코드를 받아 다시 시도하세요.",
+  "@msgPlatRelayNoNewAccount": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayUnavailable": "이 서버에서는 Team Gateway 계정 연결을 사용할 수 없어요.",
+  "msgPlatRelayFailed": "게이트웨이가 응답하지 않았어요. 다시 시도하세요.",
+  "msgPlatTgQuickSetup": "빠른 설정",
+  "msgPlatTgQuickHelp": "Telegram에서 확인하면 Hermes가 bot을 만들고 Telegram 사용자 ID를 자동으로 감지해요.",
+  "msgPlatTgCreate": "Telegram으로 만들기",
+  "msgPlatTgStarting": "시작하는 중…",
+  "msgPlatTgReplaceWarning": "Telegram 자격 증명이 이미 설정되어 있어요. 새로운 빠른 설정이나 새 bot 토큰을 쓰면 저장할 때 현재 bot이 교체돼요.",
+  "msgPlatTgOpenHint": "Telegram을 열고 그곳에서 새 bot을 확인하세요.",
+  "msgPlatTgWaiting": "Telegram을 기다리는 중…",
+  "msgPlatTgExpiresIn": "{remaining} 후 만료",
+  "@msgPlatTgExpiresIn": {
+    "placeholders": {
+      "remaining": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTgExpired": "만료됨",
+  "msgPlatTgOpenTelegram": "Telegram 열기",
+  "msgPlatTgReady": "bot을 만들었어요",
+  "msgPlatTgAllowedUsers": "허용된 사용자",
+  "msgPlatTgOwnerDetected": "소유자를 감지했어요",
+  "msgPlatTgAddAtLeastOne": "Telegram 사용자 ID를 하나 이상 추가하세요.",
+  "msgPlatTgUserIdLabel": "Telegram 사용자 ID",
+  "msgPlatTgAdd": "추가",
+  "msgPlatTgRemoveId": "{id} 제거",
+  "@msgPlatTgRemoveId": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTgNumericOnly": "허용하는 Telegram 사용자 ID는 숫자여야 해요.",
+  "msgPlatTgSaveAndRestart": "저장하고 다시 시작",
+  "msgPlatTgPairingExpired": "Telegram 페어링이 만료됐어요. 새 빠른 설정을 시작해 다시 시도하세요.",
+  "msgPlatTgStillWaiting": "아직 Telegram을 기다리는 중이에요. 다시 시도 중…",
+  "msgPlatTgSavedRestarting": "Telegram을 저장했어요. 게이트웨이를 다시 시작하는 중…",
+  "msgPlatTgSavedRestartFailed": "Telegram을 저장했지만 게이트웨이를 다시 시작하지 못했어요",
+  "msgPlatTgStartFailed": "Telegram 빠른 설정을 시작하지 못했어요.",
+  "msgPlatTgUnavailable": "이 서버는 Telegram bot을 만들어 줄 수 없어요. 대신 아래에 bot 토큰을 붙여넣으세요.",
+  "msgPlatFTelegramBotTokenLabel": "bot 토큰",
+  "msgPlatFTelegramBotTokenHelp": "@BotFather로 bot을 만들고 받은 토큰을 붙여넣으세요.",
+  "msgPlatFTelegramBotTokenHint": "Telegram bot 토큰 붙여넣기",
+  "msgPlatFTelegramAllowedUsersLabel": "허용할 Telegram 사용자 ID",
+  "msgPlatFTelegramAllowedUsersHelp": "권장. @userinfobot에서 확인한 숫자 ID를 칸마다 하나씩 입력하세요. 이 값이 없으면 누구나 bot에게 DM을 보낼 수 있어요.",
+  "msgPlatFTelegramProxyLabel": "프록시 URL",
+  "msgPlatFTelegramProxyHelp": "Telegram이 차단된 네트워크에서만 필요해요.",
+  "msgPlatFDiscordBotTokenLabel": "bot 토큰",
+  "msgPlatFDiscordBotTokenHelp": "Discord Developer Portal에서 애플리케이션을 만들고 bot을 추가한 다음 그 토큰을 붙여넣으세요.",
+  "msgPlatFDiscordAllowedUsersLabel": "허용할 Discord 사용자 ID",
+  "msgPlatFDiscordAllowedUsersHelp": "권장. Discord 사용자 ID를 칸마다 하나씩 입력하세요.",
+  "msgPlatFDiscordReplyToModeLabel": "답장 방식",
+  "msgPlatFDiscordReplyToModeHelp": "first, all 또는 off.",
+  "msgPlatFDiscordAllowAllUsersLabel": "모든 Discord 사용자 허용",
+  "msgDiscordEveryoneHelp": "개발 전용이에요. true이면 allowlist 없이 누구나 bot에게 DM을 보낼 수 있어요.",
+  "msgPlatFDiscordHomeChannelLabel": "홈 채널 ID",
+  "msgPlatFDiscordHomeChannelHelp": "bot이 먼저 메시지(cron 출력, 알림)를 보내는 채널이에요.",
+  "msgPlatFDiscordHomeChannelNameLabel": "홈 채널 이름",
+  "msgPlatFDiscordHomeChannelNameHelp": "로그와 상태 출력에 표시되는 홈 채널 이름이에요.",
+  "msgPlatFBluebubblesAllowAllUsersLabel": "모든 iMessage 사용자 허용",
+  "msgPlatFBluebubblesAllowAllUsersHelp": "true이면 BlueBubbles allowlist를 건너뛰어요.",
+  "msgPlatFMattermostAllowAllUsersLabel": "모든 Mattermost 사용자 허용",
+  "msgPlatFMattermostHomeChannelLabel": "홈 채널",
+  "msgPlatFQqAllowAllUsersLabel": "모든 QQ 사용자 허용",
+  "msgPlatFQqbotHomeChannelLabel": "QQ 홈 채널",
+  "msgPlatFQqbotHomeChannelHelp": "cron 전달에 쓰는 기본 채널 또는 그룹이에요.",
+  "msgPlatFQqbotHomeChannelNameLabel": "QQ 홈 채널 이름",
+  "msgPlatFSlackBotTokenLabel": "Slack bot 토큰",
+  "msgPlatFSlackBotTokenHelp": "Slack 앱을 설치한 후 OAuth & Permissions에 있는 bot 토큰을 사용하세요.",
+  "msgPlatFSlackBotTokenHint": "Slack bot 토큰 붙여넣기",
+  "msgPlatFSlackAppTokenLabel": "Slack 앱 토큰",
+  "msgPlatFSlackAppTokenHelp": "Socket Mode에 필요한 앱 수준 토큰을 사용하세요.",
+  "msgPlatFSlackAppTokenHint": "Slack 앱 토큰 붙여넣기",
+  "msgPlatFSlackAllowedUsersLabel": "허용할 Slack 사용자 ID",
+  "msgPlatFSlackAllowedUsersHelp": "권장. Slack 사용자 ID를 칸마다 하나씩 입력하세요.",
+  "msgPlatFMattermostUrlLabel": "서버 URL",
+  "msgPlatFMattermostUrlHint": "https://mattermost.example.com",
+  "msgPlatFMattermostTokenLabel": "bot 토큰",
+  "msgPlatFMattermostAllowedUsersLabel": "허용할 사용자 ID",
+  "msgPlatFMattermostAllowedUsersHelp": "권장. Mattermost 사용자 ID를 칸마다 하나씩 입력하세요.",
+  "msgPlatFMatrixHomeserverLabel": "홈서버 URL",
+  "msgPlatFMatrixHomeserverHint": "https://matrix.org",
+  "msgPlatFMatrixAccessTokenLabel": "액세스 토큰",
+  "msgPlatFMatrixUserIdLabel": "bot 사용자 ID",
+  "msgPlatFMatrixUserIdHint": "@hermes:example.org",
+  "msgPlatFMatrixAllowedUsersLabel": "허용할 Matrix 사용자 ID",
+  "msgPlatFMatrixAllowedUsersHelp": "권장. @user:server 형식의 사용자 ID를 칸마다 하나씩 입력하세요.",
+  "msgPlatFSignalHttpUrlLabel": "Signal 브리지 URL",
+  "msgPlatFSignalHttpUrlHelp": "실행 중인 signal-cli REST 브리지의 URL이에요.",
+  "msgPlatFSignalHttpUrlHint": "http://127.0.0.1:8080",
+  "msgPlatFSignalAccountLabel": "전화번호",
+  "msgPlatFSignalAccountHelp": "signal-cli 브리지에 등록된 번호예요.",
+  "msgPlatFSignalAllowedUsersLabel": "허용할 Signal 사용자",
+  "msgPlatFSignalAllowedUsersHelp": "권장. Signal 식별자를 칸마다 하나씩 입력하세요.",
+  "msgPlatFWhatsappEnabledLabel": "WhatsApp 브리지 사용",
+  "msgPlatFWhatsappEnabledHelp": "‘사용’ 스위치로 자동 설정돼요. 필요하다는 것을 아는 경우가 아니라면 그대로 두세요.",
+  "msgPlatFWhatsappModeLabel": "브리지 모드",
+  "msgPlatFWhatsappAllowedUsersLabel": "허용할 WhatsApp 사용자",
+  "msgPlatFWhatsappAllowedUsersHelp": "권장. 전화번호 또는 WhatsApp ID를 칸마다 하나씩 입력하세요.",
+  "msgPlatIntroTelegram": "Telegram에서 @BotFather와 대화하고 /newbot을 실행한 다음 받은 토큰을 복사하세요. 그런 다음 @userinfobot에서 숫자 사용자 ID를 확인하세요.",
+  "msgPlatIntroDiscord": "Discord Developer Portal을 열어 애플리케이션을 만들고 bot을 추가한 다음 그 토큰을 복사하세요. 알맞은 스코프로 bot을 서버에 초대하세요.",
+  "msgPlatIntroSlack": "Slack 앱을 만들고 Socket Mode를 켠 다음 워크스페이스에 설치하고 bot 토큰과 앱 수준 토큰을 복사하세요.",
+  "msgPlatIntroMattermost": "Mattermost 서버에서 bot 계정이나 개인 액세스 토큰을 만든 다음 서버 URL과 토큰을 여기에 붙여넣으세요.",
+  "msgPlatIntroMatrix": "bot 계정으로 홈서버에 로그인한 다음 액세스 토큰, 사용자 ID, 홈서버 URL을 복사하세요.",
+  "msgPlatIntroSignal": "접근할 수 있는 곳에서 signal-cli REST 브리지를 실행한 다음 Hermes에 URL과 등록된 전화번호를 알려 주세요.",
+  "msgPlatIntroWhatsapp": "Hermes에 포함된 WhatsApp 브리지를 시작하고 처음 실행할 때 QR 코드를 스캔한 다음 플랫폼을 사용 설정하세요.",
+  "msgPlatIntroBluebubbles": "iMessage가 있는 Mac에서 BlueBubbles Server를 실행하고 API를 노출한 다음 Hermes에 URL과 서버 비밀번호를 알려 주세요.",
+  "msgPlatIntroHomeassistant": "Home Assistant에서 프로필을 열고 장기 액세스 토큰을 만드세요. HA URL과 함께 여기에 붙여넣으세요.",
+  "msgPlatIntroEmail": "전용 메일함을 사용하세요. Gmail/Workspace는 앱 비밀번호를 만들고 imap.gmail.com / smtp.gmail.com을 사용하세요.",
+  "msgPlatIntroSms": "Twilio 콘솔에서 Account SID와 Auth Token을 받고 SMS를 보낼 수 있는 전화번호도 준비하세요.",
+  "msgPlatIntroDingtalk": "개발자 콘솔에서 DingTalk 앱을 만들고 Client ID (App key)와 Client Secret을 여기에 복사하세요.",
+  "msgPlatIntroFeishu": "Feishu / Lark 앱을 만들고 bot 기능을 설정한 다음 App ID, App secret, 이벤트 암호화 키를 복사하세요.",
+  "msgPlatIntroWecom": "WeCom에서 그룹 로봇을 추가하고 webhook 키를 WECOM_BOT_ID로 복사하세요. 전송 전용이며, 양방향으로 쓰려면 WeCom (app) 옵션을 사용하세요.",
+  "msgPlatIntroWecomCallback": "WeCom 자체 제작 앱을 설정하고 콜백 URL을 노출한 다음 corp ID, secret, agent ID, AES 키를 입력하세요.",
+  "msgPlatIntroWeixin": "`hermes gateway setup`을 실행하고 Weixin을 선택한 다음 개인 WeChat 계정으로 QR 코드를 스캔하고 확인하세요. Hermes가 Tencent의 iLink Bot API로 연결하고 자격 증명을 저장해요.",
+  "msgPlatIntroQqbot": "QQ Open Platform(q.qq.com)에서 앱을 등록하고 App ID와 Client Secret을 복사하세요.",
+  "msgPlatIntroApiServer": "Hermes를 OpenAI 호환 API로 노출하세요. 인증 키를 설정한 다음 Open WebUI / LobeChat 등을 host:port로 연결하세요.",
+  "msgPlatIntroWebhook": "다른 도구(GitHub, GitLab, 맞춤 앱)가 POST할 수 있는 HTTP 서버를 실행하세요. secret으로 서명을 검증하세요.",
+  "botDelivTitle": "팀원을 기다리는 중",
+  "botDelivQueued": "대기 중",
+  "botDelivClaimed": "접수됨",
+  "botDelivWorking": "작업 중",
+  "botDelivWaitingClarify": "당신의 응답을 기다려요 — 질문에 답하세요",
+  "botDelivWaitingApproval": "당신의 응답을 기다려요 — 승인하거나 거부하세요",
+  "botDelivFailed": "실패: {reason}",
+  "@botDelivFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "botDelivUnknownOutcome": "결과를 알 수 없음",
+  "botDelivOpen": "열기",
+  "botDelivDismiss": "닫기",
+  "botDelivNeverResent": "여기서는 아무것도 다시 전송되지 않아요. 결과를 알 수 없다면 팀원이 이미 처리했을 수 있으니, 다시 요청하기 전에 팀원의 채팅을 여세요.",
+  "botDelivStale": "새로 고치지 못했어요 — 마지막으로 확인된 상태를 표시해요.",
+  "botDelivReasonProviderAuth": "모델 공급자가 키를 거부했어요",
+  "botDelivReasonProviderQuota": "공급자의 크레딧이 소진됐어요",
+  "botDelivReasonProviderRateLimit": "공급자가 요청을 제한하고 있어요",
+  "botDelivReasonProviderServer": "공급자에 연결할 수 없어요",
+  "botDelivReasonMissingConfig": "설정된 모델이 없어요",
+  "botDelivReasonModelUnavailable": "모델을 사용할 수 없어요",
+  "botDelivReasonContextOverflow": "컨텍스트가 가득 찼어요",
+  "botDelivReasonRuntimeOffline": "오프라인이에요",
+  "botDelivReasonQueuedExpired": "접수되지 않았어요",
+  "botDelivReasonTimeout": "시간 초과",
+  "botDelivReasonBlocked": "차단됐어요",
+  "botDelivReasonCancelled": "취소됨",
+  "botDelivReasonUnknown": "알 수 없는 오류",
+  "turnFeedSkillsLoaded": "{count, plural, other{Skill {count}개를 불러왔습니다}}",
+  "turnFeedSkillResourcesRead": "{count, plural, other{Skill 리소스 {count}개를 읽었습니다}}",
+  "turnFeedRepeated": "{count, plural, other{{tool} · {count}회}}",
+  "wsPanelTagSftp": "SFTP",
+  "wsPanelTagServer": "서버",
+  "wsPanelFilesUnavailable": "파일에는 SSH 프로필이나 서버가 나열할 수 있는 채팅 폴더가 필요합니다.",
+  "wsPanelPickerHint": "이 화면에서는 패널이 채팅 위에 열립니다.",
+  "wsPanelNeedsSsh": "SSH 프로필이 필요합니다",
+  "wsPanelNeedsSshOrFolder": "SSH 프로필이나 채팅 폴더가 필요합니다",
+  "wsPanelNoFolder": "이 채팅에는 아직 폴더가 없습니다",
+  "termUxCopied": "복사됨",
+  "termUxCopyScreen": "화면 복사",
+  "termUxCopyLink": "링크 복사",
+  "termUxOpenLink": "링크 열기",
+  "termUxJumpToBottom": "맨 아래로 이동",
+  "termUxPromptSend": "{answer} 보내기",
+  "@termUxPromptSend": {
+    "placeholders": {
+      "answer": {
+        "type": "String"
+      }
+    }
+  },
+  "termUxKeyEscape": "이스케이프",
+  "termUxKeyTab": "탭",
+  "termUxKeyBackTab": "Shift와 Tab",
+  "termUxKeyControl": "컨트롤",
+  "termUxKeyControlNext": "컨트롤, 다음 키에만",
+  "termUxKeyControlLocked": "컨트롤, 고정됨",
+  "termUxKeyAlt": "Alt",
+  "termUxKeyAltNext": "Alt, 다음 키에만",
+  "termUxKeyAltLocked": "Alt, 고정됨",
+  "termUxKeyHome": "Home",
+  "termUxKeyEnd": "End",
+  "termUxKeyPageUp": "이전 페이지",
+  "termUxKeyPageDown": "다음 페이지",
+  "termUxKeyBackspace": "백스페이스",
+  "termUxKeyEnter": "Enter",
+  "termUxKeySlash": "슬래시",
+  "termUxKeyHyphen": "하이픈",
+  "termUxKeyUnderscore": "밑줄",
+  "termUxKeyColon": "콜론",
+  "termUxCompose": "작성",
+  "termUxComposeHint": "메시지 또는 명령",
+  "termUxComposeSend": "보내기",
+  "termUxComposeHistory": "이 세션에서 보냄",
+  "termUxComposeNotSent": "보내지 못했습니다: 연결이 준비되지 않았습니다. 텍스트는 그대로 있습니다.",
+  "termUxAttach": "첨부",
+  "termUxAttachReadOnly": "이 연결은 읽기 전용이라 파일을 업로드할 수 없습니다.",
+  "termUxAttachOffline": "먼저 연결하세요. 파일은 이 SSH 연결로 업로드됩니다.",
+  "termUxUploading": "업로드 중",
+  "termUxUploaded": "업로드됨",
+  "termUxUploadFailed": "업로드 실패",
+  "termUxRemoveAttachment": "첨부 삭제",
+  "termUxComposeInsertHint": "길게 눌러 Enter 없이 삽입",
+  "termUxDictate": "받아쓰기",
+  "termUxDictateStop": "받아쓰기 중지",
+  "termUxDictationUnavailable": "지금은 받아쓰기를 사용할 수 없습니다.",
+  "termUxKeyArrows": "화살표 키",
+  "termUxKeySuspend": "컨트롤 Z, 일시 중지",
+  "termUxKeyClear": "컨트롤 L, 화면 지우기",
+  "termUxKeyboardShow": "키보드",
+  "termUxKeyboardHide": "키보드 숨기기",
+  "termUxKeyPage": "키, {count}페이지 중 {page}페이지",
+  "@termUxKeyPage": {
+    "placeholders": {
+      "page": {
+        "type": "String"
+      },
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "tg143ComposeDeliveryUncertain": "전송 직후 연결이 끊겼습니다. 다시 보내기 전에 터미널을 확인하세요.",
+  "bg143LoopbackHttpsTitle": "localhost의 HTTPS 미리보기를 사용할 수 없음",
+  "bg143LoopbackHttpsBody": "Android에서는 TLS 보안을 약화하지 않고 SSH를 통한 HTTPS 루프백 포워딩을 격리할 수 없습니다. SSH 터널을 통해 http://를 사용하거나 유효한 인증서가 있는 호스트 이름을 사용하세요.",
+  "bg143LoopbackUnavailableBody": "미리보기용 SSH 터널을 열 수 없습니다. 다시 시도하거나 SSH 프로필을 확인하세요."
 }

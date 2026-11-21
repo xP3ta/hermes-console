@@ -137,6 +137,158 @@ void main() {
     expect(request.json, {'path': '/srv/repo/a.md', 'content': 'hola\n'});
   });
 
+  test('a chat pins listing, previews, and writes to their owner', () async {
+    final h = _client(
+      (request) => switch (request.url.path) {
+        '/api/fs/list' => (200, {'entries': []}),
+        '/api/fs/read-text' => (200, {'text': 'old'}),
+        '/api/fs/read-data-url' => (
+          200,
+          {'dataUrl': 'data:image/png;base64,AA=='},
+        ),
+        _ => (200, {'ok': true}),
+      },
+    );
+    const path = '/work/repo/a% file.md';
+    final files = h.client.pinProjectFiles(
+      profile: 'named-profile',
+      sessionId: 'stored-session',
+    );
+
+    await files.listProjectDirectory('/work/repo');
+    await files.readProjectFileText(path);
+    await files.readProjectFileBytes(path);
+    await files.writeProjectFileText(path, 'edited');
+    await h.client.listProjectDirectory('/other');
+
+    final [list, text, bytes, save, standalone] = h.transport.requests;
+    expect(list.url.queryParameters, {
+      'path': '/work/repo',
+      'profile': 'named-profile',
+    });
+    for (final read in [text, bytes]) {
+      expect(read.url.queryParameters, {
+        'path': path,
+        'profile': 'named-profile',
+        'session_id': 'stored-session',
+      });
+    }
+    expect(save.url.queryParameters, {'profile': 'named-profile'});
+    expect(save.json, {
+      'path': path,
+      'content': 'edited',
+      'session_id': 'stored-session',
+    });
+    expect(standalone.url.queryParameters, {'path': '/other'});
+  });
+
+  test(
+    'New file requires an exact not-found reply in the same scope',
+    () async {
+      final h = _client(
+        (request) => request.method == 'GET'
+            ? (404, {'detail': 'File not found'})
+            : (200, {'ok': true}),
+      );
+      final files = h.client.pinProjectFiles(
+        profile: 'named-profile',
+        sessionId: 'stored-session',
+      );
+      await files.createProjectFile('/work/repo/new.md');
+
+      final [check, create] = h.transport.requests;
+      expect(check.method, 'GET');
+      expect(check.url.path, '/api/fs/read-text');
+      expect(check.url.queryParameters, {
+        'path': '/work/repo/new.md',
+        'profile': 'named-profile',
+        'session_id': 'stored-session',
+      });
+      expect(create.method, 'POST');
+      expect(create.url.path, '/api/fs/write-text');
+      expect(create.url.queryParameters, {'profile': 'named-profile'});
+      expect(create.json, {
+        'path': '/work/repo/new.md',
+        'content': '',
+        'session_id': 'stored-session',
+      });
+    },
+  );
+
+  for (final (label, status, response) in [
+    ('an existing file', 200, {'text': 'keep this'}),
+    ('a missing route', 404, {'detail': 'Not Found'}),
+    ('a missing session', 404, {'detail': 'Session not found'}),
+    ('a forbidden path', 403, {'detail': 'Access denied'}),
+    ('a server failure', 500, {'detail': 'Internal server error'}),
+  ]) {
+    test('New file sends no write after $label', () async {
+      final h = _client((_) => (status, response));
+      await expectLater(
+        h.client.createProjectFile('/work/repo/keep.md'),
+        throwsA(isA<DesktopControlFailure>()),
+      );
+      expect(h.transport.requests.single.method, 'GET');
+    });
+  }
+
+  test(
+    'managed mutations never go to the host for an SSH-backed chat',
+    () async {
+      final h = _client(
+        (_) => (
+          200,
+          {
+            'terminal': {'backend': 'ssh'},
+          },
+        ),
+      );
+      final files = h.client.pinProjectFiles(
+        profile: 'named-profile',
+        sessionId: 'stored-session',
+      );
+      await expectLater(
+        files.createProjectFolder('/work/new-folder'),
+        throwsA(_failure(DesktopControlFailureKind.forbidden)),
+      );
+      final check = h.transport.requests.single;
+      expect(check.method, 'GET');
+      expect(check.url.path, '/api/config');
+      expect(check.url.queryParameters, {'profile': 'named-profile'});
+      expect(
+        files.projectFileWriteKnownUnsupported(
+          ProjectFileWriteAction.createFolder,
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test('a local chat can still create folders on the Dashboard host', () async {
+    final h = _client(
+      (request) => request.method == 'GET'
+          ? (
+              200,
+              {
+                'terminal': {'backend': 'local'},
+              },
+            )
+          : (200, {'ok': true, 'path': '/work/new-folder'}),
+    );
+    final files = h.client.pinProjectFiles(
+      profile: 'default',
+      sessionId: 'stored-session',
+    );
+    expect(
+      await files.createProjectFolder('/work/new-folder'),
+      '/work/new-folder',
+    );
+    final [check, create] = h.transport.requests;
+    expect(check.url.queryParameters, {'profile': 'default'});
+    expect(create.url.path, '/api/files/mkdir');
+    expect(create.json, {'path': '/work/new-folder'});
+  });
+
   test(
     'uploads with multipart /api/files/upload-stream, never overwriting',
     () async {

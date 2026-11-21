@@ -9,6 +9,8 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/herdr_agents.dart'
+    show herdrShellQuote;
 import 'package:hermes_android/core/services/herdr_status.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
@@ -16,9 +18,8 @@ import 'package:hermes_android/core/services/ssh_session_kind.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
-final String _snapshotStdout = File(
-  'test/fixtures/herdr/snapshot_0_9_5.json',
-).readAsStringSync();
+final String _snapshotStdout = File('test/fixtures/herdr/snapshot_0_9_5.json')
+    .readAsStringSync();
 
 class _FakeShell implements SSHSession {
   final stdoutController = StreamController<Uint8List>();
@@ -103,6 +104,7 @@ class _FakeClient implements SSHClient {
     Map<String, String>? environment,
   }) async {
     executed.add(command);
+    if (pty != null) return _FakeShell();
     if (command.endsWith('api snapshot') ||
         command == sshHerdrSnapshotCommand) {
       return _FakeExec(0, out: snapshotOut ?? _snapshotStdout);
@@ -220,14 +222,15 @@ void main() {
     // run it directly, without a login shell each time.
     expect(client.executed, [
       sshHerdrProbeCommand,
+      '"\${SHELL:-/bin/sh}" -lc ${herdrShellQuote("'/usr/local/bin/x'")}',
       herdrSnapshotCommand('/usr/local/bin/x'),
     ]);
     expect(
       herdrSnapshotCommand('/usr/local/bin/x'),
       "'/usr/local/bin/x' api snapshot",
     );
-    // The pty only ever got the launch line.
-    expect(client.shellSession.written, ['herdr\n']);
+    expect(client.shellSession.written, isEmpty);
+    expect(session.attachment.value, isNotNull);
     expect(monitor.view.value.snapshot!.focusedPane!.name, 'reviewer');
     monitor.stop();
   });
@@ -240,11 +243,11 @@ void main() {
       final monitor = session.herdr!;
       monitor.start();
       await pumpEventQueue();
-      expect(
-        ssh.clients.single.executed,
-        [sshHerdrProbeCommand, sshHerdrSnapshotCommand],
-        reason: probeOut,
-      );
+      expect(ssh.clients.single.executed, [
+        sshHerdrProbeCommand,
+        sshInLoginShell(sshHerdrLaunchCommand),
+        sshHerdrSnapshotCommand,
+      ], reason: probeOut);
       monitor.stop();
     }
   });
@@ -268,10 +271,7 @@ void main() {
   test('plain shell and tmux sessions have no Herdr monitor', () async {
     for (final kind in [SshSessionKind.shell, SshSessionKind.tmux]) {
       final service = SshSessionService(_FakeSshManager(kind));
-      final session = await service.connect(
-        'c1',
-        onHostKey: (_) async => true,
-      );
+      final session = await service.connect('c1', onHostKey: (_) async => true);
       expect(session.herdr, isNull, reason: kind.id);
     }
   });
@@ -295,9 +295,8 @@ void main() {
   });
 
   test('the monitor reports a missing server from stderr', () async {
-    final stderr = File(
-      'test/fixtures/herdr/server_not_running_0_9_5.json',
-    ).readAsStringSync();
+    final stderr = File('test/fixtures/herdr/server_not_running_0_9_5.json')
+        .readAsStringSync();
     final monitor = HerdrMonitor(
       run: (_) async =>
           SshRemoteResult(stdout: '', stderr: stderr, exitCode: 1),

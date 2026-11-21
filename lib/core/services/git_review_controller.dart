@@ -9,7 +9,12 @@ import 'git_review_gateway.dart';
 /// Last repository status read per connection and folder: the notch's Git
 /// pill shows it (number of changed files) without asking the server again.
 /// Memory only; a new read replaces it.
-final class GitStatusCache {
+///
+/// It tells its listeners when a read settles with something new (a
+/// folder's count, a folder found not to be a repository, a gateway found
+/// without the git routes), so the chat's panels and Ajustes follow the
+/// answer without being opened again.
+final class GitStatusCache extends ChangeNotifier {
   GitStatusCache._();
 
   static final GitStatusCache instance = GitStatusCache._();
@@ -40,7 +45,14 @@ final class GitStatusCache {
   ) {
     final key = _key(connectionId, repoPath);
     if (_readSeq[key] != ticket) return false;
+    final known = _byRepo.containsKey(key);
+    final before = _byRepo[key];
     _byRepo[key] = status;
+    if (!known ||
+        (before == null) != (status == null) ||
+        before?.changed != status?.changed) {
+      notifyListeners();
+    }
     return true;
   }
 
@@ -75,6 +87,9 @@ final class GitStatusCache {
       recordRead(ticket, connectionId, repoPath, status);
     } catch (error) {
       debugPrint('[git] status prefetch failed (${error.runtimeType})');
+      // A Hermes without the git routes (404/405) has just said so: the
+      // panel it offered goes.
+      if (gateway.gitReviewKnownUnsupported) notifyListeners();
     }
   }
 
@@ -85,12 +100,13 @@ final class GitStatusCache {
   }
 }
 
-/// The notch's Git pill for a conversation: shown only once a read has
-/// confirmed that the conversation's folder is a repository the gateway can
-/// serve. A folder not read yet (the read in flight), not a repository, or
-/// on a Hermes without the git routes has no pill, so the sheet never shows
-/// it and then loses it. Its badge is the last known number of changed
-/// files.
+/// The Git panel of a conversation, as Hermes Desktop offers its review
+/// pane (`app/contrib/controller.tsx`: `$hasWorkspace` and
+/// `bindPaneVisibility('review', …)`): whenever the conversation has a
+/// folder and its gateway has the git routes, or has not said otherwise.
+/// A folder that is not a repository says so inside the panel, so the
+/// offer never waits for a read and never changes shape between openings.
+/// Its badge is the last known number of changed files.
 ({bool available, int? badge}) gitNotchEntry({
   required HermesGitReviewGateway? gateway,
   required String? repoPath,
@@ -100,13 +116,13 @@ final class GitStatusCache {
   const none = (available: false, badge: null);
   if (gateway == null ||
       repoPath == null ||
+      repoPath.trim().isEmpty ||
       gateway.gitReviewKnownUnsupported) {
     return none;
   }
   final known = cache ?? GitStatusCache.instance;
   final status = known.statusOf(connectionId, repoPath);
-  if (status == null) return none;
-  return (available: true, badge: status.changed);
+  return (available: true, badge: status?.changed);
 }
 
 /// What the screen shows instead of the file list.

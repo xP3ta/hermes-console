@@ -90,6 +90,14 @@ enum SecureStorageOperation {
   coldStartIndex,
   coldStartTail,
   coldStartKey,
+
+  /// The key of the files that replaced draft, outbox and transcript
+  /// entries was unusable; the files sealed with it were dropped.
+  localFilesKey,
+
+  /// An entry an older version wrote could not be moved into its file; it
+  /// stays the copy.
+  localFilesMove,
 }
 
 /// One kind of secure-storage failure: the operation, the error's runtime

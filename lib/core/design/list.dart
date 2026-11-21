@@ -60,10 +60,14 @@ class HermesListGroup extends StatelessWidget {
   /// leading icon, the row's own padding when none has.
   final double? dividerIndent;
 
+  /// Draws the rounded background around the rows.
+  final bool showSurface;
+
   const HermesListGroup({
     super.key,
     required this.children,
     this.dividerIndent,
+    this.showSurface = true,
   });
 
   /// Where the text of the rows starts.
@@ -80,36 +84,37 @@ class HermesListGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final indent = dividerIndent ?? textIndentOf(children);
-    return HermesSheen(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(HermesRadius.group),
+    // Paint row ink over the list or the surface provided by its host.
+    final rows = Material(
+      type: MaterialType.transparency,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0)
+              Divider(
+                height: 1,
+                indent: indent,
+                endIndent: HermesSpace.rowH,
+                color: HermesSurfaces.divider(colors),
+              ),
+            children[i],
+          ],
+        ],
       ),
+    );
+    if (!showSurface) return rows;
+
+    final radius = BorderRadius.circular(HermesRadius.group);
+    return HermesSheen(
+      shape: RoundedRectangleBorder(borderRadius: radius),
       child: Container(
         decoration: BoxDecoration(
           color: HermesSurfaces.group(colors),
-          borderRadius: BorderRadius.circular(HermesRadius.group),
+          borderRadius: radius,
         ),
         clipBehavior: Clip.antiAlias,
-        // The rows' ink paints over the body, inside its rounded clip (on
-        // the page's Material it went under the body: square corners).
-        child: Material(
-          type: MaterialType.transparency,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var i = 0; i < children.length; i++) ...[
-                if (i > 0)
-                  Divider(
-                    height: 1,
-                    indent: indent,
-                    endIndent: HermesSpace.rowH,
-                    color: HermesSurfaces.divider(colors),
-                  ),
-                children[i],
-              ],
-            ],
-          ),
-        ),
+        child: rows,
       ),
     );
   }

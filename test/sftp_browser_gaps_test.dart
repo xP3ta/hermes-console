@@ -65,6 +65,24 @@ class _FakeSftp implements SftpClient {
   final List<String> listed = [];
   final List<String> opened = [];
 
+  final List<String> madeFolders = [];
+
+  @override
+  Future<void> mkdir(String path, [SftpFileAttrs? attrs]) async {
+    madeFolders.add(path);
+    final separator = path.lastIndexOf('/');
+    final parent = separator == 0 ? '/' : path.substring(0, separator);
+    final name = path.substring(separator + 1);
+    listings[parent] = [
+      ...?listings[parent] as List<SftpName>?,
+      SftpName(
+        filename: name,
+        longname: name,
+        attr: SftpFileAttrs(mode: const SftpFileMode.value(0x41ED)),
+      ),
+    ];
+  }
+
   @override
   Future<List<SftpName>> listdir(String path) async {
     listed.add(path);
@@ -361,22 +379,20 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(ssh.remote.listed, [_home, _home]);
-    // The transfers' pill is under the list, not over it (in the pane the
-    // list is its card, Ola 6).
-    final list = tester.getRect(find.byKey(const ValueKey('sftp-pane-card')));
+    // Transfers sit below the file list.
+    final list = tester.getRect(find.byKey(const ValueKey('sftp-pane-list')));
     final bar = tester.getRect(find.byType(SshTransferBar));
     expect(bar.top, greaterThanOrEqualTo(list.bottom - 0.5));
     expect(tester.takeException(), isNull);
   });
 
-  // Ola 6 (audit §2.8, mock 136 v2-A): in the pane the files are a card of
-  // rows with their icon in a box, and the path is a pill at the foot with
-  // «Subir nivel».
-  testWidgets('in the pane: a card of rows, the path in a pill at the foot', (
+  testWidgets('in the pane: file rows share the pane surface and the path '
+      'stays in a pill at the foot', (
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
     final ssh = await _app(tester);
+    tester.view.physicalSize = const Size(657, 870);
     ssh.remote.listings[_home] = [
       SftpName(
         filename: 'lib',
@@ -403,18 +419,13 @@ void main() {
       ),
     );
 
-    final card = find.byKey(const ValueKey('sftp-pane-card'));
-    final decoration =
-        tester.widget<DecoratedBox>(card).decoration as BoxDecoration;
-    expect(
-      decoration.borderRadius,
-      BorderRadius.circular(HermesRadius.card),
-    );
+    expect(find.byKey(const ValueKey('sftp-pane-card')), findsNothing);
+    final list = find.byKey(const ValueKey('sftp-pane-list'));
     // No floating path bar over the list in the pane.
     expect(find.byType(HermesStickyControls), findsNothing);
     for (final name in ['lib', 'notes.txt']) {
       final row = find.byKey(ValueKey('sftp-row-$name'));
-      expect(find.descendant(of: card, matching: row), findsOneWidget);
+      expect(find.descendant(of: list, matching: row), findsOneWidget);
       expect(tester.getSize(row).height, greaterThanOrEqualTo(48));
       expect(
         tester.getSize(find.byKey(ValueKey('sftp-row-icon-$name'))),
@@ -427,12 +438,12 @@ void main() {
     }
     expect(find.text('5 B'), findsOneWidget);
 
-    // The path: a breadcrumb in a pill under the card, the whole path for
+    // The path: a breadcrumb in a pill under the list, the whole path for
     // TalkBack, and «Up one level» beside it, 48 dp.
     final path = find.byKey(const ValueKey('sftp-pane-path'));
     expect(
       tester.getRect(path).top,
-      greaterThanOrEqualTo(tester.getRect(card).bottom),
+      greaterThanOrEqualTo(tester.getRect(list).bottom),
     );
     final crumb = tester.widget<Text>(
       find.byKey(const ValueKey('sftp-pane-breadcrumb')),
@@ -445,6 +456,7 @@ void main() {
       find.descendant(of: up, matching: find.text('Up one level')),
       findsOneWidget,
     );
+    expect(find.text('New folder'), findsOneWidget);
     await tester.tap(up);
     for (var i = 0; i < 5; i++) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -458,6 +470,57 @@ void main() {
     );
     expect(tester.takeException(), isNull);
     semantics.dispose();
+  });
+
+  testWidgets('in the pane: create a folder in the current SFTP directory', (
+    tester,
+  ) async {
+    final ssh = await _app(tester);
+    ssh.remote.listings[_home] = [_file('notes.txt', 5)];
+    final toolbar = ValueNotifier(ChatWorkspaceToolbar.none);
+    addTearDown(toolbar.dispose);
+    await _push(
+      tester,
+      ChatWorkspacePaneScope(
+        tab: ChatWorkspaceTab.files,
+        toolbar: toolbar,
+        child: SftpBrowserScreen(connection: _connection),
+      ),
+    );
+
+    final createFolder = find.byKey(const ValueKey('sftp-pane-new-folder'));
+    expect(tester.getSize(createFolder).height, 48);
+    await tester.tap(createFolder);
+    await tester.pumpAndSettle();
+    final name = find.byKey(const ValueKey('pw1215-name-field'));
+    final create = find.byKey(const ValueKey('pw1215-name-create'));
+    await tester.enterText(name, '../otra');
+    await tester.pumpAndSettle();
+    await tester.tap(create);
+    await tester.pumpAndSettle();
+    expect(name, findsOneWidget);
+    expect(ssh.remote.madeFolders, isEmpty);
+
+    await tester.enterText(name, 'notes.txt');
+    await tester.pumpAndSettle();
+    await tester.tap(create);
+    await tester.pumpAndSettle();
+    expect(name, findsOneWidget);
+    expect(ssh.remote.madeFolders, isEmpty);
+
+    await tester.enterText(name, 'docs');
+    await tester.pumpAndSettle();
+    await tester.tap(create);
+    await tester.pumpAndSettle();
+    expect(name, findsNothing);
+    expect(ssh.remote.madeFolders, ['$_home/docs']);
+    expect(ssh.remote.listed, [_home, _home]);
+    final folder = find.byKey(const ValueKey('sftp-row-docs'));
+    expect(folder, findsOneWidget);
+    await tester.tap(folder);
+    await tester.pumpAndSettle();
+    expect(ssh.remote.listed.last, '$_home/docs');
+    expect(tester.takeException(), isNull);
   });
 
   // REVIEW-T2-D P3-5: the padlock of a read-only connection is drawn in
@@ -478,6 +541,7 @@ void main() {
         child: SftpBrowserScreen(connection: _connection),
       ),
     );
+    expect(find.byKey(const ValueKey('sftp-pane-new-folder')), findsNothing);
     expect(find.bySemanticsLabel('$_home, read only'), findsOneWidget);
     expect(
       find.descendant(

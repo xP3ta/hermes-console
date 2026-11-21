@@ -8772,6 +8772,9 @@
   "hdpTabRecent": "最近",
   "hdpShellRow": "通常のシェル",
   "hdpShellBody": "ターミナルはそのままです。",
+  "hdpReturnToShell": "シェルに戻る",
+  "hdpReturnToShellBody": "サーバー上のセッションは開いたままです。",
+  "hdpOpenSessionFailed": "セッションを開けませんでした。",
   "hdpNoSessions": "セッションはまだありません。",
   "hdpNoRecent": "今も存在する最近の項目はありません。",
   "hdpSessionWindows": "{count, plural, other{ウィンドウ {count} 個}}",
@@ -9645,5 +9648,511 @@
   "srvCheckStillRunning": "まだ実行中です。追跡を停止しました",
   "srvCheckUnavailable": "このサーバーでは実行できません。",
   "srvCheckStartFailed": "開始できませんでした。",
-  "srvCheckLost": "実行を追跡できませんでした。もう一度実行すると出力を確認できます。"
+  "srvCheckLost": "実行を追跡できませんでした。もう一度実行すると出力を確認できます。",
+  "roomFilesCountLimit": "1通のメッセージに添付できるファイルは最大{count}件です。",
+  "@roomFilesCountLimit": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatTitle": "メッセージング",
+  "msgPlatSubtitle": "Telegram、Discord、Slackなどのプラットフォームを設定します",
+  "msgPlatIntro": "このプロファイルのbotに連絡できるプラットフォームです。開くと、設定、オン/オフの切り替え、メッセージを送れる相手の選択ができます。",
+  "msgPlatTooOldTitle": "サーバーが古すぎます",
+  "msgPlatTooOld": "お使いのHermesサーバーはメッセージングの設定に対応していません。ここからプラットフォームを設定するには、Hermesを更新してください。",
+  "msgPlatLoadFailed": "メッセージングのプラットフォームを読み込めませんでした",
+  "msgPlatEmpty": "このサーバーにはメッセージングのプラットフォームがありません。",
+  "msgPlatSearch": "メッセージングを検索",
+  "msgPlatNoMatches": "一致するプラットフォームはありません。",
+  "msgPlatFilterAll": "すべて",
+  "msgPlatFilterBad": "エラー",
+  "msgPlatFilterGood": "接続済み",
+  "msgPlatFilterMuted": "非アクティブ",
+  "msgPlatFilterWarn": "要確認",
+  "msgPlatPendingCount": "{count, plural, =1{保留中のペアリング要求が1件あります} other{保留中のペアリング要求が{count}件あります}}",
+  "@msgPlatPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatStateConnected": "接続済み",
+  "msgPlatStateConnecting": "接続中",
+  "msgPlatStateDisabled": "無効",
+  "msgPlatStateFatal": "エラー",
+  "msgPlatStateGatewayStopped": "メッセージングゲートウェイが停止しました",
+  "msgPlatStateNotConfigured": "設定が必要",
+  "msgPlatStatePendingRestart": "再起動が必要",
+  "msgPlatStateRetrying": "再試行中",
+  "msgPlatStateStartupFailed": "起動に失敗",
+  "msgPlatStateUnknown": "不明",
+  "msgPlatReadOnly": "この接続は読み取り専用です。プラットフォームは表示できますが、変更はできません。",
+  "msgPlatRestartNeeded": "保存しました。新しい設定を反映するには、メッセージングゲートウェイを再起動してください。",
+  "msgPlatRestartNow": "今すぐ再起動",
+  "msgPlatRestarting": "再起動中…",
+  "msgPlatRestartFailed": "メッセージングの設定を適用するためのHermesの再起動に失敗しました。もう一度お試しください。それでも失敗する場合は、サーバーのログを確認してください。",
+  "msgPlatHintPendingRestart": "この変更を適用するには、メッセージングゲートウェイを再起動してください。",
+  "msgPlatHintGatewayStopped": "接続するには、メッセージングゲートウェイを起動してください。",
+  "msgPlatSharedListener": "{url}の共有ゲートウェイリスナーで提供されています",
+  "@msgPlatSharedListener": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatEnabled": "有効",
+  "msgPlatDisabled": "無効",
+  "msgPlatPlatformEnabled": "{name}を有効にしました",
+  "@msgPlatPlatformEnabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatPlatformDisabled": "{name}を無効にしました",
+  "@msgPlatPlatformDisabled": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRestartToApply": "この変更はゲートウェイを再起動すると反映されます。",
+  "msgPlatAppliedLive": "実行中のゲートウェイに適用しました。",
+  "msgPlatSetupSaved": "{name}の設定を保存しました",
+  "@msgPlatSetupSaved": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRestartToReconnect": "新しい認証情報はゲートウェイを再起動すると反映されます。",
+  "msgPlatConnectingLive": "実行中のゲートウェイが新しい認証情報で接続しています。",
+  "msgPlatKeyCleared": "{key}を消去しました",
+  "@msgPlatKeyCleared": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedUpdate": "{name}を更新できませんでした",
+  "@msgPlatFailedUpdate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedSave": "{name}を保存できませんでした",
+  "@msgPlatFailedSave": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedClear": "{key}を消去できませんでした",
+  "@msgPlatFailedClear": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatFailedDetail": "{message}: {detail}",
+  "@msgPlatFailedDetail": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      },
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatGetCredentials": "認証情報を取得",
+  "msgPlatOpenSetupGuide": "設定ガイドを開く",
+  "msgPlatRequired": "必須",
+  "msgPlatRecommended": "推奨",
+  "msgPlatAdvanced": "詳細設定（{count}）",
+  "@msgPlatAdvanced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatNoTokenNeeded": "このプラットフォームではここでトークンは不要です。上の設定ガイドに従ってから、有効にしてください。",
+  "msgPlatUnsavedChanges": "未保存の変更",
+  "msgPlatSaving": "保存中…",
+  "msgPlatSaveChanges": "変更を保存",
+  "msgPlatSaved": "保存しました",
+  "msgPlatReplaceValue": "現在の値を置き換える",
+  "msgPlatOpenDocs": "ドキュメントを開く",
+  "msgPlatClearField": "{key}を消去",
+  "@msgPlatClearField": {
+    "placeholders": {
+      "key": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatAddEntry": "もう1つ追加",
+  "msgPlatRemoveEntry": "削除",
+  "msgPlatEntryPlaceholder": "IDを入力",
+  "msgPlatEntryLabel": "{label} {index}",
+  "@msgPlatEntryLabel": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "msgPlatTest": "接続をテスト",
+  "msgPlatTesting": "テスト中…",
+  "msgPlatTestResult": "{name}: {message}",
+  "@msgPlatTestResult": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTestFailed": "チャンネルをテストできませんでした",
+  "msgPlatOpenFailed": "リンクを開けませんでした。",
+  "msgPlatHandle": "@{name}",
+  "@msgPlatHandle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayTitle": "Team Gateway",
+  "msgPlatRelayBadge": "botトークンは不要です",
+  "msgPlatRelayIntro": "{platform}は、共有のHermes botを通じてこのエージェントに接続します。{platform}アカウントをリンクし、botにメッセージを送ってエージェントと会話してください。",
+  "@msgPlatRelayIntro": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLink": "{platform}をリンク",
+  "@msgPlatRelayLink": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLinkAnother": "別の{platform}アカウントをリンク",
+  "@msgPlatRelayLinkAnother": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayLinkedAccounts": "リンク済みのアカウント",
+  "msgPlatRelayUnlink": "リンク解除",
+  "msgPlatRelayUnlinkFailed": "そのアカウントのリンクを解除できませんでした",
+  "msgPlatRelayStepOpen": "1. {platform}でbotを開きます。",
+  "@msgPlatRelayStepOpen": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayStepSend": "2. リンクしたいアカウントから、botに次のメッセージを送ります:",
+  "msgPlatRelayOpen": "{platform}を開く",
+  "@msgPlatRelayOpen": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayCopy": "メッセージをコピー",
+  "msgPlatRelayCopied": "コピーしました",
+  "msgPlatRelayWaiting": "botがメッセージを確認するのを待っています。コードは1回だけ使えます。",
+  "msgPlatRelayLinked": "{platform}アカウントをリンクしました。botにメッセージを送ってエージェントと会話してください。",
+  "@msgPlatRelayLinked": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayExpired": "コードは使用される前に期限切れになりました。新しいコードを取得して、もう一度お試しください。",
+  "msgPlatRelayRefused": "{platform}がリンクを拒否しました。新しいコードを取得して、もう一度お試しください。",
+  "@msgPlatRelayRefused": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayManaged": "Team Gatewayが管理しています",
+  "msgPlatRelayManagedNote": "このデプロイではTeam Gatewayがメッセージングを担うため、ゲートウェイは起動のたびに{platform}の直接接続をオフにします。リレーと併用するには、ゲートウェイの環境でGATEWAY_RELAY_ALLOW_DIRECT_PLATFORMS=trueを設定してください（直接接続があるとインスタンスがゼロまでスケールダウンできなくなり、メッセージが二重に配信される場合があります）。",
+  "@msgPlatRelayManagedNote": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayManagedIntro": "このエージェントのアカウントはNous Portalからリンクします。",
+  "msgPlatRelayOpenPortal": "Nous Portalでアカウントをリンク",
+  "msgPlatRelayNoNewAccount": "コードは無効になり、新しいアカウントも表示されませんでした。{platform}アカウントが一覧にない場合は、新しいコードを取得してもう一度お試しください。",
+  "@msgPlatRelayNoNewAccount": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatRelayUnavailable": "このサーバーではTeam Gatewayのアカウントリンクを利用できません。",
+  "msgPlatRelayFailed": "ゲートウェイから応答がありませんでした。もう一度お試しください。",
+  "msgPlatTgQuickSetup": "クイック設定",
+  "msgPlatTgQuickHelp": "Telegramで確認すると、Hermesがbotを作成し、TelegramのユーザーIDを自動で検出します。",
+  "msgPlatTgCreate": "Telegramで作成",
+  "msgPlatTgStarting": "開始中…",
+  "msgPlatTgReplaceWarning": "Telegramの認証情報はすでに設定されています。新しいクイック設定または新しいbotトークンを使うと、保存時に現在のbotが置き換えられます。",
+  "msgPlatTgOpenHint": "Telegramを開いて、新しいbotを確認してください。",
+  "msgPlatTgWaiting": "Telegramを待っています…",
+  "msgPlatTgExpiresIn": "{remaining}後に期限切れ",
+  "@msgPlatTgExpiresIn": {
+    "placeholders": {
+      "remaining": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTgExpired": "期限切れ",
+  "msgPlatTgOpenTelegram": "Telegramを開く",
+  "msgPlatTgReady": "botを作成しました",
+  "msgPlatTgAllowedUsers": "許可するユーザー",
+  "msgPlatTgOwnerDetected": "オーナーを検出しました",
+  "msgPlatTgAddAtLeastOne": "TelegramのユーザーIDを1つ以上追加してください。",
+  "msgPlatTgUserIdLabel": "TelegramのユーザーID",
+  "msgPlatTgAdd": "追加",
+  "msgPlatTgRemoveId": "{id}を削除",
+  "@msgPlatTgRemoveId": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "msgPlatTgNumericOnly": "許可するTelegramのユーザーIDは数字にしてください。",
+  "msgPlatTgSaveAndRestart": "保存して再起動",
+  "msgPlatTgPairingExpired": "Telegramのペアリングが期限切れになりました。新しいクイック設定を開始してもう一度お試しください。",
+  "msgPlatTgStillWaiting": "まだTelegramを待っています。再試行中…",
+  "msgPlatTgSavedRestarting": "Telegramを保存しました。ゲートウェイを再起動しています…",
+  "msgPlatTgSavedRestartFailed": "Telegramを保存しましたが、ゲートウェイの再起動に失敗しました",
+  "msgPlatTgStartFailed": "Telegramのクイック設定を開始できませんでした。",
+  "msgPlatTgUnavailable": "このサーバーではTelegram botを作成できません。代わりに、下にbotトークンを貼り付けてください。",
+  "msgPlatFTelegramBotTokenLabel": "botトークン",
+  "msgPlatFTelegramBotTokenHelp": "@BotFatherでbotを作成し、受け取ったトークンを貼り付けてください。",
+  "msgPlatFTelegramBotTokenHint": "Telegram botのトークンを貼り付け",
+  "msgPlatFTelegramAllowedUsersLabel": "許可するTelegramユーザーID",
+  "msgPlatFTelegramAllowedUsersHelp": "推奨。@userinfobotで確認できる数字のIDを、1ボックスにつき1つ入力します。未設定の場合、誰でもbotにDMを送れます。",
+  "msgPlatFTelegramProxyLabel": "プロキシURL",
+  "msgPlatFTelegramProxyHelp": "Telegramがブロックされているネットワークでのみ必要です。",
+  "msgPlatFDiscordBotTokenLabel": "botトークン",
+  "msgPlatFDiscordBotTokenHelp": "Discord Developer Portalでアプリケーションを作成し、botを追加して、そのトークンを貼り付けてください。",
+  "msgPlatFDiscordAllowedUsersLabel": "許可するDiscordユーザーID",
+  "msgPlatFDiscordAllowedUsersHelp": "推奨。DiscordのユーザーIDを、1ボックスにつき1つ入力します。",
+  "msgPlatFDiscordReplyToModeLabel": "返信スタイル",
+  "msgPlatFDiscordReplyToModeHelp": "first、all、またはoff。",
+  "msgPlatFDiscordAllowAllUsersLabel": "すべてのDiscordユーザーを許可",
+  "msgDiscordEveryoneHelp": "開発専用です。trueの場合、allowlistなしで誰でもbotにDMを送れます。",
+  "msgPlatFDiscordHomeChannelLabel": "ホームチャンネルID",
+  "msgPlatFDiscordHomeChannelHelp": "botが自発的にメッセージ（cronの出力、リマインダー）を送るチャンネル。",
+  "msgPlatFDiscordHomeChannelNameLabel": "ホームチャンネル名",
+  "msgPlatFDiscordHomeChannelNameHelp": "ログとステータス出力に表示されるホームチャンネルの表示名。",
+  "msgPlatFBluebubblesAllowAllUsersLabel": "すべてのiMessageユーザーを許可",
+  "msgPlatFBluebubblesAllowAllUsersHelp": "trueの場合、BlueBubblesのallowlistをスキップします。",
+  "msgPlatFMattermostAllowAllUsersLabel": "すべてのMattermostユーザーを許可",
+  "msgPlatFMattermostHomeChannelLabel": "ホームチャンネル",
+  "msgPlatFQqAllowAllUsersLabel": "すべてのQQユーザーを許可",
+  "msgPlatFQqbotHomeChannelLabel": "QQのホームチャンネル",
+  "msgPlatFQqbotHomeChannelHelp": "cron配信のデフォルトのチャンネルまたはグループ。",
+  "msgPlatFQqbotHomeChannelNameLabel": "QQのホームチャンネル名",
+  "msgPlatFSlackBotTokenLabel": "Slack botトークン",
+  "msgPlatFSlackBotTokenHelp": "Slackアプリをインストールした後、OAuth & Permissionsにあるbotトークンを使用します。",
+  "msgPlatFSlackBotTokenHint": "Slack botトークンを貼り付け",
+  "msgPlatFSlackAppTokenLabel": "Slackアプリトークン",
+  "msgPlatFSlackAppTokenHelp": "Socket Modeに必要なアプリレベルトークンを使用します。",
+  "msgPlatFSlackAppTokenHint": "Slackアプリトークンを貼り付け",
+  "msgPlatFSlackAllowedUsersLabel": "許可するSlackユーザーID",
+  "msgPlatFSlackAllowedUsersHelp": "推奨。SlackのユーザーIDを、1ボックスにつき1つ入力します。",
+  "msgPlatFMattermostUrlLabel": "サーバーURL",
+  "msgPlatFMattermostUrlHint": "https://mattermost.example.com",
+  "msgPlatFMattermostTokenLabel": "botトークン",
+  "msgPlatFMattermostAllowedUsersLabel": "許可するユーザーID",
+  "msgPlatFMattermostAllowedUsersHelp": "推奨。MattermostのユーザーIDを、1ボックスにつき1つ入力します。",
+  "msgPlatFMatrixHomeserverLabel": "ホームサーバーURL",
+  "msgPlatFMatrixHomeserverHint": "https://matrix.org",
+  "msgPlatFMatrixAccessTokenLabel": "アクセストークン",
+  "msgPlatFMatrixUserIdLabel": "botのユーザーID",
+  "msgPlatFMatrixUserIdHint": "@hermes:example.org",
+  "msgPlatFMatrixAllowedUsersLabel": "許可するMatrixユーザーID",
+  "msgPlatFMatrixAllowedUsersHelp": "推奨。@user:server形式のユーザーIDを、1ボックスにつき1つ入力します。",
+  "msgPlatFSignalHttpUrlLabel": "SignalブリッジURL",
+  "msgPlatFSignalHttpUrlHelp": "稼働中のsignal-cli RESTブリッジのURL。",
+  "msgPlatFSignalHttpUrlHint": "http://127.0.0.1:8080",
+  "msgPlatFSignalAccountLabel": "電話番号",
+  "msgPlatFSignalAccountHelp": "signal-cliブリッジに登録されている番号。",
+  "msgPlatFSignalAllowedUsersLabel": "許可するSignalユーザー",
+  "msgPlatFSignalAllowedUsersHelp": "推奨。Signalの識別子を、1ボックスにつき1つ入力します。",
+  "msgPlatFWhatsappEnabledLabel": "WhatsAppブリッジを有効にする",
+  "msgPlatFWhatsappEnabledHelp": "「有効」スイッチによって自動的に設定されます。必要だとわかっている場合以外は変更しないでください。",
+  "msgPlatFWhatsappModeLabel": "ブリッジモード",
+  "msgPlatFWhatsappAllowedUsersLabel": "許可するWhatsAppユーザー",
+  "msgPlatFWhatsappAllowedUsersHelp": "推奨。電話番号またはWhatsApp IDを、1ボックスにつき1つ入力します。",
+  "msgPlatIntroTelegram": "Telegramで@BotFatherと会話し、/newbotを実行して、受け取ったトークンをコピーします。次に、@userinfobotで数字のユーザーIDを確認します。",
+  "msgPlatIntroDiscord": "Discord Developer Portalを開いてアプリケーションを作成し、botを追加して、そのトークンをコピーします。適切なスコープでbotをサーバーに招待してください。",
+  "msgPlatIntroSlack": "Slackアプリを作成してSocket Modeを有効にし、ワークスペースにインストールして、botトークンとアプリレベルトークンをコピーします。",
+  "msgPlatIntroMattermost": "Mattermostサーバーでbotアカウントまたはパーソナルアクセストークンを作成し、サーバーURLとトークンをここに貼り付けます。",
+  "msgPlatIntroMatrix": "botアカウントでホームサーバーにサインインし、アクセストークン、ユーザーID、ホームサーバーURLをコピーします。",
+  "msgPlatIntroSignal": "到達可能な場所でsignal-cli RESTブリッジを実行し、そのURLと登録済みの電話番号をHermesに設定します。",
+  "msgPlatIntroWhatsapp": "Hermesに同梱のWhatsAppブリッジを起動し、初回起動時にQRコードをスキャンして、プラットフォームを有効にします。",
+  "msgPlatIntroBluebubbles": "iMessageが使えるMacでBlueBubbles Serverを実行してAPIを公開し、そのURLとサーバーのパスワードをHermesに設定します。",
+  "msgPlatIntroHomeassistant": "Home Assistantでプロフィールを開き、長期間有効なアクセストークンを作成します。HAのURLと一緒にここに貼り付けてください。",
+  "msgPlatIntroEmail": "専用のメールボックスを使用してください。Gmail/Workspaceの場合は、アプリパスワードを作成し、imap.gmail.com / smtp.gmail.comを使用します。",
+  "msgPlatIntroSms": "TwilioコンソールでAccount SIDとAuth Tokenを取得し、SMSを送信できる電話番号も用意します。",
+  "msgPlatIntroDingtalk": "開発者コンソールでDingTalkアプリを作成し、Client ID（App key）とClient Secretをここにコピーします。",
+  "msgPlatIntroFeishu": "Feishu / Larkアプリを作成してbot機能を設定し、App ID、App secret、イベント暗号化キーをコピーします。",
+  "msgPlatIntroWecom": "WeComでグループロボットを追加し、そのwebhookキーをWECOM_BOT_IDとしてコピーします。送信専用です。双方向にするにはWeCom（アプリ）オプションを使用してください。",
+  "msgPlatIntroWecomCallback": "WeComの自社開発アプリを設定してコールバックURLを公開し、corp ID、secret、agent ID、AESキーを指定します。",
+  "msgPlatIntroWeixin": "`hermes gateway setup`を実行してWeixinを選択し、個人のWeChatアカウントでQRコードをスキャンして確認します。HermesはTencentのiLink Bot APIを通じて接続し、認証情報を保存します。",
+  "msgPlatIntroQqbot": "QQ Open Platform（q.qq.com）でアプリを登録し、App IDとClient Secretをコピーします。",
+  "msgPlatIntroApiServer": "HermesをOpenAI互換のAPIとして公開します。認証キーを設定し、Open WebUI / LobeChatなどをhost:portに向けてください。",
+  "msgPlatIntroWebhook": "他のツール（GitHub、GitLab、独自アプリ）からPOSTできるHTTPサーバーを実行します。secretを使って署名を検証してください。",
+  "botDelivTitle": "チームメイトを待っています",
+  "botDelivQueued": "キュー待ち",
+  "botDelivClaimed": "受け取り済み",
+  "botDelivWorking": "作業中",
+  "botDelivWaitingClarify": "あなたの対応待ち — 質問に答えてください",
+  "botDelivWaitingApproval": "あなたの対応待ち — 承認または拒否してください",
+  "botDelivFailed": "失敗しました: {reason}",
+  "@botDelivFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "botDelivUnknownOutcome": "結果は不明です",
+  "botDelivOpen": "開く",
+  "botDelivDismiss": "閉じる",
+  "botDelivNeverResent": "ここでは何も再送されません。結果が不明な場合、チームメイトはすでに対応した可能性があります。もう一度依頼する前にそのチャットを開いてください。",
+  "botDelivStale": "更新できませんでした — 最後に確認できた状態を表示しています。",
+  "botDelivReasonProviderAuth": "モデルプロバイダーがキーを拒否しました",
+  "botDelivReasonProviderQuota": "プロバイダーのクレジットが不足しています",
+  "botDelivReasonProviderRateLimit": "プロバイダーがレート制限しています",
+  "botDelivReasonProviderServer": "プロバイダーに接続できません",
+  "botDelivReasonMissingConfig": "モデルが設定されていません",
+  "botDelivReasonModelUnavailable": "モデルを利用できません",
+  "botDelivReasonContextOverflow": "コンテキストがいっぱいです",
+  "botDelivReasonRuntimeOffline": "オフラインです",
+  "botDelivReasonQueuedExpired": "受け取られませんでした",
+  "botDelivReasonTimeout": "タイムアウトしました",
+  "botDelivReasonBlocked": "ブロックされています",
+  "botDelivReasonCancelled": "キャンセルしました",
+  "botDelivReasonUnknown": "不明なエラー",
+  "turnFeedSkillsLoaded": "{count, plural, other{{count}個のスキルを読み込みました}}",
+  "turnFeedSkillResourcesRead": "{count, plural, other{スキルのリソースを{count}件読み込みました}}",
+  "turnFeedRepeated": "{count, plural, other{{tool} · {count}回}}",
+  "wsPanelTagSftp": "SFTP",
+  "wsPanelTagServer": "サーバー",
+  "wsPanelFilesUnavailable": "ファイルには SSH プロファイル、またはサーバーが一覧表示できるチャットのフォルダーが必要です。",
+  "wsPanelPickerHint": "この画面ではパネルはチャットの上に開きます。",
+  "wsPanelNeedsSsh": "SSH プロファイルが必要です",
+  "wsPanelNeedsSshOrFolder": "SSH プロファイルかチャットのフォルダーが必要です",
+  "wsPanelNoFolder": "このチャットにはまだフォルダーがありません",
+  "termUxCopied": "コピーしました",
+  "termUxCopyScreen": "画面をコピー",
+  "termUxCopyLink": "リンクをコピー",
+  "termUxOpenLink": "リンクを開く",
+  "termUxJumpToBottom": "最下部へ移動",
+  "termUxPromptSend": "{answer} を送信",
+  "@termUxPromptSend": {
+    "placeholders": {
+      "answer": {
+        "type": "String"
+      }
+    }
+  },
+  "termUxKeyEscape": "エスケープ",
+  "termUxKeyTab": "タブ",
+  "termUxKeyBackTab": "Shift と Tab",
+  "termUxKeyControl": "コントロール",
+  "termUxKeyControlNext": "コントロール、次のキーのみ",
+  "termUxKeyControlLocked": "コントロール、固定",
+  "termUxKeyAlt": "Alt",
+  "termUxKeyAltNext": "Alt、次のキーのみ",
+  "termUxKeyAltLocked": "Alt、固定",
+  "termUxKeyHome": "Home",
+  "termUxKeyEnd": "End",
+  "termUxKeyPageUp": "前のページ",
+  "termUxKeyPageDown": "次のページ",
+  "termUxKeyBackspace": "バックスペース",
+  "termUxKeyEnter": "Enter",
+  "termUxKeySlash": "スラッシュ",
+  "termUxKeyHyphen": "ハイフン",
+  "termUxKeyUnderscore": "アンダースコア",
+  "termUxKeyColon": "コロン",
+  "termUxCompose": "作成",
+  "termUxComposeHint": "メッセージまたはコマンド",
+  "termUxComposeSend": "送信",
+  "termUxComposeHistory": "このセッションで送信済み",
+  "termUxComposeNotSent": "送信されませんでした：接続の準備ができていません。テキストは残っています。",
+  "termUxAttach": "添付",
+  "termUxAttachReadOnly": "この接続は読み取り専用のため、ファイルをアップロードできません。",
+  "termUxAttachOffline": "先に接続してください。ファイルはこの SSH 接続でアップロードされます。",
+  "termUxUploading": "アップロード中",
+  "termUxUploaded": "アップロード済み",
+  "termUxUploadFailed": "アップロードに失敗しました",
+  "termUxRemoveAttachment": "添付を削除",
+  "termUxComposeInsertHint": "長押しで Enter なしで挿入",
+  "termUxDictate": "音声入力",
+  "termUxDictateStop": "音声入力を停止",
+  "termUxDictationUnavailable": "現在、音声入力は使用できません。",
+  "termUxKeyArrows": "矢印キー",
+  "termUxKeySuspend": "コントロール Z、一時停止",
+  "termUxKeyClear": "コントロール L、画面をクリア",
+  "termUxKeyboardShow": "キーボード",
+  "termUxKeyboardHide": "キーボードを隠す",
+  "termUxKeyPage": "キー、{count} ページ中 {page} ページ",
+  "@termUxKeyPage": {
+    "placeholders": {
+      "page": {
+        "type": "String"
+      },
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "tg143ComposeDeliveryUncertain": "送信直後に接続が切れました。再送信する前にターミナルを確認してください。",
+  "bg143LoopbackHttpsTitle": "localhost の HTTPS プレビューは利用できません",
+  "bg143LoopbackHttpsBody": "Android では、TLS の安全性を下げずに SSH 経由の HTTPS ループバック転送を分離できません。SSH トンネル経由で http:// を使うか、有効な証明書を持つホスト名を使ってください。",
+  "bg143LoopbackUnavailableBody": "プレビュー用の SSH トンネルを開けませんでした。もう一度試すか、SSH プロファイルを確認してください。"
 }

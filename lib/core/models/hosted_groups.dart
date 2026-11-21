@@ -986,6 +986,17 @@ final class HostedGroupAttachment {
     return shown.isEmpty ? kind : shown;
   }
 
+  /// This entry as a `groups.send` payload lists it: exactly the five
+  /// fields the server compares with the stored row
+  /// (`gateway/hosted_room_attachments.py::commit_message_with_receipt`).
+  Map<String, Object> toManifest() => {
+    'attachment_id': attachmentId,
+    'kind': kind,
+    'name': name,
+    'size': size,
+    'mime': mime,
+  };
+
   /// A whole message manifest: a list of at most [maxPerMessage] entries
   /// with unique ids and at most [maxMessageBytes] in total.
   static List<HostedGroupAttachment> manifest(Object? value) {

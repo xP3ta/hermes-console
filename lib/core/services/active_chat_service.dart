@@ -1,5 +1,6 @@
 import '../bots/data/gateway_socket_meter.dart';
 import '../browser/agent_browser_bridge.dart';
+import '../bots/data/bot_delivery.dart' show BotDeliveryGateway;
 import '../models/account_usage_limits.dart';
 import '../models/bot_mention.dart';
 import '../models/connection_request.dart';
@@ -105,6 +106,7 @@ import 'local_transcript_store.dart';
 import 'interactive_prompt_reducer.dart';
 import 'profile_chat_mode.dart';
 import 'recovery_proof.dart';
+import 'sealed_local_files.dart';
 import 'notifications/background_listener.dart';
 import 'notifications/live_turn_notifications.dart';
 import 'notifications/notification_service.dart';
@@ -2618,14 +2620,25 @@ class CancelledTurnTombstoneStore {
        _write = write,
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
 
+  /// One sealed file ([SealedLocalFiles]): each tombstone keeps the text of
+  /// a stopped turn. The secure-storage entry an older version wrote is
+  /// moved there when first read.
   factory CancelledTurnTombstoneStore.secure({
     FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
-  }) => CancelledTurnTombstoneStore(
-    read: () => secureStorage.read(key: _storageKey),
-    write: (value) => secureStorage.write(key: _storageKey, value: value),
-  );
+  }) {
+    final files = SealedLocalFiles(
+      SealedLocalFiles.tombstones,
+      secureStorage: secureStorage,
+    );
+    return CancelledTurnTombstoneStore(
+      // An unparsable entry stays untouched, as before.
+      read: () => files.read(_name, movable: SealedLocalFiles.isJson),
+      write: (value) => files.write(_name, value),
+    );
+  }
 
   static const _storageKey = 'cancelled_turn_tombstones_v2';
+  static const _name = SealedName(_storageKey);
 
   final Future<String?> Function() _read;
   final Future<void> Function(String value) _write;
@@ -5879,6 +5892,12 @@ class ActiveChat with WidgetsBindingObserver {
     return gateway is HermesDesktopControlGateway
         ? gateway as HermesDesktopControlGateway
         : null;
+  }
+
+  /// The gateway this chat rides when it answers `bot_delivery.list`.
+  BotDeliveryGateway? get botDeliveryGateway {
+    final gateway = _desktopGateway;
+    return gateway is BotDeliveryGateway ? gateway as BotDeliveryGateway : null;
   }
 
   bool get desktopChangeEventsAvailable {
@@ -12834,6 +12853,7 @@ class ActiveChat with WidgetsBindingObserver {
           turnStartedAt: snapshot.resolvedTurnStartedAt,
           coldOpen: coldOpen,
         );
+        final sawRuntimePayload = _turnSawRuntimePayload;
         _desktopStartedAt = snapshot.startedAt;
         _desktopTurnStartedAt = projection.running
             ? snapshot.resolvedTurnStartedAt
@@ -12851,6 +12871,8 @@ class ActiveChat with WidgetsBindingObserver {
           pendingApproval = null;
           _cancelling = false;
           state = ChatPipelineState.failed;
+          _lastTerminalAt = DateTime.now().toUtc();
+          _emit(ActiveChatEvent.sessionInfo);
         } else if (projection.running) {
           _usingDesktopGateway = true;
           // index.ts:2137-2139: when the live view is kept, the current rows
@@ -12865,7 +12887,7 @@ class ActiveChat with WidgetsBindingObserver {
           }
         } else if (isStreaming &&
             !_runTerminal &&
-            _turnSawRuntimePayload &&
+            (sawRuntimePayload || !_clientSubmittedCurrentTurn) &&
             !rejectSnapshotLiveActivity &&
             snapshotTranscriptComplete) {
           // Un snapshot completo y bien formado que no está ni fallido ni
@@ -12886,6 +12908,7 @@ class ActiveChat with WidgetsBindingObserver {
           pendingApproval = null;
           _cancelling = false;
           state = ChatPipelineState.completed;
+          _lastTerminalAt = DateTime.now().toUtc();
           _emit(ActiveChatEvent.sessionInfo);
         }
         // ss1215: the snapshot is now the authority; the remembered status
@@ -27163,6 +27186,16 @@ class ActiveChat with WidgetsBindingObserver {
           state = ChatPipelineState.executing;
           _emit(ActiveChatEvent.toolProgress);
         }
+      case 'moa.reference':
+        _applyMoaReference(payload);
+      case 'moa.progress':
+        _applyMoaProgress(payload);
+      case 'moa.phase':
+        // Desktop: only the aggregator phase leaves a line (`phase` may also
+        // carry counts or the aggregator name, shown nowhere).
+        if (payload['phase'] == 'aggregator') {
+          _applyMoaReasoning('◇ MoA aggregating…\n', replace: false);
+        }
       case 'message.delta':
         final rawDelta = payload['text'];
         final narratable =
@@ -28913,6 +28946,96 @@ class ActiveChat with WidgetsBindingObserver {
     // eventos distintos y el payload público no necesita classifier. Para
     // compatibilidad aceptamos su ausencia, pero cualquier classifier explícito
     // desconocido falla cerrado en Voz en vez de adivinar que es narrable.
+    return true;
+  }
+
+  /// `moa.reference` (Desktop `gateway-event/message-stream.ts`
+  /// `appendMoaReference`): one reference model's finished answer, as a
+  /// labelled block of the turn's reasoning. The first one replaces the
+  /// progress trail; later ones accumulate (hermes #64658).
+  void _applyMoaReference(Map<String, dynamic> payload) {
+    final rawLabel = payload['label'];
+    final label = rawLabel is String && rawLabel.isNotEmpty
+        ? rawLabel
+        : 'reference';
+    final index = payload['index'];
+    final count = payload['count'];
+    final numbered = index is num && index != 0 && count is num && count != 0;
+    final header = numbered
+        ? '◇ Reference ${_moaNumber(index)}/${_moaNumber(count)} — $label'
+        : '◇ Reference — $label';
+    final body = payload['text'];
+    _applyMoaReasoning(
+      '$header\n${body is String ? body : ''}\n\n',
+      replace: index is! num || index <= 1,
+    );
+  }
+
+  /// `moa.progress`: «refs k/n» while the references are still being
+  /// gathered; the first reference block replaces the trail.
+  void _applyMoaProgress(Map<String, dynamic> payload) {
+    final done = payload['refs_done'];
+    final total = payload['refs_total'];
+    if (done is! num || total is! num) return;
+    final label = payload['label'];
+    final refs = '${_moaNumber(done)}/${_moaNumber(total)}';
+    _applyMoaReasoning(
+      label is String && label.isNotEmpty
+          ? '◇ MoA refs $refs — $label\n'
+          : '◇ MoA refs $refs\n',
+      replace: done <= 1,
+    );
+  }
+
+  /// A JSON number the way JavaScript prints it in a template string.
+  static String _moaNumber(num value) =>
+      value == value.truncate() ? '${value.truncate()}' : '$value';
+
+  void _applyMoaReasoning(String text, {required bool replace}) {
+    if (replace) {
+      if (!_replaceAssistantReasoningActivity(text)) return;
+    } else {
+      _appendAssistantReasoningActivity(text);
+    }
+    state = ChatPipelineState.executing;
+    _emit(ActiveChatEvent.toolProgress);
+  }
+
+  /// Desktop `appendReasoningDelta(..., replace = true)`: the turn's
+  /// reasoning becomes [incoming] alone, unless the reply already has text.
+  /// Returns whether it changed anything.
+  bool _replaceAssistantReasoningActivity(String incoming) {
+    if (incoming.trim().isEmpty) return false;
+    _flushTokenBuffer();
+    var index = _assistantActivityMessageIndex();
+    if (index >= 0 &&
+        (_messages[index]['content']?.toString().trim().isNotEmpty ?? false)) {
+      return false;
+    }
+    if (index < 0) {
+      _messages.insert(0, {
+        'role': 'assistant',
+        'content': '',
+        '_pipeline': true,
+      });
+      index = 0;
+    }
+    final message = _messages[index];
+    final activity = normalizeAssistantActivityTrace(
+      message[assistantActivityTraceKey],
+    ).map(Map<String, dynamic>.from).toList(growable: true);
+    activity.removeWhere((step) => step['kind'] == 'reasoning');
+    activity.add({
+      'kind': 'reasoning',
+      'text': incoming,
+      'status': 'running',
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+    _messages[index] = {
+      ...message,
+      'reasoning': incoming.trim(),
+      assistantActivityTraceKey: activity,
+    };
     return true;
   }
 
@@ -37763,6 +37886,7 @@ class ActiveChatService {
     if (resolvedDesktopGateway is TuiGatewayClient) {
       resolvedDesktopGateway.redialWhenIdle = true;
     }
+    DateTime? lastSettledTerminalAt;
     late final ActiveChat chat;
     chat = ActiveChat(
       busyInputModes: _busyInputModes,
@@ -37815,9 +37939,17 @@ class ActiveChatService {
       onEvent: (event) {
         _onHomeWidgetChatEvent(chat, event);
         _refreshActiveIds(force: event == ActiveChatEvent.subagentActivity);
+        final settledAt = chat.lastTerminalAt;
         if (event == ActiveChatEvent.done ||
             event == ActiveChatEvent.error ||
             event == ActiveChatEvent.cancelled) {
+          lastSettledTerminalAt = settledAt;
+          _settleRosterAfterOwnTerminal(chat);
+        } else if (event == ActiveChatEvent.sessionInfo &&
+            settledAt != null &&
+            !chat.isStreaming &&
+            settledAt != lastSettledTerminalAt) {
+          lastSettledTerminalAt = settledAt;
           _settleRosterAfterOwnTerminal(chat);
         }
         _publishLiveStatus(key, chat);
@@ -38636,6 +38768,20 @@ class ActiveChatService {
             );
         if (!ended) continue;
         debugPrint('[active-chat] live row settled by roster (resume)');
+        globalActivity.settleTurnEnded(
+          connectionId: row.chat.connection.id,
+          profile: row.chat.sessionProfile,
+          durableSessionIds: {
+            row.chat.sessionId,
+            row.chat.logicalSessionId,
+            row.chat.serverSessionId,
+            ?row.chat.storedSessionId,
+          },
+          endedAt: DateTime.fromMillisecondsSinceEpoch(
+            requestedAtMs,
+            isUtc: true,
+          ),
+        );
         await notifications.liveTurnEnded(
           row.turn.sessionId,
           endedAtMs: requestedAtMs,

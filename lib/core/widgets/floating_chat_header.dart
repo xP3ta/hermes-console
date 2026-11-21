@@ -575,6 +575,7 @@ class FloatingHeaderButton extends StatelessWidget {
     this.highlighted = false,
     this.onLongPress,
     this.longPressLabel,
+    this.showLongPressIndicator = true,
     super.key,
   });
 
@@ -597,6 +598,9 @@ class FloatingHeaderButton extends StatelessWidget {
   final bool highlighted;
   final VoidCallback? onLongPress;
   final String? longPressLabel;
+
+  /// Shows the chevron when a long press is available.
+  final bool showLongPressIndicator;
 
   /// The accent laid over the face of a button that is on.
   static const double _onTint = 0.16;
@@ -669,7 +673,7 @@ class FloatingHeaderButton extends StatelessWidget {
           children: [
             HermesGlassPiece(shape: const CircleBorder(), child: face),
             button,
-            if (more != null)
+            if (more != null && showLongPressIndicator)
               PositionedDirectional(
                 end: HermesSpace.x2,
                 bottom: HermesSpace.x2,

@@ -83,6 +83,17 @@ class Pw1215FakeWritableFilesGateway extends Pf1215FakeFilesGateway
   }
 
   @override
+  Future<void> createProjectFile(String path) async {
+    if (files.containsKey(path) || folders.containsKey(path)) {
+      throw const DesktopControlFailure(
+        DesktopControlFailureKind.rejected,
+        code: 409,
+      );
+    }
+    await writeProjectFileText(path, '');
+  }
+
+  @override
   Future<void> writeProjectFileText(String path, String content) async {
     writeCalls.add('write-text:$path:$content');
     _guard(ProjectFileWriteAction.writeText);

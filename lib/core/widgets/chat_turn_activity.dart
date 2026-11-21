@@ -1348,9 +1348,24 @@ class _ThinkingElapsedState extends State<_ThinkingElapsed> {
 /// Icon of a tool row, by what the tool does.
 IconData turnToolIcon(ActivityStep step) {
   if (step.kind == ActivityStepKind.skill) return HIcons.auto_awesome_rounded;
-  final name = canonicalToolName(step.label);
+  return turnToolIconFor(step.label);
+}
+
+final RegExp _toolWords = RegExp(r'[_\-]+');
+
+/// Icon of a tool by its name: the families of Hermes Desktop's `TOOL_META`
+/// (`components/assistant-ui/tool/fallback-model/index.ts`: terminal, file,
+/// edit, files, search, globe, brain, eye, watch, question, file-media) in
+/// the app's icon set, the generic tool for anything else. A plugin's own
+/// memory tool (`omh_memory`) gets the memory brain too: Desktop knows only
+/// its built-in `memory` by name.
+IconData turnToolIconFor(String tool) {
+  final name = canonicalToolName(tool);
   if (isSkillActivityTool(name)) return HIcons.auto_awesome_rounded;
-  if (isMemoryTool(name)) return HIcons.psychology_outlined;
+  final words = name.toLowerCase().split(_toolWords);
+  if (isMemoryTool(name) || words.contains('memory')) {
+    return HIcons.psychology_outlined;
+  }
   if (toolAppActionLabel(name) != null) return HIcons.extension_outlined;
   return switch (name) {
     'terminal' ||

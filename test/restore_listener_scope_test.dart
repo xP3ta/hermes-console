@@ -118,7 +118,8 @@ void main() {
 
     test('rooms are watched but the retired Bots/Salas widgets get nothing', () {
       final bots = read('lib/core/services/notifications/bot_mode_background.dart');
-      expect(bots, contains('publish ?? _discardBotModeWidgetSnapshot'));
+      expect(bots, contains('    this.publish,'));
+      expect(bots, contains('      if (widgets != null) {'));
     });
 
     test('the listener never touches the turn ledger or the turn service', () {

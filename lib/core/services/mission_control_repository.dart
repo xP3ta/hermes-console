@@ -148,6 +148,29 @@ abstract interface class MissionHostedGroupsAttachmentGateway {
   });
 }
 
+/// Optional room file store: `groups.attachment.upload`
+/// ([TuiGatewayClient.uploadGroupAttachment]) and a `groups.send` that lists
+/// the uploaded files.
+abstract interface class MissionHostedGroupsUploadGateway {
+  Future<HostedGroupAttachment> uploadAttachment(
+    String roomId, {
+    required String uploadId,
+    required String kind,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+    required int generation,
+  });
+
+  Future<HostedGroupLogPage> sendWithAttachments(
+    String roomId, {
+    required String text,
+    required List<HostedGroupAttachment> attachments,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  });
+}
+
 final class _CallbackMissionHostedGroupsGateway
     implements MissionHostedGroupsGateway {
   final Future<GroupsCapabilities> Function() _capabilities;
@@ -257,7 +280,8 @@ final class _TuiMissionHostedGroupsGateway
         MissionHostedGroupsIncrementalGateway,
         MissionHostedGroupsChangeEventsGateway,
         MissionHostedGroupsListingGateway,
-        MissionHostedGroupsAttachmentGateway {
+        MissionHostedGroupsAttachmentGateway,
+        MissionHostedGroupsUploadGateway {
   final TuiGatewayClient client;
 
   const _TuiMissionHostedGroupsGateway(this.client);
@@ -292,6 +316,39 @@ final class _TuiMissionHostedGroupsGateway
     eventId: eventId,
     attachment: attachment,
     generation: generation,
+  );
+  @override
+  Future<HostedGroupAttachment> uploadAttachment(
+    String roomId, {
+    required String uploadId,
+    required String kind,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+    required int generation,
+  }) => client.uploadGroupAttachment(
+    roomId: roomId,
+    uploadId: uploadId,
+    kind: kind,
+    name: name,
+    mime: mime,
+    bytes: bytes,
+    generation: generation,
+  );
+  @override
+  Future<HostedGroupLogPage> sendWithAttachments(
+    String roomId, {
+    required String text,
+    required List<HostedGroupAttachment> attachments,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  }) => client.sendGroupText(
+    roomId: roomId,
+    text: text,
+    threadId: attempt.threadId,
+    eventId: attempt.clientEventId,
+    generation: generation,
+    attachments: attachments,
   );
   @override
   Future<HostedGroupLogPage> log(String roomId, {required int generation}) =>
@@ -547,6 +604,27 @@ abstract interface class MissionHostedGroupsAttachmentDataSource {
   });
 }
 
+/// Optional room file store: a file kept with `groups.attachment.upload`
+/// and an owner message that lists such files.
+abstract interface class MissionHostedGroupsUploadDataSource {
+  Future<HostedGroupAttachment> uploadHostedGroupAttachment(
+    HostedGroupRoom room, {
+    required String uploadId,
+    required String kind,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+  });
+
+  Future<HostedGroupWorkspaceReadback> sendHostedGroupMessage(
+    HostedGroupRoom room, {
+    required String text,
+    required List<HostedGroupAttachment> attachments,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  });
+}
+
 /// The `groups.capabilities` live on the socket right now. An open room
 /// reads it before each read so a reconnect (a new socket generation) never
 /// leaves the room bound to the generation it was opened with.
@@ -635,6 +713,7 @@ final class MissionControlRepository
         MissionHostedGroupsReadDataSource,
         MissionHostedGroupsCapabilitySource,
         MissionHostedGroupsAttachmentDataSource,
+        MissionHostedGroupsUploadDataSource,
         MissionLiveRefreshDataSource,
         MissionHostedRoomsLinkSource {
   final MissionProfilesLoader profilesLoader;
@@ -1229,6 +1308,50 @@ final class MissionControlRepository
     );
   }
 
+  /// An upload under the capabilities live on the socket now, like a
+  /// download: a server that does not list the method is never asked, and
+  /// says so (-32601). One that lists it while its room driver is down
+  /// fails this upload only: the method is not missing.
+  @override
+  Future<HostedGroupAttachment> uploadHostedGroupAttachment(
+    HostedGroupRoom room, {
+    required String uploadId,
+    required String kind,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+  }) async {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    final gateway = hostedGroupsGateway;
+    if (gateway == null || gateway is! MissionHostedGroupsUploadGateway) {
+      throw const TuiGatewayRpcError(
+        'groups.attachment.upload',
+        'Group operation is unavailable',
+        code: -32601,
+      );
+    }
+    final capabilities = await gateway.capabilities();
+    if (!capabilities.methods.contains(GroupMethod.attachmentUpload)) {
+      throw const TuiGatewayRpcError(
+        'groups.attachment.upload',
+        'Group operation is unavailable',
+        code: -32601,
+      );
+    }
+    if (!capabilities.supports(GroupMethod.attachmentUpload)) {
+      throw StateError('hosted group capability unavailable');
+    }
+    return (gateway as MissionHostedGroupsUploadGateway).uploadAttachment(
+      room.roomId,
+      uploadId: uploadId,
+      kind: kind,
+      name: name,
+      mime: mime,
+      bytes: bytes,
+      generation: capabilities.generation,
+    );
+  }
+
   @override
   Future<HostedGroupRoom> createHostedGroup({
     required String name,
@@ -1267,14 +1390,57 @@ final class MissionControlRepository
     required String text,
     required HostedGroupSendAttempt attempt,
     required int generation,
+  }) => _sendHostedGroup(
+    room,
+    text: text,
+    attachments: const [],
+    attempt: attempt,
+    generation: generation,
+  );
+
+  @override
+  Future<HostedGroupWorkspaceReadback> sendHostedGroupMessage(
+    HostedGroupRoom room, {
+    required String text,
+    required List<HostedGroupAttachment> attachments,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  }) => _sendHostedGroup(
+    room,
+    text: text,
+    attachments: attachments,
+    attempt: attempt,
+    generation: generation,
+  );
+
+  Future<HostedGroupWorkspaceReadback> _sendHostedGroup(
+    HostedGroupRoom room, {
+    required String text,
+    required List<HostedGroupAttachment> attachments,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
   }) async {
     final gateway = await _requireHosted(GroupMethod.send, generation);
-    final tail = await gateway.send(
-      room.roomId,
-      text: text,
-      attempt: attempt,
-      generation: generation,
-    );
+    final HostedGroupLogPage tail;
+    if (attachments.isEmpty) {
+      tail = await gateway.send(
+        room.roomId,
+        text: text,
+        attempt: attempt,
+        generation: generation,
+      );
+    } else if (gateway is MissionHostedGroupsUploadGateway) {
+      tail = await (gateway as MissionHostedGroupsUploadGateway)
+          .sendWithAttachments(
+            room.roomId,
+            text: text,
+            attachments: attachments,
+            attempt: attempt,
+            generation: generation,
+          );
+    } else {
+      throw StateError('hosted group capability unavailable');
+    }
     // send already verified its acknowledgement tail (the log since the
     // acknowledged event). When that tail carries this attempt's event and
     // continues the room's cursor exactly under the room's authority, it IS

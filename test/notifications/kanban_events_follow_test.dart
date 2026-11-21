@@ -305,19 +305,50 @@ void main() {
     expect(server.boardReads, 2);
   });
 
-  test('the board is still read every ten minutes with nothing '
-      'moving', () async {
+  test('with the socket up, the board is read again only every thirty '
+      'minutes with nothing moving', () async {
+    var now = DateTime(2026, 11, 20, 9);
+    await withClock(Clock(() => now), () async {
+      await tick();
+      // Idle ticks of the listener's slowest cadence (180 s).
+      for (var i = 0; i < 9; i++) {
+        now = now.add(const Duration(minutes: 3));
+        await tick();
+      }
+      expect(server.boardReads, 1, reason: '27 idle minutes, one read');
+      now = now.add(const Duration(minutes: 3));
+      await tick();
+      expect(server.boardReads, 2, reason: 'the backstop at 30 minutes');
+      await tick();
+      expect(server.boardReads, 2);
+      expect(
+        server.requests.where((r) => r == 'GET /api/plugins/kanban/events'),
+        hasLength(1),
+        reason: 'the same socket all along',
+      );
+    });
+  });
+
+  test('a server without the route is asked for it again every ten '
+      'minutes, its board read on every tick meanwhile', () async {
+    server.eventsRoute = false;
     var now = DateTime(2026, 11, 20, 9);
     await withClock(Clock(() => now), () async {
       await tick();
       now = now.add(const Duration(minutes: 9));
       await tick();
-      expect(server.boardReads, 1);
+      expect(server.boardReads, 2);
+      expect(
+        server.requests.where((r) => r == 'GET /api/plugins/kanban/events'),
+        hasLength(1),
+      );
       now = now.add(const Duration(minutes: 1));
       await tick();
-      expect(server.boardReads, 2);
-      await tick();
-      expect(server.boardReads, 2);
+      expect(server.boardReads, 3);
+      expect(
+        server.requests.where((r) => r == 'GET /api/plugins/kanban/events'),
+        hasLength(2),
+      );
     });
   });
 }

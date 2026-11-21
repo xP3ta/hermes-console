@@ -226,6 +226,24 @@ void main() {
       preferred = null;
     });
 
+    test('renew re-stamps the last board with no new read, and does nothing '
+        'before a first offer', () async {
+      final p = publisher();
+      await p.renew('conn-1');
+      expect(stored(), isNull);
+      await p.offer(
+        connectionId: 'conn-1',
+        tasks: [_task('r', 'running', assignee: 'forja')],
+      );
+      expect(store.redraws, hasLength(1));
+      // The events socket said nothing moved: renewed instead of read.
+      now = _t0 + 6 * 60000;
+      await p.renew('conn-1');
+      expect(store.redraws, hasLength(2));
+      expect(stored()!.updatedAtMs, now);
+      expect(stored()!.tasks.single.id, 'r');
+    });
+
     test('a board is written once and its widget asked to redraw', () async {
       final p = publisher();
       await p.offer(
@@ -316,7 +334,16 @@ void main() {
         '      );',
       ),
     );
-    expect('LauncherWidgetTasksPublisher'.allMatches(listener), hasLength(1));
+    // And, on the ticks whose events socket said nothing moved, what that
+    // read offered is re-stamped from memory: still no request.
+    expect(
+      listener,
+      contains(
+        '        unawaited(LauncherWidgetTasksPublisher.instance.renew('
+        'connection.id));',
+      ),
+    );
+    expect('LauncherWidgetTasksPublisher'.allMatches(listener), hasLength(2));
     final screen = File(
       'lib/core/screens/tasks_screen.dart',
     ).readAsStringSync();

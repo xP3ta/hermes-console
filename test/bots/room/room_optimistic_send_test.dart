@@ -7,8 +7,10 @@ import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
 import 'package:hermes_android/core/bots/ui/room/room_launcher.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
+import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -16,6 +18,7 @@ import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../support/memory_sealed_files.dart';
 import 'room_fixtures.dart';
 
 /// Every RPC of the real path costs [rpc]; a send is the acknowledgement
@@ -126,6 +129,7 @@ final class _RecordingDrafts implements RoomDraftStore {
     threadId: null,
     preparedId: storedPreparedId,
     preparedText: null,
+    files: const <AttachmentDraft>[],
   );
 
   @override
@@ -134,11 +138,15 @@ final class _RecordingDrafts implements RoomDraftStore {
     String? threadId,
     String? preparedId,
     String? preparedText,
+    List<AttachmentDraft> files = const [],
   }) async => calls.add('save:$text:${preparedId ?? '-'}');
 
   @override
   Future<void> clear({required String preparedId}) async =>
       calls.add('clear:$preparedId');
+
+  @override
+  Future<void> retire(List<AttachmentDraft> files) async {}
 }
 
 Finder get _field => find.descendant(
@@ -237,6 +245,7 @@ final class _MemoryDrafts implements RoomDraftStore {
   String? threadId;
   String? preparedId;
   String? preparedText;
+  List<AttachmentDraft> files = const [];
 
   _MemoryDrafts({this.text = '', this.preparedId});
 
@@ -248,6 +257,7 @@ final class _MemoryDrafts implements RoomDraftStore {
       threadId: threadId,
       preparedId: preparedId,
       preparedText: preparedText,
+      files: files,
     );
   }
 
@@ -257,12 +267,14 @@ final class _MemoryDrafts implements RoomDraftStore {
     String? threadId,
     String? preparedId,
     String? preparedText,
+    List<AttachmentDraft> files = const [],
   }) async {
     await Future<void>.value();
     this.text = text;
     this.threadId = threadId;
     this.preparedId = preparedId;
     this.preparedText = preparedId == null ? null : preparedText;
+    this.files = files;
   }
 
   @override
@@ -273,7 +285,11 @@ final class _MemoryDrafts implements RoomDraftStore {
     threadId = null;
     this.preparedId = null;
     preparedText = null;
+    files = const [];
   }
+
+  @override
+  Future<void> retire(List<AttachmentDraft> files) async {}
 }
 
 /// Opens the room as Mission Control does: [snapshot] is the log captured
@@ -925,7 +941,12 @@ void main() {
       await _tapSend(tester);
       await tester.pumpAndSettle();
       expect(gateway.completedSends, 1);
-      expect(secure, isEmpty, reason: 'the sent text is no draft any more');
+      expect(
+        SealedValues(secure).keys,
+        isEmpty,
+        reason: 'the sent text is no draft any more',
+      );
+      expect(secure.keys.toSet()..remove(SealedLocalFiles.keyKey), isEmpty);
 
       // Re-entering offline must not bring the sent text back either.
       gateway.failRead = true;

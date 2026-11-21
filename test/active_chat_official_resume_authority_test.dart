@@ -10,6 +10,7 @@ import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/memory_sealed_files.dart';
 import 'support/official_resume_server.dart';
 
 void main() {
@@ -149,7 +150,10 @@ void main() {
               }
             }
             expect(
-              secure.keys.where((k) => k.startsWith('hermes.transcript.v3.')),
+              [
+                ...secure.keys,
+                ...SealedValues(secure).keys,
+              ].where((k) => k.startsWith('hermes.transcript.v3.')),
               isEmpty,
             );
           }, createHttpClient: RealFixtureHttp().createHttpClient),

@@ -7,8 +7,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/app_error_log.dart';
 import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/services/cold_start_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/memory_sealed_files.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -220,6 +223,12 @@ void main() {
           ],
         );
         reads.clear();
+        // The snapshot is a sealed file now; its secure entry is gone.
+        expect(secure.containsKey(key), isFalse);
+        final file = SealedValues(secure).fileNameOf(key);
+        expect(file, isNotNull);
+        final lists = MemorySealedFileIo.of(SealedLocalFiles.lists)
+          ..resetHooks();
 
         final app = await bootstrapHermesApp() as HermesApp;
         final peek = app.activeChats.coldStartStore!.peekRecents(
@@ -228,9 +237,10 @@ void main() {
         );
         if (locked) {
           expect(reads, isNot(contains(key)));
+          expect(lists.readNames, isNot(contains(file)));
           expect(peek, isNull);
         } else {
-          expect(reads, contains(key));
+          expect(lists.readNames, contains(file));
           expect(peek?.single.title, 'privado');
         }
       },

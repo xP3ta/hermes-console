@@ -12,8 +12,11 @@ import '../widgets/artifact_viewer/artifact_html_policy.dart';
 import '../widgets/chat/back_to_chat_notch.dart';
 import '../widgets/workspace/chat_workspace_host.dart'
     show ChatWorkspacePaneScope;
+import '../widgets/workspace/workspace_panel_frame.dart'
+    show ChatWorkspacePanelCard;
 import 'agent_browser_bridge.dart';
 import 'agent_preview_offer_card.dart';
+import 'browser_loopback_reach.dart';
 import 'webview_render_guard.dart';
 import 'in_app_browser_policy.dart';
 
@@ -25,6 +28,8 @@ class InAppBrowserLoadError {
     required this.description,
     this.code,
     this.rendererGone = false,
+    this.loopbackHttpsUnsupported = false,
+    this.loopbackUnavailable = false,
   });
 
   final String url;
@@ -36,6 +41,14 @@ class InAppBrowserLoadError {
   /// The system killed the page's renderer (REVIEW-R5-B #1): the WebView was
   /// replaced and Retry loads [url] in the new one.
   final bool rendererGone;
+
+  /// An explicit `https://` loopback preview over SSH was refused rather than
+  /// downgraded to HTTP or exposed without isolation.
+  final bool loopbackHttpsUnsupported;
+
+  /// The SSH loopback forward could not be opened or is closed; never falls
+  /// back to resolving loopback on the phone.
+  final bool loopbackUnavailable;
 }
 
 /// What a tab of an `InAppTabbedBrowser` gets from its host and tells it
@@ -53,6 +66,7 @@ class InAppBrowserTabHooks {
     this.onPage,
     this.belowBar,
     this.barTrailing,
+    this.barAction,
   });
 
   /// The tab is the one on screen: it takes Back.
@@ -85,6 +99,11 @@ class InAppBrowserTabHooks {
 
   /// In the bar's row, after the address: the tabs, on a short screen.
   final Widget? barTrailing;
+
+  /// In the bar's row, right after the address, at its own size: the
+  /// count of tabs in the workspace pane, where the bar is the panel's one
+  /// row over its card.
+  final Widget? barAction;
 }
 
 /// The in-app browser of a conversation, opened from the notch sheet's
@@ -112,11 +131,17 @@ class InAppBrowserScreen extends StatefulWidget {
     this.settingsFor = defaultArtifactWebViewSettings,
     this.rendererWatch,
     this.tab,
+    this.loopbackReach,
     super.key,
   });
 
   /// Set when the screen is one tab of an `InAppTabbedBrowser`.
   final InAppBrowserTabHooks? tab;
+
+  /// 1.4.3: with an SSH profile, a loopback address is the server's, loaded
+  /// through a forward (Desktop's preview reach) and shown as asked. Null:
+  /// it is the phone's, and its error says so.
+  final BrowserLoopbackReach? loopbackReach;
 
   /// The connection of the chat this browser belongs to, and its runtime
   /// session, read live. Either null: no agent can read it.
@@ -169,6 +194,14 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
 
   /// Which WebView this is: a new one after a dead renderer.
   int _webGeneration = 0;
+
+  /// Monotonic counter identifying this screen to [BrowserLoopbackReach].
+  static int _nextOwnerSeq = 0;
+  late final String _ownerId =
+      widget.tab?.tabId ?? 'screen-${++_nextOwnerSeq}';
+
+  /// Sequence number guarding async forward resolution against races.
+  int _loadSeq = 0;
 
   WebViewRendererWatch get _rendererWatch =>
       widget.rendererWatch ?? WebViewRenderGuard.instance;
@@ -235,12 +268,25 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   }
 
   @override
+  void didUpdateWidget(InAppBrowserScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.loopbackReach, widget.loopbackReach)) {
+      _loadSeq++;
+      final oldReach = oldWidget.loopbackReach;
+      if (oldReach != null) unawaited(oldReach.releaseOwner(_ownerId));
+    }
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycle = state;
   }
 
   @override
   void dispose() {
+    _loadSeq++;
+    final reach = widget.loopbackReach;
+    if (reach != null) unawaited(reach.releaseOwner(_ownerId));
     _detachAgent?.call();
     if (_agentReachable) widget.tab?.onPage?.call(null);
     _rendererWatch.forget(_controller);
@@ -442,20 +488,60 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   /// «Ver» (REVIEW-R5-B #26). Loads Console starts never come through here.
   NavigationDecision _onNavigationRequest(NavigationRequest request) {
     final decision = inAppBrowserNavigationDecision(request);
-    if (decision == NavigationDecision.navigate &&
-        request.isMainFrame &&
-        _agentReads == 0) {
+    if (decision != NavigationDecision.navigate) return decision;
+    final uri = Uri.tryParse(request.url);
+    final reach = widget.loopbackReach;
+    if (reach != null && uri != null) {
+      if (browserLoopbackTarget(uri) != null) {
+        if (request.isMainFrame) {
+          if (_agentReads == 0) _setAgentOwned(false);
+          _navigate(uri);
+        }
+        return NavigationDecision.prevent;
+      }
+      if (isInternalBrowserForwardHost(uri.host)) {
+        if (reach.isOwnLiveForwardUri(_ownerId, uri)) {
+          if (request.isMainFrame && _agentReads == 0) {
+            _setAgentOwned(false);
+          }
+          return NavigationDecision.navigate;
+        }
+        if (request.isMainFrame && reach.isRetiredForwardUri(uri)) {
+          final revealed = Uri.tryParse(reach.reveal(request.url));
+          if (revealed != null) {
+            if (_agentReads == 0) _setAgentOwned(false);
+            _navigate(revealed);
+          }
+        }
+        return NavigationDecision.prevent;
+      }
+      if (request.isMainFrame) {
+        unawaited(reach.releaseOwner(_ownerId));
+      }
+    }
+    if (request.isMainFrame && _agentReads == 0) {
       _setAgentOwned(false);
     }
     return decision;
   }
 
+  void _releaseForwardIfOffOrigin(String rawUrl) {
+    final reach = widget.loopbackReach;
+    if (reach == null || rawUrl.isEmpty) return;
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null) return;
+    if (reach.isOwnLiveForwardUri(_ownerId, uri)) return;
+    if (browserLoopbackTarget(uri) != null) return;
+    unawaited(reach.releaseOwner(_ownerId));
+  }
+
   void _onPageStarted(String url) {
     if (!mounted) return;
+    _releaseForwardIfOffOrigin(url);
     setState(() {
       _loading = true;
       _error = null;
-      if (url.isNotEmpty) _url = url;
+      if (url.isNotEmpty) _url = _asked(url);
       _pending = null;
     });
     _syncAddressField();
@@ -466,7 +552,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
     if (!mounted) return;
     setState(() {
       _loading = false;
-      if (url.isNotEmpty) _url = url;
+      if (url.isNotEmpty) _url = _asked(url);
       _pending = null;
     });
     _syncAddressField();
@@ -482,8 +568,9 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   void _onUrlChange(UrlChange change) {
     final url = change.url;
     if (!mounted || url == null || url.isEmpty) return;
+    _releaseForwardIfOffOrigin(url);
     setState(() {
-      _url = url;
+      _url = _asked(url);
       _pending = null;
     });
     _syncAddressField();
@@ -496,7 +583,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
     if (!mounted || error.isForMainFrame == false) return;
     setState(() {
       _error = InAppBrowserLoadError(
-        url: error.url ?? _pending ?? _url,
+        url: _asked(error.url ?? _pending ?? _url),
         description: error.description,
         code: error.errorCode,
       );
@@ -521,19 +608,72 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   // ── Actions (all of them follow a tap by the user) ─────────────────────
 
   Future<void> _load(Uri uri) async {
+    final loadSeq = ++_loadSeq;
     try {
       await _ready;
-      await _controller.loadRequest(uri);
+      if (!mounted || loadSeq != _loadSeq) return;
+      final reach = widget.loopbackReach;
+      if (reach == null) {
+        await _controller.loadRequest(uri);
+        return;
+      }
+      final resolution = await reach.resolve(uri, ownerId: _ownerId);
+      if (!mounted || loadSeq != _loadSeq) return;
+      switch (resolution.status) {
+        case BrowserLoopbackStatus.passthrough:
+          await _controller.loadRequest(resolution.uri);
+        case BrowserLoopbackStatus.forwarded:
+          await _controller.loadRequest(
+            resolution.uri,
+            headers: resolution.headers,
+          );
+        case BrowserLoopbackStatus.unsupportedHttps:
+          setState(() {
+            _url = uri.toString();
+            _error = InAppBrowserLoadError(
+              url: uri.toString(),
+              description: '',
+              loopbackHttpsUnsupported: true,
+            );
+            _loading = false;
+            _pending = null;
+          });
+          _syncAddressField();
+          _reportUrl();
+        case BrowserLoopbackStatus.unavailable:
+          setState(() {
+            _url = uri.toString();
+            _error = InAppBrowserLoadError(
+              url: uri.toString(),
+              description: '',
+              loopbackUnavailable: true,
+            );
+            _loading = false;
+            _pending = null;
+          });
+          _syncAddressField();
+          _reportUrl();
+      }
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || loadSeq != _loadSeq) return;
       setState(() {
-        _error = InAppBrowserLoadError(url: uri.toString(), description: '');
+        _error = InAppBrowserLoadError(
+          url: uri.toString(),
+          description: '',
+          loopbackUnavailable:
+              widget.loopbackReach != null &&
+              browserLoopbackTarget(uri) != null,
+        );
         _loading = false;
         _pending = null;
       });
       _syncAddressField();
     }
   }
+
+  /// A page's address as the user asked for it: a forward's local end
+  /// shows as the loopback address it reaches.
+  String _asked(String url) => widget.loopbackReach?.reveal(url) ?? url;
 
   void _navigate(Uri uri) {
     setState(() {
@@ -571,6 +711,15 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
       return;
     }
     if (_url.isEmpty) return;
+    final current = browserExternalUri(_url);
+    final reach = widget.loopbackReach;
+    if (current != null &&
+        reach != null &&
+        browserLoopbackTarget(current) != null &&
+        !reach.hasLiveForwardFor(_ownerId, current)) {
+      _navigate(current);
+      return;
+    }
     setState(() {
       _error = null;
       _loading = true;
@@ -662,6 +811,28 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
     final foreground = tab?.foreground ?? true;
     // A tab typing its address: the page keeps the room the notch took.
     final typing = tab != null && MediaQuery.viewInsetsOf(context).bottom > 0;
+    final page = Stack(
+      fit: StackFit.expand,
+      children: [
+        // A new platform view for a new WebView.
+        KeyedSubtree(
+          key: ValueKey(_webGeneration),
+          child: WebViewWidget(
+            key: const ValueKey('in-app-browser-webview'),
+            controller: _controller,
+          ),
+        ),
+        if (error != null)
+          _InAppBrowserErrorView(
+            error: error,
+            reached: widget.loopbackReach != null,
+            onRetry: _reload,
+            onOpenExternal: (uri) => unawaited(_openExternal(uri)),
+          )
+        else if (blank)
+          const _InAppBrowserBlankView(),
+      ],
+    );
     return PopScope(
       // Back walks the page's history first (Desktop: Escape goes back when
       // the page has somewhere to go back to); the notch always leaves.
@@ -692,47 +863,35 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
                   onOpen: (offer) => _showAgentPage(offer.url, offer.label),
                 ),
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: HermesSpace.x2,
-                  ),
-                  child: DecoratedBox(
-                    position: DecorationPosition.foreground,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: colors.divider),
-                      borderRadius: BorderRadius.circular(HermesRadius.group),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(HermesRadius.group),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          // A new platform view for a new WebView.
-                          KeyedSubtree(
-                            key: ValueKey(_webGeneration),
-                            child: WebViewWidget(
-                              key: const ValueKey('in-app-browser-webview'),
-                              controller: _controller,
+                // 1.4.3: in the pane the page is the panel's card, as the
+                // Terminal's (its margin, radius and hairline).
+                child: inPane
+                    ? ChatWorkspacePanelCard(child: page)
+                    : Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: HermesSpace.x2,
+                        ),
+                        child: DecoratedBox(
+                          position: DecorationPosition.foreground,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: colors.divider),
+                            borderRadius: BorderRadius.circular(
+                              HermesRadius.group,
                             ),
                           ),
-                          if (error != null)
-                            _InAppBrowserErrorView(
-                              error: error,
-                              onRetry: _reload,
-                              onOpenExternal: (uri) =>
-                                  unawaited(_openExternal(uri)),
-                            )
-                          else if (blank)
-                            const _InAppBrowserBlankView(),
-                        ],
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(
+                              HermesRadius.group,
+                            ),
+                            child: page,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ),
               ),
-              if (inPane || typing)
+              // In the pane the card keeps its own margin under it.
+              if (typing && !inPane)
                 const SizedBox(height: HermesSpace.x2)
-              else
+              else if (!inPane)
                 BackToChatNotch(
                   notchKey: const ValueKey('in-app-browser-notch'),
                   label: widget.backLabel ?? strings.brwBackToChat,
@@ -815,6 +974,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
             Expanded(flex: 3, child: trailing),
           ] else
             Expanded(child: _buildAddressField(strings, colors)),
+          ?widget.tab?.barAction,
           IconButton(
             key: const ValueKey('in-app-browser-open-external'),
             tooltip: strings.brwOpenExternal,
@@ -925,11 +1085,15 @@ class _InAppBrowserBlankView extends StatelessWidget {
 class _InAppBrowserErrorView extends StatelessWidget {
   const _InAppBrowserErrorView({
     required this.error,
+    required this.reached,
     required this.onRetry,
     required this.onOpenExternal,
   });
 
   final InAppBrowserLoadError error;
+
+  /// Loopback addresses go to the server over SSH: no mismatch to explain.
+  final bool reached;
   final VoidCallback onRetry;
   final ValueChanged<Uri> onOpenExternal;
 
@@ -939,9 +1103,16 @@ class _InAppBrowserErrorView extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final kind = classifyBrowserLoadError(error.description);
     final cleartext =
-        !error.rendererGone && kind == InAppBrowserErrorKind.cleartextBlocked;
+        !error.rendererGone &&
+        !error.loopbackHttpsUnsupported &&
+        !error.loopbackUnavailable &&
+        kind == InAppBrowserErrorKind.cleartextBlocked;
     final title = error.rendererGone
         ? strings.brwRendererGone
+        : error.loopbackHttpsUnsupported
+        ? strings.bg143LoopbackHttpsTitle
+        : error.loopbackUnavailable
+        ? strings.brwFailedToLoad
         : switch (kind) {
             InAppBrowserErrorKind.cleartextBlocked => strings.brwCleartextTitle,
             InAppBrowserErrorKind.serverNotFound => strings.brwServerNotFound,
@@ -949,6 +1120,10 @@ class _InAppBrowserErrorView extends StatelessWidget {
           };
     final description = error.rendererGone
         ? strings.brwRendererGoneBody
+        : error.loopbackHttpsUnsupported
+        ? strings.bg143LoopbackHttpsBody
+        : error.loopbackUnavailable
+        ? strings.bg143LoopbackUnavailableBody
         : cleartext
         ? strings.brwCleartextBody
         : error.description.isEmpty
@@ -970,6 +1145,11 @@ class _InAppBrowserErrorView extends StatelessWidget {
             children: [
               Text(
                 title,
+                key: error.loopbackHttpsUnsupported
+                    ? const ValueKey(
+                        'in-app-browser-loopback-https-unsupported',
+                      )
+                    : null,
                 textAlign: TextAlign.center,
                 style: HermesType.style(HermesType.title, colors.textPrimary),
               ),
@@ -999,7 +1179,7 @@ class _InAppBrowserErrorView extends StatelessWidget {
               ),
               const SizedBox(height: HermesSpace.x1),
               Text(description, textAlign: TextAlign.center, style: support),
-              if (isLoopbackBrowserUrl(error.url)) ...[
+              if (!reached && isLoopbackBrowserUrl(error.url)) ...[
                 const SizedBox(height: HermesSpace.x2),
                 Text(
                   strings.brwRemoteLoopback,

@@ -52,6 +52,17 @@ abstract interface class BotModeListingGateway {
   Future<HostedGroupListing> listGroupsDetailed({required int generation});
 }
 
+/// Optional: `groups.state` with its `change_events`, true when the backend
+/// pushes `groups.changed` for the room (Hermes Agent
+/// `gateway/hosted_room_context.py`; older backends omit it).
+/// [TuiBotModeGateway] has it.
+abstract interface class BotModeRoomEventsGateway {
+  Future<
+    ({HostedGroupRoom room, RoomDriverStatus? driverStatus, bool changeEvents})
+  >
+  groupStateWithEvents(String roomId, {required int generation});
+}
+
 /// [gateway]'s listing: tolerant when it can be, strict otherwise.
 Future<HostedGroupListing> botModeListing(
   BotModeGateway gateway, {
@@ -72,7 +83,8 @@ Future<HostedGroupListing> botModeListing(
 bool isGroupsUnsupported(Object error) =>
     error is TuiGatewayRpcError && error.code == -32601;
 
-final class TuiBotModeGateway implements BotModeGateway, BotModeListingGateway {
+final class TuiBotModeGateway
+    implements BotModeGateway, BotModeListingGateway, BotModeRoomEventsGateway {
   final TuiGatewayClient client;
   const TuiBotModeGateway(this.client);
 
@@ -101,6 +113,12 @@ final class TuiBotModeGateway implements BotModeGateway, BotModeListingGateway {
     String roomId, {
     required int generation,
   }) => client.groupStateWithDriver(roomId, generation: generation);
+  @override
+  Future<
+    ({HostedGroupRoom room, RoomDriverStatus? driverStatus, bool changeEvents})
+  >
+  groupStateWithEvents(String roomId, {required int generation}) =>
+      client.groupStateWithEvents(roomId, generation: generation);
   @override
   Future<HostedGroupLogPage> groupLog(
     String roomId, {

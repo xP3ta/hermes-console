@@ -421,7 +421,7 @@ void main() {
           reduced: true,
         ),
       );
-      // Settled, the outcome is a quiet «·» lead: no ring, no check.
+      // The settled capsule leads with a small check.
       expect(
         find.descendant(
           of: find.byType(TurnInlineActivity),
@@ -432,7 +432,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(TurnInlineActivity),
-          matching: find.text('·'),
+          matching: find.byIcon(HIcons.done_rounded),
         ),
         findsOneWidget,
       );

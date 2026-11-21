@@ -1122,7 +1122,12 @@ List<RoomThreadInfo> roomThreads(List<HostedGroupEvent> events) {
   return out;
 }
 
-/// Every attachment referenced in the room, newest first.
+/// Every file of the room, newest message first: the files a message
+/// names by path, then the files of its `attachments` manifest (the room's
+/// own store) in manifest order, as the message shows them. The store has
+/// no list method upstream (Hermes Desktop never calls one,
+/// `canonical-group-history.test.tsx`): its files are the manifests of the
+/// room log.
 List<({RoomAttachmentRef ref, HostedGroupEvent event})> roomFiles(
   List<HostedGroupEvent> events,
 ) {
@@ -1132,6 +1137,9 @@ List<({RoomAttachmentRef ref, HostedGroupEvent event})> roomFiles(
     if (text == null) continue;
     for (final ref in parseRoomMessageText(text).attachments) {
       out.add((ref: ref, event: e));
+    }
+    for (final file in e.attachments) {
+      out.add((ref: RoomAttachmentRef.stored(e.eventId, file), event: e));
     }
   }
   return out;

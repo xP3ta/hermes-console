@@ -13,7 +13,7 @@ void main() {
   );
 
   test(
-    'authoritative roster exposes unopened work and clears after two absences',
+    'authoritative roster exposes unopened work and clears on first absence',
     () {
       final aggregate = GlobalActivityAggregate.inMemory(
         now: () => DateTime.utc(2026),
@@ -56,28 +56,13 @@ void main() {
         roster: const DesktopActiveSessionList(),
       );
       expect(
-        aggregate.activityFor('connection-a', 'default', 'durable-a')?.active,
-        isTrue,
-      );
-
-      aggregate.applyRoster(
-        connectionId: 'connection-a',
-        profile: 'default',
-        replayEpoch: 'epoch-a',
-        requestGeneration: aggregate.beginRosterRequest(
-          'connection-a',
-          'default',
-        ),
-        roster: const DesktopActiveSessionList(),
-      );
-      expect(
         aggregate.activityFor('connection-a', 'default', 'durable-a'),
         isNull,
       );
     },
   );
 
-  test('two explicit non-busy roster rows clear activity', () {
+  test('one explicit non-busy roster row clears activity immediately', () {
     final aggregate = GlobalActivityAggregate.inMemory();
 
     void apply(String status) {
@@ -102,13 +87,134 @@ void main() {
     }
 
     apply('working');
-    apply('idle');
     expect(aggregate.isActive('connection-a', 'default', 'durable-a'), isTrue);
     apply('idle');
     expect(
       aggregate.activityFor('connection-a', 'default', 'durable-a'),
       isNull,
     );
+  });
+
+  test(
+    'in-flight non-busy roster does not clear activity updated by live event',
+    () {
+      final aggregate = GlobalActivityAggregate.inMemory();
+      final inFlight = aggregate.beginRosterRequest('connection-a', 'default');
+
+      aggregate.observeEvent(
+        scope: scope,
+        event: const TuiGatewayEvent(
+          type: 'message.start',
+          sessionId: 'runtime-a',
+          sequence: 1,
+          payload: {},
+        ),
+      );
+
+      aggregate.applyRoster(
+        connectionId: 'connection-a',
+        profile: 'default',
+        replayEpoch: 'epoch-a',
+        requestGeneration: inFlight,
+        roster: const DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'runtime-a',
+              storedSessionId: 'durable-a',
+              status: 'idle',
+            ),
+          ],
+        ),
+      );
+
+      expect(
+        aggregate.activityFor('connection-a', 'default', 'durable-a')?.phase,
+        GlobalActivityPhase.preparing,
+      );
+
+      aggregate.applyRoster(
+        connectionId: 'connection-a',
+        profile: 'default',
+        replayEpoch: 'epoch-a',
+        requestGeneration: aggregate.beginRosterRequest(
+          'connection-a',
+          'default',
+        ),
+        roster: const DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'runtime-a',
+              storedSessionId: 'durable-a',
+              status: 'idle',
+            ),
+          ],
+        ),
+      );
+      expect(
+        aggregate.activityFor('connection-a', 'default', 'durable-a'),
+        isNull,
+      );
+    },
+  );
+
+  test('session.info running false settles activity unless awaiting input', () {
+    final terminals = <GlobalActivityPhase>[];
+    final aggregate = GlobalActivityAggregate.inMemory(
+      onTerminal: (_, phase) => terminals.add(phase),
+    );
+    aggregate.applyRoster(
+      connectionId: 'connection-a',
+      profile: 'default',
+      replayEpoch: 'epoch-a',
+      requestGeneration: aggregate.beginRosterRequest(
+        'connection-a',
+        'default',
+      ),
+      roster: const DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-a',
+            storedSessionId: 'durable-a',
+            status: 'working',
+          ),
+        ],
+      ),
+    );
+
+    aggregate.observeGatewayEvent(
+      connectionId: 'connection-a',
+      profile: 'default',
+      event: const TuiGatewayEvent(
+        type: 'session.info',
+        sessionId: 'runtime-a',
+        payload: {
+          'running': false,
+          'pending_approval': {'id': 'req-1'},
+        },
+      ),
+    );
+    expect(
+      aggregate.activityFor('connection-a', 'default', 'durable-a')?.phase,
+      GlobalActivityPhase.waitingForUser,
+    );
+    expect(terminals, isEmpty);
+
+    aggregate.observeGatewayEvent(
+      connectionId: 'connection-a',
+      profile: 'default',
+      event: const TuiGatewayEvent(
+        type: 'session.info',
+        sessionId: 'runtime-a',
+        payload: {
+          'info': {'running': false},
+        },
+      ),
+    );
+    expect(
+      aggregate.activityFor('connection-a', 'default', 'durable-a'),
+      isNull,
+    );
+    expect(terminals, [GlobalActivityPhase.completed]);
   });
 
   test('malformed roster only marks known activity stale', () {

@@ -247,6 +247,9 @@ abstract class HermesProjectFileWritesGateway {
   /// Creates [path] and returns the folder the server reports.
   Future<String> createProjectFolder(String path);
 
+  /// Creates an empty file and rejects an existing entry at [path].
+  Future<void> createProjectFile(String path);
+
   /// Creates or overwrites the UTF-8 text file at [path].
   Future<void> writeProjectFileText(String path, String content);
 
@@ -260,6 +263,10 @@ abstract class HermesProjectFileWritesGateway {
   /// Deletes a file or an empty folder (never recursive).
   Future<void> deleteProjectEntry(String path);
 }
+
+/// A file browser and editor bound to the chat that owns its paths.
+abstract interface class HermesPinnedProjectFiles
+    implements HermesProjectFilesGateway, HermesProjectFileWritesGateway {}
 
 /// The child chat `session.branch` / `session.branch_whole` created. Only the
 /// identity travels: the child chat loads its own transcript when opened.

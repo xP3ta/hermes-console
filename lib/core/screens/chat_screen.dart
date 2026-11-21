@@ -45,6 +45,7 @@ import '../widgets/chat/message_reaction_bar.dart';
 import '../widgets/chat/quick_reaction_bar.dart';
 import '../models/message_reaction.dart' show MessageReactionAuthor;
 import '../widgets/chat/chat_message_frame.dart';
+import '../widgets/chat/turn_activity_pill.dart' show TurnActivityFooter;
 import '../widgets/message_avatar_header.dart' show AvatarDetailsIndent;
 import '../widgets/chat/chat_replying_indicator.dart';
 import '../widgets/chat/composer_pasted_image.dart';
@@ -285,9 +286,24 @@ import '../widgets/hermes_drawer.dart';
 import '../widgets/owned_resource_host.dart';
 import '../widgets/workspace/chat_workspace.dart';
 import '../widgets/workspace/chat_workspace_host.dart';
+import '../widgets/workspace/workspace_panel_frame.dart';
 import 'herdr_agents_screen.dart';
 import 'sftp_browser_screen.dart';
+import 'ssh_credentials_screen.dart';
 import 'ssh_screen.dart';
+import '../services/desktop_control_gateway.dart'
+    show HermesProjectFileWritesGateway, HermesProjectFilesGateway;
+import '../services/ssh_manager.dart' show SshConfig;
+import '../services/ssh_session_kind.dart' show SshSessionKind;
+import '../services/ssh_session_service.dart'
+    show SshSessionPhase;
+import '../services/terminal_sessions.dart' show TerminalRecentStore;
+import '../widgets/ssh_sessions_sheet.dart';
+import '../widgets/ssh_host_key_dialog.dart';
+import '../browser/browser_loopback_reach.dart';
+import '../browser/in_app_browser_policy.dart' show isBrowsableWebUri;
+import '../services/ssh_profile_presence.dart';
+import '../widgets/workspace/workspace_files_panel.dart';
 import '../widgets/agent_name_scope.dart';
 import '../widgets/profile_scope.dart' show appActiveProfileScope;
 import '../widgets/hermes_premium_ui.dart';
@@ -297,9 +313,14 @@ import '../companion/models/companion_mood.dart';
 import '../widgets/interactive_prompt_card.dart';
 import '../widgets/markdown_table.dart';
 import '../widgets/mission_profile_avatar.dart';
+import '../bots/data/bot_mode_repository.dart'
+    show TuiBotModeGateway;
+import '../bots/state/bot_delivery_watch.dart';
 import '../bots/ui/bot_identity.dart';
 import '../bots/ui/profile/profile_model_picker.dart' show ProfileModelEdits;
 import '../bots/ui/roster/living_bot_face.dart';
+import '../bots/ui/teammate_chat_route.dart';
+import '../bots/ui/teammate_waits_strip.dart';
 import '../services/bot_roster_store.dart';
 import '../bots/ui/room/room_widgets.dart' show RoomSeparator;
 import '../widgets/motion_entrance.dart';
@@ -1737,12 +1758,80 @@ class _ChatScreenState extends State<ChatScreen>
   /// set up (v25) and offers to set it up otherwise; Files is the SFTP
   /// browser; Git the conversation folder's review (Desktop's local
   /// operations only, no push); Navegador the in-app browser.
-  Widget _buildWorkspaceTab(BuildContext context, ChatWorkspaceTab tab) {
+  ///
+  /// A tab's first route is built once by its navigator: the body follows
+  /// what decides it (the folder, Git's answers) on its own.
+  Widget _buildWorkspaceTab(BuildContext context, ChatWorkspaceTab tab) =>
+      ListenableBuilder(
+        listenable: _panelChanges,
+        builder: (context, _) => _workspaceTabBody(context, tab),
+      );
+
+  Widget _workspaceTabBody(BuildContext context, ChatWorkspaceTab tab) {
     switch (tab) {
       case ChatWorkspaceTab.terminal:
-        return SshScreen(connection: widget.connection);
+        return SshScreen(
+          connection: widget.connection,
+          onOpenLink: _openTerminalLinkInBrowser,
+        );
       case ChatWorkspaceTab.files:
-        return SftpBrowserScreen(connection: widget.connection);
+        // 1.4.3: without an SSH profile, the conversation's folder through
+        // the server's own `/api/fs`, as Desktop's Files pane; with one,
+        // SFTP as before.
+        final strings = Strings.of(context);
+        final folder = _gitRepoPath;
+        final gateway = _chat.desktopControlGateway;
+        final pinnedFiles = gateway is TuiGatewayClient
+            ? gateway.pinProjectFiles(
+                profile: _effectiveSessionProfile,
+                sessionId: _chat.storedSessionId,
+              )
+            : null;
+        final files = pinnedFiles ?? _filesGateway;
+        final writes = pinnedFiles ??
+            (gateway is HermesProjectFileWritesGateway
+                ? gateway as HermesProjectFileWritesGateway
+                : null);
+        final source = chatFilesSource(
+          withoutSsh: _withoutSsh,
+          files: files,
+          folder: folder,
+        );
+        final server = source == ChatFilesSource.server;
+        return ChatWorkspacePanel(
+          insetCard: source == ChatFilesSource.none,
+          header: ChatWorkspacePanelHeader(
+            icon: chatWorkspaceTabIcon(ChatWorkspaceTab.files),
+            title: server ? folder! : widget.connection.label,
+            detail: server ? widget.connection.label : null,
+            mono: server,
+            tag: server ? strings.wsPanelTagServer : strings.wsPanelTagSftp,
+          ),
+          child: switch (source) {
+            ChatFilesSource.sftp => SftpBrowserScreen(
+              key: const ValueKey('chat-files-sftp'),
+              connection: widget.connection,
+            ),
+            ChatFilesSource.server => ChatWorkspaceServerFiles(
+              key: ValueKey('chat-files-server-$folder'),
+              files: files!,
+              writes: writes,
+              root: folder!,
+              readOnlyConnection: widget.connection.readOnly,
+            ),
+            ChatFilesSource.none => Center(
+              child: HermesEmptyState(
+                key: const ValueKey('chat-files-unavailable'),
+                icon: chatWorkspaceTabIcon(ChatWorkspaceTab.files),
+                title: strings.cwsFiles,
+                body: strings.wsPanelFilesUnavailable,
+                primaryLabel: strings.ssh2Configure,
+                primaryIcon: HIcons.settings_ethernet_rounded,
+                onPrimary: () => _addSshProfile(context),
+              ),
+            ),
+          },
+        );
       case ChatWorkspaceTab.agents:
         return HerdrAgentsScreen(connection: widget.connection);
       case ChatWorkspaceTab.git:
@@ -1759,16 +1848,28 @@ class _ChatScreenState extends State<ChatScreen>
         final policy = context
             .findAncestorStateOfType<HermesAppState>()
             ?.approvalPolicy;
-        return GitHubScreen(
-          gateway: gateway,
-          connectionId: widget.connection.id,
-          repoPath: repo,
-          sessionReadOnly:
-              policy?.effectiveMode(widget.session.id) == ApprovalMode.readOnly,
-          // Conflicts are solved in the terminal: its tab, beside Git.
-          onOpenTerminal: _sshAvailable(context)
-              ? () => _workspaceFor(context).open(ChatWorkspaceTab.terminal)
-              : null,
+        return ChatWorkspacePanel(
+          // The folder in the context line, as the Terminal's shell folder.
+          header: ChatWorkspacePanelHeader(
+            icon: chatWorkspaceTabIcon(ChatWorkspaceTab.git),
+            title: repo,
+            detail: widget.connection.label,
+          ),
+          child: GitHubScreen(
+            // Keyed by the folder, as Desktop's `ReviewPaneContent` keys its
+            // review by cwd: another folder is another review.
+            key: ValueKey('chat-git-panel-$repo'),
+            gateway: gateway,
+            connectionId: widget.connection.id,
+            repoPath: repo,
+            sessionReadOnly:
+                policy?.effectiveMode(widget.session.id) ==
+                ApprovalMode.readOnly,
+            // Conflicts are solved in the terminal: its tab, beside Git.
+            onOpenTerminal: _sshAvailable(context)
+                ? () => _workspaceFor(context).open(ChatWorkspaceTab.terminal)
+                : null,
+          ),
         );
       case ChatWorkspaceTab.browser:
         // Q9-NAV: the chat's tabs, the same as over the chat.
@@ -1778,9 +1879,110 @@ class _ChatScreenState extends State<ChatScreen>
           agentSessionId: () => _chat.desktopRuntimeSessionId,
           working: () => _runningWork.value.turnActive,
           changes: _browserPipChanges,
+          loopbackReach: _browserLoopbackReach,
+          loopbackReachScope: _browserLoopbackReachScope,
         );
     }
   }
+
+  Object? _workspaceTabRouteScope(ChatWorkspaceTab tab) => switch (tab) {
+    ChatWorkspaceTab.git => (widget.connection.id, _gitRepoPath),
+    ChatWorkspaceTab.files when _withoutSsh => (
+      widget.connection.id,
+      _gitRepoPath,
+      _effectiveSessionProfile,
+      _chat.storedSessionId,
+    ),
+    _ => null,
+  };
+
+  /// The server's folder routes (`/api/fs`) of this conversation's gateway,
+  /// what Desktop's Files pane reads; null when it has none.
+  HermesProjectFilesGateway? get _filesGateway {
+    final gateway = _chat.desktopControlGateway;
+    return gateway is HermesProjectFilesGateway
+        ? gateway as HermesProjectFilesGateway
+        : null;
+  }
+
+  /// 1.4.3: with an SSH profile the Browser reaches the server's loopback
+  /// through it, as Desktop's preview reach does for SSH remotes
+  /// (`electron/preview-reach.ts`): over the terminal's connection while it
+  /// is up, else one of the browser's own. Without a profile, null: a
+  /// loopback address stays the phone's, and its error says so.
+  void _openTerminalLinkInBrowser(Uri uri) {
+    if (!isBrowsableWebUri(uri)) return;
+    _browserTabs.open(url: uri);
+    _workspaceFor(context).open(ChatWorkspaceTab.browser);
+  }
+
+  Object? get _browserLoopbackReachScope {
+    final profile = _sshProfile;
+    if (profile == null) return null;
+    return '${widget.connection.id}|${profile.target}|'
+        '${profile.method.name}|$_sshProfileRevision';
+  }
+
+  BrowserLoopbackReach Function()? get _browserLoopbackReach {
+    if (_sshProfile == null) return null;
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app == null) return null;
+    final id = widget.connection.id;
+    return () => BrowserLoopbackReach.overSsh(
+      live: () {
+        final session = app.sshSessions.of(id);
+        return session?.phase.value == SshSessionPhase.ready
+            ? session?.client
+            : null;
+      },
+      connect: () => app.sshManager.connect(
+        id,
+        onHostKey: (prompt) async =>
+            mounted && await showSshHostKeyDialog(context, prompt),
+      ),
+    );
+  }
+
+  /// 1.4.3: the pane bar's Herdr button (its place was there, never
+  /// filled) for the Terminal of a profile whose session is Herdr, once the
+  /// terminal is connected: the same session switcher, on its Herdr tab.
+  VoidCallback? _workspaceHerdr(ChatWorkspaceTab tab) {
+    if (tab != ChatWorkspaceTab.terminal ||
+        _sshProfile?.sessionKind != SshSessionKind.herdr) {
+      return null;
+    }
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final session = app?.sshSessions.of(widget.connection.id);
+    if (app == null ||
+        session?.client == null ||
+        session?.phase.value != SshSessionPhase.ready) {
+      return null;
+    }
+    return () => unawaited(_openHerdrSessions(app));
+  }
+
+  Future<void> _openHerdrSessions(HermesAppState app) async {
+    final id = widget.connection.id;
+    final session = app.sshSessions.of(id);
+    if (session == null) return;
+    await chooseSshTerminalSession(
+      context,
+      service: app.sshSessions,
+      session: session,
+      recents: TerminalRecentStore(app.connManager.prefs, id),
+      startOnHerdr: true,
+    );
+  }
+
+  /// The SSH profile's form, from a panel ([context] is the panel's): a
+  /// profile saved there is read again ([SshProfilePresence]).
+  void _addSshProfile(BuildContext context) => unawaited(
+    Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => SshCredentialsScreen(connection: widget.connection),
+      ),
+    ),
+  );
 
   /// SSH (Terminal, Files) is there whenever the app is: the ≡ menu's own
   /// SSH entry has the same rule (`buildAppSettingsDestinations`).
@@ -1795,6 +1997,9 @@ class _ChatScreenState extends State<ChatScreen>
       repoPath: _gitRepoPath,
       connectionId: widget.connection.id,
     );
+    // Learning that the gateway has no git routes never takes away a Git
+    // tab already open: it says so inside.
+    final gitOpen = _workspaceFor(context).tabs.contains(ChatWorkspaceTab.git);
     return [
       if (ssh) ChatWorkspaceTab.terminal,
       // Herdr's agents ride the same SSH connection as the terminal: beside
@@ -1802,13 +2007,11 @@ class _ChatScreenState extends State<ChatScreen>
       if (ssh && FeatureFlags.instance.agentsSection)
         ChatWorkspaceTab.agents,
       if (ssh) ChatWorkspaceTab.files,
-      if (git.available) ChatWorkspaceTab.git,
+      if (git.available || gitOpen) ChatWorkspaceTab.git,
       ChatWorkspaceTab.browser,
     ];
   }
 
-  /// v25's count on the Git tab: the folder's changed files, as on the
-  /// notch sheet's Git.
   int? _workspaceTabBadge(ChatWorkspaceTab tab) {
     if (tab != ChatWorkspaceTab.git) return null;
     return gitNotchEntry(
@@ -7503,8 +7706,9 @@ class _ChatScreenState extends State<ChatScreen>
         if (!mounted) return;
         _onVoiceState();
         // Whether this folder is a repository is known before the notch
-        // sheet is first opened, so its Git pill does not appear late.
-        _warmGitStatus();
+        // sheet is first opened, so its Git pill does not appear late; the
+        // panels follow the folder from now on.
+        _startPanels();
         // The chat's first frame is out. Nothing loads now: the recogniser
         // loads when the microphone is first touched (see
         // `ChatRecognizerPrewarm.armOnMicPressDown`).
@@ -9556,18 +9760,22 @@ class _ChatScreenState extends State<ChatScreen>
       compact: _compactHeader,
       leading: leading,
       trailing: trailing,
-      // A tap opens the last panel (over the chat where nothing fits
-      // beside it) and closes it; a long press picks one.
-      trailingSecondary: ChatViewsButton(
-        key: const ValueKey('chat-views-button'),
-        controller: workspace,
-        availableTabs: _workspaceTabsAvailable(context),
-        // the owner (final windows): «Vistas» is only the layout (Chat ·
-        // Dividido · Trabajo); the panels are Ajustes'.
-        onPopover: (closed) {
-          _viewsPopoverOpen = true;
-          unawaited(closed.whenComplete(() => _viewsPopoverOpen = false));
-        },
+      // Vistas controls the layout; Ajustes opens the panels.
+      // A long press opens the panel last used.
+      trailingSecondary: ListenableBuilder(
+        // Git is offered as soon as its folder is known.
+        listenable: _panelChanges,
+        builder: (context, _) => ChatViewsButton(
+          key: const ValueKey('chat-views-button'),
+          controller: workspace,
+          availableTabs: _workspaceTabsAvailable(context),
+          // Each use reads Git again (a folder made a repository since).
+          onUse: _warmGitStatus,
+          onPopover: (closed) {
+            _viewsPopoverOpen = true;
+            unawaited(closed.whenComplete(() => _viewsPopoverOpen = false));
+          },
+        ),
       ),
       // Seam for the mascot engine (review/1215-mascot). QA 9493: the face
       // is always the chat's ORIGINAL one (custom avatar, the bot's face);
@@ -10970,6 +11178,7 @@ class _ChatScreenState extends State<ChatScreen>
     AppLockSensitiveReadFence.changes.removeListener(_onDraftDisclosureChanged);
     final foregroundLifecycle = _foregroundConversationLifecycle;
     _modelPulse.dispose();
+    _teammateWatch?.dispose();
     // Corta YA la suscripción a los cambios del chat y marca el desmontaje, para
     // que ningún evento diferido del stream dispare setState sobre este State ya
     // defunct. El stream del agente NO se cancela aquí: el servicio lo mantiene
@@ -11007,6 +11216,7 @@ class _ChatScreenState extends State<ChatScreen>
     _persistLastRead();
     _chatSub?.cancel();
     _chatSub = null;
+    _stopPanels();
     _idleProbeHold?.cancel();
     if (_chatBound) {
       _chat.transportStatusListenable.removeListener(_syncTransportVisibility);
@@ -15587,14 +15797,98 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// Reads the conversation folder's git status into the notch's cache.
-  /// Nothing happens without git routes or a folder.
+  /// Nothing happens without git routes or a folder. Never from a build:
+  /// the answer rebuilds what listens to the cache.
   void _warmGitStatus() {
     final gateway = _gitGateway;
     final repo = _gitRepoPath;
+    _gitWarmedFolder = repo;
     if (gateway == null || repo == null) return;
     unawaited(
       GitStatusCache.instance.prefetch(gateway, widget.connection.id, repo),
     );
+  }
+
+  /// The folder [_warmGitStatus] last read.
+  String? _gitWarmedFolder;
+
+  /// Bumped when something that decides the panels changes outside a
+  /// build of this screen (the conversation's folder).
+  final ValueNotifier<int> _panelFacts = ValueNotifier(0);
+
+  /// What the panels on offer, their badges and their bodies follow: Git's
+  /// answers and [_panelFacts].
+  late final Listenable _panelChanges = Listenable.merge([
+    GitStatusCache.instance,
+    _panelFacts,
+  ]);
+
+  StreamSubscription<ActiveChatEvent>? _panelChatSub;
+  String? _panelStoredSessionId;
+
+  /// The panels follow the conversation from its first frame: Git is read
+  /// for its folder, and again whenever `session.info` moves the folder
+  /// (Desktop keys its review pane by `$currentCwd`), so Git is offered as
+  /// soon as the runtime says where the conversation works.
+  void _startPanels() {
+    _warmGitStatus();
+    _panelStoredSessionId = _chat.storedSessionId;
+    _panelChatSub ??= _chat.changes.listen((event) {
+      if (event == ActiveChatEvent.sessionInfo) _followPanelFolder();
+    });
+    unawaited(_readSshProfile());
+    SshProfilePresence.instance.revision.addListener(_onSshProfiles);
+  }
+
+  /// This connection's SSH profile, read from its secure storage after the
+  /// first frame and again whenever a profile is saved or removed. Until it
+  /// has been read (or when it cannot be), the panels do what they always
+  /// did: the Terminal's hub, Files over SFTP.
+  SshConfig? _sshProfile;
+  bool _sshProfileRead = false;
+  int _sshProfileReads = 0;
+  int _sshProfileRevision = 0;
+
+  /// Known for certain to have no SSH profile.
+  bool get _withoutSsh => _sshProfileRead && _sshProfile == null;
+
+  void _onSshProfiles() => unawaited(_readSshProfile());
+
+  Future<void> _readSshProfile() async {
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app == null) return;
+    final read = ++_sshProfileReads;
+    SshConfig? profile;
+    var known = true;
+    try {
+      profile = await app.sshManager.loadConfig(widget.connection.id);
+    } catch (error) {
+      debugPrint('[panels] SSH profile unreadable (${error.runtimeType})');
+      known = false;
+    }
+    if (!mounted || read != _sshProfileReads) return;
+    _sshProfileRead = known;
+    _sshProfile = profile;
+    _sshProfileRevision++;
+    _panelFacts.value++;
+  }
+
+  void _followPanelFolder() {
+    if (!mounted) return;
+    final folderChanged = _gitRepoPath != _gitWarmedFolder;
+    final storedSessionId = _chat.storedSessionId;
+    if (!folderChanged && storedSessionId == _panelStoredSessionId) return;
+    if (folderChanged) _warmGitStatus();
+    _panelStoredSessionId = storedSessionId;
+    _panelFacts.value++;
+  }
+
+  /// [_panelFacts] stays undisposed: a window of the chat (Ajustes) may
+  /// still listen to it while the screen goes.
+  void _stopPanels() {
+    _panelChatSub?.cancel();
+    _panelChatSub = null;
+    SshProfilePresence.instance.revision.removeListener(_onSshProfiles);
   }
 
   bool _desktopControlCenterAvailable(DesktopGatewayCapability capability) {
@@ -15640,12 +15934,17 @@ class _ChatScreenState extends State<ChatScreen>
     unawaited(
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => InAppTabbedBrowser(
-            tabs: _browserTabs,
-            agentConnectionId: widget.connection.id,
-            agentSessionId: () => _chat.desktopRuntimeSessionId,
-            working: () => _runningWork.value.turnActive,
-            changes: _browserPipChanges,
+          builder: (_) => ListenableBuilder(
+            listenable: _panelFacts,
+            builder: (_, _) => InAppTabbedBrowser(
+              tabs: _browserTabs,
+              agentConnectionId: widget.connection.id,
+              agentSessionId: () => _chat.desktopRuntimeSessionId,
+              working: () => _runningWork.value.turnActive,
+              changes: _browserPipChanges,
+              loopbackReach: _browserLoopbackReach,
+              loopbackReachScope: _browserLoopbackReachScope,
+            ),
           ),
         ),
       ),
@@ -15691,7 +15990,6 @@ class _ChatScreenState extends State<ChatScreen>
     // next time (also after "not a repository": git init).
     _warmGitStatus();
     final workspace = _workspaceFor(context);
-    final gitBadge = _workspaceTabBadge(ChatWorkspaceTab.git);
 
     // As the notch's sheet did: the composer lets go of the keyboard first,
     // so closing Ajustes never brings it back.
@@ -15722,133 +16020,159 @@ class _ChatScreenState extends State<ChatScreen>
         void select(_ChatControlAction action) =>
             Navigator.of(dialogContext).pop(action);
 
-        return ChatControlSheet(
-          labels: ChatControlLabels(
-            title: strings.chaControlTitle,
-            refresh: strings.chaUpdateTitle,
-            content: strings.chaArtifactsAction,
-            voiceSettings: _voiceInThisChat
-                ? strings.chaVoiceSettingsCta
-                : null,
-            prompts: strings.pj1215PromptsAction,
-            usage: strings.kluUsageTitle,
-            usageValue: _pillContextMetrics.value.percent == null
-                ? null
-                : '${_pillContextMetrics.value.percent!} %',
-            permissions: policy == null ? null : strings.msvPermissions,
-            permissionsValue: policy == null
-                ? null
-                : approvalModeLabel(
-                    strings,
-                    policy.effectiveMode(widget.session.id),
-                  ),
-            showPinnedPrompt: strings.q90PinnedPromptShow,
-            branch: strings.tc1215BranchChat,
-            details: strings.chaSessionDetailsAction,
-            cron: strings.crnOpenFromConversation,
-            recovery: strings.recoveryCenterTitle,
-            extensions: strings.drawerExtensions,
-            delete: strings.chaControlDeleteConversation,
-            readOnly: strings.statusReadOnly,
-            findInChat: strings.chatNotchFindInChat,
-            newChat: strings.chaNewChatTooltip,
-            desktop: strings.botScreenTooltip,
-            panels: strings.chaControlPanels,
-            panelOpen: strings.chaControlPanelOpen,
-            subagents: strings.sv2MenuEntry(
-              _displaySubagentActivities.length + _reopenableSubagents.length,
-            ),
-            showHiddenSubagents: strings.sv2MenuShowHidden,
+        // Git's answer may come while Ajustes is open (its folder read
+        // above, or the runtime's folder arriving): its row follows.
+        return ListenableBuilder(
+          listenable: _panelChanges,
+          builder: (_, _) => _controlSheet(
+            strings: strings,
+            policy: policy,
+            sessionReadOnly: sessionReadOnly,
+            botSurface: botSurface,
+            workspace: workspace,
+            select: select,
           ),
-          conversationTitle: localizedSessionTitle(strings, widget.session),
-          // the owner (final windows): the panels (once «Vistas»') are rows of
-          // Ajustes; the one open beside the chat says so.
-          workspace: [
-            for (final tab in _workspaceTabsAvailable(context))
-              ChatWorkspaceEntry(
-                kind: switch (tab) {
-                  ChatWorkspaceTab.terminal => ChatWorkspaceKind.terminal,
-                  ChatWorkspaceTab.files => ChatWorkspaceKind.files,
-                  ChatWorkspaceTab.git => ChatWorkspaceKind.git,
-                  ChatWorkspaceTab.browser => ChatWorkspaceKind.browser,
-                  ChatWorkspaceTab.agents => ChatWorkspaceKind.agents,
-                },
-                label: chatWorkspaceTabLabel(strings, tab),
-                open: workspace.workspaceVisible && workspace.active == tab,
-                badgeCount: tab == ChatWorkspaceTab.git ? gitBadge : null,
-                badgeSemanticLabel:
-                    tab == ChatWorkspaceTab.git && gitBadge != null
-                    ? strings.gitChanged(gitBadge)
-                    : null,
-                onTap: () => select(switch (tab) {
-                  ChatWorkspaceTab.terminal => _ChatControlAction.panelTerminal,
-                  ChatWorkspaceTab.files => _ChatControlAction.panelFiles,
-                  ChatWorkspaceTab.git => _ChatControlAction.panelGit,
-                  ChatWorkspaceTab.browser => _ChatControlAction.panelBrowser,
-                  ChatWorkspaceTab.agents => _ChatControlAction.panelAgents,
-                }),
-              ),
-          ],
-          readOnly: sessionReadOnly,
-          showDetails: _devDiagnostics,
-          showCron: widget.session.isJob,
-          // A Bot Chat continues one conversation: its screen in the place
-          // of «Nuevo chat» (D2).
-          onNewChat: botSurface
-              ? null
-              : () => select(_ChatControlAction.newChat),
-          onDesktop: botSurface
-              ? () => select(_ChatControlAction.desktop)
-              : null,
-          onRefresh: () => select(_ChatControlAction.refresh),
-          onContent: () => select(_ChatControlAction.content),
-          onPrompts: () => select(_ChatControlAction.prompts),
-          onUsage: () => select(_ChatControlAction.usage),
-          onPermissions: policy == null
-              ? null
-              : () => select(_ChatControlAction.permissions),
-          onShowPinnedPrompt:
-              PinnedPromptPrefs.shared.enabled &&
-                  PinnedPromptPrefs.shared.isHiddenFor(_pinnedPromptChatKey)
-              ? () => select(_ChatControlAction.showPinnedPrompt)
-              : null,
-          onSubagents:
-              _displaySubagentActivities.isEmpty && _reopenableSubagents.isEmpty
-              ? null
-              : () => select(_ChatControlAction.subagents),
-          onShowHiddenSubagents: _hasHiddenSubagents
-              ? () => select(_ChatControlAction.showHiddenSubagents)
-              : null,
-          onBranch: _chat.canBranchChat
-              ? () => select(_ChatControlAction.branch)
-              : null,
-          onDetails: () => select(_ChatControlAction.details),
-          onCron: () => select(_ChatControlAction.cron),
-          onRecovery:
-              !_desktopControlCenterAvailable(
-                DesktopGatewayCapability.recoveryCenter,
-              )
-              ? null
-              : () => select(_ChatControlAction.recovery),
-          // This conversation's extensions (scoped to its runtime): the ≡
-          // menu only opens the instance-wide centre.
-          onExtensions:
-              !_desktopControlCenterAvailable(
-                DesktopGatewayCapability.extensionsCenter,
-              )
-              ? null
-              : () => select(_ChatControlAction.extensions),
-          onFindInChat: () => select(_ChatControlAction.find),
-          onVoiceSettings: _voiceInThisChat
-              ? () => select(_ChatControlAction.voiceSettings)
-              : null,
-          onDelete: () => select(_ChatControlAction.delete),
         );
       },
     );
     if (!mounted) return;
     setState(() => _controlSheetOpen = false);
     if (action == null) return;
+    _onControlAction(action, policy, composerHadKeyboard);
+  }
+
+  /// Ajustes' window, built again when the panels' facts change.
+  Widget _controlSheet({
+    required Strings strings,
+    required ApprovalPolicyService? policy,
+    required bool sessionReadOnly,
+    required bool botSurface,
+    required ChatWorkspaceController workspace,
+    required void Function(_ChatControlAction action) select,
+  }) {
+    final gitBadge = _workspaceTabBadge(ChatWorkspaceTab.git);
+    return ChatControlSheet(
+      labels: ChatControlLabels(
+        title: strings.chaControlTitle,
+        refresh: strings.chaUpdateTitle,
+        content: strings.chaArtifactsAction,
+        voiceSettings: _voiceInThisChat ? strings.chaVoiceSettingsCta : null,
+        prompts: strings.pj1215PromptsAction,
+        usage: strings.kluUsageTitle,
+        usageValue: _pillContextMetrics.value.percent == null
+            ? null
+            : '${_pillContextMetrics.value.percent!} %',
+        permissions: policy == null ? null : strings.msvPermissions,
+        permissionsValue: policy == null
+            ? null
+            : approvalModeLabel(
+                strings,
+                policy.effectiveMode(widget.session.id),
+              ),
+        showPinnedPrompt: strings.q90PinnedPromptShow,
+        branch: strings.tc1215BranchChat,
+        details: strings.chaSessionDetailsAction,
+        cron: strings.crnOpenFromConversation,
+        recovery: strings.recoveryCenterTitle,
+        extensions: strings.drawerExtensions,
+        delete: strings.chaControlDeleteConversation,
+        readOnly: strings.statusReadOnly,
+        findInChat: strings.chatNotchFindInChat,
+        newChat: strings.chaNewChatTooltip,
+        desktop: strings.botScreenTooltip,
+        panels: strings.chaControlPanels,
+        panelOpen: strings.chaControlPanelOpen,
+        subagents: strings.sv2MenuEntry(
+          _displaySubagentActivities.length + _reopenableSubagents.length,
+        ),
+        showHiddenSubagents: strings.sv2MenuShowHidden,
+      ),
+      conversationTitle: localizedSessionTitle(strings, widget.session),
+      // the owner (final windows): the panels (once «Vistas»') are rows of
+      // Ajustes; the one open beside the chat says so.
+      workspace: [
+        for (final tab in _workspaceTabsAvailable(context))
+          ChatWorkspaceEntry(
+            kind: switch (tab) {
+              ChatWorkspaceTab.terminal => ChatWorkspaceKind.terminal,
+              ChatWorkspaceTab.files => ChatWorkspaceKind.files,
+              ChatWorkspaceTab.git => ChatWorkspaceKind.git,
+              ChatWorkspaceTab.browser => ChatWorkspaceKind.browser,
+              ChatWorkspaceTab.agents => ChatWorkspaceKind.agents,
+            },
+            label: chatWorkspaceTabLabel(strings, tab),
+            open: workspace.workspaceVisible && workspace.active == tab,
+            badgeCount: tab == ChatWorkspaceTab.git ? gitBadge : null,
+            badgeSemanticLabel: tab == ChatWorkspaceTab.git && gitBadge != null
+                ? strings.gitChanged(gitBadge)
+                : null,
+            onTap: () => select(switch (tab) {
+              ChatWorkspaceTab.terminal => _ChatControlAction.panelTerminal,
+              ChatWorkspaceTab.files => _ChatControlAction.panelFiles,
+              ChatWorkspaceTab.git => _ChatControlAction.panelGit,
+              ChatWorkspaceTab.browser => _ChatControlAction.panelBrowser,
+              ChatWorkspaceTab.agents => _ChatControlAction.panelAgents,
+            }),
+          ),
+      ],
+      readOnly: sessionReadOnly,
+      showDetails: _devDiagnostics,
+      showCron: widget.session.isJob,
+      // A Bot Chat continues one conversation: its screen in the place
+      // of «Nuevo chat» (D2).
+      onNewChat: botSurface ? null : () => select(_ChatControlAction.newChat),
+      onDesktop: botSurface ? () => select(_ChatControlAction.desktop) : null,
+      onRefresh: () => select(_ChatControlAction.refresh),
+      onContent: () => select(_ChatControlAction.content),
+      onPrompts: () => select(_ChatControlAction.prompts),
+      onUsage: () => select(_ChatControlAction.usage),
+      onPermissions: policy == null
+          ? null
+          : () => select(_ChatControlAction.permissions),
+      onShowPinnedPrompt:
+          PinnedPromptPrefs.shared.enabled &&
+              PinnedPromptPrefs.shared.isHiddenFor(_pinnedPromptChatKey)
+          ? () => select(_ChatControlAction.showPinnedPrompt)
+          : null,
+      onSubagents:
+          _displaySubagentActivities.isEmpty && _reopenableSubagents.isEmpty
+          ? null
+          : () => select(_ChatControlAction.subagents),
+      onShowHiddenSubagents: _hasHiddenSubagents
+          ? () => select(_ChatControlAction.showHiddenSubagents)
+          : null,
+      onBranch: _chat.canBranchChat
+          ? () => select(_ChatControlAction.branch)
+          : null,
+      onDetails: () => select(_ChatControlAction.details),
+      onCron: () => select(_ChatControlAction.cron),
+      onRecovery:
+          !_desktopControlCenterAvailable(
+            DesktopGatewayCapability.recoveryCenter,
+          )
+          ? null
+          : () => select(_ChatControlAction.recovery),
+      // This conversation's extensions (scoped to its runtime): the ≡
+      // menu only opens the instance-wide centre.
+      onExtensions:
+          !_desktopControlCenterAvailable(
+            DesktopGatewayCapability.extensionsCenter,
+          )
+          ? null
+          : () => select(_ChatControlAction.extensions),
+      onFindInChat: () => select(_ChatControlAction.find),
+      onVoiceSettings: _voiceInThisChat
+          ? () => select(_ChatControlAction.voiceSettings)
+          : null,
+      onDelete: () => select(_ChatControlAction.delete),
+    );
+  }
+
+  void _onControlAction(
+    _ChatControlAction action,
+    ApprovalPolicyService? policy,
+    bool composerHadKeyboard,
+  ) {
     switch (action) {
       case _ChatControlAction.voiceSettings:
         _openVoiceSettings();
@@ -18074,6 +18398,7 @@ class _ChatScreenState extends State<ChatScreen>
                                     // Column or shift the composer.
                                     _buildStopStatusStrip(colors),
                                     _buildBackgroundTaskStrip(colors),
+                                    ?_buildTeammateWaitsStrip(),
                                     // This chat's voice is in the island and the
                                     // composer; only a voice running in another
                                     // chat still shows its way back here.
@@ -18236,15 +18561,17 @@ class _ChatScreenState extends State<ChatScreen>
               : _askAboutSelection,
           // F4: on tablets and an open Fold the chat shares the screen with
           // the workspace once a tab is open; otherwise it is the same chat.
-          child: ChatWorkspaceHost(
-            controller: _workspaceFor(context),
+          // The panels on offer follow Git's answers and the folder; the
+          // chat itself is the same widget across those rebuilds.
+          child: ListenableBuilder(
+            listenable: _panelChanges,
             // QA 9709 (open Fold, a panel beside the chat): a pane gives the
             // chat no system padding of its own (`_paneBox`), so the header in
             // it starts at the pane's top, while this screen, above the host,
             // still sees the status bar. The header's extent read here put the
             // pinned prompt's band (and every landing) one status bar below
             // the island. It is read inside the chat's own place instead.
-            chat: Builder(
+            child: Builder(
               builder: (paneContext) {
                 _floatingTopInset = FloatingChatHeader.insetFor(
                   paneContext,
@@ -18253,12 +18580,18 @@ class _ChatScreenState extends State<ChatScreen>
                 return HermesReadingZone(child: scaffold());
               },
             ),
-            tabBuilder: _buildWorkspaceTab,
-            availableTabs: _workspaceTabsAvailable(context),
-            tabBadge: _workspaceTabBadge,
-            // the owner (Q9): no dock inside a chat, not even v25's side rail on
-            // tablets; the chat and its panes take the whole width.
-            navigation: null,
+            builder: (context, chat) => ChatWorkspaceHost(
+              controller: _workspaceFor(context),
+              chat: chat!,
+              tabBuilder: _buildWorkspaceTab,
+              tabRouteScope: _workspaceTabRouteScope,
+              availableTabs: _workspaceTabsAvailable(context),
+              tabBadge: _workspaceTabBadge,
+              herdrFor: _workspaceHerdr,
+              // the owner (Q9): no dock inside a chat, not even v25's side rail
+              // on tablets; the chat and its panes take the whole width.
+              navigation: null,
+            ),
           ),
         ),
       ),
@@ -20394,6 +20727,57 @@ class _ChatScreenState extends State<ChatScreen>
   /// línea, sin `ListTile` ni chevron — tocar abre el texto completo, la X
   /// descarta sin verlo. Si hay más de una pendiente, se muestra la más
   /// reciente con un contador; las demás esperan su turno.
+  BotDeliveryWatch? _teammateWatch;
+
+  /// «Waiting on teammates» above the composer of a bot's canonical Bot Chat
+  /// (Desktop `teammate-waits.tsx`: only the chat of the sender bot).
+  Widget? _buildTeammateWaitsStrip() {
+    if (widget.session.source.trim().toLowerCase() != 'bot-mode-canonical') {
+      return null;
+    }
+    final sender = widget.missionBotProfile?.name.trim() ?? '';
+    if (sender.isEmpty) return null;
+    final watch = _teammateWatch ??= BotDeliveryWatch(
+      profile: sender,
+      gateway: () => _chat.botDeliveryGateway,
+    );
+    return TeammateWaitsStrip(
+      key: const ValueKey('chat-teammate-waits'),
+      watch: watch,
+      onOpenTeammate: (target) => unawaited(_openTeammateChat(target)),
+    );
+  }
+
+  Future<void> _openTeammateChat(String target) async {
+    final gateway = _chat.desktopControlGateway;
+    if (gateway is! TuiGatewayClient) return;
+    final navigator = Navigator.of(context);
+    final unavailable = Strings.of(context).missionBotChatMetadataUnavailable;
+    final notice = HermesNotice.of(context);
+    try {
+      final found = await resolveTeammateChat(
+        TuiBotModeGateway(gateway),
+        target,
+      );
+      if (!mounted || found == null) return;
+      unawaited(
+        navigator.push(
+          teammateChatRoute(
+            connection: widget.connection,
+            profile: found.profile,
+            target: found.target,
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      notice.showSnackBar(
+        SnackBar(content: Text(unavailable)),
+        kind: HermesNoticeKind.warning,
+      );
+    }
+  }
+
   Widget _buildBackgroundTaskStrip(HermesThemeColors colors) {
     final outcomes = _chat.backgroundTaskOutcomes;
     if (outcomes.isEmpty) return const SizedBox.shrink();
@@ -27494,21 +27878,12 @@ class _AssistantMessage extends StatelessWidget {
                 rowAttachments: connectionCard == null
                     ? const {}
                     : {connectionCard!.toolCallId: connectionCard!.card},
-                headerBuilder: (context, summary, details) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      key: const ValueKey('assistant-footer-actions'),
-                      children: [
-                        ...headerActions(),
-                        const SizedBox(width: 4),
-                        Expanded(child: summary),
-                      ],
+                headerBuilder: (context, summary, details) =>
+                    TurnActivityFooter(
+                      summary: summary,
+                      details: details,
+                      actions: headerActions(),
                     ),
-                    details,
-                  ],
-                ),
             )
           else
             Row(

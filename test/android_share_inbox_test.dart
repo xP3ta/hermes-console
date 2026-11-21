@@ -5,6 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/services/android_share_inbox.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
+
+import 'support/memory_sealed_files.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -82,11 +85,15 @@ void main() {
     expect(pending?.id, 'share-1');
     expect(pending?.text, 'https://example.com/noticia');
     expect(pending?.attachments.single.name, 'captura.jpg');
-    expect(secureValues, hasLength(1));
+    // A sealed file; secure storage keeps only its key.
+    final sealed = SealedValues(secureValues);
+    expect(sealed['android_share_inbox_v1'], contains('noticia'));
+    expect(secureValues.keys, [SealedLocalFiles.keyKey]);
 
     await inbox.acknowledge('share-1');
     expect(await inbox.peek(), isNull);
-    expect(secureValues, isEmpty);
+    expect(sealed.containsKey('android_share_inbox_v1'), isFalse);
+    expect(secureValues.keys, [SealedLocalFiles.keyKey]);
     await inbox.dispose();
   });
 

@@ -72,6 +72,20 @@ class LauncherWidgetTasksPublisher {
   final Future<String?> Function() _preferredConnection;
   Future<void> _tail = Future<void>.value();
 
+  /// What was last offered for each connection, for [renew].
+  final Map<String, List<KanbanTask>> _offered = {};
+
+  /// Offers again what was last offered for [connectionId], when the caller
+  /// knows the board is unchanged without reading it again (the listener's
+  /// events socket is up and carried nothing). An unchanged board is then
+  /// re-stamped as usual, so the widget keeps knowing its data is current.
+  /// Nothing happens before a first offer.
+  Future<void> renew(String connectionId) {
+    final last = _offered[connectionId];
+    if (last == null) return Future<void>.value();
+    return offer(connectionId: connectionId, tasks: last);
+  }
+
   /// Offers the cards of the board just read for [connectionId]. Never
   /// throws: a widget must not break the screen or the listener pass that
   /// fed it.
@@ -80,6 +94,7 @@ class LauncherWidgetTasksPublisher {
     required Iterable<KanbanTask> tasks,
   }) {
     final cards = tasks.toList(growable: false);
+    _offered[connectionId] = cards;
     final operation = _tail.then((_) async {
       try {
         await _publish(connectionId, cards);

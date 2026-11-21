@@ -306,6 +306,25 @@ void main() {
           store.values[LauncherWidgetCronSnapshot.storageKey],
         );
 
+    test('renew re-stamps the last listing with no new read, and does '
+        'nothing before a first offer', () async {
+      final p = publisher();
+      await p.renew('conn-1');
+      expect(stored(), isNull);
+      await p.offer(
+        connectionId: 'conn-1',
+        jobs: [_job('a', next: _t0 ~/ 1000 + 60, status: 'ok')],
+        profile: null,
+      );
+      expect(store.redraws, hasLength(1));
+      // The listener heard no cron.changed: it renews instead of listing.
+      now = _t0 + 6 * 60000;
+      await p.renew('conn-1');
+      expect(store.redraws, hasLength(2));
+      expect(stored()!.updatedAtMs, now);
+      expect(stored()!.jobs.single.id, 'a');
+    });
+
     test('a listing is written once and its widget asked to redraw', () async {
       final p = publisher();
       await p.offer(

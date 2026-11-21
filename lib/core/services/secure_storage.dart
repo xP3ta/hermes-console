@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -40,6 +41,27 @@ class SecureStorage {
   /// rotated refresh token). Other platforms have no such channel.
   static const _durable = MethodChannel('hermes/durable_secrets');
 
+  @visibleForTesting
+  static MethodChannel? androidKeysChannelForTesting;
+
+  /// Reads just the names in Console's default Android secure store.
+  /// Other backends use the secure-storage plugin's enumeration API.
+  static Future<Iterable<String>> listKeys(FlutterSecureStorage storage) async {
+    final channel = Platform.isAndroid ? _durable : androidKeysChannelForTesting;
+    if (channel != null &&
+        identical(storage.aOptions, AndroidOptions.defaultOptions)) {
+      var keys = await channel.invokeListMethod<String>('listKeys');
+      if (keys == null) {
+        // Initialize the plugin so it can migrate an older backend with
+        // encrypted key names. A presence check doesn't return any values.
+        await storage.containsKey(key: '');
+        keys = await channel.invokeListMethod<String>('listKeys');
+      }
+      if (keys != null) return keys;
+    }
+    return (await storage.readAll()).keys;
+  }
+
   /// Like [writeDashboardSecret], but returns only once the value is on disk.
   /// Throws when the flush cannot be confirmed.
   Future<void> writeDashboardSecretDurable(
@@ -48,6 +70,12 @@ class SecureStorage {
     String value,
   ) async {
     await _storage.write(key: _dashKey(connectionId, field), value: value);
+    await flushWrites();
+  }
+
+  /// Returns once every secure-storage write made so far is on disk.
+  /// Throws when the flush cannot be confirmed.
+  static Future<void> flushWrites() async {
     try {
       if (await _durable.invokeMethod<bool>('flush') != true) {
         throw StateError('secure storage flush failed');
@@ -80,8 +108,8 @@ class SecureStorage {
   /// Every secret a bridge-era install (≤ 1.2.14) left in the Keystore:
   /// `bridge_url_<id>` and `bridge_token_<id>`. Names only, never values.
   Future<List<String>> legacyBridgeKeys() async {
-    final all = await _storage.readAll();
-    return all.keys.where((k) => k.startsWith('bridge_')).toList()..sort();
+    final keys = await listKeys(_storage);
+    return keys.where((k) => k.startsWith('bridge_')).toList()..sort();
   }
 
   /// Deletes them. Nothing reads these keys any more.
@@ -138,8 +166,8 @@ class SecureStorage {
       _storage.delete(key: _appKey(name));
 
   Future<void> clearAllConnectionSecrets() async {
-    final all = await _storage.readAll();
-    final keys = all.keys
+    final all = await listKeys(_storage);
+    final keys = all
         .where(
           (k) =>
               k.startsWith('api_key_') ||

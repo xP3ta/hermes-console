@@ -192,6 +192,22 @@ final _toolRunningEffect = _Effect((chat, _, emitted, label) {
   return _emits(emitted, ActiveChatEvent.toolProgress, label);
 });
 
+String _reasoningOf(ActiveChat chat) =>
+    chat.messages.map((row) => '${row['reasoning'] ?? ''}').join(' ');
+
+/// Desktop `gateway-event/message-stream.ts`: the MoA lines land in the
+/// reasoning of the turn (`moa.aggregating` only animates the pet there).
+_Effect _moaLine(
+  String line, {
+  Map<String, dynamic> Function(Map<String, dynamic>)? enrich,
+  bool Function(Map<String, dynamic>)? applies,
+}) => _Effect(enrich: enrich, (chat, payload, emitted, label) {
+  if (applies != null && !applies(payload)) return false;
+  expect(_reasoningOf(chat), contains(line), reason: label);
+  expect(chat.state, ChatPipelineState.executing, reason: label);
+  return _emits(emitted, ActiveChatEvent.toolProgress, label);
+});
+
 /// The gateway of the sample under test, for effects that need a prior frame.
 _FakeDesktopGateway? _sampleGateway;
 
@@ -245,6 +261,16 @@ final Map<String, _Effect> _handled = {
   'reasoning.delta': _reasoningEffect,
   'thinking.delta': _thinkingEffect,
   'reasoning.available': _reasoningEffect,
+  'moa.reference': _moaLine('◇ Reference'),
+  'moa.progress': _moaLine(
+    '◇ MoA refs',
+    applies: (payload) =>
+        payload['refs_done'] is num && payload['refs_total'] is num,
+  ),
+  'moa.phase': _moaLine(
+    '◇ MoA aggregating…',
+    enrich: (sample) => {...sample, 'phase': 'aggregator'},
+  ),
   'tool.start': _toolRunningEffect,
   'tool.generating': _toolRunningEffect,
   'tool.complete': _emitsAlways(ActiveChatEvent.toolProgress),
@@ -403,7 +429,7 @@ final Map<String, _Effect> _handled = {
 
 const _desktopOnly =
     'Desktop-only surface (window, voice, preview, pet, setup, billing, '
-    'browser, MoA, notifications); the chat has no view for it';
+    'browser, notifications); the chat has no view for it';
 
 /// Events the live chat deliberately does nothing with, and why. Each must
 /// stay inert: a new handler has to move its event to [_handled].
@@ -437,10 +463,9 @@ const Map<String, String> _ignored = {
   'display.install.log': _desktopOnly,
   'display.lease': _desktopOnly,
   'display.status': _desktopOnly,
-  'moa.aggregating': _desktopOnly,
-  'moa.phase': _desktopOnly,
-  'moa.progress': _desktopOnly,
-  'moa.reference': _desktopOnly,
+  'moa.aggregating':
+      'Desktop only moves the pet on it (message-stream.ts): no transcript '
+      'change, the aggregator reply arrives as a normal message',
   'pet.generate.progress': _desktopOnly,
   'pet.hatch.progress': _desktopOnly,
   'preview.close': _desktopOnly,

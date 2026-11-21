@@ -444,6 +444,9 @@ class Pc1215CreatingProjectsGateway extends Pj1215FakeProjectsGateway
   bool projectFileWriteKnownUnsupported(ProjectFileWriteAction action) => false;
 
   @override
+  Future<void> createProjectFile(String path) => writeProjectFileText(path, '');
+
+  @override
   Future<void> writeProjectFileText(String path, String content) async {
     writes.add(('POST /api/fs/write-text', {'path': path, 'content': content}));
   }

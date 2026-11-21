@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/attachment_draft.dart';
+import 'sealed_local_files.dart';
 
 /// Contenido recibido mediante ACTION_SEND/ACTION_SEND_MULTIPLE de Android.
 ///
@@ -73,7 +74,9 @@ class AndroidSharedContent {
       fromMap(raw);
 }
 
-/// Bandeja pequeña y cifrada entre Android y el árbol Flutter.
+/// Bandeja pequeña y cifrada entre Android y el árbol Flutter: un archivo
+/// sellado ([SealedLocalFiles]; la entrada del Keystore de una versión anterior
+/// se mueve a él al leerla).
 ///
 /// Se guarda antes de avisar a la UI. Si la app aún no tiene instancia, está
 /// bloqueada o Android mata el proceso, el share sigue disponible al volver.
@@ -81,15 +84,19 @@ class AndroidShareInbox {
   factory AndroidShareInbox({
     MethodChannel channel = const MethodChannel('hermes/share'),
     FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
-  }) => AndroidShareInbox._(channel, secureStorage);
+  }) => AndroidShareInbox._(
+    channel,
+    SealedLocalFiles(SealedLocalFiles.shareInbox, secureStorage: secureStorage),
+  );
 
-  AndroidShareInbox._(this._channel, this._secure);
+  AndroidShareInbox._(this._channel, this._files);
 
   static const String _storageKey = 'android_share_inbox_v1';
+  static const _name = SealedName(_storageKey);
   static const int _maxPending = 8;
 
   final MethodChannel _channel;
-  final FlutterSecureStorage _secure;
+  final SealedLocalFiles _files;
   final StreamController<AndroidSharedContent> _events =
       StreamController<AndroidSharedContent>.broadcast();
 
@@ -123,7 +130,13 @@ class AndroidShareInbox {
   }
 
   Future<List<AndroidSharedContent>> _readAll() async {
-    final raw = await _secure.read(key: _storageKey);
+    final String? raw;
+    try {
+      raw = await _files.read(_name, movable: SealedLocalFiles.isJson);
+    } on SealedFileUnreadable {
+      // Like a value that does not parse.
+      return [];
+    }
     if (raw == null || raw.isEmpty) return [];
     try {
       final decoded = jsonDecode(raw);
@@ -142,12 +155,12 @@ class AndroidShareInbox {
 
   Future<void> _writeAll(List<AndroidSharedContent> items) async {
     if (items.isEmpty) {
-      await _secure.delete(key: _storageKey);
+      await _files.delete(_name);
       return;
     }
-    await _secure.write(
-      key: _storageKey,
-      value: jsonEncode(items.map((item) => item.toJson()).toList()),
+    await _files.write(
+      _name,
+      jsonEncode(items.map((item) => item.toJson()).toList()),
     );
   }
 

@@ -176,6 +176,50 @@ void main() {
     },
   );
 
+  test('a skill qualified by its namespace keeps its name; a malformed '
+      'namespace or a deeper path does not', () {
+    // Hermes names a plugin's skill `namespace:name`, and the skills index
+    // writes it `plugin:namespace:name` (`tools/skills_tool.py`
+    // `_resolve_plugin_skill`).
+    for (final name in [
+      'omh:web-research',
+      'plugin:omh:web-research',
+      'research:current-news-research',
+      'omh:research/web',
+    ]) {
+      expect(activityToolDetail('skill_view', {'name': name}), name);
+      expect(
+        activityToolDetail('skill_view', {
+          'name': name,
+          'file_path': 'references/api.md',
+        }),
+        '$name → api.md',
+      );
+      expect(
+        ActivityStep.fromTrace({
+          'kind': 'tool',
+          'label': 'skill_view',
+          'detail': name,
+        })!.detail,
+        name,
+      );
+    }
+    for (final name in [
+      'a:b:c:d',
+      ':web-research',
+      'omh:',
+      'om h:web',
+      'omh:a/b/c',
+      'C:/Windows/system32',
+      'omh:../secrets',
+      'omh:my-api-token',
+      'omh:web research',
+    ]) {
+      expect(activityToolDetail('skill_view', {'name': name}), isNull);
+      expect(sanitizeActivityDetail('skill_view', name), isNull);
+    }
+  });
+
   test('skill details reject relative paths deeper than category/name', () {
     for (final name in ['a/b/c', 'home/user/x', 'home/xpeta/proyecto']) {
       expect(activityToolDetail('skill_view', {'name': name}), isNull);

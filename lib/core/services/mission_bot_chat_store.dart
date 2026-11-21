@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'mission_store_mutation_queue.dart';
+import 'secure_storage.dart';
 
 enum MissionBotChatPinState { absent, available, corrupt, unavailable }
 
@@ -132,11 +133,9 @@ final class MissionBotChatStore {
   Future<int> deleteForConnection(String connectionId) =>
       MissionStoreMutationQueue.run(() async {
         final securePrefix = '$_securePrefix${_scope(connectionId)}.';
-        final all = await _secure.readAll();
+        final keys = await SecureStorage.listKeys(_secure);
         var removed = 0;
-        for (final key in all.keys.where(
-          (key) => key.startsWith(securePrefix),
-        )) {
+        for (final key in keys.where((key) => key.startsWith(securePrefix))) {
           await _secure.delete(key: key);
           removed++;
         }

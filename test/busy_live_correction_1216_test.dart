@@ -34,6 +34,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 
 final _connection = SavedConnection(
@@ -343,7 +344,8 @@ Future<String> _draft(_Fixture fixture) async => (await fixture.drafts.load(
 /// Durable records originating from the busy composer/next-turn queue.
 /// An ambiguous redirect keeps this origin flag without joining the live queue.
 List<PreparedTurn> _queuedOutbox() {
-  final raw = _secure['chat_turn_outbox_v1'];
+  // The outbox is a sealed file.
+  final raw = SealedValues(_secure)['chat_turn_outbox_v1'];
   if (raw == null) return const [];
   return [
     for (final value in (jsonDecode(raw) as Map).values)

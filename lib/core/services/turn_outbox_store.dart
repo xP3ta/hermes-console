@@ -14,6 +14,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/attachment_draft.dart';
 import '../models/prepared_turn.dart';
 import 'attachment_uploader.dart';
+import 'sealed_local_files.dart';
+import 'secure_storage.dart';
 import 'session_deletion.dart';
 
 /// Contrato mínimo que consume el lifecycle de un turno activo. Permite probar
@@ -138,12 +140,35 @@ class AttachmentOwnershipCoordinator {
   /// it; it also names the legacy v2 drafts found when it was built).
   static const String draftIndexKey = 'chat_draft_index_v1';
 
+  static bool isDraftKey(String key) =>
+      key.startsWith('chat_draft_v3.') || key.startsWith('chat_draft_v2_');
+
   /// Every draft key this isolate has written. Two index updates racing can
   /// lose a name; a draft written here is still read by its name.
   static final Set<String> _draftKeysWritten = {};
 
   /// Called by `ChatDraftStore` before it writes the draft under [key].
   static void noteDraftKeyWritten(String key) => _draftKeysWritten.add(key);
+
+  /// The sealed file of the draft stored under [key] (`ChatDraftStore`):
+  /// scoped by connection, profile and chat, so a cleanup of any of them
+  /// finds its files by name. A key no v3 draft has gets no scope.
+  static SealedName draftName(String key) {
+    final parts = key.split('.');
+    if (parts.length != 4 || parts.first != 'chat_draft_v3') {
+      return SealedName(key);
+    }
+    try {
+      return SealedName(key, [
+        for (final part in parts.skip(1))
+          utf8.decode(
+            base64Url.decode(part.padRight((part.length + 3) ~/ 4 * 4, '=')),
+          ),
+      ]);
+    } on FormatException {
+      return SealedName(key);
+    }
+  }
 
   static int? reservePendingOwner(Iterable<AttachmentDraft> attachments) {
     final owned = attachments
@@ -248,35 +273,59 @@ class AttachmentOwnershipCoordinator {
           : ticket;
       AppLockSensitiveReadFence.current.ensureCurrent();
       admitted.ensureCurrent();
-      final values = <Object?>[];
-      // By name: `readAll()` decrypts every secret of the app into one
-      // platform message (chat tails are megabytes), and this runs for each
-      // state of a send with attachments. With no draft index yet, nothing
-      // proves which drafts exist: then everything is read.
-      final names = await _draftNames(secure);
-      AppLockSensitiveReadFence.current.ensureCurrent();
-      admitted.ensureCurrent();
-      final Map<String, String> secureEntries;
-      if (names == null) {
-        secureEntries = await secure.readAll();
+      void fence() {
         AppLockSensitiveReadFence.current.ensureCurrent();
         admitted.ensureCurrent();
-      } else {
-        secureEntries = {};
-        for (final key in [TurnOutboxStore._storageKey, ...names]) {
-          final raw = await secure.read(key: key);
-          AppLockSensitiveReadFence.current.ensureCurrent();
-          admitted.ensureCurrent();
-          if (raw != null) secureEntries[key] = raw;
-        }
       }
+
+      final values = <Object?>[];
+      // The outbox and every draft file are opened (a file that does not
+      // open vetoes the deletion). Drafts in secure storage are read by
+      // name. With no draft index yet, enumerate just the keys first.
+      final drafts = SealedLocalFiles(
+        SealedLocalFiles.drafts,
+        secureStorage: secure,
+      );
+      final draftFiles = await drafts.readScope(const [], fence: fence);
+      fence();
+      if (draftFiles.unreadable.isNotEmpty) return null;
+      final secureEntries = <String, String>{
+        TurnOutboxStore._storageKey: ?await SealedLocalFiles(
+          SealedLocalFiles.outbox,
+          secureStorage: secure,
+        ).read(TurnOutboxStore._name, fence: fence, movable: (_) => false),
+        ...draftFiles.unfinished,
+        ...draftFiles.values,
+      };
+      fence();
+      final indexedNames = await _draftNames(secure);
+      fence();
+      final names =
+          indexedNames ??
+          (await SecureStorage.listKeys(secure)).where(isDraftKey);
+      fence();
       for (final entry in secureEntries.entries) {
-        final relevant =
-            entry.key == 'chat_turn_outbox_v1' ||
-            entry.key.startsWith('chat_draft_v3.') ||
-            entry.key.startsWith('chat_draft_v2_');
-        if (!relevant) continue;
+        if (entry.key != TurnOutboxStore._storageKey &&
+            !isDraftKey(entry.key)) {
+          continue;
+        }
         final decoded = jsonDecode(entry.value);
+        if (decoded is! Map) return null;
+        values.add(decoded);
+      }
+      for (final key in names) {
+        if (!isDraftKey(key) || secureEntries.containsKey(key)) continue;
+        fence();
+        final raw = key.startsWith('chat_draft_v3.')
+            ? await drafts.read(
+                draftName(key),
+                fence: fence,
+                movable: (_) => false,
+              )
+            : await secure.read(key: key);
+        fence();
+        if (raw == null) continue;
+        final decoded = jsonDecode(raw);
         if (decoded is! Map) return null;
         values.add(decoded);
       }
@@ -353,12 +402,15 @@ class AttachmentOwnershipCoordinator {
   }
 }
 
-/// Outbox pequeña y cifrada. Una única clave evita mantener un índice sensible
-/// en SharedPreferences. La cola compartida serializa el ownership de adjuntos
-/// frente a los drafts dentro del mismo isolate.
+/// Outbox pequeña y cifrada. Un único archivo sellado ([SealedLocalFiles]; la
+/// entrada `chat_turn_outbox_v1` de versiones anteriores se mueve a él al
+/// leerla) evita mantener un índice sensible en SharedPreferences. La cola
+/// compartida serializa el ownership de adjuntos frente a los drafts dentro
+/// del mismo isolate.
 class TurnOutboxStore
     implements TurnOutboxPersistence, FailedPreparedTurnDiscardPersistence {
   static const _storageKey = 'chat_turn_outbox_v1';
+  static const _name = SealedName(_storageKey);
   static const _discardStoragePrefix = '@failed-before-acceptance-discard-v1:';
   static const maxAge = Duration(days: 30);
   static const discardTombstoneMaxAge = Duration(days: 30);
@@ -430,6 +482,8 @@ class TurnOutboxStore
   );
 
   final FlutterSecureStorage _secure;
+  final SealedLocalFiles _files;
+  final SealedLocalFiles _drafts;
   final Future<bool> Function(AttachmentDraft) _deletePrivateCopy;
   final int Function() _nowMs;
   final LocalConversationLifecycle? lifecycle;
@@ -440,6 +494,14 @@ class TurnOutboxStore
     int Function()? nowMs,
     this.lifecycle,
   }) : _secure = secureStorage,
+       _files = SealedLocalFiles(
+         SealedLocalFiles.outbox,
+         secureStorage: secureStorage,
+       ),
+       _drafts = SealedLocalFiles(
+         SealedLocalFiles.drafts,
+         secureStorage: secureStorage,
+       ),
        _deletePrivateCopy =
            deletePrivateCopy ?? AttachmentUploader.deletePrivateDraftCopy,
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
@@ -460,6 +522,7 @@ class TurnOutboxStore
   @visibleForTesting
   static void resetSerializationForTesting() {
     AttachmentOwnershipCoordinator.resetForTesting();
+    SealedLocalFiles.resetForTesting();
     _mutationGenerations.clear();
   }
 
@@ -481,7 +544,14 @@ class TurnOutboxStore
     _FailedPreparedTurnDiscard discard,
   ) async {
     final key = _linkedDraftStorageKey(discard);
-    final raw = await _secure.read(key: key);
+    final name = AttachmentOwnershipCoordinator.draftName(key);
+    final String? raw;
+    try {
+      raw = await _drafts.read(name);
+    } on SealedFileUnreadable {
+      // Sin identidad legible no se borra ni el draft ni su valla.
+      return false;
+    }
     if (raw == null || raw.isEmpty) return true;
     late final Map<String, dynamic> decoded;
     try {
@@ -510,7 +580,7 @@ class TurnOutboxStore
     }
     // Orden seguro de compactación: draft primero, tombstone después. Un
     // process death entre ambos deja una valla redundante, nunca resurrección.
-    await _secure.delete(key: key);
+    await _drafts.delete(name);
     await _cleanupUnowned(attachments);
     return true;
   }
@@ -544,7 +614,19 @@ class TurnOutboxStore
   }
 
   Future<_TurnOutboxState> _readState({bool failOnCorruption = false}) async {
-    final raw = await _secure.read(key: _storageKey);
+    final String? raw;
+    try {
+      raw = await _files.read(_name, movable: _movable);
+    } on SealedFileUnreadable catch (error) {
+      // Like an entry that does not parse: never read as empty, never
+      // overwritten.
+      SecureStorageDiagnostics.record(
+        SecureStorageOperation.outboxRead,
+        error,
+      );
+      if (failOnCorruption) throw const FormatException('Corrupt turn outbox');
+      throw StateError('Encrypted turn outbox cannot be read safely');
+    }
     if (raw == null || raw.isEmpty) return _TurnOutboxState();
     try {
       final decoded = jsonDecode(raw);
@@ -618,14 +700,25 @@ class TurnOutboxStore
     }
   }
 
+  /// An entry an older version wrote is moved only when it parses; one that
+  /// does not stays where it is and fails as it always did.
+  static bool _movable(String raw) {
+    try {
+      return jsonDecode(raw) is Map;
+    } on FormatException {
+      return false;
+    }
+  }
+
   Future<void> _writeState(_TurnOutboxState state) async {
     if (state.turns.isEmpty && state.discards.isEmpty) {
-      await _secure.delete(key: _storageKey);
+      // Every outbox operation runs in one queue: no write is in flight.
+      await _files.delete(_name, unfinished: true);
       return;
     }
-    await _secure.write(
-      key: _storageKey,
-      value: jsonEncode({
+    await _files.write(
+      _name,
+      jsonEncode({
         for (final entry in state.turns.entries)
           entry.key: entry.value.toJson(),
         for (final discard in state.discards.values)

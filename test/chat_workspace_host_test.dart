@@ -144,6 +144,34 @@ class _ToolbarTabState extends State<_ToolbarTab> {
   }
 }
 
+/// A tab that puts only the keys on the bar, published again each time it
+/// changes (as the terminal does on every build).
+class _KeysOnlyTab extends StatefulWidget {
+  const _KeysOnlyTab();
+
+  @override
+  State<_KeysOnlyTab> createState() => _KeysOnlyTabState();
+}
+
+class _KeysOnlyTabState extends State<_KeysOnlyTab> {
+  bool keys = false;
+
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ChatWorkspacePaneScope.publish(
+        context,
+        ChatWorkspaceToolbar(
+          keysShown: keys,
+          onToggleKeys: () => setState(() => keys = !keys),
+        ),
+      );
+    });
+    return Scaffold(body: Text('keys $keys'));
+  }
+}
+
 void _size(WidgetTester tester, Size size) {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -165,6 +193,7 @@ Future<ChatWorkspaceController> _pump(
   bool outerScaffold = false,
   Widget Function(ChatWorkspaceController controller)? chat,
   TextDirection? textDirection,
+  VoidCallback? Function(ChatWorkspaceTab tab)? herdrFor,
 }) async {
   _size(tester, size);
   final c = controller ?? ChatWorkspaceController(prefs: prefs);
@@ -198,6 +227,7 @@ Future<ChatWorkspaceController> _pump(
             availableTabs: availableTabs,
             navigation: navigation,
             tabBadge: tabBadge,
+            herdrFor: herdrFor,
           );
           // The Chats screen around the chat on the open Fold: a Scaffold
           // that makes room for the keyboard and takes it out of the
@@ -233,6 +263,104 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 void main() {
+  // 1.4.3: the bar's Herdr place was never filled (no screen publishes it).
+  // The host fills it for the tab the chat names (the Terminal of a Herdr
+  // profile, once connected); a screen's own Herdr still wins.
+  group('the bar\'s Herdr', () {
+    const herdr = ValueKey('chat-workspace-herdr');
+
+    testWidgets('is the host\'s for the tab it names, and only there', (
+      tester,
+    ) async {
+      var opened = 0;
+      final c = await _pump(
+        tester,
+        availableTabs: const [
+          ChatWorkspaceTab.terminal,
+          ChatWorkspaceTab.files,
+        ],
+        herdrFor: (tab) =>
+            tab == ChatWorkspaceTab.terminal ? () => opened++ : null,
+      );
+      c.open(ChatWorkspaceTab.files);
+      await _settle(tester);
+      expect(find.byKey(herdr), findsNothing);
+      c.open(ChatWorkspaceTab.terminal);
+      await _settle(tester);
+      expect(find.byKey(herdr), findsOneWidget);
+      expect(
+        tester.widget<IconButton>(find.byKey(herdr)).tooltip,
+        'Herdr: workspaces and agents',
+      );
+      await tester.tap(find.byKey(herdr));
+      await tester.pump();
+      expect(opened, 1);
+      c.activate(ChatWorkspaceTab.files);
+      await _settle(tester);
+      expect(find.byKey(herdr), findsNothing);
+    });
+
+    testWidgets('appears once the tab can use it, without the host being '
+        'built again (the terminal connects after its panel opened)', (
+      tester,
+    ) async {
+      var ready = false;
+      var opened = 0;
+      final c = await _pump(
+        tester,
+        availableTabs: const [ChatWorkspaceTab.terminal],
+        tabBuilder: (_, _) => const _KeysOnlyTab(),
+        herdrFor: (_) => ready ? () => opened++ : null,
+      );
+      c.open(ChatWorkspaceTab.terminal);
+      await _settle(tester);
+      expect(find.byKey(herdr), findsNothing);
+      // The session comes up: nothing rebuilds the host; the tab's screen
+      // publishes its bar again as it changes.
+      ready = true;
+      await tester.tap(find.byKey(const ValueKey('chat-workspace-keys')));
+      await _settle(tester);
+      expect(find.textContaining('keys true'), findsOneWidget);
+      expect(find.byKey(herdr), findsOneWidget);
+      await tester.tap(find.byKey(herdr));
+      await tester.pump();
+      expect(opened, 1);
+    });
+
+    testWidgets('with nothing to open there is no empty place for it', (
+      tester,
+    ) async {
+      final c = await _pump(
+        tester,
+        availableTabs: const [ChatWorkspaceTab.terminal],
+        herdrFor: (_) => null,
+      );
+      c.open(ChatWorkspaceTab.terminal);
+      await _settle(tester);
+      expect(find.byKey(herdr), findsNothing);
+      expect(
+        find.byKey(const ValueKey('chat-workspace-expand')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a screen\'s own Herdr wins over the host\'s', (tester) async {
+      var hosts = 0;
+      final c = await _pump(
+        tester,
+        availableTabs: const [ChatWorkspaceTab.terminal],
+        tabBuilder: (_, _) => const _ToolbarTab(),
+        herdrFor: (_) => () => hosts++,
+      );
+      c.open(ChatWorkspaceTab.terminal);
+      await _settle(tester);
+      await tester.tap(find.byKey(herdr));
+      await _settle(tester);
+      expect(hosts, 0);
+      expect(find.textContaining('herdr 1'), findsOneWidget);
+    });
+  });
+
   testWidgets('no tab open: the chat alone, exactly as before', (
     tester,
   ) async {
@@ -563,7 +691,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('pane bar: «Chat» folds, expand to workspace only, rail, menu', (
+  testWidgets('pane bar: fold, enter and exit fullscreen, and change layout', (
     tester,
   ) async {
     final c = await _pump(tester);
@@ -574,19 +702,25 @@ void main() {
     await _settle(tester);
     expect(find.text('terminal 1'), findsOneWidget);
 
-    // Expand: workspace only, the chat folds into the rail.
-    await tester.tap(find.byKey(const ValueKey('chat-workspace-expand')));
+    final expand = find.byKey(const ValueKey('chat-workspace-expand'));
+    final frame = find.byKey(const ValueKey('chat-workspace-panel-clip'));
+    final split = tester.getRect(frame);
+    await tester.tap(expand);
     await _settle(tester);
     expect(c.mode, ChatWorkspaceMode.workspace);
-    expect(find.byKey(_rail), findsOneWidget);
+    expect(c.fullscreen, isTrue);
+    expect(find.byKey(_rail), findsNothing);
     expect(find.byKey(_chatField), findsNothing);
-    expect(tester.getRect(find.byKey(_rail)).width, 56);
+    expect(tester.getRect(frame).width, greaterThan(split.width));
+    expect(tester.getRect(frame).height, greaterThan(split.height));
     expect(find.text('terminal 1'), findsOneWidget);
 
-    // The rail brings the chat back, draft intact.
-    await tester.tap(find.byKey(const ValueKey('chat-workspace-show-chat')));
+    await tester.tap(expand);
     await _settle(tester);
+    expect(c.fullscreen, isFalse);
     expect(c.mode, ChatWorkspaceMode.split);
+    expect(tester.getRect(frame), split);
+    expect(find.text('terminal 1'), findsOneWidget);
     expect(find.text('keep me'), findsOneWidget);
 
     // Fold the panel: chat only. The workspace is unmounted (review
@@ -613,6 +747,43 @@ void main() {
     await tester.tap(find.text('Workspace only'));
     await _settle(tester);
     expect(c.mode, ChatWorkspaceMode.workspace);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('portrait Fold: fullscreen gains space and Back restores the '
+      'previous layout after nested pages', (tester) async {
+    final c = await _pump(tester, size: const Size(657, 870));
+    c.open(ChatWorkspaceTab.files);
+    await _settle(tester);
+    final frame = find.byKey(const ValueKey('chat-workspace-panel-clip'));
+    final initial = tester.getRect(frame);
+    expect(find.byKey(_rail), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('tab-files')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('chat-workspace-expand')));
+    await _settle(tester);
+    expect(c.fullscreen, isTrue);
+    expect(find.byKey(_rail), findsNothing);
+    expect(tester.getRect(frame).width, closeTo(649, 1));
+    expect(tester.getRect(frame).height, greaterThan(initial.height));
+    expect(find.text('files 1'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('tab-push-files')));
+    await _settle(tester);
+    expect(find.text('inner files'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await _settle(tester);
+    expect(c.fullscreen, isTrue);
+    expect(find.text('files 1'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await _settle(tester);
+    expect(c.fullscreen, isFalse);
+    expect(c.mode, ChatWorkspaceMode.split);
+    expect(find.byKey(_rail), findsOneWidget);
+    expect(tester.getRect(frame), initial);
+    expect(find.text('files 1'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -2068,43 +2239,59 @@ void main() {
       }
     }
 
-    testWidgets('a phone: only «Chat»; «Dividido» and «Trabajo» are '
-        'dimmed, with the line that says why', (tester) async {
-      final semantics = tester.ensureSemantics();
-      final c = ChatWorkspaceController(screen: ChatWorkspaceScreen.chats)
-        ..windowWidth = 412;
-      const tabs = [ChatWorkspaceTab.terminal, ChatWorkspaceTab.files];
-      await _pump(
-        tester,
-        size: const Size(412, 915),
-        controller: c,
-        availableTabs: tabs,
-        chat: chatWithViews(tabs),
-      );
-      expect(find.byKey(listHandle), findsNothing);
-      expect(find.byKey(workHandle), findsNothing);
-      await openMenu(tester);
-      expect(find.textContaining('Upright, the chat takes'), findsOneWidget);
-      for (final mode in [
-        ChatWorkspaceMode.split,
-        ChatWorkspaceMode.workspace,
-      ]) {
-        expect(
-          tester.getSemantics(row(mode)),
-          isSemantics(hasEnabledState: true, isEnabled: false),
-          reason: mode.name,
+    for (final size in const [Size(412, 915), Size(657, 870)]) {
+      testWidgets('${size.width}: «Vistas» only picks the layout; Work '
+          'returns to the last panel', (tester) async {
+        final semantics = tester.ensureSemantics();
+        final c = ChatWorkspaceController(screen: ChatWorkspaceScreen.chats)
+          ..windowWidth = size.width;
+        const tabs = [ChatWorkspaceTab.terminal, ChatWorkspaceTab.files];
+        await _pump(
+          tester,
+          size: size,
+          controller: c,
+          availableTabs: tabs,
+          chat: chatWithViews(tabs),
         );
-      }
-      await tester.tap(row(ChatWorkspaceMode.split));
-      await _settle(tester);
-      expect(c.workspaceVisible, isFalse);
-      expect(
-        tester.getSemantics(row(ChatWorkspaceMode.chat)),
-        isSemantics(isSelected: true, isEnabled: true),
-      );
-      expect(tester.takeException(), isNull);
-      semantics.dispose();
-    });
+        c.open(ChatWorkspaceTab.files);
+        c.setMode(ChatWorkspaceMode.chat);
+        await _settle(tester);
+        await openMenu(tester);
+        expect(find.byKey(listHandle), findsNothing);
+        expect(find.byKey(workHandle), findsNothing);
+        expect(find.byKey(const ValueKey('chat-views-panel-terminal')), findsNothing);
+        expect(
+          tester.getSemantics(row(ChatWorkspaceMode.chat)),
+          isSemantics(label: 'Chat', isSelected: true, isEnabled: true),
+        );
+        expect(
+          tester.getSemantics(row(ChatWorkspaceMode.split)),
+          isSemantics(label: 'Split', hasEnabledState: true, isEnabled: false),
+        );
+        await tester.tap(row(ChatWorkspaceMode.split));
+        await _settle(tester);
+        expect(c.workspaceVisible, isFalse);
+        expect(find.byKey(menu), findsOneWidget);
+
+        await tester.tap(row(ChatWorkspaceMode.workspace));
+        await _settle(tester);
+        expect(find.byKey(menu), findsNothing);
+        expect(c.mode, ChatWorkspaceMode.workspace);
+        expect(c.active, ChatWorkspaceTab.files);
+        expect(find.byKey(_chatField), findsNothing);
+        await tester.tap(find.byKey(const ValueKey('chat-workspace-collapse')));
+        await _settle(tester);
+        expect(c.workspaceVisible, isFalse);
+
+        await tester.longPress(find.byKey(views));
+        await _settle(tester);
+        expect(find.byKey(menu), findsNothing);
+        expect(c.workspaceVisible, isTrue);
+        expect(c.active, ChatWorkspaceTab.files);
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      });
+    }
 
     testWidgets('no panel this chat can open: «Dividido» and «Trabajo» are '
         'dimmed, with one line', (tester) async {
@@ -2238,18 +2425,24 @@ void main() {
         await openMenu(tester);
         expect(tester.takeException(), isNull);
         for (final mode in ChatWorkspaceMode.values) {
+          final entry = row(mode);
           final circle = tester.getRect(
             find.descendant(
-              of: row(mode),
+              of: entry,
               matching: find.byKey(const ValueKey('chat-views-layout-circle')),
             ),
           );
           // The circle leads: on the right in right-to-left.
           expect(
             circle.center.dx,
-            greaterThan(tester.getRect(row(mode)).center.dx),
+            greaterThan(tester.getRect(entry).center.dx),
+            reason: mode.name,
           );
-          expect(tester.getRect(row(mode)).height, greaterThanOrEqualTo(48));
+          expect(
+            tester.getRect(entry).height,
+            greaterThanOrEqualTo(48),
+            reason: mode.name,
+          );
         }
         final popover = tester.getRect(find.byKey(menu));
         expect(popover.bottom, lessThanOrEqualTo(900));

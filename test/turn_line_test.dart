@@ -225,9 +225,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('out-a')), findsOneWidget);
     expect(find.text('Fallido'), findsOneWidget);
+    // Opened, a settled row's verb is regular: only a call still running
+    // is in bold.
     expect(
       tester.widget<Text>(find.text('Ejecutó').first).style!.fontWeight,
-      FontWeight.w700,
+      FontWeight.w400,
     );
     expect(tester.takeException(), isNull);
   });

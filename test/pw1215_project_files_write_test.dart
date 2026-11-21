@@ -195,6 +195,25 @@ void main() {
     expect(_entry('$_root/idea.md'), findsOneWidget);
   });
 
+  testWidgets('a file created after the listing survives New file', (
+    tester,
+  ) async {
+    final gateway = Pw1215FakeWritableFilesGateway.sample();
+    await _enterFiles(tester, gateway);
+    final existing = gateway.files['$_root/lib/main.dart']!;
+    gateway.files['$_root/late.md'] = existing;
+
+    await _addMenu(tester, 'file');
+    await _typeName(tester, 'late.md');
+    await tester.tap(find.byKey(_create));
+    await tester.pumpAndSettle();
+
+    expect(gateway.writeCalls, isEmpty);
+    expect(gateway.files['$_root/late.md'], same(existing));
+    expect(find.text(_s(tester).pw1215NameTaken), findsOneWidget);
+    expect(find.byType(ArtifactViewerScreen), findsNothing);
+  });
+
   testWidgets('edit: Editar → change → Guardar writes and shows the result', (
     tester,
   ) async {

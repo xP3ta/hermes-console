@@ -13,6 +13,9 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
+
+import 'support/memory_sealed_files.dart';
 
 const rows = <Map<String, dynamic>>[
   {'role': 'assistant', 'content': 'stale'},
@@ -82,6 +85,11 @@ void main() {
       await SharedPreferences.getInstance(),
       mutationNamespaceForTesting: files.path,
     );
+    // Drafts, the outbox and transcripts are sealed files: their reads,
+    // writes and deletions are storage calls like the entries'.
+    HookedSealedFileIo.install(
+      (method, name) async => hook?.call(MethodCall(method, {'key': name})),
+    );
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -105,6 +113,7 @@ void main() {
         );
   });
   tearDown(() async {
+    MemorySealedFileIo.install();
     await files.delete(recursive: true);
   });
   Future<AttachmentDraft> attachment() async {
@@ -403,7 +412,9 @@ void main() {
               : isA<LocalConversationWriteRejected>(),
         );
         expect(AttachmentOwnershipCoordinator.hasPendingOwner(item), isFalse);
-        expect(secure, isEmpty);
+        // Only the key of the sealed files, and no file.
+        expect(secure.keys, [SealedLocalFiles.keyKey]);
+        expect(SealedValues(secure).keys, isEmpty);
         expect(await File(item.localPath).exists(), isFalse);
       },
     );
@@ -540,7 +551,7 @@ void main() {
       expect(outcome, isA<StateError>());
       await LocalTranscriptStore.saveFromNewestFirst('neighbor', 's', rows);
       expect(events, ['inner']);
-      expect(secure, hasLength(1));
+      expect(SealedValues(secure).keys, hasLength(1));
     },
   );
 
@@ -596,7 +607,7 @@ void main() {
           lifecycle: owners[i],
         );
       }
-      expect(secure, hasLength(scopes.length));
+      expect(SealedValues(secure).keys, hasLength(scopes.length));
       await LocalTranscriptStore.deleteForConnection('c');
       for (var i = 0; i < scopes.length; i++) {
         expect(

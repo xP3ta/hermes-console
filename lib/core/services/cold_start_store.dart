@@ -11,18 +11,21 @@ import 'app_error_log.dart';
 import 'app_lock_sensitive_read_fence.dart';
 import 'cache_settings.dart';
 import 'cold_start_tail_cipher.dart';
+import 'sealed_local_files.dart';
+import 'secure_storage.dart';
 import 'transcript_rehydrate_cost.dart' show decodeJsonOffMain;
 
-/// Storage boundary of [ColdStartStore]. Small entries (the index, the list
-/// snapshots, the key of the tail files) go to `flutter_secure_storage`
-/// (Android Keystore-backed encryption); the chat tails go to files sealed
-/// with that key ([ColdStartTailCipher]).
+/// Storage boundary of [ColdStartStore]. Small entries (the index, the key
+/// of the tail files) go to `flutter_secure_storage` (Android
+/// Keystore-backed encryption); the chat tails go to files sealed with that
+/// key ([ColdStartTailCipher]), and the list snapshots to the app's sealed
+/// local files ([SealedLocalFiles.lists]), still by their key.
 ///
-/// The tails are not kept in secure storage: the plugin holds every value
-/// of the app in one SharedPreferences file, which Android loads whole into
-/// memory as soon as any key is read, so megabytes of tails weighed on the
-/// whole process from its first secure read.
-abstract interface class ColdStartStorage {
+/// The tails and lists are not kept in secure storage: the plugin holds
+/// every value of the app in one SharedPreferences file, which Android
+/// loads whole into memory as soon as any key is read, so megabytes of
+/// tails weighed on the whole process from its first secure read.
+abstract interface class ColdStartStorage implements SealedFileIo {
   Future<String?> read(String key);
 
   Future<void> write(String key, String value);
@@ -31,22 +34,25 @@ abstract interface class ColdStartStorage {
 
   /// Every key in the store, so cleanup can sweep blobs the index lost.
   ///
-  /// Expensive in production: `flutter_secure_storage` has no key-only
-  /// listing, so this decrypts every entry. Call it only from explicit
-  /// cleanup (forget/clear), never from load, save or startup paths.
+  /// Call it only from explicit cleanup (forget/clear). Listing the sealed
+  /// files opens them to recover their keys.
   Future<Iterable<String>> keys();
 
   /// The tail file [name], or null when there is none.
+  @override
   Future<Uint8List?> readFile(String name);
 
   /// Replaces the tail file [name] whole: a reader finds the old bytes or
   /// the new ones, never part of them.
+  @override
   Future<void> writeFile(String name, Uint8List bytes);
 
+  @override
   Future<void> deleteFile(String name);
 
   /// The names of the tail files, unfinished writes included. Nothing is
   /// read or decrypted.
+  @override
   Future<List<String>> fileNames();
 }
 
@@ -55,7 +61,11 @@ final class SecureColdStartStorage implements ColdStartStorage {
     FlutterSecureStorage secureStorage = const FlutterSecureStorage(),
     Future<Directory> Function()? directory,
   }) : _secure = secureStorage,
-       _directory = directory ?? _supportDirectory;
+       _directory = directory ?? _supportDirectory,
+       _lists = SealedLocalFiles(
+         SealedLocalFiles.lists,
+         secureStorage: secureStorage,
+       );
 
   /// A file being written carries this suffix until it is complete; then it
   /// is renamed over the old one.
@@ -63,6 +73,23 @@ final class SecureColdStartStorage implements ColdStartStorage {
 
   final FlutterSecureStorage _secure;
   final Future<Directory> Function() _directory;
+  final SealedLocalFiles _lists;
+
+  /// A Home recents or Chats list snapshot: a sealed file (an entry an
+  /// older version wrote is moved there when first read).
+  static final _listKey = RegExp(
+    r'^cold_start_(?:recents|list)_v1\.([0-9a-f]*)\.([0-9a-f]*)$',
+  );
+
+  static SealedName? _listName(String key) {
+    final match = _listKey.firstMatch(key);
+    if (match == null) return null;
+    String text(String hex) => String.fromCharCodes([
+      for (var i = 0; i + 4 <= hex.length; i += 4)
+        int.parse(hex.substring(i, i + 4), radix: 16),
+    ]);
+    return SealedName(key, [text(match[1]!), text(match[2]!)]);
+  }
 
   /// App-private: Android `Context.getFilesDir()`, which neither the cloud
   /// backup nor a device transfer copies (`allowBackup="false"` and the
@@ -78,19 +105,39 @@ final class SecureColdStartStorage implements ColdStartStorage {
   }
 
   @override
-  Future<String?> read(String key) => _secure.read(key: key);
+  Future<String?> read(String key) async {
+    final list = _listName(key);
+    if (list == null) return _secure.read(key: key);
+    try {
+      return await _lists.read(list);
+    } on SealedFileUnreadable {
+      // A cached list that does not open is a miss.
+      await _lists.delete(list);
+      return null;
+    }
+  }
 
   @override
-  Future<void> write(String key, String value) =>
-      _secure.write(key: key, value: value);
+  Future<void> write(String key, String value) {
+    final list = _listName(key);
+    if (list == null) return _secure.write(key: key, value: value);
+    return _lists.write(list, value);
+  }
 
   @override
-  Future<void> delete(String key) => _secure.delete(key: key);
+  Future<void> delete(String key) {
+    final list = _listName(key);
+    if (list == null) return _secure.delete(key: key);
+    return _lists.delete(list);
+  }
 
-  /// `readAll()` is the only listing the plugin offers (it decrypts every
-  /// value); see [ColdStartStorage.keys] for where it may be called.
+  /// List files that do not open are deleted here, as nothing could name them.
   @override
-  Future<Iterable<String>> keys() async => (await _secure.readAll()).keys;
+  Future<Iterable<String>> keys() async {
+    final files = await _lists.readScope(const []);
+    await _lists.deleteFiles([...files.unreadable, ...files.partial]);
+    return {...await SecureStorage.listKeys(_secure), ...files.values.keys};
+  }
 
   @override
   Future<Uint8List?> readFile(String name) async {

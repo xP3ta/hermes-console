@@ -285,10 +285,21 @@ void main() {
 
   group('states the mock does not draw', () {
     testWidgets('not a repository', (tester) async {
-      await _pump(tester, _gateway(status: null));
-      expect(find.byKey(const ValueKey('git-state-not-repo')), findsOneWidget);
+      final gateway = _gateway(status: null);
+      await _pump(tester, gateway);
+      final state = find.byKey(const ValueKey('git-state-not-repo'));
+      expect(state, findsOneWidget);
       expect(find.text(_s.gitNotRepo), findsOneWidget);
       expect(find.byKey(const ValueKey('git-commit-bar')), findsNothing);
+      // 1.4.3: the folder is named and can be read again (`git init`).
+      expect(
+        find.descendant(of: state, matching: find.text('/srv/repo')),
+        findsOneWidget,
+      );
+      final reads = gateway.calls.where((c) => c == 'status').length;
+      await tester.tap(find.byKey(const ValueKey('git-retry')));
+      await _settleReads(tester);
+      expect(gateway.calls.where((c) => c == 'status').length, reads + 1);
     });
 
     testWidgets('no changes', (tester) async {

@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import '../../../models/attachment_draft.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../services/chat_draft_store.dart';
 import '../../../services/app_lock_sensitive_read_fence.dart';
@@ -77,6 +80,45 @@ final class CallbackRoomGateway implements RoomGateway {
   }
 }
 
+/// [RoomFileStore] over Mission Control's callbacks (the pooled repository
+/// under the live capabilities).
+final class CallbackRoomFileStore implements RoomFileStore {
+  final Future<HostedGroupAttachment> Function(
+    String uploadId,
+    String kind,
+    String name,
+    String mime,
+    Uint8List bytes,
+  )
+  onUpload;
+  final Future<HostedGroupWorkspaceReadback> Function(
+    String text,
+    List<HostedGroupAttachment> attachments,
+    HostedGroupSendAttempt attempt,
+  )
+  onSend;
+
+  const CallbackRoomFileStore({required this.onUpload, required this.onSend});
+
+  @override
+  Future<HostedGroupAttachment> upload(
+    HostedGroupRoom room, {
+    required String uploadId,
+    required String kind,
+    required String name,
+    required String mime,
+    required Uint8List bytes,
+  }) => onUpload(uploadId, kind, name, mime, bytes);
+
+  @override
+  Future<HostedGroupWorkspaceReadback> send(
+    HostedGroupRoom room, {
+    required String text,
+    required List<HostedGroupAttachment> attachments,
+    required HostedGroupSendAttempt attempt,
+  }) => onSend(text, attachments, attempt);
+}
+
 /// `groups.approve` on the pooled Desktop socket for [connection] (no new
 /// socket when Bot Mode already holds one). The server matches the exact
 /// `request_id`, so answering an already-answered request is harmless.
@@ -150,6 +192,7 @@ final class ChatDraftRoomStore implements RoomDraftStore {
       threadId: draft.replyThreadId,
       preparedId: draft.preparedTurnClientTurnId,
       preparedText: draft.preparedTurnText,
+      files: draft.attachments,
     );
   }
 
@@ -159,12 +202,13 @@ final class ChatDraftRoomStore implements RoomDraftStore {
     String? threadId,
     String? preparedId,
     String? preparedText,
+    List<AttachmentDraft> files = const [],
   }) async {
     final saved = await store.save(
       connectionId,
       sessionId,
       text,
-      const [],
+      files,
       profile: profile,
       replyThreadId: threadId,
       preparedTurnClientTurnId: preparedId,
@@ -180,4 +224,8 @@ final class ChatDraftRoomStore implements RoomDraftStore {
     profile: profile,
     onlyPreparedTurnClientTurnId: preparedId,
   );
+
+  @override
+  Future<void> retire(List<AttachmentDraft> files) =>
+      store.retireAttachments(files);
 }

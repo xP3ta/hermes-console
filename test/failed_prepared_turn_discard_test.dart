@@ -8,8 +8,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+
+import 'support/memory_sealed_files.dart';
 
 final class _BarrierSecureStorage extends FlutterSecureStorage {
   final Map<String, String> values = <String, String>{};
@@ -17,10 +20,22 @@ final class _BarrierSecureStorage extends FlutterSecureStorage {
   Completer<void>? blockedWriteEntered;
   Completer<void>? releaseBlockedWrite;
 
+  /// Drafts and the outbox are sealed files: their values by key.
+  SealedValues get sealed => SealedValues(values);
+
+  /// Holds the next write of the file that keeps [key].
   void blockNextWrite(String key) {
     blockNextWriteKey = key;
     blockedWriteEntered = Completer<void>();
     releaseBlockedWrite = Completer<void>();
+  }
+
+  Future<void> beforeFileWrite(String file) async {
+    final key = blockNextWriteKey;
+    if (key == null || sealed.fileNameOf(key) != file) return;
+    blockNextWriteKey = null;
+    blockedWriteEntered!.complete();
+    await releaseBlockedWrite!.future;
   }
 
   @override
@@ -34,11 +49,6 @@ final class _BarrierSecureStorage extends FlutterSecureStorage {
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
-    if (blockNextWriteKey == key) {
-      blockNextWriteKey = null;
-      blockedWriteEntered!.complete();
-      await releaseBlockedWrite!.future;
-    }
     if (value == null) {
       values.remove(key);
     } else {
@@ -116,7 +126,12 @@ void main() {
     prefs = await SharedPreferences.getInstance();
     LocalConversationCleanupFence.resetForTesting();
     TurnOutboxStore.resetSerializationForTesting();
+    for (final family in SealedLocalFiles.families) {
+      MemorySealedFileIo.of(family).beforeWrite = secure.beforeFileWrite;
+    }
   });
+
+  tearDown(MemorySealedFileIo.install);
 
   test(
     'discard exacto cerca save admitido, callback viejo y permite sucesor',
@@ -152,7 +167,7 @@ void main() {
         await store.save(neighbor);
       }
       final before =
-          jsonDecode(secure.values[TurnOutboxStore.storageKeyForTesting]!)
+          jsonDecode(secure.sealed[TurnOutboxStore.storageKeyForTesting]!)
               as Map<String, dynamic>;
       final neighborBytes = <String, String>{
         for (final neighbor in <PreparedTurn>[
@@ -187,7 +202,7 @@ void main() {
       await store.save(successor);
 
       final after =
-          jsonDecode(secure.values[TurnOutboxStore.storageKeyForTesting]!)
+          jsonDecode(secure.sealed[TurnOutboxStore.storageKeyForTesting]!)
               as Map<String, dynamic>;
       for (final entry in neighborBytes.entries) {
         expect(jsonEncode(after[entry.key]), entry.value);
@@ -254,7 +269,7 @@ void main() {
         'session-draft-neighbor',
         profile: target.profile,
       );
-      final neighborBytes = secure.values[neighborKey];
+      final neighborBytes = secure.sealed[neighborKey];
 
       // Un autosave P0 ya entró en storage antes de que el usuario vaciase.
       final targetDraftKey = ChatDraftStore.keyForTesting(
@@ -305,7 +320,7 @@ void main() {
         isTrue,
       );
 
-      final beforeStaleCallback = secure.values[targetDraftKey];
+      final beforeStaleCallback = secure.sealed[targetDraftKey];
       await recoveredDrafts.save(
         target.connectionId,
         target.sessionId,
@@ -314,7 +329,7 @@ void main() {
         profile: target.profile,
         preparedTurnClientTurnId: target.clientTurnId,
       );
-      expect(secure.values[targetDraftKey], beforeStaleCallback);
+      expect(secure.sealed[targetDraftKey], beforeStaleCallback);
 
       await recoveredDrafts.clear(
         target.connectionId,
@@ -329,7 +344,7 @@ void main() {
         )).text,
         isEmpty,
       );
-      expect(secure.values[neighborKey], neighborBytes);
+      expect(secure.sealed[neighborKey], neighborBytes);
 
       await recoveredDrafts.save(
         target.connectionId,
@@ -347,7 +362,7 @@ void main() {
         )).text,
         'draft del sucesor',
       );
-      expect(secure.values[neighborKey], neighborBytes);
+      expect(secure.sealed[neighborKey], neighborBytes);
     },
   );
 
@@ -386,7 +401,7 @@ void main() {
           isTrue,
         );
       }
-      final encoded = secure.values[TurnOutboxStore.storageKeyForTesting]!;
+      final encoded = secure.sealed[TurnOutboxStore.storageKeyForTesting]!;
       final records = jsonDecode(encoded) as Map<String, dynamic>;
       final tombstones = records.values.where(
         (value) =>
@@ -403,7 +418,7 @@ void main() {
       now += TurnOutboxStore.discardTombstoneMaxAge.inMilliseconds + 1;
       expect(await store.prune(), 0);
       expect(
-        secure.values.containsKey(TurnOutboxStore.storageKeyForTesting),
+        secure.sealed.containsKey(TurnOutboxStore.storageKeyForTesting),
         isFalse,
       );
     },
@@ -442,7 +457,7 @@ void main() {
       'draft-neighbor-retention',
       profile: oldest.profile,
     );
-    final neighborBytes = secure.values[neighborKey];
+    final neighborBytes = secure.sealed[neighborKey];
     expect(await store.discardFailedBeforeAcceptance(oldest), isTrue);
 
     for (var index = 0; index < TurnOutboxStore.maxDiscardTombstones; index++) {
@@ -452,8 +467,8 @@ void main() {
       );
     }
 
-    expect(secure.values.containsKey(targetDraftKey), isFalse);
-    expect(secure.values[neighborKey], neighborBytes);
+    expect(secure.sealed.containsKey(targetDraftKey), isFalse);
+    expect(secure.sealed[neighborKey], neighborBytes);
     expect(
       await store.isFailedBeforeAcceptanceDiscarded(
         connectionId: oldest.connectionId,

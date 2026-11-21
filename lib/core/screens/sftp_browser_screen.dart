@@ -1,6 +1,7 @@
-// Navegador SFTP sobre la conexión SSH: listar/navegar, descargar, subir y
+// Navegador SFTP sobre la conexión SSH: navegar, crear carpetas, descargar, subir y
 // borrar. Respeta el modo solo-lectura de la instancia. App Lock al entrar.
 import 'package:hermes_android/core/design/hicons.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -20,19 +21,15 @@ import '../services/ssh_manager.dart';
 import '../screens/lock_screen.dart';
 import '../theme/app_theme.dart';
 import '../theme/hermes_tokens.dart'
-    show
-        HermesIcon,
-        HermesRadius,
-        HermesSize,
-        HermesSpace,
-        HermesSurfaces,
-        HermesType;
+    show HermesIcon, HermesRadius, HermesSize, HermesSpace, HermesType;
 import '../utils/ssh_error.dart';
 import '../widgets/chat/back_to_chat_notch.dart';
 import '../widgets/hermes_tree_rows.dart';
 import '../widgets/hermes_app_bar.dart';
 import 'sftp_file_preview_screen.dart';
 import '../widgets/hermes_premium_ui.dart' show HermesEmptyState;
+import '../widgets/projects/project_files_browser.dart'
+    show showProjectEntryNameDialog;
 import '../widgets/save_to_device_feedback.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 import '../widgets/ssh_transfer_bar.dart';
@@ -114,6 +111,9 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
   SftpTransferService? _shareService;
 
   bool get _readOnly => _mgr.isReadOnly(widget.connection.id);
+
+  bool get _canCreateFolder =>
+      _sftp != null && !_readOnly && !_loading && !_busy && _error == null;
 
   /// In the workspace pane (audit 2.8, as the Terminal): the pane's bar
   /// already names the tab, so there is no header of its own; upload and
@@ -228,11 +228,12 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
   Future<void> _list() async {
     final sftp = _sftp;
     if (sftp == null) return;
+    final path = _path;
     setState(() => _loading = true);
     try {
-      final raw = await sftp.listdir(_path);
+      final raw = await sftp.listdir(path);
       final items = _sortedNames(raw);
-      if (!mounted) return;
+      if (!mounted || sftp != _sftp || path != _path) return;
       setState(() {
         _expanded.clear();
         _children.clear();
@@ -243,13 +244,12 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
         _listFailed = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || sftp != _sftp || path != _path) return;
       setState(() {
         // Permission denied / no such file are named (SshFailure), not
         // reported as a connection error.
-        _error = Strings.of(
-          context,
-        ).sftpUnreadableBody(localizedSshError(Strings.of(context), e));
+        _error = Strings.of(context)
+            .sftpUnreadableBody(localizedSshError(Strings.of(context), e));
         _listFailed = true;
         _loading = false;
       });
@@ -324,9 +324,8 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
     } catch (e) {
       if (!mounted) return;
       _snack(
-        Strings.of(
-          context,
-        ).sftpUnreadableBody(localizedSshError(Strings.of(context), e)),
+        Strings.of(context)
+            .sftpUnreadableBody(localizedSshError(Strings.of(context), e)),
       );
     }
   }
@@ -573,6 +572,41 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
     }
   }
 
+  Future<void> _newFolder() async {
+    final sftp = _sftp;
+    if (sftp == null || !_canCreateFolder) return;
+    final parent = _path;
+    final strings = Strings.of(context);
+    final name = await showProjectEntryNameDialog(
+      context,
+      parent: parent,
+      nameTaken: (name) => _entries.any((entry) => entry.filename == name),
+      title: strings.pw1215NewFolder,
+      label: strings.pw1215FolderName,
+    );
+    if (name == null ||
+        !mounted ||
+        !_canCreateFolder ||
+        sftp != _sftp ||
+        parent != _path) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await sftp.mkdir(_join(parent, name));
+      if (!mounted) return;
+      _snack(strings.pw1215FolderCreated, FeedbackKind.routine);
+      if (_path == parent && sftp == _sftp) await _list();
+    } catch (error) {
+      if (!mounted) return;
+      _snack(
+        '${strings.pw1215WriteFailed} ${localizedSshError(strings, error)}',
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _upload() async {
     final s = Strings.of(context);
     if (_readOnly) return;
@@ -665,6 +699,13 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
               centerTitle: false,
               title: Text(Strings.of(context).sftpFilesTitle),
               actions: [
+                if (_canCreateFolder)
+                  IconButton(
+                    key: const ValueKey('sftp-new-folder'),
+                    tooltip: Strings.of(context).pw1215NewFolder,
+                    icon: const Icon(HIcons.create_new_folder_outlined),
+                    onPressed: _newFolder,
+                  ),
                 // Uploading starts from up here, not from a button over the
                 // list.
                 if (!_readOnly && _error == null)
@@ -681,8 +722,8 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
                 ),
               ],
             ),
-      // In the pane, mock 136 v2-A (Cadu): the files in a card, the path in
-      // a pill at the foot. Full screen, the path floats over the list.
+      // In the workspace the path controls sit below the list. On the
+      // standalone Files page the path floats over the list.
       body: _inPane ? _paneBody(colors) : _screenBody(colors),
     );
   }
@@ -726,54 +767,36 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
     onRetry: (t) => unawaited(_retryDownload(t, _transfers)),
   );
 
-  /// In the pane, mock 136 v2-A (Cadu's look): the files in a rounded card
-  /// with its own margin, each row with its icon in a small box; under it
-  /// the transfers' pill when there are any, and at the foot the path in a
-  /// pill with «Subir nivel» beside it.
-  Widget _paneBody(HermesThemeColors colors) {
-    final chrome = HermesChrome.of(colors);
-    final radius = BorderRadius.circular(HermesRadius.card);
-    return Column(
-      children: [
-        if (_busy) const LinearProgressIndicator(minHeight: 2),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              HermesSpace.inset,
-              HermesSpace.x1,
-              HermesSpace.inset,
-              HermesSpace.x2,
-            ),
-            child: DecoratedBox(
-              key: const ValueKey('sftp-pane-card'),
-              position: DecorationPosition.foreground,
-              decoration: BoxDecoration(
-                borderRadius: radius,
-                border: Border.all(color: chrome.line),
-              ),
-              child: ClipRRect(
-                borderRadius: radius,
-                child: ColoredBox(
-                  color: HermesSurfaces.group(colors),
-                  child: _list_(colors, pane: true),
-                ),
-              ),
-            ),
-          ),
+  /// The pane's frame already gives the file list its rounded surface.
+  Widget _paneBody(HermesThemeColors colors) => Column(
+    children: [
+      if (_busy) const LinearProgressIndicator(minHeight: 2),
+      Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: HermesSpace.x2),
+          child: _list_(colors, pane: true),
         ),
-        _transferBar(),
-        _pathPill(colors),
-      ],
-    );
-  }
+      ),
+      _transferBar(),
+      _pathPill(colors),
+    ],
+  );
 
   /// v2-A `.pillbar`: the folder as a breadcrumb (the whole path for a
-  /// screen reader) and «Subir nivel», each a 48 dp pill of the chrome.
-  Widget _pathPill(HermesThemeColors colors) {
+  /// screen reader), «Subir nivel» and «Nueva carpeta» in 48 dp pills.
+  Widget _pathPill(HermesThemeColors colors) => LayoutBuilder(
+    builder: (context, constraints) =>
+        _pathControls(colors, constraints.maxWidth),
+  );
+
+  Widget _pathControls(HermesThemeColors colors, double width) {
     final strings = Strings.of(context);
     final chrome = HermesChrome.of(colors);
     final atRoot = _path == '/';
     final label = HermesType.value.copyWith(color: chrome.mutedInk);
+    final textScale = MediaQuery.textScalerOf(context).scale(1);
+    final showNewFolderLabel = width >= 360 * textScale;
+    final showUpLabel = width >= (_canCreateFolder ? 480 : 360) * textScale;
     return Padding(
       key: const ValueKey('sftp-pane-path'),
       padding: const EdgeInsets.fromLTRB(
@@ -823,29 +846,65 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
             ),
           ),
           const SizedBox(width: HermesSpace.x2),
-          _pill(
-            chrome,
-            key: const ValueKey('sftp-pane-up'),
-            onTap: atRoot ? null : _goUp,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  HIcons.arrow_upward,
-                  size: HermesIcon.sm,
-                  color: atRoot ? colors.textDisabled : chrome.ink,
-                ),
-                const SizedBox(width: HermesSpace.x1),
-                Text(
-                  strings.sftpUpLevel,
-                  style: HermesType.value.copyWith(
-                    fontWeight: FontWeight.w600,
+          Tooltip(
+            message: strings.sftpUpLevel,
+            child: _pill(
+              chrome,
+              key: const ValueKey('sftp-pane-up'),
+              onTap: atRoot ? null : _goUp,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    HIcons.arrow_upward,
+                    size: HermesIcon.sm,
                     color: atRoot ? colors.textDisabled : chrome.ink,
                   ),
-                ),
-              ],
+                  if (showUpLabel) ...[
+                    const SizedBox(width: HermesSpace.x1),
+                    Text(
+                      strings.sftpUpLevel,
+                      style: HermesType.value.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: atRoot ? colors.textDisabled : chrome.ink,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
+          if (_canCreateFolder) ...[
+            const SizedBox(width: HermesSpace.x2),
+            Tooltip(
+              message: strings.pw1215NewFolder,
+              child: _pill(
+                chrome,
+                key: const ValueKey('sftp-pane-new-folder'),
+                onTap: _newFolder,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      HIcons.create_new_folder_outlined,
+                      size: HermesIcon.sm,
+                      color: colors.accentText,
+                    ),
+                    if (showNewFolderLabel) ...[
+                      const SizedBox(width: HermesSpace.x1),
+                      Text(
+                        strings.pw1215NewFolder,
+                        style: HermesType.value.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: colors.accentText,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1000,7 +1059,9 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
             ),
             dense: true,
             leading: Icon(
-              isDir ? HIcons.folder_outlined : HIcons.insert_drive_file_outlined,
+              isDir
+                  ? HIcons.folder_outlined
+                  : HIcons.insert_drive_file_outlined,
               color: isDir ? colors.secondary : colors.textSecondary,
               size: 20,
             ),
@@ -1059,7 +1120,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
         ],
       );
 
-  /// A row of the pane's card (v2-A `.frow`): the icon in a 32 dp box, the
+  /// A file row: the icon in a 32 dp box, the
   /// name in 13/600, the size under it; 48 dp to touch, radius 16.
   Widget _paneRow(HermesThemeColors colors, FileTreeRow<SftpName> row) {
     final e = row.entry;

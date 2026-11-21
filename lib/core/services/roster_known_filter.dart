@@ -18,15 +18,16 @@ DesktopActiveSessionList filterRosterToKnown(
   hasMalformedRows: roster.hasMalformedRows,
 );
 
-/// Ids the profile knows: loaded rows (id, lineage root, parent), pinned ids
-/// and roster ids that have a local chat of the profile.
+/// Ids the profile knows: loaded rows (id, lineage root, parent), pinned ids,
+/// tracked profile activity ids and roster ids that have a local chat.
 Set<String> knownSessionIds({
   required Iterable<Session> sessions,
   required Iterable<String> pinnedIds,
   required DesktopActiveSessionList roster,
   required bool Function(String id) hasLocalChat,
+  Iterable<String> trackedIds = const [],
 }) {
-  final known = <String>{...pinnedIds};
+  final known = <String>{...pinnedIds, ...trackedIds};
   for (final session in sessions) {
     known
       ..add(session.id)

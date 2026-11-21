@@ -6,10 +6,13 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/herdr_agents.dart'
+    show herdrShellQuote;
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_kind.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
+import 'package:hermes_android/core/services/ssh_terminal_input.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 /// The interactive pty. Records everything the app types into it.
@@ -91,6 +94,8 @@ class _FakeClient implements SSHClient {
   /// when unset.
   final int? fallbackProbe;
   final List<String> executed = [];
+  final List<_FakeShell> attachments = [];
+  Future<SSHSession>? pendingAttachment;
   bool closed = false;
 
   @override
@@ -104,6 +109,13 @@ class _FakeClient implements SSHClient {
     Map<String, String>? environment,
   }) async {
     executed.add(command);
+    if (pty != null) {
+      final pending = pendingAttachment;
+      if (pending != null) return pending;
+      final attached = _FakeShell();
+      attachments.add(attached);
+      return attached;
+    }
     final code = command == sshHerdrFallbackProbeCommand
         ? (fallbackProbe ?? probe)
         : probe;
@@ -201,7 +213,7 @@ void main() {
     });
   }
 
-  test('Herdr: probes on its own channel, then types `herdr`', () async {
+  test('Herdr uses its own PTY after the probe', () async {
     final ssh = _FakeSshManager(kind: SshSessionKind.herdr);
     final service = SshSessionService(ssh);
     final attached = <SshTerminalSession>[];
@@ -210,23 +222,29 @@ void main() {
     final session = await service.connect('c1', onHostKey: (_) async => true);
 
     final client = ssh.clients.single;
-    expect(client.executed, [sshHerdrProbeCommand]);
-    expect(client.shellSession.written, ['herdr\n']);
+    expect(client.executed, [
+      sshHerdrProbeCommand,
+      '"\${SHELL:-/bin/sh}" -lc ${herdrShellQuote("'/usr/bin/x'")}',
+    ]);
+    expect(client.shellSession.written, isEmpty);
+    expect(session.attachment.value?.shell, same(client.attachments.single));
     expect(session.missingProgram.value, isNull);
     expect(attached, [session]);
   });
 
-  test('tmux: types the exact create-or-attach command', () async {
+  test('tmux opens a dedicated create-or-attach PTY', () async {
     final ssh = _FakeSshManager(kind: SshSessionKind.tmux);
     final service = SshSessionService(ssh);
 
     await service.connect('c1', onHostKey: (_) async => true);
 
     final client = ssh.clients.single;
-    expect(client.executed, [sshTmuxProbeCommand]);
-    expect(client.shellSession.written, [
-      'tmux new-session -A -D -s hermes-console\n',
+    expect(client.executed, [
+      sshTmuxProbeCommand,
+      sshInLoginShell(sshTmuxLaunchCommand),
     ]);
+    expect(client.shellSession.written, isEmpty);
+    expect(client.attachments, hasLength(1));
   });
 
   for (final kind in [SshSessionKind.herdr, SshSessionKind.tmux]) {
@@ -265,9 +283,10 @@ void main() {
       expect(client.executed, [
         sshHerdrProbeCommand,
         sshHerdrFallbackProbeCommand,
+        '"\${SHELL:-/bin/sh}" -lc ${herdrShellQuote("'/usr/bin/x'")}',
       ]);
-      // The fake prints /usr/bin/x: the validated path is what gets typed.
-      expect(client.shellSession.written, ["'/usr/bin/x'\n"]);
+      expect(client.shellSession.written, isEmpty);
+      expect(session.attachment.value?.shell, same(client.attachments.single));
       expect(session.missingProgram.value, isNull);
       expect(session.herdr, isNotNull);
     },
@@ -346,6 +365,8 @@ void main() {
       Uint8List.fromList(utf8.encode('before-drop')),
     );
     await _settle();
+    ssh.clients.first.attachments.single.end();
+    await _settle();
     ssh.clients.first.shellSession.end();
     await _settle();
 
@@ -357,11 +378,117 @@ void main() {
       second.terminal.buffer.lines.toList().join('\n'),
       contains('before-drop'),
     );
-    expect(ssh.clients.last.shellSession.written, [
-      'tmux new-session -A -D -s hermes-console\n',
+    expect(ssh.clients.last.executed, [
+      sshTmuxProbeCommand,
+      sshInLoginShell(sshTmuxLaunchCommand),
     ]);
+    expect(ssh.clients.last.shellSession.written, isEmpty);
+    expect(first.attachment.value, isNull);
+    expect(
+      second.attachment.value?.shell,
+      same(ssh.clients.last.attachments.single),
+    );
     expect(second.phase.value, SshSessionPhase.ready);
   });
+
+  test(
+    'Herdr, tmux and the normal shell keep their own terminal input',
+    () async {
+      final ssh = _FakeSshManager(kind: SshSessionKind.shell);
+      final service = SshSessionService(ssh);
+      final root = await service.connect('c1', onHostKey: (_) async => true);
+      final client = ssh.clients.single;
+      final shell = client.shellSession;
+      shell.stdoutController.add(
+        Uint8List.fromList(utf8.encode('base prompt')),
+      );
+      await _settle();
+
+      expect(
+        await service.attachTerminal(root, SshSessionKind.herdr, 'herdr'),
+        isTrue,
+      );
+      final herdr = client.attachments.single;
+      expect(root.visibleTerminal.terminal, isNot(same(root.terminal)));
+      root.visibleTerminal.terminal.textInput('n');
+      expect(herdr.written, ['n']);
+      expect(shell.written, isEmpty);
+
+      expect(
+        await service.attachTerminal(
+          root,
+          SshSessionKind.tmux,
+          sshTmuxLaunchCommand,
+        ),
+        isTrue,
+      );
+      final tmux = client.attachments.last;
+      expect(herdr.closed, isTrue);
+      expect(herdr.stdoutController.hasListener, isFalse);
+      expect(root.visibleTerminal.kind, SshSessionKind.tmux);
+
+      service.showPlainShell(root);
+      expect(tmux.closed, isTrue);
+      expect(client.closed, isFalse);
+      expect(shell.closed, isFalse);
+      expect(root.phase.value, SshSessionPhase.ready);
+      expect(root.visibleTerminal, same(root));
+      expect(
+        root.terminal.buffer.lines.toList().join('\n'),
+        contains('base prompt'),
+      );
+      root.terminal.textInput('a');
+      expect(shell.written, ['a']);
+    },
+  );
+
+  test('leaving an attachment invalidates a switch still opening', () async {
+    final ssh = _FakeSshManager(kind: SshSessionKind.shell);
+    final service = SshSessionService(ssh);
+    final root = await service.connect('c1', onHostKey: (_) async => true);
+    final client = ssh.clients.single;
+    await service.attachTerminal(root, SshSessionKind.herdr, 'herdr');
+
+    final next = Completer<SSHSession>();
+    client.pendingAttachment = next.future;
+    final switching = service.attachTerminal(
+      root,
+      SshSessionKind.tmux,
+      sshTmuxLaunchCommand,
+    );
+    service.showPlainShell(root);
+    final lateChannel = _FakeShell();
+    next.complete(lateChannel);
+
+    expect(await switching, isFalse);
+    expect(lateChannel.closed, isTrue);
+    expect(root.visibleTerminal, same(root));
+    expect(client.shellSession.closed, isFalse);
+  });
+
+  test(
+    'a program exit goes back to the shell and stays there on reconnect',
+    () async {
+      final ssh = _FakeSshManager(kind: SshSessionKind.herdr);
+      final service = SshSessionService(ssh);
+      final root = await service.connect('c1', onHostKey: (_) async => true);
+      final client = ssh.clients.single;
+      client.attachments.single.end(exitCode: 0);
+      await _settle();
+      expect(root.visibleTerminal, same(root));
+      expect(client.shellSession.closed, isFalse);
+
+      client.shellSession.end();
+      await _settle();
+      final reconnected = await service.connect(
+        'c1',
+        onHostKey: (_) async => true,
+      );
+      expect(reconnected.visibleTerminal, same(reconnected));
+      expect(ssh.clients.last.attachments, isEmpty);
+      expect(ssh.clients.last.executed, isEmpty);
+    },
+  );
 
   test('one-shot ctrl turns the next key into a control character', () async {
     final ssh = _FakeSshManager(kind: SshSessionKind.shell);
@@ -392,5 +519,83 @@ void main() {
 
     expect(shell.written, ['\x1b[12;1R', '\x02']);
     expect(session.ctrlArmed.value, isFalse);
+  });
+
+  // 1.4.3: Ctrl double tapped stays on for every key; Alt puts ESC first;
+  // a paste goes through untouched by either.
+  test('locked ctrl, alt and a paste reach the shell as meant', () async {
+    final ssh = _FakeSshManager(kind: SshSessionKind.shell);
+    final service = SshSessionService(ssh);
+    final session = await service.connect('c1', onHostKey: (_) async => true);
+    final shell = ssh.clients.single.shellSession;
+    final modifiers = session.modifiers;
+
+    modifiers.ctrl.tap();
+    modifiers.ctrl.tap();
+    expect(modifiers.ctrl.locked.value, isTrue);
+    session.terminal.textInput('c');
+    session.terminal.textInput('c');
+    sshPasteText(session.terminal, 'c', modifiers: modifiers);
+    modifiers.ctrl.tap();
+    modifiers.alt.tap();
+    session.terminal.textInput('b');
+    session.terminal.textInput('b');
+
+    expect(shell.written, ['\x03', '\x03', 'c', '\x1bb', 'b']);
+  });
+
+  // U-11 and 1.4.3: the idle close never takes a terminal that is open
+  // (on screen, or a panel of the workspace); closed, it goes as before.
+  test('the idle close spares a session whose terminal is open', () async {
+    final ssh = _FakeSshManager(kind: SshSessionKind.shell);
+    final service = SshSessionService(ssh);
+    final session = await service.connect('c1', onHostKey: (_) async => true);
+    final client = ssh.clients.single;
+    session.lastActivityAt = DateTime.now().subtract(
+      const Duration(minutes: 30),
+    );
+
+    service.attachView('c1');
+    service.attachView('c1');
+    expect(service.closeIdle(const Duration(minutes: 10)), 0);
+    expect(session.phase.value, SshSessionPhase.ready);
+    expect(client.closed, isFalse);
+
+    // Two screens on it: closing one is not enough.
+    service.detachView('c1');
+    expect(service.closeIdle(const Duration(minutes: 10)), 0);
+    expect(session.phase.value, SshSessionPhase.ready);
+
+    service.detachView('c1');
+    expect(service.isViewed('c1'), isFalse);
+    expect(service.closeIdle(const Duration(minutes: 10)), 1);
+    expect(session.phase.value, SshSessionPhase.closed);
+    expect(session.end, SshSessionEnd.closedByApp);
+    expect(client.closed, isTrue);
+  });
+
+  test('Compose remembers in memory, newest first, until closed', () async {
+    final service = SshSessionService(
+      _FakeSshManager(kind: SshSessionKind.shell),
+    );
+    await service.connect('c1', onHostKey: (_) async => true);
+
+    service.rememberComposed('c1', 'ls -la');
+    service.rememberComposed('c1', 'git status');
+    service.rememberComposed('c1', 'ls -la');
+    service.rememberComposed('c1', '   ');
+    expect(service.composeHistory('c1'), ['ls -la', 'git status']);
+    expect(service.composeHistory('c2'), isEmpty);
+    for (var i = 0; i < 30; i++) {
+      service.rememberComposed('c1', 'echo $i');
+    }
+    expect(
+      service.composeHistory('c1').length,
+      SshSessionService.composeHistoryLimit,
+    );
+    expect(service.composeHistory('c1').first, 'echo 29');
+
+    service.close('c1');
+    expect(service.composeHistory('c1'), isEmpty);
   });
 }

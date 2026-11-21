@@ -8,6 +8,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
 import 'package:hermes_android/core/services/global_activity_aggregate.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -16,6 +17,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 
 /// Conversations keeps per-session state on the server, as Desktop: the
@@ -75,8 +77,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secureValues = <String, String>{};
   var bulkReads = 0;
-  // Reads of a stored draft, by name. The list reads everything once (to
-  // index what is stored) and each draft by its name from then on.
+  // Reads of a stored draft: its sealed file (or an entry an older version
+  // left). The list reads everything in secure storage once (to index what
+  // an older version stored) and the draft files from then on.
   var draftReads = 0;
   const secureChannel = MethodChannel(
     'plugins.it_nomads.com/flutter_secure_storage',
@@ -87,6 +90,11 @@ void main() {
     secureValues.clear();
     bulkReads = 0;
     draftReads = 0;
+    MemorySealedFileIo.of(SealedLocalFiles.drafts)
+      ..resetHooks()
+      ..beforeRead = (_) async {
+        draftReads++;
+      };
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secureChannel, (call) async {
           final args = call.arguments is Map
@@ -127,7 +135,10 @@ void main() {
     final patches = <http.Request>[];
     final prefs = await SharedPreferences.getInstance();
     final manager = await ConnectionManager.create(prefs);
-    secureValues.addAll(draftFixtures);
+    // Drafts this version stored: sealed files.
+    for (final MapEntry(:key, :value) in draftFixtures.entries) {
+      SealedValues(secureValues)[key] = value;
+    }
     final aggregate = GlobalActivityAggregate.inMemory();
     addTearDown(aggregate.dispose);
     final dashboard = DashboardClient(
@@ -227,7 +238,10 @@ void main() {
       expect(bulkReads, 1);
       expect(draftReads, 2);
       expect(find.text('SYNTHETIC_LIST_DRAFT'), findsOneWidget);
-      expect(jsonDecode(secureValues[key]!)['text'], 'SYNTHETIC_LIST_DRAFT');
+      expect(
+        jsonDecode(SealedValues(secureValues)[key]!)['text'],
+        'SYNTHETIC_LIST_DRAFT',
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );

@@ -55,7 +55,7 @@ void main() {
   );
   late List<Map<String, dynamic>> bulkBodies;
 
-  Future<void> pumpScreen(
+  Future<int> pumpScreen(
     WidgetTester tester, {
     Map<String, Object> prefs = const {},
     bool board = false,
@@ -143,12 +143,13 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('kanban-view-board')));
       await pumpUntilLoaded(tester);
     }
+    return started;
   }
 
   testWidgets('the new skin is on by default: compact header, cards', (
     tester,
   ) async {
-    await pumpScreen(tester);
+    final started = await pumpScreen(tester);
     expect(find.byKey(const ValueKey('kanban-skin-count')), findsOneWidget);
     expect(find.text(_en.kanbanSkinCount(5)), findsOneWidget);
     expect(
@@ -163,15 +164,10 @@ void main() {
     expect(find.byKey(const ValueKey('kanban-links-b')), findsOneWidget);
     expect(find.byKey(const ValueKey('kanban-links-r')), findsNothing);
     // Live clock only on the running task.
-    expect(find.byKey(const ValueKey('kanban-clock-r')), findsOneWidget);
+    final runClock = find.byKey(const ValueKey('kanban-clock-r'));
+    expect(runClock, findsOneWidget);
     expect(find.byKey(const ValueKey('kanban-clock-a')), findsNothing);
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('kanban-clock-r')),
-        matching: find.textContaining('2:0'),
-      ),
-      findsOneWidget,
-    );
+    expect(tester.widget<KanbanRunClock>(runClock).startedAt, started);
   });
 
   testWidgets('the board keeps the backend order, with tone and help', (

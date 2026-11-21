@@ -3,6 +3,25 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.4.3 (14035)
+
+- The chat's Views button selects the layout. Open Terminal, Files, Changes
+  or Browser from the three-dot menu. Panels can fill the display and return
+  to the previous layout.
+- Terminal uses the chat's rounded controls and keeps Herdr and the login
+  shell in separate sessions that you can switch between.
+- Tool activity is grouped into expandable rows that stay readable on
+  narrow screens.
+- Files uses a single surface, supports creating folders over SFTP and
+  scopes server text previews and edits to the chat. Creating a file checks
+  the latest server state first. Changes closes an old diff when the chat
+  moves to a different folder.
+- Local chat drafts, outbox and cached history use encrypted files. Room
+  attachments, messaging setup, and background updates have been improved.
+- Android finds legacy secure-storage entries by key, avoiding a bulk decrypt
+  when recovering drafts or cleaning up local data.
+- Android decodes notification avatars at icon resolution to limit memory use.
+
 ## 1.4.2 (14023) — 2026-11-20
 
 Console 1.4.2 is a corrective release. It fixes signing in again, rooms,

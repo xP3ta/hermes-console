@@ -9,12 +9,16 @@ import 'package:flutter/services.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/app_lock_sensitive_read_fence.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/cold_start_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/notifications/notification_action_drain.dart';
 import 'package:hermes_android/core/services/notifications/notification_strings.dart';
 import 'package:hermes_android/core/services/notifications/rich_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../support/memory_sealed_files.dart';
 
 // Scope probe: real drainer/router/dedupe; opaque synthetic reply and ids.
 // No new durable reply store or native inbox implementation is introduced.
@@ -158,7 +162,7 @@ void main() {
         await prefs.remove('active_profile_connection-a');
         await f.drain(_identifiedReply('same-uid', payload: first));
         expect(f.durableDraft(first)['text'], 'synthetic reply');
-        expect(f.values.length, 4);
+        expect(f.draftFiles, hasLength(4));
       } finally {
         await f.dispose();
       }
@@ -302,14 +306,12 @@ void main() {
       final successor = _ClaimedInbox()
         ..reply = action
         ..phase = custody['phase'] as String;
-      final before = await File(
-        '${f.directory.path}/secure-values.json',
-      ).readAsString();
+      final before = f.durableState();
       await f.drain(action, inbox: successor);
       expect(successor.acked, isTrue);
       expect(successor.phases, ['rescued']);
       expect(
-        await File('${f.directory.path}/secure-values.json').readAsString(),
+        f.durableState(),
         before,
         reason: 'read proof without duplicate durable write',
       );
@@ -356,24 +358,39 @@ void main() {
             }
           }
 
+          // Sensitive reads and writes of the draft: its sealed file, and
+          // the draft entries (the index) in secure storage.
+          Future<void> read() async {
+            reads++;
+            if ((boundary == 'load_read' && reads == 1) ||
+                (boundary == 'save_read' && reads == 2)) {
+              await pause();
+            }
+          }
+
+          Future<void> write() async {
+            writes++;
+            if (boundary == 'save_write') await pause();
+          }
+
+          final files = MemorySealedFileIo.of(SealedLocalFiles.drafts)
+            ..resetHooks();
+          addTearDown(files.resetHooks);
+          files.beforeRead = (_) async {
+            if (armed) await read();
+          };
+          files.beforeWrite = (_) async {
+            if (armed) await write();
+          };
           messenger.setMockMethodCallHandler(channel, (call) async {
             final args = (call.arguments as Map?) ?? const {};
             final key = args['key'] as String? ?? '';
             switch (call.method) {
               case 'read':
-                if (armed && key.startsWith('chat_draft')) {
-                  reads++;
-                  if ((boundary == 'load_read' && reads == 1) ||
-                      (boundary == 'save_read' && reads == 2)) {
-                    await pause();
-                  }
-                }
+                if (armed && key.startsWith('chat_draft')) await read();
                 return values[key];
               case 'write':
-                if (armed && key.startsWith('chat_draft')) {
-                  writes++;
-                  if (boundary == 'save_write') await pause();
-                }
+                if (armed && key.startsWith('chat_draft')) await write();
                 values[key] = args['value'] as String;
                 return null;
               case 'delete':
@@ -778,6 +795,7 @@ PendingNotificationAction _identifiedReply(
 
 // Disk-backed METHOD-CHANNEL TEST ADAPTER: opaque synthetic data only.
 // This is not a product plaintext store and does not emulate Android crypto.
+// The drafts are sealed files ([SealedLocalFiles]) in the same directory.
 final class _DiskRescueFixture {
   _DiskRescueFixture(this.directory, this.prefs);
   final Directory directory;
@@ -786,6 +804,34 @@ final class _DiskRescueFixture {
     jsonDecode(File('${directory.path}/secure-values.json').readAsStringSync())
         as Map,
   );
+
+  Directory _sealed(String family) =>
+      Directory('${directory.path}/sealed/$family');
+
+  /// The draft files on disk.
+  List<File> get draftFiles {
+    final drafts = _sealed(SealedLocalFiles.drafts);
+    if (!drafts.existsSync()) return const [];
+    return drafts.listSync().whereType<File>().toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+  }
+
+  /// Everything durable: the secure values and every draft file.
+  String durableState() => [
+    File('${directory.path}/secure-values.json').readAsStringSync(),
+    for (final file in draftFiles)
+      '${file.uri.pathSegments.last}:'
+          '${base64Encode(file.readAsBytesSync())}',
+  ].join('\n');
+
+  SealedValues get sealed => SealedValues(
+    values,
+    readFile: (family, name) {
+      final file = File('${_sealed(family).path}/$name');
+      return file.existsSync() ? file.readAsBytesSync() : null;
+    },
+  );
+
   static Future<_DiskRescueFixture> create({String? path}) async {
     final root = Directory(
       path ?? '${Directory.current.path}/build/rescue-probes',
@@ -798,6 +844,8 @@ final class _DiskRescueFixture {
     );
     final file = File('${directory.path}/secure-values.json');
     if (!await file.exists()) await file.writeAsString('{}', flush: true);
+    SealedLocalFiles.ioForTesting = (family, _) =>
+        SecureColdStartStorage(directory: () async => f._sealed(family));
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -830,7 +878,7 @@ final class _DiskRescueFixture {
   Map durableDraft(NotificationActionPayload p, {String profile = 'default'}) {
     final address = replyDraftAddress(p, activeProfile: profile)!;
     return jsonDecode(
-          values[ChatDraftStore.keyForTesting(
+          sealed[ChatDraftStore.keyForTesting(
             p.connId,
             address.sessionId,
             profile: address.profile,
@@ -857,7 +905,10 @@ final class _DiskRescueFixture {
     expect(ops.roomSendAttempts, 0);
   }
 
-  Future<void> dispose() => directory.delete(recursive: true);
+  Future<void> dispose() async {
+    MemorySealedFileIo.install();
+    await directory.delete(recursive: true);
+  }
 }
 
 PendingNotificationAction _reply({

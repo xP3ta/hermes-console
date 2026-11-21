@@ -2,6 +2,7 @@ import 'package:hermes_android/core/services/connection_status.dart' show Connec
 import 'package:hermes_android/core/widgets/chat/chat_queue_chip.dart';
 
 import 'support/live_chat_v4.dart';
+import 'support/memory_sealed_files.dart';
 import 'support/legacy_tui_gateway_server.dart';
 import 'package:hermes_android/core/services/turn_keepalive_hold.dart';
 import 'package:hermes_android/core/bots/data/gateway_socket_meter.dart';
@@ -113,6 +114,7 @@ import 'package:hermes_android/core/models/desktop_compression_result.dart';
 import 'support/clipboard_image_fake.dart';
 import 'support/fake_webview_platform.dart';
 import 'support/fake_git_review_gateway.dart';
+import 'support/pf1215_fake_files_gateway.dart';
 import 'package:hermes_android/core/models/git_review.dart';
 import 'package:hermes_android/core/services/git_review_gateway.dart';
 import 'package:hermes_android/core/screens/git_hub_screen.dart';
@@ -159,6 +161,8 @@ import 'package:hermes_android/core/browser/agent_browser_bridge.dart';
 import 'package:hermes_android/core/browser/agent_browser_pip.dart';
 import 'package:hermes_android/core/browser/in_app_browser_screen.dart';
 import 'package:hermes_android/core/screens/ssh_screen.dart';
+import 'package:hermes_android/core/models/project_files.dart';
+import 'package:hermes_android/core/screens/sftp_browser_screen.dart';
 import 'package:hermes_android/core/screens/ssh_credentials_screen.dart';
 import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/core/widgets/chat/chat_sources_list.dart';
@@ -177,6 +181,7 @@ import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/attachment_uploader.dart';
 import 'package:hermes_android/core/services/chat_preference_store.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
@@ -259,6 +264,45 @@ Iterable<TextSpan> _flattenTextSpans(TextSpan root) sync* {
   for (final child in root.children ?? const <InlineSpan>[]) {
     if (child is TextSpan) yield* _flattenTextSpans(child);
   }
+}
+
+/// The drafts' sealed files as one chat's draft store sees them: the read
+/// and delete hooks of its storage see each file by the key it keeps (by
+/// its name when there is no file to tell).
+class _DraftFiles implements SealedFileIo {
+  _DraftFiles(this.storage);
+
+  final _MemoryDraftSecureStorage storage;
+
+  MemorySealedFileIo get _files =>
+      MemorySealedFileIo.of(SealedLocalFiles.drafts);
+
+  String? _keyOf(String name) {
+    final bytes = _files.files[name];
+    return bytes == null
+        ? null
+        : SealedValues(storage.values).keyOfFile(name, bytes);
+  }
+
+  @override
+  Future<Uint8List?> readFile(String name) async {
+    final key = _keyOf(name);
+    if (key != null) await storage.beforeRead?.call(key);
+    return _files.readFile(name);
+  }
+
+  @override
+  Future<void> writeFile(String name, Uint8List bytes) =>
+      _files.writeFile(name, bytes);
+
+  @override
+  Future<void> deleteFile(String name) async {
+    await storage.beforeDelete?.call(_keyOf(name) ?? name);
+    await _files.deleteFile(name);
+  }
+
+  @override
+  Future<List<String>> fileNames() => _files.fileNames();
 }
 
 class _MemoryDraftSecureStorage extends FlutterSecureStorage {
@@ -1124,6 +1168,24 @@ class _Qa9715GitGateway extends _StableRefreshGateway
   @override
   Future<void> gitCommit(String path, String message) =>
       git.gitCommit(path, message);
+}
+
+/// A gateway with the server's folder routes (`/api/fs`), as Desktop's
+/// Files pane reads them.
+class _FilesPanelGateway extends _StableRefreshGateway
+    implements HermesProjectFilesGateway {
+  final files = Pf1215FakeFilesGateway.sample();
+  @override
+  bool get projectFilesKnownUnsupported => files.projectFilesKnownUnsupported;
+  @override
+  Future<ProjectDirectoryListing> listProjectDirectory(String path) =>
+      files.listProjectDirectory(path);
+  @override
+  Future<ProjectFilePreview> readProjectFileText(String path) =>
+      files.readProjectFileText(path);
+  @override
+  Future<Uint8List> readProjectFileBytes(String path) =>
+      files.readProjectFileBytes(path);
 }
 
 class _DroppedTransportGateway extends _UiRewindGateway
@@ -3160,6 +3222,8 @@ const _fid22Focus = String.fromEnvironment('FID22_FOCUS');
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   var secureStore = <String, String>{};
+  // Drafts and the outbox are sealed files; their values by key.
+  late SealedValues sealed;
   var draftStoreNamespace = 0;
   var compressionRestoreStoreNamespace = 0;
   var failOutboxWrites = false;
@@ -3443,15 +3507,44 @@ void main() {
     // Caché estática de planes de render: cada test empieza vacío.
     ChatScreen.resetAssistantRenderPlanCacheForTesting();
     BotMentionRoster.shared.clear();
+    // Some tests seed a local transcript before pumpChat initializes prefs.
+    SharedPreferences.setMockInitialValues({});
     secureStore = <String, String>{};
+    sealed = SealedValues(secureStore);
+    for (final io in MemorySealedFileIo.families.values) {
+      io.files.clear();
+    }
     failOutboxWrites = false;
     outboxWriteCalls = 0;
     delayedOutboxRead = null;
     delayedOutboxWrite = null;
+    // The outbox file: its writes can fail, be held and are counted; its
+    // reads are held like the entry read below.
+    MemorySealedFileIo.of(SealedLocalFiles.outbox)
+      ..resetHooks()
+      ..beforeRead = (_) async {
+        await delayedOutboxRead?.future;
+      }
+      ..beforeWrite = (_) async {
+        if (failOutboxWrites) {
+          throw PlatformException(code: 'secure_unavailable');
+        }
+        outboxWriteCalls++;
+        await delayedOutboxWrite?.future;
+      };
+    // A chat whose draft storage carries read or delete hooks sees them for
+    // its draft files too.
+    SealedLocalFiles.ioForTesting = (family, secure) => switch (family) {
+      SealedLocalFiles.drafts when secure is _MemoryDraftSecureStorage =>
+        _DraftFiles(secure),
+      _ => MemorySealedFileIo.of(family),
+    };
     clipboardText = null;
     foregroundServiceRunning = false;
     hapticCalls = 0;
     TurnOutboxStore.resetSerializationForTesting();
+    // Pending operations belong to the previous test's fake-async zone.
+    LocalConversationCleanupFence.resetForTesting();
     // Process-wide media state: a download an earlier test left hanging on
     // a fake Dashboard that never answers must not keep the two auto-load
     // slots, a queued prefetch or a ready memo for the tests after it.
@@ -3483,14 +3576,6 @@ void main() {
                 (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
             switch (call.method) {
               case 'write':
-                if (failOutboxWrites && args['key'] == 'chat_turn_outbox_v1') {
-                  throw PlatformException(code: 'secure_unavailable');
-                }
-                if (args['key'] == 'chat_turn_outbox_v1') {
-                  outboxWriteCalls++;
-                  final writeGate = delayedOutboxWrite;
-                  if (writeGate != null) await writeGate.future;
-                }
                 secureStore[args['key'] as String] = args['value'] as String;
                 return null;
               case 'read':
@@ -3730,7 +3815,11 @@ void main() {
     // Esta suite prueba Chat, no la poda de conexiones huérfanas ni callbacks
     // tardíos del Chat anterior. Inyecta el estado inicial V3 después de que el
     // bootstrap haya asentado, inmediatamente antes de montar el sujeto.
-    secureStore.addAll(seededV3Drafts);
+    // Drafts this version stores: sealed files.
+    for (final MapEntry(:key, :value) in seededV3Drafts.entries) {
+      secureStore.remove(key);
+      sealed[key] = value;
+    }
     beforeChatPush?.call();
     final ctx = tester.element(find.byType(Navigator).first);
     Navigator.of(ctx).push(
@@ -14554,7 +14643,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(secureStore[key], raw);
+    expect(sealed[key], raw);
   });
 
   testWidgets('a chat created here is one local entry, under the server id', (
@@ -14706,6 +14795,7 @@ void main() {
     Navigator.of(tester.element(find.byType(ChatScreen))).pop();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    expect(delayed, isTrue, reason: 'the restore was held, not skipped');
     gate.complete();
     await tester.pump();
     expect(
@@ -15202,7 +15292,7 @@ void main() {
           composer.any((c) => c.text == 'SYNTHETIC_SENSITIVE_COMPOSER'),
           isFalse,
         );
-        expect(secureStore.containsKey(key), isTrue);
+        expect(sealed.containsKey(key), isTrue);
         expect(draftReads, readCut);
         app.appLock.unlock();
         await tester.pump();
@@ -15215,7 +15305,7 @@ void main() {
           'SYNTHETIC_SENSITIVE_COMPOSER',
         );
         expect(
-          jsonDecode(secureStore[key]!)['text'],
+          jsonDecode(sealed[key]!)['text'],
           'SYNTHETIC_SENSITIVE_COMPOSER',
         );
         expect(draftReads, greaterThan(readCut));
@@ -15670,7 +15760,7 @@ void main() {
         tester.widget<TextField>(find.byType(TextField).first).controller!.text,
         isEmpty,
       );
-      expect(secureStore.containsKey(key), isFalse);
+      expect(sealed.containsKey(key), isFalse);
       expect(tester.takeException(), isNull);
     });
 
@@ -15717,7 +15807,7 @@ void main() {
         tester.widget<TextField>(find.byType(TextField).first).controller!.text,
         'texto sin ACK',
       );
-      expect(secureStore.containsKey(key), isTrue);
+      expect(sealed.containsKey(key), isTrue);
       expect(tester.takeException(), isNull);
     });
 
@@ -15751,7 +15841,7 @@ void main() {
         tester.widget<TextField>(find.byType(TextField).first).controller!.text,
         'borrador libre',
       );
-      expect(secureStore.containsKey(key), isTrue);
+      expect(sealed.containsKey(key), isTrue);
       expect(tester.takeException(), isNull);
     });
   });
@@ -15987,7 +16077,7 @@ void main() {
       expect(tester.widget<TextField>(field).controller!.text, isEmpty);
       await tester.enterText(field, 'own draft');
       await tester.pump(const Duration(milliseconds: 400));
-      expect(secureStore[foreignKey], foreignBytes);
+      expect(sealed[foreignKey], foreignBytes);
       final store = ChatDraftStore(
         await SharedPreferences.getInstance(),
         secureStorage: _MemoryDraftSecureStorage(secureStore),
@@ -15998,7 +16088,7 @@ void main() {
       );
       await tester.enterText(field, '');
       await tester.pump(const Duration(milliseconds: 400));
-      expect(secureStore[foreignKey], foreignBytes);
+      expect(sealed[foreignKey], foreignBytes);
       expect(gateway.submissions, isEmpty);
     },
   );
@@ -16043,7 +16133,7 @@ void main() {
         'stored-submission-test',
         profile: 'work',
       );
-      final bytes = secureStore[key];
+      final bytes = sealed[key];
       expect(bytes, isNotNull);
       final owner = LocalConversationCleanupFence.currentLifecycle(
         connectionId: connection.id,
@@ -16053,10 +16143,10 @@ void main() {
       LocalConversationCleanupFence.endLifecycle(owner);
       await tester.enterText(field, 'revoked work draft');
       await tester.pump(const Duration(milliseconds: 400));
-      expect(secureStore[key], bytes);
+      expect(sealed[key], bytes);
       await tester.enterText(field, '');
       await tester.pump(const Duration(milliseconds: 400));
-      expect(secureStore[key], bytes);
+      expect(sealed[key], bytes);
       expect(gateway.submissions, ['first work turn']);
     },
   );
@@ -16090,7 +16180,7 @@ void main() {
       final field = find.byType(TextField).first;
       await tester.enterText(field, 'confirmed draft');
       await tester.pump(const Duration(milliseconds: 400));
-      final confirmed = secureStore[key];
+      final confirmed = sealed[key];
       expect(confirmed, isNotNull);
       final owner = LocalConversationCleanupFence.currentLifecycle(
         connectionId: connection.id,
@@ -16115,7 +16205,7 @@ void main() {
       release.complete();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(secureStore[key], confirmed);
+      expect(sealed[key], confirmed);
       final store = ChatDraftStore(
         await SharedPreferences.getInstance(),
         secureStorage: _MemoryDraftSecureStorage(secureStore),
@@ -16283,7 +16373,7 @@ void main() {
       await clear;
       await tester.pump(const Duration(milliseconds: 400));
       expect(
-        secureStore.containsKey(key),
+        sealed.containsKey(key),
         isFalse,
         reason: 'save admission must precede the owning screen queue',
       );
@@ -18950,7 +19040,7 @@ void main() {
     }
 
     expect(gateway.submissions, isEmpty);
-    final stored = jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map;
+    final stored = jsonDecode(sealed['chat_turn_outbox_v1']!) as Map;
     expect(stored, hasLength(1));
     expect(
       (stored.values.single as Map)['client_turn_id'],
@@ -23103,7 +23193,7 @@ void main() {
     );
     expect(gateway.submissions, isEmpty);
     final stored =
-        jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map<String, dynamic>;
+        jsonDecode(sealed['chat_turn_outbox_v1']!) as Map<String, dynamic>;
     expect(
       (stored.values.single as Map<String, dynamic>)['state'],
       PreparedTurnState.ambiguous.name,
@@ -23133,7 +23223,7 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
       isEmpty,
     );
-    expect(secureStore.containsKey('chat_turn_outbox_v1'), isFalse);
+    expect(sealed.containsKey('chat_turn_outbox_v1'), isFalse);
     expect(tester.takeException(), isNull);
   });
 
@@ -23176,7 +23266,7 @@ void main() {
       prompt,
     );
     final stored =
-        jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map<String, dynamic>;
+        jsonDecode(sealed['chat_turn_outbox_v1']!) as Map<String, dynamic>;
     expect(
       (stored.values.single as Map<String, dynamic>)['state'],
       PreparedTurnState.ambiguous.name,
@@ -23409,7 +23499,7 @@ void main() {
 
     Map<String, dynamic> storedOutboxTurn() {
       final stored =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+          jsonDecode(sealed['chat_turn_outbox_v1']!)
               as Map<String, dynamic>;
       return stored.values.single as Map<String, dynamic>;
     }
@@ -24149,7 +24239,7 @@ void main() {
     );
     // La clave creada quedó persistida junto a retry_boundary.
     final stored =
-        jsonDecode(secureStore['chat_turn_outbox_v1']!) as Map<String, dynamic>;
+        jsonDecode(sealed['chat_turn_outbox_v1']!) as Map<String, dynamic>;
     final boundary =
         (stored.values.single as Map<String, dynamic>)['retry_boundary']
             as Map<String, dynamic>;
@@ -24320,7 +24410,7 @@ void main() {
         hasLength(1),
       );
       var stored =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+          jsonDecode(sealed['chat_turn_outbox_v1']!)
               as Map<String, dynamic>;
       expect(
         (stored.values.single as Map<String, dynamic>)['state'],
@@ -24355,7 +24445,7 @@ void main() {
       );
       expect(find.textContaining('TuiGatewayRpcError'), findsNothing);
       stored =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+          jsonDecode(sealed['chat_turn_outbox_v1']!)
               as Map<String, dynamic>;
       expect(
         (stored.values.single as Map<String, dynamic>)['state'],
@@ -24414,7 +24504,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       final outboxBeforeDelete =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+          jsonDecode(sealed['chat_turn_outbox_v1']!)
               as Map<String, dynamic>;
       final rejectedId =
           (outboxBeforeDelete.values.single
@@ -24452,15 +24542,15 @@ void main() {
         profile: 'default',
       );
       final outboxWithNeighbor =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+          jsonDecode(sealed['chat_turn_outbox_v1']!)
               as Map<String, dynamic>;
       final neighborOutboxBytes = jsonEncode(
         outboxWithNeighbor[outboxNeighbor.storageId],
       );
-      final neighborDraftBytes = secureStore[neighborDraftKey];
-      expect(secureStore.containsKey(draftKey), isTrue);
+      final neighborDraftBytes = sealed[neighborDraftKey];
+      expect(sealed.containsKey(draftKey), isTrue);
       expect(
-        (jsonDecode(secureStore[draftKey]!)
+        (jsonDecode(sealed[draftKey]!)
             as Map<String, dynamic>)['preparedTurnClientTurnId'],
         rejectedId,
       );
@@ -24477,9 +24567,9 @@ void main() {
       expect(draftDeleteEntered.isCompleted, isTrue);
       // Readback del backend justo en el corte entre stores: el draft antiguo
       // aún existe, pero el turno ya fue reemplazado por autoridad durable.
-      expect(secureStore.containsKey(draftKey), isTrue);
+      expect(sealed.containsKey(draftKey), isTrue);
       final cutOutbox =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+          jsonDecode(sealed['chat_turn_outbox_v1']!)
               as Map<String, dynamic>;
       expect(cutOutbox.containsKey(outboxNeighbor.storageId), isTrue);
       expect(cutOutbox.containsKey(rejectedStorageId), isFalse);
@@ -24533,15 +24623,15 @@ void main() {
         ),
         isTrue,
       );
-      expect(secureStore.containsKey(draftKey), isFalse);
+      expect(sealed.containsKey(draftKey), isFalse);
       final afterRestart =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+          jsonDecode(sealed['chat_turn_outbox_v1']!)
               as Map<String, dynamic>;
       expect(
         jsonEncode(afterRestart[outboxNeighbor.storageId]),
         neighborOutboxBytes,
       );
-      expect(secureStore[neighborDraftKey], neighborDraftBytes);
+      expect(sealed[neighborDraftKey], neighborDraftBytes);
       expect(restartedGateway.submissions, isEmpty);
       expect(
         restartedChat.messages.where(
@@ -24633,7 +24723,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 800));
       await tester.pump(const Duration(milliseconds: 800));
       expect(
-        secureStore.containsKey(draftKey),
+        sealed.containsKey(draftKey),
         isFalse,
         reason: 'salir no puede volver a persistir el texto borrado',
       );
@@ -25151,7 +25241,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       final stored =
-          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+          jsonDecode(sealed['chat_turn_outbox_v1']!)
               as Map<String, dynamic>;
       expect(
         (stored.values.single as Map<String, dynamic>)['state'],
@@ -25250,8 +25340,8 @@ void main() {
       isEmpty,
     );
     expect(gateway.submissions, isEmpty);
-    expect(secureStore.containsKey('chat_turn_outbox_v1'), isTrue);
-    expect(secureStore.containsKey(acceptedDraftKey), isFalse);
+    expect(sealed.containsKey('chat_turn_outbox_v1'), isTrue);
+    expect(sealed.containsKey(acceptedDraftKey), isFalse);
     expect(tester.takeException(), isNull);
   });
 
@@ -50351,7 +50441,9 @@ void main() {
           expect(tester.state(find.byType(SshScreen)), same(hub));
           await tester.tap(find.byKey(const ValueKey('chat-workspace-expand')));
           await tester.pump();
+          expect(workspace.fullscreen, isTrue);
           expect(workspace.mode, ChatWorkspaceMode.workspace);
+          expect(tester.getRect(frame), const Rect.fromLTRB(4, 4, 386, 840));
           expect(
             find.descendant(
               of: find.byType(SshTerminalScreen),
@@ -50468,6 +50560,259 @@ void main() {
         expect(tester.takeException(), isNull);
       });
     }
+
+    testWidgets('a new chat folder closes the previous repo diff', (
+      tester,
+    ) async {
+      phone(tester);
+      mockCompanionStorage();
+      final gateway = _Qa9715GitGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('ws-panel-git-switch'),
+        desktopGateway: gateway,
+        messagesLoaded: false,
+      );
+      for (var frame = 0; frame < 5; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(chat.hasDesktopRuntime, isTrue);
+      gateway.emit('session.info', const {
+        'info': {'cwd': '/work/repo-a'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await pickPanel(tester, 'git');
+      await tester.pump(const Duration(milliseconds: 450));
+      final review = find.byType(GitHubScreen);
+      expect(tester.widget<GitHubScreen>(review).repoPath, '/work/repo-a');
+
+      await tester.tap(find.text('conflict.txt').first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 450));
+      final stage = find.byKey(const ValueKey('git-diff-stage'));
+      expect(stage, findsOneWidget);
+
+      gateway.emit('session.info', const {
+        'info': {'cwd': '/work/repo-a'},
+      });
+      await tester.pump();
+      expect(stage, findsOneWidget);
+
+      gateway.emit('session.info', const {
+        'info': {'cwd': '/work/repo-b'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 450));
+      expect(stage, findsNothing);
+      expect(tester.widget<GitHubScreen>(review).repoPath, '/work/repo-b');
+      expect(tester.takeException(), isNull);
+    });
+
+    // 1.4.3 (the owner: «git never shows up, and it exists»). Git used to be
+    // offered only once a read had found a repository, read on the first
+    // frame, before the runtime said where the conversation works. Desktop
+    // offers its review pane whenever there is a folder
+    // (`app/contrib/controller.tsx`, `$hasWorkspace`).
+    testWidgets('Git is offered in the open Ajustes as soon as session.info '
+        'brings the folder; a folder that is not a repository says so in '
+        'the panel, with the folder and a retry', (tester) async {
+      phone(tester);
+      mockCompanionStorage();
+      final gateway = _Qa9715GitGateway();
+      gateway.git.status = null;
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('ws-panel-git-late'),
+        desktopGateway: gateway,
+        messagesLoaded: false,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      for (var frame = 0; frame < 4; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(chat.hasDesktopRuntime, isTrue);
+      final gitRow = find.byKey(const ValueKey('chat-control-workspace-git'));
+      await openSheet(tester);
+      expect(gitRow, findsNothing, reason: 'no folder yet');
+      final readsBefore = gateway.git.calls.where((c) => c == 'status').length;
+
+      gateway.emit('session.info', const {
+        'info': {'cwd': '/srv/notes'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.desktopRuntimeInfo.cwd, '/srv/notes');
+      expect(gitRow, findsOneWidget, reason: 'the open window follows');
+      expect(
+        gateway.git.calls.where((c) => c == 'status').length,
+        greaterThan(readsBefore),
+        reason: 'the new folder is read',
+      );
+
+      await tester.tap(gitRow);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      final review = find.byType(GitHubScreen);
+      expect(review, findsOneWidget);
+      expect(tester.widget<GitHubScreen>(review).repoPath, '/srv/notes');
+      final notRepo = find.byKey(const ValueKey('git-state-not-repo'));
+      expect(notRepo, findsOneWidget);
+      expect(
+        find.descendant(of: notRepo, matching: find.text('/srv/notes')),
+        findsOneWidget,
+        reason: 'the folder is named',
+      );
+      expect(
+        find.descendant(
+          of: notRepo,
+          matching: find.byKey(const ValueKey('git-retry')),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a Hermes without the git routes is never offered Git', (
+      tester,
+    ) async {
+      phone(tester);
+      mockCompanionStorage();
+      final gateway = _Qa9715GitGateway();
+      gateway.git.unsupported = true;
+      final base = _session();
+      await pumpChat(
+        tester,
+        connection: _remoteConn('ws-panel-git-old'),
+        desktopGateway: gateway,
+        session: Session(
+          id: base.id,
+          title: base.title,
+          model: base.model,
+          source: base.source,
+          messageCount: base.messageCount,
+          isActive: base.isActive,
+          preview: base.preview,
+          startedAt: base.startedAt,
+          cwd: '/srv/notes',
+        ),
+      );
+      await openSheet(tester);
+      expect(
+        find.byKey(const ValueKey('chat-control-workspace-git')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-control-workspace-browser')),
+        findsOneWidget,
+      );
+      expect(gateway.git.calls, isEmpty);
+    });
+
+    testWidgets('on the Fold, Vistas changes layout and Ajustes opens Files', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      phone(tester, const Size(657, 870));
+      mockCompanionStorage();
+      final gateway = _Qa9715GitGateway();
+      await pumpChat(
+        tester,
+        connection: _remoteConn('ws-fold-views'),
+        desktopGateway: gateway,
+      );
+      await tester.tap(viewsButton);
+      await tester.pump();
+      await tester.pump(kChatNotchSheetOpen + const Duration(milliseconds: 80));
+      Finder layout(String mode) =>
+          find.byKey(ValueKey('chat-views-layout-$mode'));
+      expect(layout('chat'), findsOneWidget);
+      expect(layout('workspace'), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-views-panel-terminal')), findsNothing);
+      expect(
+        tester.getSemantics(layout('split')),
+        isSemantics(label: 'Dividido', hasEnabledState: true, isEnabled: false),
+      );
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(kChatNotchSheetClose + const Duration(milliseconds: 120));
+      // Files opens over the chat and says how to get one.
+      await pickPanel(tester, 'files');
+      expect(find.byKey(const ValueKey('chat-workspace-views')), findsNothing);
+      final unavailable = find.byKey(const ValueKey('chat-files-unavailable'));
+      expect(unavailable, findsOneWidget);
+      expect(
+        find.ancestor(
+          of: unavailable,
+          matching: find.byKey(const ValueKey('chat-workspace-panel-clip')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: unavailable, matching: find.text('Configurar SSH')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    });
+
+    // 1.4.3: without an SSH profile Files had nothing to show although the
+    // server lists folders (`/api/fs`), which Desktop's Files pane reads.
+    testWidgets('Files without an SSH profile lists the chat\'s folder through '
+        'the server in a single framed panel', (tester) async {
+      phone(tester);
+      mockCompanionStorage();
+      final gateway = _FilesPanelGateway();
+      final base = _session();
+      await pumpChat(
+        tester,
+        connection: _remoteConn('ws-panel-files'),
+        desktopGateway: gateway,
+        session: Session(
+          id: base.id,
+          title: base.title,
+          model: base.model,
+          source: base.source,
+          messageCount: base.messageCount,
+          isActive: base.isActive,
+          preview: base.preview,
+          startedAt: base.startedAt,
+          cwd: pf1215Root,
+        ),
+      );
+      await pickPanel(tester, 'files');
+      await tester.pump(const Duration(milliseconds: 200));
+      final server = find.byKey(const ValueKey('chat-files-server'));
+      expect(server, findsOneWidget);
+      expect(find.byType(SftpBrowserScreen), findsNothing);
+      expect(gateway.files.fsCalls.first, 'list:$pf1215Root');
+      expect(
+        find.byKey(const ValueKey('pf1215-fs-entry-$pf1215Root/README.md')),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(
+          of: server,
+          matching: find.byKey(const ValueKey('chat-workspace-panel-clip')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(
+          of: server,
+          matching: find.byKey(const ValueKey('workspace-panel-card')),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('workspace-panel-header')),
+          matching: find.textContaining(pf1215Root, findRichText: true),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
 
     // The «Agentes» (Herdr) section is off in this release: the chat's panel
     // strip must not offer it either, even with an SSH connection.
@@ -55413,27 +55758,26 @@ Future<void> _rebuildChatScreen(WidgetTester tester) async {
   await tester.pump();
 }
 
-/// The timeline's row of step [id]: the verb in bold and, when there is one,
-/// the target in the chip beside it (live-pill: no longer one «verbo · objetivo»
-/// string).
+/// The opened list's pill of step [id] (the live window's pill): its one
+/// line says the verb in bold first and, when there is one, the target
+/// after it, «Ejecutó  sleep».
 void _expectStepRow(String id, String verb, [String? target]) {
   final card = find.byKey(ValueKey('turn-step-card-$id'));
   expect(card, findsOneWidget, reason: 'step $id');
   expect(
-    find.descendant(of: card, matching: find.text(verb, findRichText: true)),
+    find.descendant(
+      of: card,
+      matching: find.byWidgetPredicate((widget) {
+        if (widget is! RichText) return false;
+        final line = widget.text.toPlainText();
+        return target == null
+            ? line == verb || line.startsWith('$verb  ')
+            : line == '$verb  $target';
+      }),
+    ),
     findsOneWidget,
-    reason: 'verb of $id',
+    reason: 'verb and target of $id',
   );
-  if (target != null) {
-    expect(
-      find.descendant(
-        of: card,
-        matching: find.text(target, findRichText: true),
-      ),
-      findsOneWidget,
-      reason: 'target of $id',
-    );
-  }
 }
 
 /// Q9-CHAT5 v2: what a screen reader hears for the step card of [id] (its

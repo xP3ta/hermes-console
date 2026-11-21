@@ -5,7 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/app_lock_sensitive_read_fence.dart';
 import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/sealed_local_files.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/memory_sealed_files.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +24,17 @@ void main() {
         final writeRelease = Completer<void>();
         AppLockService? observedLock;
         var readsAdmittedLocked = 0;
+        // The draft itself is a sealed file: its write is held there, and
+        // a file read while locked counts like an entry read.
+        final files = MemorySealedFileIo.of(SealedLocalFiles.drafts)
+          ..resetHooks();
+        files.beforeWrite = (_) async {
+          if (!writeStarted.isCompleted) writeStarted.complete();
+          await writeRelease.future;
+        };
+        files.beforeRead = (_) async {
+          if (observedLock?.locked.value == true) readsAdmittedLocked++;
+        };
         TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, (call) async {
               final args = (call.arguments as Map?) ?? const {};
@@ -33,10 +47,6 @@ void main() {
                   }
                   return values[key];
                 case 'write':
-                  if (key.startsWith('chat_draft_v3.')) {
-                    if (!writeStarted.isCompleted) writeStarted.complete();
-                    await writeRelease.future;
-                  }
                   values[key] = args['value'] as String;
                   return null;
                 case 'delete':
@@ -90,6 +100,7 @@ void main() {
           );
         } finally {
           if (!writeRelease.isCompleted) writeRelease.complete();
+          files.resetHooks();
           TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
               .setMockMethodCallHandler(channel, null);
         }

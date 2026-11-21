@@ -1,10 +1,8 @@
-// «Sessions» for the terminal (1.4.0): what already runs on the server, to
-// attach the terminal to it. Tabs: Shell (stay as it is), tmux (its
-// sessions), Herdr (its named sessions and the default session's
-// workspaces, with their state) and Recent. Everything is read first, with
-// the app's own read-only commands; choosing a row only returns the line to
-// type, built from a validated id or name.
+// Sessions that can be opened beside the login shell. The listing uses
+// read-only commands. The selection contains a validated attachment command
+// or the choice to return to the shell.
 import 'package:hermes_android/core/design/hicons.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -12,48 +10,107 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../design/modal.dart';
 import '../services/herdr_status.dart';
+import '../services/ssh_session_kind.dart';
+import '../services/ssh_session_service.dart';
 import '../services/terminal_sessions.dart';
 import '../theme/app_theme.dart';
 import '../theme/hermes_tokens.dart';
 import 'console_loader.dart';
 import 'herdr_agents_widgets.dart';
 
-/// What the user chose: the line to type and how to remember it.
 class TerminalSessionChoice {
-  const TerminalSessionChoice(this.line, this.recent);
+  const TerminalSessionChoice(String command, TerminalRecent item)
+    : line = command,
+      recent = item;
 
-  final String line;
-  final TerminalRecent recent;
+  const TerminalSessionChoice.shell() : line = null, recent = null;
+
+  final String? line;
+  final TerminalRecent? recent;
 }
 
-/// Shows the sheet. Returns the choice, or null (closed, or «Shell»).
+/// Offers the same session switching from the terminal menu and from the
+/// workspace's Herdr shortcut.
+Future<void> chooseSshTerminalSession(
+  BuildContext context, {
+  required SshSessionService service,
+  required SshTerminalSession session,
+  required TerminalRecentStore recents,
+  bool startOnHerdr = false,
+}) async {
+  final client = session.client;
+  if (client == null || session.phase.value != SshSessionPhase.ready) return;
+  final choice = await showSshSessionsSheet(
+    context,
+    run: (command) => SshSessionService.runRemote(client, command),
+    recents: recents,
+    startOnHerdr: startOnHerdr,
+    canReturnToShell: session.attachment.value != null,
+  );
+  if (choice == null || !context.mounted) return;
+  final recent = choice.recent;
+  final line = choice.line;
+  if (recent == null || line == null) {
+    service.showPlainShell(session);
+    return;
+  }
+  final kind = switch (recent.kind) {
+    TerminalRecentKind.tmux => SshSessionKind.tmux,
+    TerminalRecentKind.herdrSession ||
+    TerminalRecentKind.herdrWorkspace => SshSessionKind.herdr,
+  };
+  if (await service.attachTerminal(session, kind, line)) {
+    await recents.add(recent);
+  } else if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(Strings.of(context).hdpOpenSessionFailed)),
+    );
+  }
+}
+
+/// Returns the choice, or null when the sheet is dismissed.
+/// [startOnHerdr]: opens on its Herdr tab (the workspace bar's Herdr).
 Future<TerminalSessionChoice?> showSshSessionsSheet(
   BuildContext context, {
   required SshRemoteRunner run,
   TerminalRecentStore? recents,
+  bool startOnHerdr = false,
+  bool canReturnToShell = false,
 }) => showHermesSurface<TerminalSessionChoice>(
   context: context,
   surfaceKey: const ValueKey('ssh-sessions-sheet'),
   maxWidth: 520,
   maxHeightFactor: 0.9,
   scrim: HermesScrim.sheet,
-  builder: (context) => _SessionsSheet(run: run, recents: recents),
+  builder: (context) => _SessionsSheet(
+    run: run,
+    recents: recents,
+    initial: startOnHerdr ? _Tab.herdr : _Tab.shell,
+    canReturnToShell: canReturnToShell,
+  ),
 );
 
 enum _Tab { shell, tmux, herdr, recent }
 
 class _SessionsSheet extends StatefulWidget {
-  const _SessionsSheet({required this.run, required this.recents});
+  const _SessionsSheet({
+    required this.run,
+    required this.recents,
+    required this.initial,
+    required this.canReturnToShell,
+  });
 
   final SshRemoteRunner run;
   final TerminalRecentStore? recents;
+  final _Tab initial;
+  final bool canReturnToShell;
 
   @override
   State<_SessionsSheet> createState() => _SessionsSheetState();
 }
 
 class _SessionsSheetState extends State<_SessionsSheet> {
-  _Tab _tab = _Tab.shell;
+  late _Tab _tab = widget.initial;
   TmuxListing? _tmux;
   HerdrListing? _herdr;
 
@@ -180,9 +237,14 @@ class _SessionsSheetState extends State<_SessionsSheet> {
     return [
       _SessionRow(
         key: const ValueKey('ssh-sessions-shell'),
-        title: strings.hdpShellRow,
-        subtitle: strings.hdpShellBody,
-        onTap: () => Navigator.of(context).pop(),
+        title: widget.canReturnToShell
+            ? strings.hdpReturnToShell
+            : strings.hdpShellRow,
+        subtitle: widget.canReturnToShell
+            ? strings.hdpReturnToShellBody
+            : strings.hdpShellBody,
+        onTap: () =>
+            Navigator.of(context).pop(const TerminalSessionChoice.shell()),
       ),
     ];
   }

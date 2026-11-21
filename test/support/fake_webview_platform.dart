@@ -55,6 +55,7 @@ class FakeWebViewController extends PlatformWebViewController {
   final List<String> loadedHtml = [];
   final List<String> loadedFiles = [];
   final List<Uri> loadedRequests = [];
+  final List<Map<String, String>> loadedRequestHeaders = [];
   FakeNavigationDelegate? navigationDelegate;
   void Function(PlatformWebViewPermissionRequest request)? permissionHandler;
   bool? zoomEnabled;
@@ -84,8 +85,10 @@ class FakeWebViewController extends PlatformWebViewController {
       loadedFiles.add(absoluteFilePath);
 
   @override
-  Future<void> loadRequest(LoadRequestParams params) async =>
-      loadedRequests.add(params.uri);
+  Future<void> loadRequest(LoadRequestParams params) async {
+    loadedRequests.add(params.uri);
+    loadedRequestHeaders.add(Map<String, String>.from(params.headers));
+  }
 
   @override
   Future<void> enableZoom(bool enabled) async {

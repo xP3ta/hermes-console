@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -27,6 +28,9 @@ class _Gateway {
     server.listen((request) async {
       final socket = await WebSocketTransformer.upgrade(request);
       sockets.add(socket);
+      // A test can hold a dial between the upgrade and `gateway.ready`.
+      final gate = readyGate;
+      if (gate != null) await gate.future;
       socket.add(
         jsonEncode({
           'jsonrpc': '2.0',
@@ -112,6 +116,10 @@ class _Gateway {
   final sockets = <WebSocket>[];
   final frames = <Map<String, dynamic>>[];
   bool running = false;
+
+  /// While set, a new connection waits for it before it sends
+  /// `gateway.ready`: the client's dial stays in flight.
+  Completer<void>? readyGate;
 
   /// What Hermes' replay ring holds: every frame sent, delivered or not.
   final ring = <Map<String, dynamic>>[];
@@ -498,22 +506,57 @@ void main() {
     gateway.event('message.start', 1, const {});
     await _until(() => chat.isStreaming);
 
+    // The loss is an event of the client's link, not a state to poll for:
+    // the chat redials by itself a few tens of milliseconds after it, and a
+    // poll that comes late on a slow runner never sees the socket down.
+    final lost = Completer<void>();
+    void noteLoss() {
+      if (!client.isConnected && !lost.isCompleted) lost.complete();
+    }
+
+    client.linkListenable.addListener(noteLoss);
+    addTearDown(() => client.linkListenable.removeListener(noteLoss));
+    // The redial stays in flight, at the server's `gateway.ready`, until the
+    // app is back: the hold ends on resume with a dial on the wire.
+    final dialHeld = Completer<void>();
+    gateway.readyGate = dialHeld;
+    addTearDown(() {
+      if (!dialHeld.isCompleted) dialHeld.complete();
+    });
+    // A failing test must not leave the binding paused for the next one.
+    addTearDown(
+      () => binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed),
+    );
+    final sockets = gateway.sockets.length;
+
     binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     TurnKeepAliveHold.held = true;
     await gateway.sockets.last.close(1001);
-    await _until(() => !client.isConnected, reason: 'socket noticed');
+    await lost.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => fail('the cut socket was never noticed'),
+    );
     Object? redialError;
     final redial = client.connect().then<void>(
       (_) {},
       onError: (Object error) => redialError = error,
     );
     binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await redial.timeout(const Duration(seconds: 10), onTimeout: () {});
+    await _until(
+      () => gateway.sockets.length > sockets,
+      reason: 'the redial reached the server',
+    );
+    dialHeld.complete();
+    await redial.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => fail('the redial never settled'),
+    );
     expect(
       redialError,
       isNull,
       reason: 'no spurious connectionLost from a suspend on the way back',
     );
+    expect(client.isConnected, isTrue, reason: 'the redial completed');
   });
 
   test('a real socket drop still schedules the recovery (loss path)', () async {

@@ -1316,7 +1316,8 @@ void main() {
   });
 
   testWidgets(
-    'inicio hidrata active_list y exige dos ausencias antes de quedar inactivo',
+    'inicio hidrata active_list, conserva stale al fallar y limpia con una '
+    'ausencia',
     (tester) async {
       tester.view.physicalSize = const Size(1170, 2532);
       tester.view.devicePixelRatio = 3;
@@ -1393,7 +1394,7 @@ void main() {
       final initialSessionReads = client.sessionReads;
 
       client.sessions = [row('Vista previa actualizada', now + 60)];
-      roster = const DesktopActiveSessionList();
+      failRoster = true;
       events.add(
         const TuiGatewayEvent(
           type: 'sessions.changed',
@@ -1410,11 +1411,19 @@ void main() {
       }
       expect(client.sessionReads, greaterThan(initialSessionReads));
       expect(
+        activeChats.globalActivity
+            .activityFor(connection.id, 'default', 'cold-running')
+            ?.stale,
+        isTrue,
+      );
+      // A failed roster read marks activity stale without dropping it.
+      expect(
         find.byKey(const ValueKey('home-chat-working-cold-running')),
         findsOneWidget,
       );
 
-      failRoster = true;
+      failRoster = false;
+      roster = const DesktopActiveSessionList();
       events.add(
         const TuiGatewayEvent(
           type: 'sessions.changed',
@@ -1430,36 +1439,7 @@ void main() {
       ) {
         await tester.pump(const Duration(milliseconds: 25));
       }
-      expect(
-        activeChats.globalActivity
-            .activityFor(connection.id, 'default', 'cold-running')
-            ?.stale,
-        isTrue,
-      );
-      // The first absence remains visually continuous while the next read
-      // settles; the second absence below removes it.
-      expect(
-        find.byKey(const ValueKey('home-chat-working-cold-running')),
-        findsOneWidget,
-      );
-
-      failRoster = false;
-      events.add(
-        const TuiGatewayEvent(
-          type: 'sessions.changed',
-          sessionId: '',
-          payload: {},
-        ),
-      );
-      await tester.pump(sessionLibraryRefreshGap);
-      for (
-        var attempt = 0;
-        attempt < 40 && rosterReads < initialRosterReads + 3;
-        attempt++
-      ) {
-        await tester.pump(const Duration(milliseconds: 25));
-      }
-      expect(rosterReads, greaterThanOrEqualTo(initialRosterReads + 3));
+      expect(rosterReads, greaterThanOrEqualTo(initialRosterReads + 2));
       await tester.pump(const Duration(milliseconds: 250));
       expect(
         find.byKey(const ValueKey('home-chat-working-cold-running')),
