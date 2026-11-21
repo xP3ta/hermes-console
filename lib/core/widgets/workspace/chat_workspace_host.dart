@@ -2243,8 +2243,9 @@ class _PaneActions extends StatelessWidget {
             // «Vistas» lives here while the chat is hidden (its own header
             // has it otherwise): always one tap away.
             if (!controller.chatVisible || chatWorkspaceOpensOverChat(controller))
-              Builder(
-                builder: (buttonContext) => button(
+              ChatViewsLiveTabs(
+                tabs: availableTabs,
+                builder: (buttonContext, liveTabs) => button(
                   key: const ValueKey('chat-workspace-views-button'),
                   icon: HIcons.view_column_outlined,
                   tooltip: chatWorkspaceViewsLabel(strings, controller),
@@ -2252,6 +2253,7 @@ class _PaneActions extends StatelessWidget {
                     buttonContext,
                     controller: controller,
                     availableTabs: availableTabs,
+                    liveTabs: liveTabs,
                   ),
                 ),
               ),
