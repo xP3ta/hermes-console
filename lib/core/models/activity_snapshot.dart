@@ -217,14 +217,28 @@ String? _detailFile(String value) {
 
 /// A skill's namespace: a plugin's (`omh:web-research`) or a category's
 /// (`research:current-news`), as Hermes resolves `namespace:name`
-/// (`agent/skill_utils.py` `is_valid_namespace`).
-final _detailSkillNamespace = RegExp(r'^[a-zA-Z0-9_-]+$');
+/// (`agent/skill_utils.py` `is_valid_namespace`). Narrower than the server's
+/// grammar on purpose: it starts with a letter and has at least two
+/// characters, so neither the numeric id of a bot token
+/// (`123456789:AA…`) nor a drive letter (`C:dir/file`) reads as one.
+final _detailSkillNamespace = RegExp(r'^[a-zA-Z][a-zA-Z0-9_-]+$');
+
+/// A bot token as Telegram issues it: numeric bot id, colon, opaque key.
+final _botTokenLike = RegExp(r'\d{5,}:[A-Za-z0-9_-]{20,}');
+
+/// A long run that mixes upper case, lower case and digits is a key, not
+/// the name somebody gave a skill.
+bool _opaqueKeyLike(String segment) =>
+    segment.length >= 20 &&
+    segment.contains(RegExp(r'[A-Z]')) &&
+    segment.contains(RegExp(r'[a-z]')) &&
+    segment.contains(RegExp(r'[0-9]'));
 
 /// Catalogue IDs may be category/name, and may be qualified by a namespace
 /// (`namespace:name`, or `plugin:namespace:name` as the skills index writes
 /// a plugin's; `tools/skills_tool.py` `_resolve_plugin_skill`). Each segment
-/// is still an identifier, never an absolute path, traversal, free text or a
-/// secret.
+/// is still an identifier, never an absolute or drive-relative path,
+/// traversal, free text or a secret.
 bool _detailSkillId(String value) {
   final qualified = value.split(':');
   final segments = qualified.last.split('/');
@@ -234,6 +248,8 @@ bool _detailSkillId(String value) {
           .every(_detailSkillNamespace.hasMatch) &&
       segments.length <= 2 &&
       segments.every(_detailIdentifier.hasMatch) &&
+      !segments.any(_opaqueKeyLike) &&
+      !_botTokenLike.hasMatch(value) &&
       !_secretLike.hasMatch(value);
 }
 
