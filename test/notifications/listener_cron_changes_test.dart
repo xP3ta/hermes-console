@@ -241,6 +241,29 @@ void main() {
       expect(shown, ['Scheduled task failed']);
     });
 
+    test('a routine of another profile that has never run still keeps the '
+        'listing read on every tick, so its first results are not skipped',
+        () async {
+      await client.connect();
+      // No `latest_execution`, no `last_run_at`: the job has no execution
+      // to show yet.
+      const neverRan = {'id': 'job-7', 'name': 'Radar', 'profile': 'radar'};
+      dashboard.jobs = [_job('e1', 'completed'), neverRan];
+      final d = discovery();
+      for (var i = 0; i < 3; i++) {
+        await tick(d);
+      }
+      expect(dashboard.jobReads, 3);
+      // Its first run fails; no `cron.changed` arrives for that profile.
+      dashboard.jobs = [
+        _job('e1', 'completed'),
+        {..._job('e8', 'failed'), 'id': 'job-7', 'profile': 'radar'},
+      ];
+      await tick(d);
+      expect(dashboard.jobReads, 4);
+      expect(shown, ['Scheduled task failed']);
+    });
+
     test('a server without change events lists on every tick, as '
         'before', () async {
       gateway.changeEvents = false;
