@@ -225,9 +225,12 @@ MessagingPlatformUpdate messagingChanges(
   MessagingPlatform platform,
   Map<String, String> draft,
 ) {
+  final fields = {for (final field in platform.envVars) field.key: field};
   final env = <String, String>{
     for (final entry in draft.entries)
-      if (entry.value.trim().isNotEmpty) entry.key: entry.value.trim(),
+      if (entry.value.trim().isNotEmpty &&
+          !_isShownMask(fields[entry.key], entry.value.trim()))
+        entry.key: entry.value.trim(),
   };
   final clear = [
     for (final field in platform.envVars)
@@ -235,6 +238,21 @@ MessagingPlatformUpdate messagingChanges(
         field.key,
   ];
   return MessagingPlatformUpdate(env: env, clearEnv: clear);
+}
+
+/// Whether [typed] is only the mask the form shows for the saved value of
+/// [field] (its preview, the server's redacted form, or bullets). Typing the
+/// mask back is not an edit: the saved value stays, and the mask is never
+/// sent as if it were the credential.
+bool _isShownMask(MessagingEnvField? field, String typed) {
+  if (typed.startsWith('«redacted') || RegExp(r'^[•*]+$').hasMatch(typed)) {
+    return true;
+  }
+  if (field == null || !field.isSet || field.redactedValue.isEmpty) {
+    return false;
+  }
+  return typed == field.redactedValue ||
+      typed == credentialPreview(field.redactedValue);
 }
 
 /// Desktop `settings/helpers.ts` `credentialPreview`: the text a saved

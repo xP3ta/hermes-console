@@ -228,6 +228,27 @@ void main() {
     expect(server.seen.first.query['profile'], 'default');
   });
 
+  test('typing the shown mask back is not an edit: it is never sent as the '
+      'credential', () async {
+    server.routes['GET /api/messaging/platforms'] = (200, _platformsJson());
+    final telegram = (await real(() => client.load('research'))).first;
+    for (final typed in [
+      '1234…wxyz',
+      '«redacted:1234…wxyz»',
+      '••••••••',
+      ' 1234…wxyz ',
+    ]) {
+      final update = messagingChanges(telegram, {'TELEGRAM_BOT_TOKEN': typed});
+      expect(update.env, isEmpty, reason: typed);
+      expect(update.hasChanges, isFalse, reason: typed);
+    }
+    // A real new value still goes out.
+    expect(
+      messagingChanges(telegram, {'TELEGRAM_BOT_TOKEN': 'new-value'}).env,
+      {'TELEGRAM_BOT_TOKEN': 'new-value'},
+    );
+  });
+
   test('saving sends only what was typed: never a saved secret, never its '
       'preview, and an emptied allowlist is a clear', () async {
     server.routes['GET /api/messaging/platforms'] = (200, _platformsJson());
