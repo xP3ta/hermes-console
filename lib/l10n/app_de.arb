@@ -2552,6 +2552,7 @@
   "diagBundleSubtitle": "Bereinigte Vorschau; es wird nichts automatisch gesendet",
   "diagBundlePreviewTitle": "Diagnose prüfen",
   "diagBundlePrivacy": "Enthält nur Zustände und Zähler. Enthält keine Server, Zugangsdaten, Unterhaltungen, Pfade oder Kennungen.",
+  "diagBundleTraffic": "Enthalten ist auch, wie viel die App in den letzten 48 Stunden mit deinem Server gesprochen hat: Anfragen und Bytes je Routenart, WebSocket-Nachrichten und Neuverbindungen, im Vordergrund und im Hintergrund. Ohne Adressen, Kennungen oder Inhalte. Gezählt wird nur auf diesem Telefon.",
   "diagBundleError": "Die lokale Diagnose konnte nicht vorbereitet werden",
   "dependencyDashboardTitle": "Das Dashboard muss eingerichtet werden",
   "dependencyDashboardBody": "Diese Funktion verwendet das Hermes-Dashboard. Richte seinen Zugang ein, damit die App diese Daten laden und speichern kann.",

@@ -2552,6 +2552,7 @@
   "diagBundleSubtitle": "민감한 정보를 제거한 미리보기입니다. 자동 전송하지 않습니다",
   "diagBundlePreviewTitle": "진단 정보 검토",
   "diagBundlePrivacy": "상태와 개수만 포함됩니다. 서버, 자격 증명, 대화, 경로 또는 식별자는 포함하지 않습니다.",
+  "diagBundleTraffic": "지난 48시간 동안 앱이 서버와 주고받은 양도 포함됩니다. 경로 종류별 요청 수와 바이트, WebSocket 메시지와 재연결 횟수를 포그라운드와 백그라운드로 나누어 기록합니다. 주소, 식별자, 내용은 포함되지 않습니다. 이 휴대폰에서만 집계됩니다.",
   "diagBundleError": "로컬 진단을 준비하지 못했습니다",
   "dependencyDashboardTitle": "Dashboard 설정 필요",
   "dependencyDashboardBody": "이 기능은 Hermes Dashboard를 사용합니다. 앱이 데이터를 불러오고 저장할 수 있도록 접근을 설정하세요.",

@@ -2552,6 +2552,7 @@
   "diagBundleSubtitle": "预览已脱敏；不会自动发送任何内容",
   "diagBundlePreviewTitle": "查看诊断报告",
   "diagBundlePrivacy": "仅包含状态和计数，不包含服务器、凭据、对话、路径或标识符。",
+  "diagBundleTraffic": "还包括过去 48 小时内应用与服务器的通信量：按路由类型统计的请求数和字节数、WebSocket 消息数和重连次数，并区分前台和后台。不含地址、标识符或内容。仅在本机统计。",
   "diagBundleError": "无法生成本地诊断报告",
   "dependencyDashboardTitle": "需要配置 Dashboard",
   "dependencyDashboardBody": "此功能使用 Hermes Dashboard。请配置访问方式，以便应用加载和保存这些数据。",

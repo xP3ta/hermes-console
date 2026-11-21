@@ -2552,6 +2552,7 @@
   "diagBundleSubtitle": "Anteprima ripulita; non viene inviato nulla automaticamente",
   "diagBundlePreviewTitle": "Controlla diagnostica",
   "diagBundlePrivacy": "Include solo stati e contatori. Non contiene server, credenziali, conversazioni, percorsi o identificatori.",
+  "diagBundleTraffic": "Include anche quanto l’app ha parlato con il tuo server nelle ultime 48 ore: richieste e byte per tipo di percorso, messaggi WebSocket e riconnessioni, in primo piano e in background. Senza indirizzi, identificatori né contenuti. Il conteggio avviene solo su questo telefono.",
   "diagBundleError": "Impossibile preparare la diagnostica locale",
   "dependencyDashboardTitle": "La Dashboard richiede configurazione",
   "dependencyDashboardBody": "Questa funzione usa la Dashboard di Hermes. Configura l'accesso perché l'app possa caricare e salvare questi dati.",

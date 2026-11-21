@@ -4308,6 +4308,7 @@
   "diagBundleSubtitle": "Pré-visualização sanitizada; nada é enviado automaticamente",
   "diagBundlePreviewTitle": "Revisar diagnóstico",
   "diagBundlePrivacy": "Inclui apenas estados e contadores. Não contém servidores, credenciais, conversas, caminhos nem identificadores.",
+  "diagBundleTraffic": "Inclui também quanto a app falou com o seu servidor nas últimas 48 horas: pedidos e bytes por tipo de rota, mensagens de WebSocket e religações, em primeiro e em segundo plano. Sem endereços, identificadores nem conteúdo. A contagem é feita apenas neste telemóvel.",
   "diagBundleError": "Não foi possível preparar o diagnóstico local",
   "dependencyDashboardTitle": "O Dashboard precisa de configuração",
   "dependencyDashboardBody": "Este recurso usa o Dashboard do Hermes. Configure o acesso dele para que o app possa carregar e salvar esses dados.",

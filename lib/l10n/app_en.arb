@@ -3822,6 +3822,7 @@
   "diagBundleSubtitle": "Sanitized preview; nothing is sent automatically",
   "diagBundlePreviewTitle": "Review diagnostic",
   "diagBundlePrivacy": "Includes only states and counters. It contains no servers, credentials, conversations, paths, or identifiers.",
+  "diagBundleTraffic": "It also includes how much the app talked to your server in the last 48 hours: requests and bytes per kind of route, WebSocket messages and reconnections, in the foreground and in the background. No addresses, identifiers or content. It is counted on this phone only.",
   "diagBundleError": "The local diagnostic could not be prepared",
   "dependencyDashboardTitle": "The Dashboard needs configuration",
   "dependencyDashboardBody": "This feature uses the Hermes Dashboard. Configure access so the app can load and save this data.",

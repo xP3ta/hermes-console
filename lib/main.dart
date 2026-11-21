@@ -124,6 +124,7 @@ import 'core/services/screen_security.dart';
 import 'core/services/session_archive.dart';
 import 'core/services/sftp_transfer_service.dart';
 import 'core/services/ssh_dashboard_tunnel.dart';
+import 'core/services/traffic_counter.dart';
 import 'core/services/ssh_manager.dart';
 import 'core/services/ssh_tunnel_connector.dart';
 import 'core/services/ssh_session_service.dart';
@@ -1763,6 +1764,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _syncBackgroundCronConnections,
     );
     unawaited(BackgroundListener.setUiForeground(true));
+    final lifecycleNow = WidgetsBinding.instance.lifecycleState;
+    TrafficCounter.instance
+      ..attach(widget.connManager.prefs)
+      ..foreground =
+          lifecycleNow == null || lifecycleNow == AppLifecycleState.resumed;
     BackgroundListener.restoreIfEnabled(widget.connManager.prefs);
     voice.prepareReadAloudPlayback = _prepareReadAloudPlayback;
     voice.readAloud.addListener(_onReadAloudRuntimeChanged);
@@ -1979,6 +1985,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     }
     // Solo molestamos con notificaciones cuando la app no está en primer plano.
     widget.notifications.appInForeground = state == AppLifecycleState.resumed;
+    TrafficCounter.instance.foreground = state == AppLifecycleState.resumed;
     unawaited(
       BackgroundListener.setUiForeground(state == AppLifecycleState.resumed),
     );

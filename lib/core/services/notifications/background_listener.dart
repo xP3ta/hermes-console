@@ -26,6 +26,7 @@ import '../kanban_watch_board.dart';
 import '../launcher_widget_cron.dart';
 import '../launcher_widget_tasks.dart';
 import '../shared_gateway_pool.dart';
+import '../traffic_counter.dart';
 import '../tui_gateway_client.dart';
 import '../../utils/session_title.dart';
 import '../../utils/transport_privacy.dart';
@@ -1618,6 +1619,8 @@ class _HermesTaskHandler extends TaskHandler {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
+    // This isolate keeps its own traffic counts, always as background.
+    TrafficCounter.instance.attach(prefs, service: true);
     final automationOptIn = prefs.getBool(BackgroundListener.prefKey) == true;
     // Cada TaskHandler vive en su propio isolate: los estáticos inicializados
     // por la UI no cruzan esa frontera. Hidratar el gate antes de construir el

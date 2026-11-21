@@ -132,6 +132,7 @@ import 'tui_gateway_client.dart';
 import 'turn_keepalive_hold.dart';
 import 'turn_outbox_store.dart';
 import 'stream_segments.dart';
+import 'traffic_counter.dart';
 
 /// Hermes Desktop espera hasta cinco segundos a que el turno interrumpido deje
 /// de estar busy antes de entregar la corrección capturada por barge-in.
@@ -13685,6 +13686,7 @@ class ActiveChat with WidgetsBindingObserver {
         pagination: null,
       );
     }
+    TrafficCounter.instance.rehydration('stored_page');
     final gateway = _desktopGateway;
     final runtime =
         runtimeSessionId ??
@@ -23352,6 +23354,7 @@ class ActiveChat with WidgetsBindingObserver {
     int step,
   ) async {
     final runtime = error.data['session_id'] as String;
+    TrafficCounter.instance.rehydration('in_place');
     // QA/debug diagnostics only; never printed by a release build.
     if (!kReleaseMode) {
       debugPrint(

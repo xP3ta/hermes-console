@@ -2552,6 +2552,7 @@
   "diagBundleSubtitle": "Aperçu expurgé ; rien n’est envoyé automatiquement",
   "diagBundlePreviewTitle": "Vérifier le diagnostic",
   "diagBundlePrivacy": "Inclut uniquement des états et compteurs. Ne contient ni serveurs, ni identifiants, ni conversations, ni chemins, ni identifiants uniques.",
+  "diagBundleTraffic": "Il indique aussi combien l’app a échangé avec votre serveur ces 48 dernières heures : requêtes et octets par type de route, messages WebSocket et reconnexions, au premier plan et en arrière-plan. Sans adresses, identifiants ni contenu. Le comptage se fait uniquement sur ce téléphone.",
   "diagBundleError": "Impossible de préparer le diagnostic local",
   "dependencyDashboardTitle": "Le Dashboard doit être configuré",
   "dependencyDashboardBody": "Cette fonction utilise le Dashboard de Hermes. Configure son accès pour que l’application puisse charger et enregistrer ces données.",

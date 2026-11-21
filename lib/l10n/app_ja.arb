@@ -2552,6 +2552,7 @@
   "diagBundleSubtitle": "機密情報を除いたプレビュー。自動送信はしません",
   "diagBundlePreviewTitle": "診断を確認",
   "diagBundlePrivacy": "状態と件数のみ含みます。サーバー、認証情報、会話、パス、識別子は含みません。",
+  "diagBundleTraffic": "過去48時間にアプリがサーバーとやり取りした量も含まれます。ルートの種類ごとのリクエスト数とバイト数、WebSocket のメッセージ数と再接続回数を、前面と背景に分けて記録します。アドレス、識別子、内容は含みません。集計はこの端末内だけで行われます。",
   "diagBundleError": "ローカル診断を準備できませんでした",
   "dependencyDashboardTitle": "Dashboardの設定が必要です",
   "dependencyDashboardBody": "この機能はHermesのDashboardを使用します。データの読み込みと保存ができるようアクセスを設定してください。",

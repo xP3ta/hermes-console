@@ -11,6 +11,7 @@ import '../config/flavor.dart';
 import '../services/app_error_log.dart';
 import '../services/connection_manager.dart';
 import '../services/diagnostic_bundle_service.dart';
+import '../services/traffic_counter.dart';
 import '../services/turn_outbox_store.dart';
 import '../feedback/feedback_policy.dart';
 import '../design/modal.dart' show showHermesDialogRoute;
@@ -85,6 +86,13 @@ class DiagnosticBundleController {
       // El informe sigue siendo útil sin estadísticas de caché.
     }
 
+    Map<String, dynamic>? traffic;
+    try {
+      traffic = await TrafficCounter.instance.report(prefs: manager.prefs);
+    } catch (_) {
+      // The report is still useful without the traffic counts.
+    }
+
     final connections = manager.getConnections();
     return service.build(
       DiagnosticBundleInput(
@@ -112,6 +120,7 @@ class DiagnosticBundleController {
             DiagnosticErrorEvent.fromAppError(record),
         ],
         secureStorage: SecureStorageDiagnostics.recent,
+        traffic: traffic,
       ),
     );
   }
@@ -205,6 +214,8 @@ class _DiagnosticBundleTileState extends State<DiagnosticBundleTile> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(s.diagBundlePrivacy),
+                  const SizedBox(height: 8),
+                  Text(s.diagBundleTraffic),
                   const SizedBox(height: 12),
                   Flexible(
                     child: SingleChildScrollView(

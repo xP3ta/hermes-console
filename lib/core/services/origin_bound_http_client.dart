@@ -8,6 +8,7 @@ import 'package:http/io_client.dart';
 
 import '../bots/data/gateway_socket_meter.dart';
 import '../utils/transport_privacy.dart';
+import 'traffic_counter.dart';
 
 /// HTTP authority belongs to the caller's explicit URL, never its Location.
 /// Reject all redirects (including same-origin ones) rather than contacting a
@@ -192,15 +193,23 @@ class OriginBoundHttpClient extends http.BaseClient {
     }
     TransportPrivacy.requireAllowed(uri.toString());
     request.followRedirects = false;
+    // The one place every REST call to a Hermes server crosses: the shape
+    // of its route and the size of its bodies are tallied on the phone
+    // (never its address, query, headers or content).
+    final flow = TrafficCounter.instance.request(
+      request.method,
+      uri.path,
+      requestBytes: request.contentLength,
+    );
     final meter = GatewaySocketMeter.instance;
-    if (!meter.enabled) return _inner.send(request);
+    if (!meter.enabled) return _counted(await _inner.send(request), flow);
     final watch = Stopwatch()..start();
     int? status;
     var outcome = 'error';
     try {
       final response = await _inner.send(request);
       status = response.statusCode;
-      return response;
+      return _counted(response, flow);
     } on http.RequestAbortedException {
       outcome = 'aborted';
       rethrow;
@@ -217,6 +226,25 @@ class OriginBoundHttpClient extends http.BaseClient {
       );
     }
   }
+
+  /// [response] with the bytes of its body added to [flow] as they are
+  /// read; everything else is the response as it came.
+  static http.StreamedResponse _counted(
+    http.StreamedResponse response,
+    TrafficFlow flow,
+  ) => http.StreamedResponse(
+    response.stream.map((chunk) {
+      flow.received(chunk.length);
+      return chunk;
+    }),
+    response.statusCode,
+    contentLength: response.contentLength,
+    request: response.request,
+    headers: response.headers,
+    isRedirect: response.isRedirect,
+    persistentConnection: response.persistentConnection,
+    reasonPhrase: response.reasonPhrase,
+  );
 
   /// Calls made through the returned view are cut, and aborted, at [deadline].
   http.Client within(Duration deadline) => DeadlineHttpClient(this, deadline);
