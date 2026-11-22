@@ -1770,13 +1770,11 @@ List<Map<String, dynamic>> _associateGeneratedImagesNewestFirst(
     collectToolResult(message);
   }
 
+  // The folded tool results stay on their row: the settled turn's diff
+  // cards and its changes chip are read from them (`_toolOutputFor`).
+  // Dropping them here made every publication through this function take
+  // them away and the next read bring them back.
   final projected = List<Map<String, dynamic>>.of(messages);
-  for (var index = 0; index < projected.length; index++) {
-    if (!projected[index].containsKey(assistantToolResultEvidenceKey)) continue;
-    final sanitized = Map<String, dynamic>.from(projected[index])
-      ..remove(assistantToolResultEvidenceKey);
-    projected[index] = Map<String, dynamic>.unmodifiable(sanitized);
-  }
   if (additions.isEmpty) return projected;
   for (final entry in additions.entries) {
     final message = projected[entry.key];
@@ -20345,7 +20343,12 @@ class ActiveChat with WidgetsBindingObserver {
         // Every earlier page first: the count is over the whole history.
         var guard = 0;
         while (hasEarlierMessages && guard++ < 200) {
-          if (!await loadEarlierMessages() || _disposed) {
+          final loaded = await loadEarlierMessages();
+          if (_disposed) return const BranchOutcome(BranchStatus.failed);
+          // The last page can come empty: it adds no row and only says
+          // there is nothing earlier. That is the end of the history, not
+          // a page that could not be read.
+          if (!loaded && (hasEarlierMessages || earlierMessagesLoadFailed)) {
             return const BranchOutcome(BranchStatus.failed);
           }
         }
