@@ -562,6 +562,44 @@ void main() {
       expect(web.loadedRequests, isEmpty);
     });
 
+    testWidgets('a folder longer than the screen scrolls to its last file', (
+      tester,
+    ) async {
+      final files = _Listing({
+        '/srv/long': [
+          for (var i = 0; i < 80; i++)
+            ProjectFsEntry(
+              name: 'file-${i.toString().padLeft(2, '0')}.txt',
+              path: '/srv/long/file-${i.toString().padLeft(2, '0')}.txt',
+              isDirectory: false,
+            ),
+        ],
+      });
+      await tester.pumpWidget(
+        _host(ChatFolderScreen(files: files, root: '/srv/long')),
+      );
+      await _settle(tester);
+      expect(tester.takeException(), isNull);
+      final last = find.text('file-79.txt');
+      final screen = tester.getRect(find.byType(ChatFolderScreen));
+      expect(tester.getRect(last).top, greaterThan(screen.bottom));
+      await tester.scrollUntilVisible(
+        last,
+        400,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('chat-folder-list')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await _settle(tester);
+      expect(tester.getRect(last).bottom, lessThanOrEqualTo(screen.bottom));
+      await tester.tap(last);
+      await _settle(tester);
+      expect(files.reads, ['/srv/long/file-79.txt']);
+    });
+
     testWidgets('a folder opens in the explorer', (tester) async {
       final files = _Listing({
         '/srv/p/docs': [
