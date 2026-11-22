@@ -17302,7 +17302,48 @@ class ActiveChat with WidgetsBindingObserver {
       ..addAll(kept);
   }
 
+  /// One live correction is one row. A correction that is not yet a row of
+  /// the transcript is known by the snapshot entry it came from
+  /// (`_desktopSnapshotKey`) or by the send that made it (`_clientTurnId`);
+  /// a second row with either identity is the same correction arriving by
+  /// another route (the optimistic row, the live snapshot, a projection
+  /// restored from disk), never a second message. The snapshot's row wins.
+  /// Rows of the transcript and corrections with different identities (two
+  /// real identical ones) are left alone.
+  void _collapseRepeatedLiveSteerRows() {
+    bool live(Map<String, dynamic> row) =>
+        row['role'] == 'user' &&
+        row['_steer'] == true &&
+        !_isDurableSteerEcho(row);
+    final keys = <String>{};
+    final sends = <String, Map<String, dynamic>>{};
+    final drop = <Map<String, dynamic>>{};
+    for (final row in _messages) {
+      if (!live(row)) continue;
+      final inflight = row['_desktopSnapshotKind'] == 'inflight';
+      final key = inflight ? row['_desktopSnapshotKey']?.toString() : null;
+      if (key != null && key.isNotEmpty && !keys.add(key)) {
+        drop.add(row);
+        continue;
+      }
+      final send = row['_clientTurnId']?.toString();
+      if (send == null || send.isEmpty) continue;
+      final kept = sends[send];
+      if (kept == null) {
+        sends[send] = row;
+      } else if (inflight && kept['_desktopSnapshotKind'] != 'inflight') {
+        drop.add(kept);
+        sends[send] = row;
+      } else {
+        drop.add(row);
+      }
+    }
+    if (drop.isEmpty) return;
+    _messages.removeWhere((row) => drop.any((gone) => identical(gone, row)));
+  }
+
   void _mergeSteerRecords() {
+    _collapseRepeatedLiveSteerRows();
     if (_messages.isEmpty ||
         (_steerRecords.isEmpty && _steerEchoClientIds.isEmpty)) {
       return;
@@ -17338,9 +17379,12 @@ class ActiveChat with WidgetsBindingObserver {
       Map<String, dynamic>? echo;
       if (record.anchorUserOrdinal == latestUserOrdinal) {
         for (final candidate in authoritativeCorrections) {
+          // A projection restored from disk lost its send id: it claims
+          // the entry of its own text whatever id that row carries.
           if (!usedCorrections.contains(candidate) &&
               candidate['content'] == record.content &&
               (candidate['_clientTurnId'] == null ||
+                  record.clientTurnId == null ||
                   candidate['_clientTurnId'] == record.clientTurnId)) {
             echo = candidate;
             break;
@@ -17410,6 +17454,7 @@ class ActiveChat with WidgetsBindingObserver {
               !_isDurableSteerEcho(existingChronological[index]) &&
               existingChronological[index]['content'] == content &&
               (existingChronological[index]['_clientTurnId'] == null ||
+                  record.clientTurnId == null ||
                   existingChronological[index]['_clientTurnId'] ==
                       record.clientTurnId)) {
             matchingIndex = index;
