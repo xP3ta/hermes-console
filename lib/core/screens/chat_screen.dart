@@ -278,6 +278,7 @@ import '../widgets/chat_approval_dock.dart';
 import '../utils/approval_display.dart';
 import '../widgets/chat/tool_output_cards.dart';
 import '../widgets/chat/turn_changes_sheet.dart';
+import '../widgets/chat/review_notice_row.dart';
 import '../widgets/chat/turn_memory_pill.dart';
 import '../widgets/chat_control_sheet.dart';
 import '../services/git_review_controller.dart';
@@ -22911,6 +22912,19 @@ class _ChatScreenState extends State<ChatScreen>
       }
     }
 
+    // `review.summary`: a quiet one-line receipt, like the memory one above
+    // it; its full text opens on tap.
+    if (msg case {
+      'display_kind': 'side_answer',
+      'display_metadata': {'kind': 'review'},
+    }) {
+      final answer = (msg['display_metadata'] as Map)['answer'];
+      final text = answer is String && answer.trim().isNotEmpty
+          ? answer
+          : content;
+      if (text.trim().isNotEmpty) return ReviewNoticeRow(text: text);
+    }
+
     final timelineEvent = _timelineSystemEventPresentation(context, msg);
     if (timelineEvent != null) {
       return _TimelineSystemEventRow(
@@ -22920,7 +22934,6 @@ class _ChatScreenState extends State<ChatScreen>
         raw: content,
         titleMaxLines: switch (msg) {
           {'display_kind': 'process_complete'} => 2,
-          {'display_metadata': {'kind': 'review'}} => 4,
           _ => null,
         },
       );

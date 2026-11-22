@@ -2489,5 +2489,35 @@ void main() {
       expect(find.textContaining('💾'), findsNothing);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('a review.summary is a quiet one-line receipt, said once', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+
+      gateway.emit('review.summary', const {
+        'text':
+            "💾 Self-improvement review: Skill 'html-mockup-iteration' "
+            "patched · Skill 'html-mockup-iteration' patched "
+            '(references/mobile-prototype-verification.md)',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final pill = find.byKey(const ValueKey('review-notice-pill'));
+      expect(pill, findsOneWidget);
+      final label = tester.widget<Text>(
+        find.descendant(of: pill, matching: find.byType(Text)),
+      );
+      expect(label.maxLines, 1);
+      expect(
+        label.data,
+        "Self-improvement review: Skill 'html-mockup-iteration' patched "
+        '(references/mobile-prototype-verification.md)',
+      );
+      expect(tester.getSize(pill).height, 28);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

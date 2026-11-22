@@ -1,9 +1,11 @@
-// The live-turn pill opened: the turn's calls organised, in the live turn's
-// own look. Every step is its own small outlined pill (the closed window's)
-// hanging from the connector down the side, one tick per pill. A run of
-// consecutive calls of one kind is ONE pill, «Verb ×N», with what they acted
-// on and how long they took together, and opens to the calls themselves as
-// pills one level in, on a connector of their own.
+// The turn's summary opened: the turn's calls organised. Every step is a
+// plain line (icon, words, time, state mark; nothing drawn around it, in the
+// receipt rows' size and ink) hanging from the connector down the side, one
+// tick per line, as if it grew out of it (the owner, 22 nov: no outlined
+// pills, only the tree). A run of consecutive calls of one kind is ONE
+// line, «Verb ×N», with what they acted on and how long they took together,
+// and opens to the calls themselves one level in, on a connector of their
+// own. The closed live window keeps its outlined pills.
 import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
@@ -14,7 +16,9 @@ import 'package:hermes_android/core/models/activity_snapshot.dart'
     show activityToolDetail;
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/live_turn_window.dart';
+import 'package:hermes_android/core/design/gel_surface.dart';
 import 'package:hermes_android/core/widgets/chat/tool_steps_summary.dart';
+import 'package:hermes_android/core/widgets/chat/turn_receipt_pill.dart';
 import 'package:hermes_android/core/widgets/chat/turn_step_cards.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
@@ -411,8 +415,8 @@ void main() {
       });
     }
 
-    testWidgets('each kind its icon; the verb in medium weight, the detail in the '
-        'secondary ink', (tester) async {
+    testWidgets('each kind its icon; the words in the receipt rows\' size and '
+        'ink, the detail fainter', (tester) async {
       await _screen(tester, 750);
       await tester.pumpWidget(_host(_screenshot()));
       await tester.pump();
@@ -427,8 +431,13 @@ void main() {
       expect(iconOf(_groupPill('w1')), HIcons.search_rounded);
       expect(iconOf(_groupPill('m1')), HIcons.psychology_outlined);
       final spans = _spans(tester, _pill('t1'));
-      expect(spans.first.style!.fontWeight, FontWeight.w500);
-      expect(spans.last.style!.color, colors.textSecondary);
+      final receipt = TurnReceiptPill.styleOf(tester.element(_pill('t1')));
+      expect(spans.first.style!.fontSize, receipt.fontSize);
+      expect(spans.first.style!.fontWeight, FontWeight.w400);
+      expect(spans.first.style!.color, receipt.color);
+      expect(spans.last.style!.fontSize, receipt.fontSize);
+      expect(spans.last.style!.color!.a, lessThan(receipt.color!.a));
+      expect(colors.error, isNot(receipt.color));
     });
 
     testWidgets('a group opens to its calls, one level in on a connector of '
@@ -495,49 +504,46 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('what a group unfolds reads as unfolded: shorter, quieter '
-        'pills on a hairline connector; the open group keeps full strength', (
-      tester,
-    ) async {
+    testWidgets('what a group unfolds reads as unfolded: its ring in the '
+        'secondary ink, on a quieter connector; the open group keeps full '
+        'strength', (tester) async {
       await _screen(tester, 750);
       await tester.pumpWidget(_host(_screenshot()));
       await tester.pump();
       await tester.tap(_group('s1'));
       await tester.pump();
       final colors = AppTheme.hermesRedDark.extension<HermesThemeColors>()!;
-      BoxDecoration boxOf(Finder pill) {
-        final box = find.descendant(
-          of: pill,
-          matching: find.byType(DecoratedBox),
-        );
-        return tester.widget<DecoratedBox>(box.first).decoration
-            as BoxDecoration;
-      }
-
-      BorderSide sideOf(Finder pill) => (boxOf(pill).border! as Border).top;
-      FontWeight? verbOf(Finder pill) =>
-          _spans(tester, pill).first.style!.fontWeight;
       final group = _groupPill('s1');
       final member = _pill('s2');
       final lone = _pill('t1');
       expect(tester.widget<LiveTurnRowPill>(group).quiet, isFalse);
       expect(tester.widget<LiveTurnRowPill>(lone).quiet, isFalse);
       expect(tester.widget<LiveTurnRowPill>(member).quiet, isTrue);
-      // Hairline outline, at a lower contrast; a fainter fill.
-      expect(sideOf(member).width, lessThan(sideOf(group).width));
-      expect(sideOf(member).color.a, lessThan(sideOf(group).color.a));
-      expect(boxOf(member).color!.a, lessThan(boxOf(group).color!.a));
-      // The first-level rows share one treatment.
-      expect(sideOf(lone), sideOf(group));
-      expect(boxOf(lone).color, boxOf(group).color);
-      // The unfolded rows are shorter, with their ring in the secondary ink.
+      // One height for every line, that of the receipt rows.
+      for (final line in [group, member, lone]) {
+        expect(tester.getSize(line).height, TurnReceiptPill.height);
+      }
+      // The unfolded level hangs from a quieter connector.
       expect(
-        tester.getSize(member).height,
-        lessThan(tester.getSize(group).height),
+        tester
+            .widget<LiveTurnBranch>(
+              find
+                  .ancestor(of: member, matching: find.byType(LiveTurnBranch))
+                  .first,
+            )
+            .quiet,
+        isTrue,
       );
-      expect(tester.getSize(lone).height, tester.getSize(group).height);
-      expect(verbOf(group), FontWeight.w500);
-      expect(verbOf(member), FontWeight.w500);
+      expect(
+        tester
+            .widget<LiveTurnBranch>(
+              find
+                  .ancestor(of: group, matching: find.byType(LiveTurnBranch))
+                  .first,
+            )
+            .quiet,
+        isFalse,
+      );
       LiveRingCheck ringOf(Finder pill) => tester.widget<LiveRingCheck>(
         find.descendant(of: pill, matching: find.byType(LiveRingCheck)),
       );
@@ -555,6 +561,129 @@ void main() {
             .turns,
         0,
       );
+    });
+
+    testWidgets('no step has a capsule: no outline, no fill, no glass; only '
+        'the connector is drawn', (tester) async {
+      await _screen(tester, 750);
+      await tester.pumpWidget(_host(_screenshot()));
+      await tester.pump();
+      await tester.tap(_group('s1'));
+      await tester.pump();
+      expect(_pills(), findsNWidgets(10));
+      for (final element in _pills().evaluate()) {
+        final pill = find.byWidget(element.widget);
+        expect((element.widget as LiveTurnRowPill).plain, isTrue);
+        for (final type in [DecoratedBox, Container, HermesGelSurface, Card]) {
+          expect(
+            find.descendant(of: pill, matching: find.byType(type)),
+            findsNothing,
+            reason: '$type in ${element.widget.key}',
+          );
+        }
+        expect(
+          find.descendant(
+            of: pill,
+            matching: find.byWidgetPredicate(
+              (widget) => widget is Material && widget.shape != null,
+            ),
+          ),
+          findsNothing,
+        );
+      }
+      // The tree is still there: one tick per line.
+      expect(_ticks(), findsNWidgets(10));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a tap on a step opens what it left, and again closes it', (
+      tester,
+    ) async {
+      await _screen(tester, 750);
+      await tester.pumpWidget(_host(_screenshot()));
+      await tester.pump();
+      const out = ValueKey('out-t1');
+      expect(find.byKey(out), findsNothing);
+      await tester.tap(_pill('t1'));
+      await tester.pump();
+      expect(find.byKey(out), findsOneWidget);
+      await tester.tap(_pill('t1'));
+      await tester.pump();
+      expect(find.byKey(out), findsNothing);
+    });
+
+    testWidgets('a failed step is told without a capsule: the error sign, '
+        'the word and the error ink', (tester) async {
+      await _screen(tester, 750);
+      await tester.pumpWidget(
+        _host([
+          _call('ok', 'terminal', title: 'Ejecutó', detail: 'ls', seconds: 1),
+          _call(
+            'bad',
+            'read_file',
+            title: 'No pudo leer',
+            detail: 'notes.md',
+            seconds: 2,
+            failed: true,
+          ),
+        ]),
+      );
+      await tester.pump();
+      final colors = AppTheme.hermesRedDark.extension<HermesThemeColors>()!;
+      final bad = _pill('bad');
+      final good = _pill('ok');
+      expect(
+        tester
+            .widget<Icon>(
+              find.descendant(
+                of: bad,
+                matching: find.byIcon(HIcons.error_outline_rounded),
+              ),
+            )
+            .color,
+        colors.error,
+      );
+      expect(_checks(bad), findsNothing);
+      expect(_checks(good), findsOneWidget);
+      final word = tester.widget<Text>(
+        find.descendant(
+          of: bad,
+          matching: find.text(StringsEs().stepsBarStatusFailed),
+        ),
+      );
+      expect(word.style!.color, colors.error);
+      expect(_spans(tester, bad).first.style!.color, colors.error);
+      expect(_spans(tester, good).first.style!.color, isNot(colors.error));
+      expect(
+        find.descendant(of: bad, matching: find.byType(DecoratedBox)),
+        findsNothing,
+      );
+    });
+
+    testWidgets('the live window keeps its outlined pill', (tester) async {
+      await _screen(tester, 750);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.hermesRedDark,
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          home: Scaffold(
+            body: LiveTurnRowPill(
+              row: LiveTurnRow.of(
+                _call('w', 'terminal', title: 'Ejecutó', seconds: 1),
+              ),
+            ),
+          ),
+        ),
+      );
+      final box = tester.widget<DecoratedBox>(
+        find.descendant(
+          of: find.byType(LiveTurnRowPill),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      expect((box.decoration as BoxDecoration).border, isNotNull);
+      expect(tester.widget<LiveTurnRowPill>(find.byType(LiveTurnRowPill)).plain, isFalse);
     });
 
     testWidgets('a run with the call in hand: the ring turning and its '

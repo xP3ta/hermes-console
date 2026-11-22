@@ -10,10 +10,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/floating.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/hermes_tokens.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
 import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart';
+import 'package:hermes_android/core/widgets/chat/turn_receipt_pill.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -76,19 +78,24 @@ Future<void> _expectOneLine(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('with room it is the whole line at its size, in a capsule as '
-      'tall as the files chip', (tester) async {
+  testWidgets('with room it is the whole line at its size, in a row as '
+      'quiet as the memory receipt', (tester) async {
     await tester.pumpWidget(_host(_pill(), width: 900));
     final shown = tester.widget<Text>(_text);
     expect(shown.data, _full);
-    expect(shown.style?.fontSize, 13);
+    expect(shown.style?.fontSize, HermesType.supportSize);
     expect(tester.getSize(_surface).height, TurnInlineActivity.capsuleHeight);
-    expect(TurnInlineActivity.capsuleHeight, 36, reason: 'the «Δ» chip');
-    // The touch target is still a full one.
+    expect(
+      TurnInlineActivity.capsuleHeight,
+      TurnReceiptPill.height,
+      reason: 'the memory receipt',
+    );
+    // The row is the whole widget: nothing taller is drawn or reserved.
     expect(
       tester.getSize(find.byType(TurnInlineActivity)).height,
-      greaterThanOrEqualTo(HermesSpace.tap),
+      TurnReceiptPill.height,
     );
+    expect(find.byType(HermesFloatingSurface), findsNothing);
     await _expectOneLine(tester);
   });
 
@@ -96,7 +103,7 @@ void main() {
       'then an ellipsis; one line and no overflow at every width', (
     tester,
   ) async {
-    // 0 whole at 13, 1 whole at 12, 2 abbreviated, 3 abbreviated and cut.
+    // 0 whole at 12.5, 1 whole at 12, 2 abbreviated, 3 abbreviated and cut.
     final seen = <int>[];
     for (var width = 900.0; width >= 70; width -= 10) {
       await tester.pumpWidget(_host(_pill(), width: width));
@@ -115,7 +122,7 @@ void main() {
       final cut = paragraph.didExceedMaxLines;
       final stage = shown.data == _short
           ? (cut ? 3 : 2)
-          : shown.style?.fontSize == 13
+          : shown.style?.fontSize == HermesType.supportSize
           ? 0
           : 1;
       expect(shown.data, anyOf(_full, _short));
@@ -240,7 +247,9 @@ void main() {
       // Room for the whole line, not for the line and the actions (the
       // test font is wider than the app's: on a 411 dp phone this is the
       // 379 dp of a reply).
-      await tester.pumpWidget(row(locale, 650, 1));
+      // 600: the line is 584 wide in Spanish and 494 in English here, and
+      // the three actions 144.
+      await tester.pumpWidget(row(locale, 600, 1));
       expect(tester.takeException(), isNull);
       final s = Strings.of(tester.element(_text));
       final whole = [
@@ -250,7 +259,7 @@ void main() {
       ].join(' · ');
       final shown = tester.widget<Text>(_text);
       expect(shown.data, whole);
-      expect(shown.style?.fontSize, 13);
+      expect(shown.style?.fontSize, HermesType.supportSize);
       await _expectOneLine(tester);
       final paragraph = tester.renderObject<RenderParagraph>(
         find.descendant(of: _text, matching: find.byType(RichText)),
@@ -276,7 +285,10 @@ void main() {
         tester.getRect(actions).center.dy,
         closeTo(tester.getRect(summary).center.dy, 0.01),
       );
-      expect(tester.widget<Text>(_text).style?.fontSize, 13);
+      expect(
+        tester.widget<Text>(_text).style?.fontSize,
+        HermesType.supportSize,
+      );
     });
 
     for (final (width, scale) in [

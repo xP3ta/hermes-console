@@ -7,6 +7,7 @@ import 'package:hermes_android/core/theme/hermes_tokens.dart';
 import 'package:hermes_android/core/theme/live_turn_tokens.dart';
 import 'package:hermes_android/core/widgets/chat/live_turn_window.dart';
 import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart';
+import 'package:hermes_android/core/widgets/chat/turn_receipt_pill.dart';
 import 'package:hermes_android/core/widgets/chat/turn_step_cards.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat_turn_activity.dart';
@@ -472,14 +473,16 @@ void main() {
       findsOneWidget,
     );
     final surface = find.byKey(const ValueKey('chat-inline-activity-surface'));
-    expect(tester.widget<HermesFloatingSurface>(surface).shape, isA<StadiumBorder>());
-    expect(tester.getSize(line).height, greaterThanOrEqualTo(HermesSpace.tap));
-    expect(tester.getSize(surface).height, lessThan(tester.getSize(line).height));
+    // A quiet receipt row, like the memory one: no capsule drawn around it
+    // (the owner, 22 nov: the bordered capsule read as too loud).
+    expect(find.byType(HermesFloatingSurface), findsNothing);
+    expect(tester.getSize(surface).height, TurnReceiptPill.height);
+    expect(tester.getSize(line).height, TurnReceiptPill.height);
     expect(tester.getSize(surface).width, lessThan(380));
     final text = tester.widget<Text>(
       find.byKey(const ValueKey('chat-inline-activity-text')),
     );
-    expect(text.style?.fontSize, 13);
+    expect(text.style?.fontSize, HermesType.supportSize);
   });
 
   // One row while the whole summary fits beside the actions (it is 662 wide
@@ -524,14 +527,23 @@ void main() {
       await tester.pump();
       final rows = find.byKey(const ValueKey('turn-line-group'));
       expect(tester.getRect(rows).left, tester.getRect(surface).left);
-      expect(
-        tester.getRect(rows).top,
-        closeTo(tester.getRect(summary).bottom, 0.01),
-      );
+      // The list starts right under the footer's head: under the summary
+      // itself, or under the taller actions when they share its row (the
+      // quiet summary is centred beside them).
+      final head = width == 900
+          ? tester.getRect(actions).bottom
+          : tester.getRect(summary).bottom;
+      expect(tester.getRect(rows).top, closeTo(head, 0.01));
       expect(
         tester.getRect(surface).center.dy,
         closeTo(tester.getRect(summary).center.dy, 0.01),
       );
+      if (width == 900) {
+        expect(
+          tester.getRect(surface).center.dy,
+          closeTo(tester.getRect(actions).center.dy, 0.01),
+        );
+      }
       expect(tester.getSize(rows).width, lessThanOrEqualTo(HermesLiveTurn.historyWidth));
       if (width == 900) {
         expect(tester.getRect(surface).right, lessThan(tester.getRect(actions).left));

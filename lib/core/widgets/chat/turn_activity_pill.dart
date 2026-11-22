@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../../l10n/app_localizations.dart';
-import '../../design/floating.dart' show HermesFloatingSurface;
-import '../../design/gel_surface.dart' show HermesGelSurface;
 import '../../theme/app_theme.dart';
 import '../../theme/hermes_tokens.dart';
 import '../activity_pill.dart' show ActivityTicker;
@@ -12,13 +10,14 @@ import '../chat_turn_activity.dart' show TurnType;
 import 'chat_live_icon.dart';
 import 'live_motion.dart';
 import 'live_turn_window.dart' show LiveSpinnerRing;
+import 'turn_receipt_pill.dart';
 import '../../theme/live_turn_tokens.dart';
 import '../../feedback/haptics.dart';
 
-/// One 48 dp target. Live, it paints the «Trabajando» card of the look
+/// Live, one 48 dp target: it paints the «Trabajando» card of the look
 /// approved on 9 nov (mock `turno3.html`): ring, word, the turn's clock and
 /// the tool count, always visible (the earlier v4 video showed only a count;
-/// the approved mock supersedes it). A settled turn uses a compact capsule
+/// the approved mock supersedes it). A settled turn is a quiet receipt row
 /// that opens the tool history. Only the live text repaints with the sheen.
 const bool kInlineActivityShowsClock = true;
 
@@ -43,9 +42,9 @@ class TurnInlineActivity extends StatefulWidget {
     super.key,
   });
 
-  /// The height of the settled capsule at the default text size: that of
-  /// the «Δ N files» chip above it.
-  static const double capsuleHeight = 36;
+  /// The height of the settled row at the default text size: that of the
+  /// memory receipt.
+  static const double capsuleHeight = TurnReceiptPill.height;
 
   /// The size the settled line shrinks to before it gives anything up.
   static const double tightFontSize = 12;
@@ -125,62 +124,38 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
         child: Icon(HIcons.expand_more_rounded, size: size, color: color),
       );
 
+  /// The settled turn: the quiet receipt row of the memory receipt and the
+  /// self-improvement notice, with the outcome before the line and the
+  /// caret that opens the steps after it. No capsule around it.
   Widget _settledCapsule(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final chrome = HermesChrome.of(colors);
-    return InkWell(
+    final ink = TurnReceiptPill.inkOf(context);
+    // In a host that stretches it, the whole width still opens the steps.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: _tap,
-      customBorder: const StadiumBorder(),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: HermesSpace.tap),
-        child: Align(
-          alignment: AlignmentDirectional.centerStart,
-          widthFactor: 1,
-          heightFactor: 1,
-          child: HermesGelSurface(
-            shape: const StadiumBorder(),
-            pressable: false,
-            sheenScale: HermesGel.textSheenScale(colors),
-            child: HermesFloatingSurface(
-              key: const ValueKey('chat-inline-activity-surface'),
-              fill: chrome.opaque,
-              shadow: false,
-              padding: const EdgeInsetsDirectional.fromSTEB(
-                HermesSpace.gap,
-                0,
-                HermesSpace.x2,
-                0,
-              ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  minHeight: TurnInlineActivity.capsuleHeight,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (widget.failed)
-                      ChatLiveIcon(
-                        ChatLiveGlyph.error,
-                        size: HermesIcon.sm,
-                        color: colors.error,
-                      )
-                    else
-                      Icon(
-                        HIcons.done_rounded,
-                        size: HermesIcon.sm,
-                        color: colors.success,
-                      ),
-                    const SizedBox(width: HermesSpace.x2),
-                    Flexible(child: _settledLine(context, colors)),
-                    const SizedBox(width: HermesSpace.x2),
-                    _caret(context, colors.textSecondary, size: HermesIcon.sm),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+      child: _settledRow(context, colors, ink),
+    );
+  }
+
+  Widget _settledRow(
+    BuildContext context,
+    HermesThemeColors colors,
+    Color ink,
+  ) {
+    return TurnReceiptPill(
+      inkKey: const ValueKey('chat-inline-activity-surface'),
+      semantics: false,
+      onTap: _tap,
+      leading: widget.failed
+          ? ChatLiveIcon(
+              ChatLiveGlyph.error,
+              size: HermesIcon.sm,
+              color: colors.error,
+            )
+          : Icon(HIcons.done_rounded, size: HermesIcon.sm, color: ink),
+      text: _settledLine(context),
+      trailing: _caret(context, ink, size: HermesIcon.sm),
     );
   }
 
@@ -189,12 +164,8 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
   /// first tightens its size, then abbreviates its counts, and only if that
   /// does not fit either ends in an ellipsis; the spoken label keeps the
   /// whole line.
-  Widget _settledLine(BuildContext context, HermesThemeColors colors) {
-    final style = HermesType.support.copyWith(
-      fontSize: TurnType.status,
-      fontWeight: FontWeight.w600,
-      color: colors.textPrimary,
-    );
+  Widget _settledLine(BuildContext context) {
+    final style = TurnReceiptPill.styleOf(context);
     final tight = style.copyWith(fontSize: TurnInlineActivity.tightFontSize);
     return LayoutBuilder(
       builder: (context, constraints) {
