@@ -10007,6 +10007,63 @@ void main() {
     },
   );
 
+  testWidgets('the newest row read again under another identity does not fade '
+      'in a second time', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final gateway = _UiRewindGateway();
+    var reads = 0;
+    List<Map<String, dynamic>> rows(String newestId) => [
+      for (var index = 0; index < 6; index++)
+        {
+          'id': index == 5 ? newestId : 'same-$index',
+          'message_id': index == 5 ? newestId : 'same-$index',
+          'role': index.isEven ? 'user' : 'assistant',
+          'content': index == 5 ? 'RESPUESTA_YA_VISTA' : 'Fila $index',
+        },
+    ];
+    await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-entrance-identity'),
+      messagesLoaded: false,
+      initialStoredSessionId: 'sess-test',
+      attachDesktopRuntimeOnLoad: false,
+      allowUnownedDesktopSnapshotForTesting: false,
+      // The same transcript; from the second read on its newest row comes
+      // under another id (as its id-less and its durable projection do).
+      storedMessageLoader: (_, _) async =>
+          rows(reads++ == 0 ? 'first-identity' : 'second-identity'),
+    );
+    await tester.pump();
+    final entrance = find.ancestor(
+      of: find.text('RESPUESTA_YA_VISTA'),
+      matching: find.byType(MotionEntrance),
+    );
+    double opacity() => tester
+        .widget<FadeTransition>(
+          find.descendant(of: entrance, matching: find.byType(FadeTransition)),
+        )
+        .opacity
+        .value;
+    expect(entrance, findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+    expect(opacity(), 1.0);
+    final first = tester.element(entrance);
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    expect(reads, greaterThan(1));
+    expect(entrance, findsOneWidget);
+    // It is another mount (the key followed the identity)…
+    expect(tester.element(entrance), isNot(same(first)));
+    // …that never painted the row transparent.
+    expect(opacity(), 1.0);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'actividad nativa mantiene shell seguro en cover pausa y reconexion',
     (tester) async {

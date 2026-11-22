@@ -32,6 +32,20 @@ void main() {
     expect(fade.opacity.value, 1.0);
   });
 
+  testWidgets('what was already on screen appears at once', (tester) async {
+    await tester.pumpWidget(
+      const Directionality(
+        textDirection: TextDirection.ltr,
+        child: MotionEntrance(animate: false, child: Text('hola')),
+      ),
+    );
+    // The very first frame, before any post-frame callback.
+    final fade = tester.widget<FadeTransition>(find.byType(FadeTransition));
+    expect(fade.opacity.value, 1.0);
+    await tester.pump();
+    expect(fade.opacity.value, 1.0);
+  });
+
   testWidgets('rebuild conserva la animación y dispose libera su listener', (
     tester,
   ) async {

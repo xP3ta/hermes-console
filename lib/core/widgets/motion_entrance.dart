@@ -14,6 +14,7 @@ class MotionEntrance extends StatefulWidget {
     required this.child,
     this.delay = Duration.zero,
     this.offset = 8,
+    this.animate = true,
   });
 
   /// Contenido que entra.
@@ -24,6 +25,11 @@ class MotionEntrance extends StatefulWidget {
 
   /// Desplazamiento vertical inicial en píxeles.
   final double offset;
+
+  /// False when what appears was already on screen under another key (the
+  /// same row with a new identity): it is shown at once, never from
+  /// transparent. Read when the widget is first mounted.
+  final bool animate;
 
   @override
   State<MotionEntrance> createState() => _MotionEntranceState();
@@ -47,7 +53,7 @@ class _MotionEntranceState extends State<MotionEntrance>
     super.didChangeDependencies();
     if (_entranceStarted) return;
     _entranceStarted = true;
-    if (Motion.reduced(context)) {
+    if (!widget.animate || Motion.reduced(context)) {
       // Avoid painting even one opacity-zero frame when motion is reduced.
       _controller.value = 1;
       return;

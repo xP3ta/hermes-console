@@ -22075,7 +22075,18 @@ class _ChatScreenState extends State<ChatScreen>
           _surfaceTurnSerial == _assistantEntranceSerial &&
           (_chat.isStreaming || _surfaceTurnTerminal);
       if (index == 0 && key != null && !belongsToSurfaceTurn) {
-        result = MotionEntrance(key: ValueKey<Object>(key), child: result);
+        // A read can replace the newest row with the same row under another
+        // identity (the id-less projection of a resumed session, then its
+        // durable copy a moment later). The new key remounts the entrance;
+        // the row was already on screen, so it does not fade in again.
+        final shown = _entranceContent(groupStart ?? unit, entries.length);
+        final arrives = shown != _lastEntranceContent;
+        _lastEntranceContent = shown;
+        result = MotionEntrance(
+          key: ValueKey<Object>(key),
+          animate: arrives,
+          child: result,
+        );
       }
       if (reportsPreservedTurnInsertion) {
         result = _SurfaceTurnInitialExtentReporter(
@@ -22612,6 +22623,25 @@ class _ChatScreenState extends State<ChatScreen>
       ChatToolActivityUnitPlan(:final messageIndexes) => messageIndexes,
     };
     return [for (final index in indexes) _messages[index]];
+  }
+
+  /// What the newest row shows, whatever identity it carries: its author,
+  /// its text and how many rows the transcript has. A new message changes
+  /// it; the same row read again does not.
+  Object? _lastEntranceContent;
+
+  Object? _entranceContent(Object unit, int rows) {
+    final message = unit is _UserTurnGroup
+        ? unit.primary
+        : unit is Map<String, dynamic>
+        ? unit
+        : null;
+    if (message == null) return null;
+    return (
+      message['role']?.toString() ?? '',
+      message['content']?.toString() ?? '',
+      rows,
+    );
   }
 
   /// Stable key for the newest-row entrance. Durable transcript coordinates are
