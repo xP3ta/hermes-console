@@ -174,6 +174,8 @@ final class SessionRepository {
   int? _total;
   bool _exhausted = false;
   Future<SessionLibrarySnapshot>? _nextPageFlight;
+  Future<_SessionPage>? _firstPageFlight;
+  String? _firstPageFlightFingerprint;
   final Set<String> _deletionTombstones = <String>{};
 
   SessionRepository(this._dashboard, this._gateway) : _ownsDashboard = false;
@@ -196,6 +198,8 @@ final class SessionRepository {
     };
     if (aliases.isEmpty) return;
     _deletionTombstones.addAll(aliases);
+    // A first page already on the wire was asked before this deletion.
+    _firstPageFlight = null;
     ++_queryEpoch;
     ++_searchEpoch;
     if (_sessions.isEmpty) return;
@@ -214,9 +218,18 @@ final class SessionRepository {
     }
   }
 
+  /// Reads the first page of [query] and makes it the library's listing.
+  ///
+  /// [joinInFlight] is for a caller with no news of its own (the health
+  /// check that just succeeded, the safety timer): when the first page of
+  /// the same query is already on the wire it waits for that answer rather
+  /// than asking the server for the same rows again. A caller that knows
+  /// something changed (an event, a mutation, the pull gesture) leaves it
+  /// off and always gets a read that started after its call.
   Future<SessionLibrarySnapshot> refresh(
     SessionLibraryQuery query, {
     Iterable<String> keepIds = const <String>[],
+    bool joinInFlight = false,
   }) async {
     final previousFingerprint = _query?.fingerprint;
     final previousSource = _source;
@@ -226,7 +239,7 @@ final class SessionRepository {
     final retainedIds = Set<String>.unmodifiable(keepIds);
     _query = query;
     try {
-      final page = await _loadDashboardPage(query, 0);
+      final page = await _firstPage(query, join: joinInFlight);
       if (!_isCurrent(epoch, fingerprint)) return _snapshot();
       if (previousFingerprint != fingerprint) _sessions = const [];
       _applyPage(page, replace: true, epoch: epoch, keepIds: retainedIds);
@@ -482,6 +495,26 @@ final class SessionRepository {
         total: _total,
         completeGatewayListing: completeGatewayListing,
       );
+
+  Future<_SessionPage> _firstPage(
+    SessionLibraryQuery query, {
+    required bool join,
+  }) {
+    final fingerprint = query.fingerprint;
+    final running = _firstPageFlight;
+    if (join && running != null && _firstPageFlightFingerprint == fingerprint) {
+      return running;
+    }
+    final read = _loadDashboardPage(query, 0);
+    _firstPageFlight = read;
+    _firstPageFlightFingerprint = fingerprint;
+    read
+        .whenComplete(() {
+          if (identical(_firstPageFlight, read)) _firstPageFlight = null;
+        })
+        .ignore();
+    return read;
+  }
 
   Future<_SessionPage> _loadDashboardPage(
     SessionLibraryQuery query,

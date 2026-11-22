@@ -1710,4 +1710,138 @@ void main() {
       expect(gatewayRequests, 1);
     },
   );
+
+  group('a caller with no news joins the first page already on the wire', () {
+    late List<Completer<void>> gates;
+    late List<Uri> asked;
+    late SessionRepository repository;
+
+    setUp(() {
+      gates = <Completer<void>>[];
+      asked = <Uri>[];
+      final dashboardHttp = MockClient((request) async {
+        asked.add(request.url);
+        final gate = Completer<void>();
+        gates.add(gate);
+        await gate.future;
+        final rows = [
+          _row(asked.length),
+        ];
+        return http.Response(
+          jsonEncode({'sessions': rows, 'total': 1, 'limit': 20, 'offset': 0}),
+          200,
+        );
+      });
+      final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+      final dashboard = _dashboard(dashboardHttp);
+      final gateway = _gateway(gatewayHttp);
+      repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+        gateway.close();
+      });
+    });
+
+    Future<void> settle() => Future<void>.delayed(Duration.zero);
+
+    test('one request answers both, and the joiner gets the rows', () async {
+      final first = repository.refresh(const SessionLibraryQuery());
+      await settle();
+      final second = repository.refresh(
+        const SessionLibraryQuery(),
+        joinInFlight: true,
+      );
+      await settle();
+      expect(asked, hasLength(1));
+      gates.single.complete();
+      await first;
+      expect((await second).sessions, hasLength(1));
+      expect(repository.snapshot.sessions, hasLength(1));
+    });
+
+    test('a caller that does not ask to join reads again', () async {
+      final first = repository.refresh(const SessionLibraryQuery());
+      await settle();
+      final second = repository.refresh(const SessionLibraryQuery());
+      await settle();
+      expect(asked, hasLength(2));
+      for (final gate in gates) {
+        gate.complete();
+      }
+      await Future.wait([first, second]);
+    });
+
+    test('another query is never answered by this one', () async {
+      final first = repository.refresh(const SessionLibraryQuery());
+      await settle();
+      final second = repository.refresh(
+        const SessionLibraryQuery(profile: 'other'),
+        joinInFlight: true,
+      );
+      await settle();
+      expect(asked, hasLength(2));
+      for (final gate in gates) {
+        gate.complete();
+      }
+      await Future.wait([first, second]);
+    });
+
+    test('a read asked before a deletion is not joined', () async {
+      final first = repository.refresh(const SessionLibraryQuery());
+      await settle();
+      repository.evictSessions([Session.tryParse(_row(99))!]);
+      final second = repository.refresh(
+        const SessionLibraryQuery(),
+        joinInFlight: true,
+      );
+      await settle();
+      expect(asked, hasLength(2));
+      for (final gate in gates) {
+        gate.complete();
+      }
+      await Future.wait([first, second]);
+    });
+
+    test('a read that already landed is not reused', () async {
+      final first = repository.refresh(const SessionLibraryQuery());
+      await settle();
+      gates.single.complete();
+      await first;
+      final second = repository.refresh(
+        const SessionLibraryQuery(),
+        joinInFlight: true,
+      );
+      await settle();
+      expect(asked, hasLength(2));
+      gates.last.complete();
+      await second;
+    });
+
+    test('a failed read fails the joiner too and frees the slot', () async {
+      final first = repository.refresh(const SessionLibraryQuery());
+      await settle();
+      gates.single.complete();
+      await first;
+      final failing = repository.refresh(const SessionLibraryQuery());
+      await settle();
+      final joined = repository.refresh(
+        const SessionLibraryQuery(),
+        joinInFlight: true,
+      );
+      await settle();
+      expect(asked, hasLength(2));
+      gates.last.completeError(StateError('down'));
+      await expectLater(joined, throwsA(anything));
+      await failing.catchError((_) => repository.snapshot);
+      final again = repository.refresh(
+        const SessionLibraryQuery(),
+        joinInFlight: true,
+      );
+      await settle();
+      expect(asked, hasLength(3));
+      gates.last.complete();
+      await again;
+    });
+  });
 }

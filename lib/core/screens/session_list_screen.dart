@@ -650,7 +650,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     _sessionSafetyTimer = Timer.periodic(sessionLibrarySafetyRefreshInterval, (
       _,
     ) {
-      if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
+      if (_libraryRefreshAllowed) {
+        unawaited(_fetchSessions(showLoader: false, joinInFlight: true));
+      }
     });
   }
 
@@ -714,7 +716,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     setState(() {});
     if (ok) {
       // Rows already on screen stay while the read lands (Desktop's way).
-      unawaited(_fetchSessions(showLoader: false));
+      unawaited(_fetchSessions(showLoader: false, joinInFlight: true));
       unawaited(_refreshRemoteActivity());
     } else {
       await _showLocalDrafts();
@@ -1745,13 +1747,24 @@ class _SessionListScreenState extends State<SessionListScreen>
       !_showArchived &&
       Session.profileOwner(_profileScope.name) == _coldListOwner;
 
-  Future<bool> _fetchSessions({bool showLoader = true}) => _underListRead(
-    (listRead) => _fetchSessionsRead(listRead, showLoader: showLoader),
+  /// [joinInFlight]: the caller has no news of its own, so a read of this
+  /// same list already on the wire answers it too (see
+  /// [SessionRepository.refresh]). Ignored while a change event is owed.
+  Future<bool> _fetchSessions({
+    bool showLoader = true,
+    bool joinInFlight = false,
+  }) => _underListRead(
+    (listRead) => _fetchSessionsRead(
+      listRead,
+      showLoader: showLoader,
+      joinInFlight: joinInFlight,
+    ),
   );
 
   Future<bool> _fetchSessionsRead(
     SessionListRead listRead, {
     bool showLoader = true,
+    bool joinInFlight = false,
   }) async {
     // Puede invocarse desde un closure del drawer después de que la pantalla se
     // haya desmontado (HermesDrawer._go) → setState() after dispose(). Guard.
@@ -1776,7 +1789,11 @@ class _SessionListScreenState extends State<SessionListScreen>
       final repository = _repository;
       final SessionLibrarySnapshot? library = repository == null
           ? null
-          : await repository.refresh(scope, keepIds: _sessionKeepIds);
+          : await repository.refresh(
+              scope,
+              keepIds: _sessionKeepIds,
+              joinInFlight: joinInFlight && invalidationEpoch == null,
+            );
       final rawRemoteSessions =
           library?.sessions ??
           await _client.getSessions(profile: scope.profile);
