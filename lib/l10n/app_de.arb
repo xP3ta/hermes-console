@@ -10219,5 +10219,5 @@
   "bg143LoopbackHttpsBody": "Android kann eine HTTPS-Loopback-Weiterleitung über SSH nicht isolieren, ohne TLS zu schwächen. Verwende http:// über den SSH-Tunnel oder einen Hostnamen mit gültigem Zertifikat.",
   "bg143LoopbackUnavailableBody": "Der SSH-Tunnel für die Vorschau konnte nicht geöffnet werden. Versuche es erneut oder prüfe dein SSH-Profil.",
   "turnLineCommandsShort": "{count} Bef.",
-  "turnLineToolsShort": "{count} Tools"
+  "turnLineToolsShort": "{count, plural, =1{1 Tool} other{{count} Tools}}"
 }

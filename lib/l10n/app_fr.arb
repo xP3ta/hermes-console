@@ -10219,5 +10219,5 @@
   "bg143LoopbackHttpsBody": "Android ne peut pas isoler une redirection HTTPS de bouclage via SSH sans affaiblir TLS. Utilisez http:// via le tunnel SSH ou un nom d’hôte avec un certificat valide.",
   "bg143LoopbackUnavailableBody": "Impossible d’ouvrir le tunnel SSH de l’aperçu. Réessayez ou vérifiez votre profil SSH.",
   "turnLineCommandsShort": "{count} cmd",
-  "turnLineToolsShort": "{count} outils"
+  "turnLineToolsShort": "{count, plural, =1{1 outil} other{{count} outils}}"
 }

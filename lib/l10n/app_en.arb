@@ -13291,6 +13291,20 @@
   "bg143LoopbackHttpsTitle": "HTTPS localhost preview unavailable",
   "bg143LoopbackHttpsBody": "Android cannot isolate an HTTPS loopback forward over SSH without weakening TLS. Use http:// over the SSH tunnel or a hostname with a valid certificate.",
   "bg143LoopbackUnavailableBody": "The SSH preview tunnel could not be opened. Try again or check your SSH profile.",
-  "turnLineCommandsShort": "{count} cmds",
-  "turnLineToolsShort": "{count} tools"
+  "turnLineCommandsShort": "{count, plural, =1{1 cmd} other{{count} cmds}}",
+  "@turnLineCommandsShort": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "turnLineToolsShort": "{count, plural, =1{1 tool} other{{count} tools}}",
+  "@turnLineToolsShort": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

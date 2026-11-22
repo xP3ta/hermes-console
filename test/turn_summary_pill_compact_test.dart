@@ -331,6 +331,8 @@ void main() {
     for (final locale in Strings.supportedLocales) {
       final s = lookupStrings(locale);
       expect(s.turnLineCommandsShort(6), contains('6'));
+      expect(s.turnLineCommandsShort(1), isNot(endsWith('s')));
+      expect(s.turnLineToolsShort(1), isNot(endsWith('s')));
       expect(s.turnLineToolsShort(51), contains('51'));
       expect(
         s.turnLineToolsShort(51).length,
