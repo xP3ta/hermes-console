@@ -644,6 +644,17 @@ void main() {
       expect(slashSuggestionsFor('hola', s), isEmpty);
     });
 
+    test('/steer is offered and parsed with its prompt; /s is its alias '
+        '(hermes_cli/commands.py)', () {
+      expect(slashSuggestionsFor('/ste', s).map((c) => c.name), ['steer']);
+      final parsed = parseSlashCommand('/steer mira  esto\notra línea')!;
+      expect(parsed.command.action, SlashAction.steer);
+      expect(parsed.arg, 'mira  esto\notra línea');
+      expect(parseSlashCommand('/steer')!.arg, isEmpty);
+      expect(parseSlashCommand('/s por aquí')!.command.action,
+          SlashAction.steer);
+    });
+
     test('todos los comandos con solo /', () {
       expect(slashSuggestionsFor('/', s).length, slashCommands(s).length);
     });

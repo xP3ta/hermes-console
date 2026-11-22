@@ -14824,6 +14824,10 @@ class _ChatScreenState extends State<ChatScreen>
       _consumeSlashInvocation(invocation);
       return;
     }
+    if (cmd.action == SlashAction.steer) {
+      await _runSteerSlash(arg);
+      return;
+    }
     if (cmd.action == SlashAction.branch) {
       final invocation = _textController.text;
       final opened = await _branchChat();
@@ -14874,10 +14878,51 @@ class _ChatScreenState extends State<ChatScreen>
       case SlashAction.btw:
       case SlashAction.background:
       case SlashAction.branch:
+      case SlashAction.steer:
       case SlashAction.remote:
         // Se manejan antes de limpiar el compositor para conservarlo si fallan.
         return;
     }
+  }
+
+  /// `/steer <prompt>`, as Hermes runs it (tui_gateway/methods_tools.py
+  /// `_cmd_steer`): no prompt, the usage line; a turn in flight, the prompt
+  /// is steered into it (`session.steer`, the route of the queue's «steer»
+  /// button: the task is not cut); nothing running, or a steer Hermes cannot
+  /// take, the prompt goes as the next message, said so. The composer keeps
+  /// its text unless the prompt went somewhere.
+  Future<void> _runSteerSlash(String arg) async {
+    final str = Strings.of(context);
+    final prompt = arg.trim();
+    if (prompt.isEmpty) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(str.slashSteerUsage)),
+        kind: HermesNoticeKind.warning,
+      );
+      return;
+    }
+    if (widget.connection.readOnly) {
+      showReadOnlyNotice(context);
+      return;
+    }
+    final invocation = _textController.text;
+    _slashSuggestions.value = const [];
+    if (_sending) {
+      final steered = await _steerLiveCorrection(prompt, invocation, true);
+      // Null: the turn ended meanwhile or Hermes cannot steer it; the
+      // prompt is then the next message, as below.
+      if (steered != null || !mounted) return;
+    } else {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(str.slashSteerIdle)),
+      );
+    }
+    final sent = await _sendMessageOnce(
+      skipSlashRouting: true,
+      textOverride: prompt,
+      includeComposerAttachments: false,
+    );
+    if (sent && mounted) _consumeSlashInvocation(invocation);
   }
 
   /// `/btw` and `/bg`: one direct request, allowed while a reply streams and

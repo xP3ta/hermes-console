@@ -47516,6 +47516,111 @@ void main() {
       await finishTurns(tester, gateway);
     });
 
+    testWidgets('/steer <prompt> while a turn runs steers it: the task is not '
+        'cut, nothing is queued or submitted', (tester) async {
+      final (chat, gateway) = await streamingChat(tester, 'conn-tc-steer');
+      expect(chat.enqueue('después'), isTrue);
+      await tester.pump();
+
+      await submitComposer(tester, '/steer mira antes el README');
+
+      expect(gateway.steers, ['mira antes el README']);
+      expect(gateway.redirects, isEmpty);
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.submissions, ['turno vivo']);
+      expect(gateway.slashCalls, isEmpty);
+      expect(gateway.dispatchCalls, isEmpty);
+      // A normal message still waits its turn in the queue.
+      expect(chat.queuedMessages, ['después']);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        isEmpty,
+      );
+      // One row for the one instruction.
+      expect(
+        chat.messages.where(
+          (m) => m['_steer'] == true && m['content'] == 'mira antes el README',
+        ),
+        hasLength(1),
+      );
+      await finishTurns(tester, gateway);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/s is the same command', (tester) async {
+      final (_, gateway) = await streamingChat(tester, 'conn-tc-steer-alias');
+
+      await submitComposer(tester, '/s por aquí');
+
+      expect(gateway.steers, ['por aquí']);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/steer without a prompt shows the usage line, sends nothing '
+        'and keeps what was typed', (tester) async {
+      final (_, gateway) = await streamingChat(tester, 'conn-tc-steer-usage');
+
+      await submitComposer(tester, '/steer');
+
+      expect(find.text('Uso: /steer <mensaje>'), findsOneWidget);
+      expect(gateway.steers, isEmpty);
+      expect(gateway.redirects, isEmpty);
+      expect(gateway.submissions, ['turno vivo']);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        '/steer',
+      );
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/steer <prompt> with nothing running goes as the next '
+        'message, and says so (Hermes `_cmd_steer`)', (tester) async {
+      final gateway = _UiTurnSideGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-tc-steer-idle'),
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+
+      await submitComposer(tester, '/steer empieza por los tests');
+
+      expect(gateway.steers, isEmpty);
+      expect(gateway.submissions, ['empieza por los tests']);
+      expect(
+        find.text(
+          'No hay ningún agente trabajando; enviado como siguiente turno',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        isEmpty,
+      );
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('a steer Hermes refuses because the turn just ended goes as '
+        'the next message instead of being lost', (tester) async {
+      final (chat, gateway) = await streamingChat(tester, 'conn-tc-steer-late');
+      gateway.steerError = const TuiGatewayRpcError(
+        'session.steer',
+        'Hermes rejected the steering instruction',
+        code: TuiGatewayRpcError.steerRejectedCode,
+      );
+
+      await submitComposer(tester, '/steer ya de paso');
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(gateway.steers, ['ya de paso']);
+      // Still busy here: the prompt waits as any other message does.
+      expect(chat.queuedMessages, ['ya de paso']);
+      expect(chat.messages.where((m) => m['_steer'] == true), isEmpty);
+      await finishTurns(tester, gateway);
+      await finishTurns(tester, gateway);
+    });
+
     testWidgets('/bg while streaming starts one background prompt', (
       tester,
     ) async {
