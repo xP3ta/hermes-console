@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/navigation/unsaved_work_guard.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_drawer.dart';
@@ -179,5 +180,43 @@ void main() {
       find.byKey(const ValueKey('drawer-instance-option-demo')),
       findsNothing,
     );
+  });
+
+  // Changing the instance returns to Home and closes the chat below: text
+  // not saved in its Files panel is asked about first, and staying changes
+  // nothing.
+  testWidgets('cambiar de instancia pregunta antes si hay texto sin guardar', (
+    tester,
+  ) async {
+    final manager = await managerWith([demo, secondary]);
+    await manager.setActiveConnection(demo.id);
+    await pumpDrawer(tester, manager: manager, connection: demo);
+    final hold = UnsavedWorkGuard.hold(
+      tester.state<NavigatorState>(find.byType(Navigator).first),
+      onDiscarded: () {},
+    );
+    addTearDown(hold.release);
+    final option = find.byKey(
+      const ValueKey('drawer-instance-option-secondary'),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('drawer-instance-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(option);
+    await tester.pumpAndSettle();
+    expect(find.text('¿Descartar los cambios?'), findsOneWidget);
+    await tester.tap(find.byKey(UnsavedWorkGuard.keepKey));
+    await tester.pumpAndSettle();
+    expect(manager.activeConnectionId.value, demo.id, reason: 'nothing moved');
+
+    if (option.evaluate().isEmpty) {
+      await tester.tap(find.byKey(const ValueKey('drawer-instance-selector')));
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(option);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(UnsavedWorkGuard.discardKey));
+    await tester.pumpAndSettle();
+    expect(manager.activeConnectionId.value, secondary.id);
   });
 }

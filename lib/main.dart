@@ -168,6 +168,7 @@ import 'l10n/app_localizations.dart';
 import 'core/feedback/feedback_policy.dart';
 import 'core/feedback/haptics.dart';
 import 'core/services/drawer_swipe_prefs.dart';
+import 'core/navigation/unsaved_work_guard.dart';
 
 /// Observador global de rutas. Lo usa [ChatScreen] (vía RouteAware) para saber
 /// cuándo su pantalla es la visible en pila y fijar/limpiar
@@ -313,7 +314,10 @@ MissionControlOpenTarget? missionControlTargetForSession(Session session) {
 Future<T?> pushNotificationOwnerRoute<T>(
   NavigatorState navigator,
   Route<T> route,
-) => navigator.pushAndRemoveUntil(route, (candidate) => candidate.isFirst);
+) => UnsavedWorkGuard.leaveWith<T>(
+  navigator,
+  () => navigator.pushAndRemoveUntil(route, (candidate) => candidate.isFirst),
+);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -2982,6 +2986,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (navigator == null || !navigator.mounted) {
       throw StateError('root navigator unavailable');
     }
+    if (UnsavedWorkGuard.affects(navigator) &&
+        !await UnsavedWorkGuard.confirm(navigator)) {
+      return;
+    }
     _appNavigationFence.begin(navigator, intent: 'widget:open-app');
     navigator.popUntil((route) => route.isFirst);
     await WidgetsBinding.instance.endOfFrame;
@@ -2994,7 +3002,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     }
     _appNavigationFence.begin(navigator, intent: 'widget:open-setup');
     if (_showOnboarding) {
-      navigator.popUntil((route) => route.isFirst);
+      UnsavedWorkGuard.popToFirst(navigator);
     } else {
       unawaited(
         navigator.push<void>(
@@ -3196,7 +3204,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                 initialLink: link,
                 onDone: () {
                   unawaited(_finishOnboarding());
-                  nav.popUntil((r) => r.isFirst);
+                  UnsavedWorkGuard.popToFirst(nav);
                 },
               )
             : InstanceEditScreen(

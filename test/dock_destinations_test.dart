@@ -689,7 +689,8 @@ void main() {
       expect(
         actions.substring(0, actions.indexOf('DockItemId.create')),
         allOf(
-          contains('popUntil((r) => r.isFirst)'),
+          // The first route, asking first about unsaved work on the way.
+          contains('UnsavedWorkGuard.popToFirst(Navigator.of(context))'),
           contains('selected: true'),
           contains("ValueKey('mission-destination-bots')"),
         ),

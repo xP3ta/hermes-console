@@ -34,6 +34,7 @@ import '../design/hermes_design.dart'
         HermesMenuButton,
         showHermesDialog;
 import '../feedback/feedback_policy.dart';
+import '../navigation/unsaved_work_guard.dart';
 
 class GatewayManagerScreen extends StatefulWidget {
   final ConnectionManager connManager;
@@ -152,7 +153,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
     final notice = AppFeedback.of(context);
     // Screens below this one (Tools hub, dock) were built for the previous
     // instance; return to the root like the drawer selector does.
-    if (changed) Navigator.of(context).popUntil((route) => route.isFirst);
+    if (changed) UnsavedWorkGuard.popToFirst(Navigator.of(context));
     notice.notify(
       FeedbackKind.routine,
       Strings.of(context).gwActiveInstance(conn.label),
@@ -244,7 +245,7 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
           connManager: widget.connManager,
           // A finished connection becomes the active one: land on Home, not
           // back on this list. Backing out never fires onDone.
-          onDone: () => Navigator.of(context).popUntil((r) => r.isFirst),
+          onDone: () => UnsavedWorkGuard.popToFirst(Navigator.of(context)),
         ),
       ),
     );

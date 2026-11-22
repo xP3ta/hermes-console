@@ -13,6 +13,7 @@ import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/navigation/unsaved_work_guard.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -1727,6 +1728,54 @@ void main() {
       expect(controller.text, isEmpty);
       expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, isEmpty);
+    });
+
+    // A new chat replaces this chat's route: text not saved in its Files
+    // panel went with it. It is asked about first, and staying keeps this
+    // very chat.
+    testWidgets('/new asks before replacing a chat with unsaved text', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final before = tester.state(find.byType(ChatScreen));
+      final hold = UnsavedWorkGuard.hold(
+        Navigator.of(tester.element(find.byType(ChatScreen))),
+        onDiscarded: () {},
+      );
+      addTearDown(hold.release);
+      final composer = find.byType(TextField).last;
+
+      await tester.enterText(composer, '/new');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text(s.pw1215DiscardTitle), findsOneWidget);
+      await tester.tap(find.byKey(UnsavedWorkGuard.keepKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text(s.pw1215DiscardTitle), findsNothing);
+      expect(
+        identical(tester.state(find.byType(ChatScreen)), before),
+        isTrue,
+        reason: 'the user stayed: the same chat, not a new one',
+      );
+
+      await tester.enterText(find.byType(TextField).last, '/new');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(UnsavedWorkGuard.discardKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(
+        identical(tester.state(find.byType(ChatScreen)), before),
+        isFalse,
+        reason: 'discarded: the new chat took the route',
+      );
+      expect(gateway.submissions, isEmpty);
     });
 
     testWidgets('typed /skills opens the capabilities hub without sending', (

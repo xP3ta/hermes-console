@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'unsaved_work_guard.dart';
+
 /// Opens a chat as the only route above the app home.
 ///
 /// Chats are destinations, not drill-down pages. Keeping section screens or
@@ -32,11 +34,13 @@ Future<T?> openChatWithParent<T extends Object?>(
   // Root navigator: called from a drawer inside a tablet detail pane, the
   // nearest navigator would nest the list screen inside the pane.
   final navigator = Navigator.of(context, rootNavigator: true);
-  navigator.pushAndRemoveUntil<void>(
-    MaterialPageRoute<void>(builder: parentBuilder),
-    (route) => route.isFirst,
-  );
-  return navigator.push<T>(MaterialPageRoute<T>(builder: builder));
+  return UnsavedWorkGuard.leaveWith<T>(navigator, () {
+    navigator.pushAndRemoveUntil<void>(
+      MaterialPageRoute<void>(builder: parentBuilder),
+      (route) => route.isFirst,
+    );
+    return navigator.push<T>(MaterialPageRoute<T>(builder: builder));
+  });
 }
 
 /// [NavigatorState] variant for app-level entry points such as notifications,
@@ -45,8 +49,11 @@ Future<T?> openChatFromHomeNavigator<T extends Object?>(
   NavigatorState navigator, {
   required WidgetBuilder builder,
 }) {
-  return navigator.pushAndRemoveUntil<T>(
-    MaterialPageRoute<T>(builder: builder),
-    (route) => route.isFirst,
+  return UnsavedWorkGuard.leaveWith<T>(
+    navigator,
+    () => navigator.pushAndRemoveUntil<T>(
+      MaterialPageRoute<T>(builder: builder),
+      (route) => route.isFirst,
+    ),
   );
 }

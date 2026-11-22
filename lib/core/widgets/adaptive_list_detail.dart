@@ -4,6 +4,7 @@ import 'package:flutter/scheduler.dart';
 import '../theme/app_theme.dart';
 import '../theme/motion.dart';
 import '../utils/responsive.dart';
+import '../navigation/unsaved_work_guard.dart';
 
 /// Material 3 list-detail layout for tablets (Chats, Projects, Settings).
 ///
@@ -157,11 +158,18 @@ class AdaptiveListDetailState extends State<AdaptiveListDetail>
     if (navigator == null) {
       return Navigator.of(context).push<T>(route);
     }
-    return navigator.pushAndRemoveUntil<T>(route, (r) => r.isFirst);
+    return UnsavedWorkGuard.leaveWith<T>(
+      navigator,
+      () => navigator.pushAndRemoveUntil<T>(route, (r) => r.isFirst),
+    );
   }
 
   /// Closes whatever is open in the pane.
-  void clear() => _navigatorKey.currentState?.popUntil((r) => r.isFirst);
+  void clear() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    UnsavedWorkGuard.leave(navigator, () => navigator.popUntil((r) => r.isFirst));
+  }
 
   void _onDepthChanged(int depth) {
     if (_depth == depth) return;

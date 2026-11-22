@@ -128,6 +128,7 @@ import '../models/session_live_status.dart';
 import '../models/subagent_activity.dart';
 import '../models/tool_output.dart';
 import '../navigation/chat_route.dart';
+import '../navigation/unsaved_work_guard.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
 import '../services/account_limits_controller.dart';
@@ -14752,22 +14753,28 @@ class _ChatScreenState extends State<ChatScreen>
       startedAt: DateTime.now().millisecondsSinceEpoch.toDouble() / 1000,
       profile: _effectiveSessionProfile,
     );
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder<void>(
-        transitionDuration: const Duration(milliseconds: 250),
-        pageBuilder: (context, animation, _) => CoveredRouteMediaQueryFreeze(
-          child: ChatScreen(connection: widget.connection, session: session),
+    // Replaces this chat's route: text not saved in its Files panel goes
+    // with it, so the user is asked first.
+    final navigator = Navigator.of(context);
+    UnsavedWorkGuard.leave(navigator, () {
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder<void>(
+          transitionDuration: const Duration(milliseconds: 250),
+          pageBuilder: (context, animation, _) => CoveredRouteMediaQueryFreeze(
+            child: ChatScreen(connection: widget.connection, session: session),
+          ),
+          transitionsBuilder: (context, animation, _, child) {
+            final curved = CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            );
+            return FadeTransition(opacity: curved, child: child);
+          },
         ),
-        transitionsBuilder: (context, animation, _, child) {
-          final curved = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-          );
-          return FadeTransition(opacity: curved, child: child);
-        },
-      ),
-    );
+      );
+    });
   }
 
   // ── Comandos slash ─────────────────────────────────────────────────────────
@@ -17243,6 +17250,11 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (isReadOnly()) {
       showReadOnlyNotice(context);
+      return;
+    }
+    // Deleting closes this chat: text not saved in its Files panel is asked
+    // about before anything is deleted.
+    if (!await UnsavedWorkGuard.confirm(Navigator.of(context)) || !mounted) {
       return;
     }
     final client = ApiClient.forConnection(widget.connection);

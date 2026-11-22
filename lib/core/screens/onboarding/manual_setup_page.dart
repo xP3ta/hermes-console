@@ -4,6 +4,7 @@ import '../../../main.dart' show HermesAppState;
 import '../../config/flavor.dart';
 import '../../services/connection_manager.dart';
 import '../onboarding_screen.dart';
+import '../../navigation/unsaved_work_guard.dart';
 
 /// The one guided page for a connection that exists and does not reach its
 /// Dashboard: the onboarding's own setup help (same command panel, same
@@ -33,6 +34,6 @@ class ManualSetupPage extends StatelessWidget {
     guided: true,
     playOpening: false,
     simpleConnectEnabled: simpleConnectEnabled,
-    onDone: () => Navigator.of(context).popUntil((r) => r.isFirst),
+    onDone: () => UnsavedWorkGuard.popToFirst(Navigator.of(context)),
   );
 }

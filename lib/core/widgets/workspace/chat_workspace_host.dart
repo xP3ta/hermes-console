@@ -33,6 +33,7 @@ import '../../design/hermes_design.dart'
         HermesMenuButton,
         HermesScrim;
 import '../../feedback/haptics.dart';
+import '../../navigation/unsaved_work_guard.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/hermes_tokens.dart' show HermesSpace;
 import '../../theme/motion.dart' show HermesMotion;
@@ -112,6 +113,7 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
       _unsaved.putIfAbsent(tab, () {
         final holds = ValueNotifier<int>(0);
         holds.addListener(() {
+          _syncLeaveGuard();
           if (holds.value != 0) return;
           // The last hold may go while the tree is being torn down: the
           // route stack waiting behind it is replaced on the next frame.
@@ -122,6 +124,86 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
         });
         return holds;
       });
+
+  // Leaving the chat itself (Back, a new chat, another conversation) with
+  // unsaved text in a tab. The tab's own routes are kept by the holds
+  // above; these keep the chat's route: Back asks here, and every other
+  // way out asks through UnsavedWorkGuard.
+  ModalRoute<Object?>? _route;
+  NavigatorState? _routeNavigator;
+  UnsavedWorkHold? _leaveHold;
+  bool _leaveDiscarded = false;
+  late final _LeavePopEntry _leaveEntry = _LeavePopEntry(_onLeavePop);
+
+  bool get _hasUnsaved => _unsaved.values.any((holds) => holds.value > 0);
+
+  void _syncLeaveGuard() {
+    final unsaved = _hasUnsaved;
+    if (!unsaved) _leaveDiscarded = false;
+    if (unsaved && _leaveHold == null && !_leaveDiscarded) {
+      final navigator = _routeNavigator;
+      if (navigator == null) return;
+      _leaveHold = UnsavedWorkGuard.hold(
+        navigator,
+        onDiscarded: () {
+          _leaveDiscarded = true;
+          _dropLeaveGuard();
+        },
+      );
+      _leaveEntry.canPopNotifier.value = false;
+      _route?.registerPopEntry(_leaveEntry);
+    } else if (!unsaved && _leaveHold != null) {
+      _dropLeaveGuard();
+    }
+  }
+
+  void _dropLeaveGuard() {
+    final hold = _leaveHold;
+    if (hold == null) return;
+    _leaveHold = null;
+    hold.release();
+    _leaveEntry.canPopNotifier.value = true;
+    _route?.unregisterPopEntry(_leaveEntry);
+  }
+
+  /// Back was refused on the chat's route while a tab holds unsaved text.
+  void _onLeavePop(bool didPop, Object? result) {
+    final route = _route;
+    final navigator = _routeNavigator;
+    if (didPop || route == null || navigator == null || !mounted) return;
+    // What would happen without this guard. Something else in the chat
+    // takes this Back (an open menu, the panel's own tab, the editor's own
+    // question): it is not a way out of the chat, nothing to ask.
+    _leaveEntry.canPopNotifier.value = true;
+    final otherwise = route.popDisposition;
+    final closesInside = route.willHandlePopInternally;
+    _leaveEntry.canPopNotifier.value = false;
+    if (otherwise == RoutePopDisposition.doNotPop) return;
+    Future<void>.microtask(() async {
+      if (!mounted || !navigator.mounted) return;
+      if (closesInside) {
+        // A drawer or another entry of the route's own history closes.
+        navigator.pop();
+        return;
+      }
+      if (!await UnsavedWorkGuard.confirm(navigator)) return;
+      if (navigator.mounted && route.isCurrent) await navigator.maybePop(result);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    final navigator = Navigator.maybeOf(context);
+    if (identical(route, _route) && identical(navigator, _routeNavigator)) {
+      return;
+    }
+    _dropLeaveGuard();
+    _route = route;
+    _routeNavigator = navigator;
+    _syncLeaveGuard();
+  }
 
   GlobalKey<NavigatorState> _navigatorFor(ChatWorkspaceTab tab) {
     final scope = widget.tabRouteScope?.call(tab);
@@ -401,9 +483,12 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
     FocusManager.instance.removeListener(_onFocusMoved);
     _chatFocus.dispose();
     _workspaceFocus.dispose();
+    _dropLeaveGuard();
+    _routeNavigator = null;
     for (final holds in _unsaved.values) {
       holds.dispose();
     }
+    _leaveEntry.canPopNotifier.dispose();
     for (final toolbar in _toolbars.values) {
       toolbar.dispose();
     }
@@ -1450,6 +1535,21 @@ class _WorkspaceTabBackState extends State<_WorkspaceTabBack> {
       child: widget.child,
     ),
   );
+}
+
+/// The chat route's veto while a tab holds unsaved text (see
+/// `_ChatWorkspaceHostState._onLeavePop`).
+class _LeavePopEntry extends PopEntry<Object?> {
+  _LeavePopEntry(this._onPop);
+
+  final void Function(bool didPop, Object? result) _onPop;
+
+  @override
+  final ValueNotifier<bool> canPopNotifier = ValueNotifier<bool>(true);
+
+  @override
+  void onPopInvokedWithResult(bool didPop, Object? result) =>
+      _onPop(didPop, result);
 }
 
 IconData chatWorkspaceTabIcon(ChatWorkspaceTab tab) => switch (tab) {

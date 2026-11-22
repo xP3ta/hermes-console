@@ -12,6 +12,7 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_ui.dart';
 import 'chat_screen.dart';
 import 'mission_control_screen.dart';
+import '../navigation/unsaved_work_guard.dart';
 
 /// Ajustes › Recorrido guiado: the one place every tour starts again from.
 /// Each tour opens its own screen first (Home, a new chat, the Bots home)
@@ -38,6 +39,13 @@ class GuidedToursScreen extends StatelessWidget {
 
   void _run(BuildContext context, GuideTourId tour) {
     final navigator = Navigator.of(context);
+    if (UnsavedWorkGuard.affects(navigator)) {
+      // Asked once; then this runs again with nothing left to ask.
+      UnsavedWorkGuard.confirm(navigator).then((discard) {
+        if (discard && context.mounted) _run(context, tour);
+      });
+      return;
+    }
     final strings = Strings.of(context);
     navigator.popUntil((route) => route.isFirst);
     switch (tour) {
