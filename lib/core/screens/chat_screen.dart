@@ -2059,6 +2059,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// persisted snapshot has (a provider that publishes no window).
   static const Duration _pillContextSettleAfter = Duration(seconds: 2);
 
+  /// How long the screen's read after a turn end waits for the turn's own
+  /// newest-page read before it reads by itself.
+  static const Duration _terminalReadWait = Duration(seconds: 5);
+
   /// Last known pill state of each conversation in this run, newest last and
   /// capped: the next opening paints it from the first frame.
   static final Map<String, _RememberedPill> _rememberedPills =
@@ -6635,6 +6639,38 @@ class _ChatScreenState extends State<ChatScreen>
     _commitSessionContextMetrics(next);
   }
 
+  /// After a reply the session row is read again at most once a minute.
+  /// The row is the only place Hermes publishes the session's cache
+  /// counters (the socket's usage has none, `tui_gateway/server.py`
+  /// `_get_usage`), but it comes whole, with the system prompt and the tool
+  /// list: tens of kB for a few numbers, on every reply (#226). The context
+  /// the footer shows comes from the socket; the panel that shows the
+  /// counters reads the row when it is opened. A reply inside the minute
+  /// leaves one read owed for when the minute ends, so the last reply's
+  /// counters still land. A cron run's verdict lives in the row: no gap.
+  Future<void> _refreshSessionUsageAfterTurn() {
+    if (CronRunWriteGate.appliesTo(widget.session)) {
+      return _refreshPublishedSessionUsage(force: true);
+    }
+    final refreshedAt = _sessionUsageRefreshedAt;
+    final since = refreshedAt == null
+        ? null
+        : DateTime.now().difference(refreshedAt);
+    if (since == null || since >= _sessionUsageAfterTurnGap) {
+      _sessionUsageOwedTimer?.cancel();
+      _sessionUsageOwedTimer = null;
+      return _refreshPublishedSessionUsage(force: true);
+    }
+    _sessionUsageOwedTimer ??= Timer(_sessionUsageAfterTurnGap - since, () {
+      _sessionUsageOwedTimer = null;
+      unawaited(_refreshPublishedSessionUsage(force: true));
+    });
+    return Future<void>.value();
+  }
+
+  static const Duration _sessionUsageAfterTurnGap = Duration(minutes: 1);
+  Timer? _sessionUsageOwedTimer;
+
   Future<void> _refreshPublishedSessionUsage({bool force = false}) {
     if (_disposed || !mounted || !_chatBound) return Future<void>.value();
     // Un draft `mob-*` todavía no existe en state.db. Consultar su detalle
@@ -8376,6 +8412,19 @@ class _ChatScreenState extends State<ChatScreen>
     if (!_canProbePassiveRemoteActivity) {
       _traceSync('skip', detail: 'not-visible');
       return true;
+    }
+    // A turn that just ended is already reading its newest page. Reading it
+    // here at the same time asked the server for the same rows twice per
+    // reply, and this read could retire the turn's own (#226). Wait for
+    // that one, bounded: the probe below then proves the page it published,
+    // or finds it did not land and reads as before.
+    final terminalRead = _chat.terminalTranscriptRead;
+    if (terminalRead != null) {
+      await terminalRead.timeout(_terminalReadWait, onTimeout: () {});
+      if (!mounted || !_canProbePassiveRemoteActivity) {
+        _traceSync('skip', detail: 'not-visible');
+        return true;
+      }
     }
     // `sessions.changed` is direct evidence the durable store moved — unlike
     // the roster-derived heuristics below, it does not depend on catching
@@ -10599,7 +10648,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _surfaceTurnTerminal = _surfaceTurnSerial == _assistantEntranceSerial;
       if (event == ActiveChatEvent.done) {
-        unawaited(_refreshPublishedSessionUsage(force: true));
+        unawaited(_refreshSessionUsageAfterTurn());
         unawaited(_accountLimits.refresh(afterTurn: true));
       }
       // Si el lector se apartó del fondo, conserva el mismo RenderObject hasta
@@ -11181,6 +11230,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _sessionUsageOwedTimer?.cancel();
     _subagentChildClient?.close();
     _subagentChildClient = null;
     _subagentChildDashboard?.close();

@@ -4509,6 +4509,13 @@ final class _TerminalTranscriptRead {
     : page = null,
       context = null;
 
+  /// The whole transcript, as the one page that carried it.
+  const _TerminalTranscriptRead.wholePage(
+    SessionMessagesPage this.page,
+    _SessionMessagesPageReadContext this.context,
+    List<Map<String, dynamic>> this.whole,
+  );
+
   const _TerminalTranscriptRead.tail(
     SessionMessagesPage this.page,
     _SessionMessagesPageReadContext this.context,
@@ -12041,6 +12048,31 @@ class ActiveChat with WidgetsBindingObserver {
     _messages.isEmpty ? 0 : identityHashCode(_messages.first),
     _messages.isEmpty ? 0 : identityHashCode(_messages.last),
   );
+
+  Future<void>? _terminalTranscriptRead;
+
+  /// The newest-page read a turn that just ended is waiting for, while it is
+  /// on the wire; null otherwise. The screen's own read after `done` waits
+  /// for it: once that page is the visible transcript the one-row probe
+  /// proves it, and the same page is not asked for a second time (#226).
+  /// Never completes with an error.
+  Future<void>? get terminalTranscriptRead => _terminalTranscriptRead;
+
+  Future<bool> _trackTerminalTranscriptRead(Future<bool> read) {
+    final Future<void> settled = read.then<void>(
+      (_) {},
+      onError: (Object _) {},
+    );
+    _terminalTranscriptRead = settled;
+    unawaited(
+      settled.whenComplete(() {
+        if (identical(_terminalTranscriptRead, settled)) {
+          _terminalTranscriptRead = null;
+        }
+      }),
+    );
+    return read;
+  }
 
   /// Cheap check before a passive transcript refresh: reads only the newest
   /// [_passiveTailProbeRows] durable row(s). Returns null when the probe does
@@ -33252,13 +33284,15 @@ class ActiveChat with WidgetsBindingObserver {
     // with visible streamed text keep the historical non-blocking behavior.
     final transcriptReconciled =
         authoritativeTranscriptApplied ||
-        await _reconcileTerminalTranscript(
-          completingEpoch,
-          completingMessageLoadEpoch,
-          bindEpoch: invocationBindEpoch,
-          sessionEpoch: invocationSessionEpoch,
-          socketGeneration: invocationSocketGeneration,
-          producerChannel: invocationProducerChannel,
+        await _trackTerminalTranscriptRead(
+          _reconcileTerminalTranscript(
+            completingEpoch,
+            completingMessageLoadEpoch,
+            bindEpoch: invocationBindEpoch,
+            sessionEpoch: invocationSessionEpoch,
+            socketGeneration: invocationSocketGeneration,
+            producerChannel: invocationProducerChannel,
+          ),
         );
     if (!invocationStillCurrent() ||
         completingMessageLoadEpoch != _messageLoadEpoch) {
@@ -33526,7 +33560,9 @@ class ActiveChat with WidgetsBindingObserver {
     final wholeTranscript =
         !page.paginationProvided ||
         (page.offset == 0 && limit != null && page.returned < limit);
-    if (wholeTranscript) return _TerminalTranscriptRead.whole(page.messages);
+    if (wholeTranscript) {
+      return _TerminalTranscriptRead.wholePage(page, context, page.messages);
+    }
     if (!_transcriptRowsHaveUnambiguousIdentityEvidence(page.messages)) {
       return _TerminalTranscriptRead.whole(await _loadStoredMessages(profile));
     }
@@ -33564,15 +33600,26 @@ class ActiveChat with WidgetsBindingObserver {
     required int messageLoadEpoch,
   }) {
     final whole = read.whole;
+    final page = read.page;
+    final context = read.context;
     if (whole != null) {
-      return _applyAuthoritativeTerminalTranscriptOnce(
+      final gate = _terminalCommitGate;
+      final appliedBefore =
+          gate.epoch == completingEpoch && gate.transcriptApplied;
+      final applied = _applyAuthoritativeTerminalTranscriptOnce(
         whole,
         completingEpoch: completingEpoch,
         messageLoadEpoch: messageLoadEpoch,
       );
+      // A short chat's newest page is its whole transcript. When this read
+      // is the one that made it the visible transcript, its tail is
+      // confirmed like a grafted page's: the screen's probe after `done`
+      // then proves it instead of downloading the page again (#226).
+      if (applied && !appliedBefore && page != null && context != null) {
+        _recordPublishedDurableTail(page, context);
+      }
+      return applied;
     }
-    final page = read.page;
-    final context = read.context;
     if (page == null || context == null) return false;
     return _applyTerminalTailPageOnce(
       page,

@@ -49433,6 +49433,94 @@ void main() {
     }
   }
 
+  // #226: the session row (tens of kB with its system prompt and tool list)
+  // was read again after every reply. It is now read at most once a minute,
+  // with one read owed for the replies that fell inside the minute.
+  {
+    testWidgets(
+      'after a reply the session row is read at most once a minute, and the '
+      'last reply still gets its read',
+      (tester) async {
+        final rows = <Map<String, dynamic>>[];
+        var detailReads = 0;
+        final api = testApiClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((request) async {
+            final path = request.url.path;
+            if (request.method == 'GET' && path == '/api/sessions/sess-test') {
+              detailReads += 1;
+              return http.Response(
+                jsonEncode({
+                  'session': {'id': 'sess-test', 'message_count': rows.length},
+                }),
+                200,
+              );
+            }
+            if (request.method == 'GET' &&
+                path == '/api/sessions/sess-test/messages') {
+              return http.Response(
+                jsonEncode({'session_id': 'sess-test', 'messages': rows}),
+                200,
+              );
+            }
+            return http.Response('not found', 404);
+          }),
+        );
+        final gateway = _Dup9340HistoryGateway(rows)..durableReady = true;
+        const provisional = Session(
+          id: 'mob-usage-row-read',
+          title: 'Nuevo chat',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 0,
+          isActive: true,
+          preview: '',
+          profile: 'default',
+          startedAt: 1,
+        );
+        await pumpChat(
+          tester,
+          session: provisional,
+          connection: _remoteConn('conn-usage-row-read'),
+          desktopGateway: gateway,
+          api: api,
+        );
+
+        Future<void> turn(int n) async {
+          final prompt = 'PROMPT_USAGE_ROW_$n';
+          final reply = 'REPLY_USAGE_ROW_$n';
+          await tester.enterText(find.byType(TextField).first, prompt);
+          await _settleComposer(tester);
+          await tester.tap(find.byKey(const ValueKey('send')));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          gateway.emit('message.start');
+          gateway.emit('message.delta', {'text': reply});
+          await tester.pump(const Duration(milliseconds: 100));
+          rows
+            ..add({'id': 1000 + 2 * n, 'role': 'user', 'content': prompt})
+            ..add({'id': 1001 + 2 * n, 'role': 'assistant', 'content': reply});
+          gateway.emit('message.complete', {'text': reply});
+          await tester.pump();
+          await tester.pump(const Duration(seconds: 2));
+        }
+
+        await turn(1);
+        expect(detailReads, 1);
+        await turn(2);
+        await turn(3);
+        expect(detailReads, 1);
+        // The minute ends: the read the later replies left owed.
+        await tester.pump(const Duration(seconds: 61));
+        await tester.pump();
+        expect(detailReads, 2);
+        await tester.pump(const Duration(seconds: 61));
+        expect(detailReads, 2);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   // Review 9341 (hallazgo MEDIA): tras la valla `compacting` espuria el
   // usuario envía un 2º mensaje antes de cualquier lectura durable. Hermes
   // Desktop solo se salta la hidratación del turno que vio `compacting`

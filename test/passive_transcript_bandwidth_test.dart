@@ -530,6 +530,66 @@ void main() {
     },
   );
 
+  // #226: measured on a phone, every reply cost two downloads of the newest
+  // page (the turn's own terminal read and the screen's read after `done`)
+  // plus two one-row probes. The screen now waits for the terminal read and
+  // lets the probe prove the page it published.
+  for (final rows in [40, 300]) {
+  testWidgets(
+    'a reply reads the newest page once: the screen does not repeat the '
+    "turn's own terminal read ($rows rows)",
+    (tester) async {
+      final server = _TranscriptServer(rows: rows);
+      final fixture = await _mount(tester, server, attachRuntime: true);
+      await _idle(tester, const Duration(seconds: 40));
+      final chat = fixture.chat;
+
+      for (var turn = 1; turn <= 3; turn++) {
+        final heavyBefore = server.heavyReads;
+        final readsBefore = server.messageReads;
+        expect(
+          await chat.send(
+            fullText: 'Pregunta $turn',
+            model: 'hermes-agent',
+            history: chat.buildHistory(),
+          ),
+          isTrue,
+        );
+        await tester.pump();
+        fixture.gateway.emit('message.start');
+        // Hermes stores the user row and says so.
+        server.append('user', content: 'Pregunta $turn');
+        fixture.gateway.emit('sessions.changed');
+        await tester.pump(const Duration(milliseconds: 200));
+        fixture.gateway.emit(
+          'message.delta',
+          payload: {'text': 'Respuesta $turn'},
+        );
+        await tester.pump(const Duration(milliseconds: 200));
+        server.append('assistant', content: 'Respuesta $turn');
+        fixture.gateway.emit('sessions.changed');
+        fixture.gateway.emit(
+          'message.complete',
+          payload: {'text': 'Respuesta $turn'},
+        );
+        await _idle(tester, const Duration(seconds: 8));
+        // ignore: avoid_print
+        print(
+          '[226] turn $turn: heavy=${server.heavyReads - heavyBefore} '
+          'reads=${server.messageReads - readsBefore}',
+        );
+        expect(chat.messages.first['content'], 'Respuesta $turn');
+        expect(
+          chat.messages.where((m) => m['content'] == 'Respuesta $turn'),
+          hasLength(1),
+        );
+        expect(server.heavyReads - heavyBefore, 1);
+      }
+      await _dispose(tester, fixture);
+    },
+  );
+  }
+
   testWidgets('idle backstop picks up a row appended elsewhere exactly once', (
     tester,
   ) async {
