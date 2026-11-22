@@ -5,6 +5,7 @@ import '../models/activity_snapshot.dart'
 import '../models/deferred_tool_call.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/provider_auth_failure.dart';
+import '../models/tool_call_failure.dart';
 import '../models/turn_error_surface.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
@@ -449,9 +450,17 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
           continue;
         }
         matched = true;
+        // The result belongs to the call itself; the entries a bridge call
+        // unwraps into (`id:0`, …) share it without each having failed.
+        final failed =
+            stepId == id &&
+            toolCallFailed(
+              toolName: step['label']?.toString(),
+              result: message['content'],
+            );
         activity[i] = settleMemory({
           ...step,
-          'status': 'completed',
+          'status': failed ? 'failed' : 'completed',
           if (endedAt != null && step['completed_at'] == null)
             'completed_at': endedAt,
         }, message);
@@ -480,7 +489,10 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
         settleMemory({
           'kind': 'tool',
           'label': label,
-          'status': 'completed',
+          'status':
+              toolCallFailed(toolName: label, result: message['content'])
+              ? 'failed'
+              : 'completed',
           if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
           'timestamp': ?timestampOf(message),
         }, message),

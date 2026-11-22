@@ -80,6 +80,76 @@ void main() {
     );
   }
 
+  test('a tool call whose stored result reports a failure is a failed step', () {
+    Map<String, Object?> call(String id, String name) => {
+      'id': id,
+      'function': {'name': name, 'arguments': '{}'},
+    };
+    final result = reconciler.project(
+      snapshot({
+        'session_id': 'runtime-failed-steps',
+        'session_key': 'stored-failed-steps',
+        'messages': [
+          const {'role': 'user', 'content': 'Try it', 'row_id': 1},
+          {
+            'role': 'assistant',
+            'content': '',
+            'tool_calls': [call('call-ls', 'terminal')],
+            'row_id': 2,
+          },
+          const {
+            'role': 'tool',
+            'content':
+                '{"output": "ls: cannot access", "exit_code": 2, "error": null}',
+            'tool_call_id': 'call-ls',
+            'tool_name': 'terminal',
+            'row_id': 3,
+          },
+          {
+            'role': 'assistant',
+            'content': '',
+            'tool_calls': [call('call-read', 'read_file')],
+            'row_id': 4,
+          },
+          const {
+            'role': 'tool',
+            'content': '{"error": "File not found: /tmp/missing.txt"}',
+            'tool_call_id': 'call-read',
+            'tool_name': 'read_file',
+            'row_id': 5,
+          },
+          {
+            'role': 'assistant',
+            'content': '',
+            'tool_calls': [call('call-ok', 'terminal')],
+            'row_id': 6,
+          },
+          const {
+            'role': 'tool',
+            'content': '{"output": "total 0", "exit_code": 0, "error": null}',
+            'tool_call_id': 'call-ok',
+            'tool_name': 'terminal',
+            'row_id': 7,
+          },
+          const {'role': 'assistant', 'content': 'Both failed.', 'row_id': 8},
+        ],
+      }),
+      retainMediaEvidence: true,
+    );
+
+    final assistant = result.messagesNewestFirst.singleWhere(
+      (message) => message['role'] == 'assistant',
+    );
+    final steps = (assistant[assistantActivityTraceKey] as List)
+        .where((step) => step['kind'] == 'tool')
+        .toList();
+    expect(steps.map((step) => step['status']), [
+      'failed',
+      'failed',
+      'completed',
+    ]);
+  });
+
   test('un turno durable fragmentado se proyecta como un solo assistant', () {
     final result = reconciler.project(
       snapshot({

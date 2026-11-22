@@ -75,6 +75,7 @@ import '../models/turn_error_surface.dart' as turn_error show providerWaitText;
 import '../models/session_activity.dart';
 import '../models/subagent_activity.dart';
 import '../../l10n/app_localizations.dart';
+import '../models/tool_call_failure.dart';
 import '../models/tool_label.dart';
 import '../models/tool_name.dart';
 import '../models/tool_output.dart';
@@ -27374,7 +27375,7 @@ class ActiveChat with WidgetsBindingObserver {
         _upsertRunTool({
           'tool': payload['name'] ?? payload['tool'] ?? payload['tool_id'],
           'preview': payload['preview'] ?? payload['input'] ?? '',
-          'error': payload['error'] != null || payload['status'] == 'error',
+          'error': _toolCompleteFailed(payload),
         }, running: false);
         _upsertAssistantToolActivity(payload, running: false, startsNew: false);
         toolOutputs.recordComplete(payload);
@@ -29470,7 +29471,7 @@ class ActiveChat with WidgetsBindingObserver {
     }
     final status = running
         ? 'running'
-        : payload['error'] != null || payload['status'] == 'error'
+        : _toolCompleteFailed(payload)
         ? 'failed'
         : 'completed';
     // Detalle SEGURO para la pastilla/el panel (ejecutable, nombre de archivo,
@@ -31609,6 +31610,17 @@ class ActiveChat with WidgetsBindingObserver {
     }
     await _settleEndedTurnWithoutError(turnEpoch, site: 'silent_probe');
   }
+
+  /// Whether a `tool.complete` frame reports a failed call: the envelope's
+  /// own flag, or the failure its `result` carries (as Hermes Desktop reads it).
+  static bool _toolCompleteFailed(Map<String, dynamic> payload) =>
+      payload['error'] != null ||
+      payload['status'] == 'error' ||
+      toolCallFailed(
+        toolName: (payload['name'] ?? payload['tool'])?.toString(),
+        result: payload['result'],
+        isError: payload['is_error'] == true,
+      );
 
   /// Adapta un evento tool.started/tool.completed del run a una línea de trace.
   ///
