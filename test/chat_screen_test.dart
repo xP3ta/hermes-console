@@ -40999,7 +40999,7 @@ void main() {
           .widget<GeneratedDocumentPreviewCard>(
             find.byType(GeneratedDocumentPreviewCard),
           )
-          .onOpen();
+          .onOpen!();
       // The 20 turns stay: an external launch keeps the time to show.
       await _pumpUntilRealWork(
         tester,

@@ -25,7 +25,8 @@ import '../theme/theme_contrast.dart';
 import '../design/tokens.dart' show HermesRadius;
 import '../theme/motion.dart' show HermesMotion;
 import 'artifact_viewer/pdf_document_view.dart' show kPdfRenderDeadline;
-import 'artifact_viewer/web_preview.dart' show kModelMaxBytes;
+import 'artifact_viewer/web_preview.dart'
+    show InlineWebPreviewPlaceholder, kModelMaxBytes;
 import 'chat/embeds/document_previews.dart';
 import 'generated_image_card.dart';
 import 'hermes_app_bar.dart';
@@ -1010,6 +1011,10 @@ class _GeneratedMediaAttachmentCardState
   bool _canRetry = true;
   bool _cancelled = false;
   bool _autoLimitExceeded = false;
+
+  /// The reader pressed Cancel: the file waits to be asked for, in its
+  /// compact card, instead of holding the place of a preview.
+  bool _stoppedByUser = false;
   bool _visible = false;
   bool _visibilityCheckScheduled = false;
   int _generation = 0;
@@ -1271,6 +1276,7 @@ class _GeneratedMediaAttachmentCardState
     }
     setState(() {
       _cancelled = false;
+      _stoppedByUser = false;
       _autoLimitExceeded = false;
       _receivedBytes = 0;
       _totalBytes = widget.reference.sizeBytes;
@@ -1493,6 +1499,7 @@ class _GeneratedMediaAttachmentCardState
   void _cancel() {
     _generation++;
     _cancelled = true;
+    _stoppedByUser = true;
     _autoLoadCancellation?.cancel();
     _autoLoadCancellation = null;
     setState(() {
@@ -1646,6 +1653,78 @@ class _GeneratedMediaAttachmentCardState
     );
   }
 
+  /// The place of an HTML page that is about to load by itself: the card
+  /// of its preview, already at its size, with the progress in the box and
+  /// the actions not yet active. The compact download card grew into the
+  /// preview when the file arrived and pushed the reply down. Null when
+  /// the page will not be previewed (too big, asked for by hand, failed).
+  Widget? _buildPendingHtmlPreview(BuildContext context) {
+    if (widget.reference.kind != GeneratedMediaKind.file ||
+        widget.reference.htmlPreview ||
+        _stoppedByUser ||
+        !_mayAutoLoad ||
+        _autoLimitExceeded ||
+        (_status != GeneratedFileStatus.consent &&
+            _status != GeneratedFileStatus.downloading)) {
+      return null;
+    }
+    final name = widget.reference.displayName;
+    if (artifactViewerKindFor(
+          name: name,
+          mimeType: widget.reference.mimeType,
+        ) !=
+        ArtifactViewerKind.html) {
+      return null;
+    }
+    final limit = math.min(_autoLimit, kInlineDocumentMaxBytes);
+    final knownSize = widget.reference.sizeBytes;
+    final total = _totalBytes;
+    if ((knownSize != null && knownSize > limit) ||
+        (total != null && total > limit) ||
+        _receivedBytes > limit) {
+      return null;
+    }
+    final strings = Strings.of(context);
+    final downloading = _status == GeneratedFileStatus.downloading;
+    return GeneratedDocumentPreviewCard(
+      name: name,
+      sizeBytes: total ?? knownSize,
+      preview: InlineWebPreviewPlaceholder(
+        label: 'HTML',
+        icon: HIcons.language_rounded,
+        footer: !downloading
+            ? null
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: 160,
+                    child: Semantics(
+                      container: true,
+                      label: strings.genMediaLoading,
+                      child: LinearProgressIndicator(
+                        value: total != null && total > 0 && _receivedBytes > 0
+                            ? (_receivedBytes / total).clamp(0.0, 1.0)
+                            : null,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const ValueKey<String>('generated-document-cancel'),
+                    onPressed: _cancel,
+                    icon: const Icon(HIcons.close_rounded),
+                    label: Text(strings.commonCancel),
+                  ),
+                ],
+              ),
+      ),
+      onOpen: null,
+      onShare: null,
+      onSave: null,
+    );
+  }
+
   /// A document shown as it looks, not as its source: a page, an SVG, a
   /// diagram, a 3D model, a note. Null for everything else (code, data,
   /// plain text keep the text preview; media has its own cards).
@@ -1790,6 +1869,8 @@ class _GeneratedMediaAttachmentCardState
         if (ready != null) return ready;
       }
     }
+    final pending = _buildPendingHtmlPreview(context);
+    if (pending != null) return pending;
     return GeneratedFileCard(
       key: ValueKey<String>('generated-${widget.reference.kind.name}-card'),
       name: widget.reference.displayName,
@@ -1935,20 +2016,30 @@ class GeneratedDocumentPreviewCard extends StatelessWidget {
   });
 
   final String name;
-  final int sizeBytes;
+
+  /// Null while the size is not known (a download not yet answered).
+  final int? sizeBytes;
   final Widget preview;
-  final VoidCallback onOpen;
-  final VoidCallback onShare;
-  final VoidCallback onSave;
+
+  /// Null while the file is on its way: the actions are there, not yet
+  /// active, so the card is already as tall as it will be.
+  final VoidCallback? onOpen;
+  final VoidCallback? onShare;
+  final VoidCallback? onSave;
 
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
+    final size = sizeBytes;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Column(
-        key: const ValueKey<String>('generated-document-preview'),
+        key: ValueKey<String>(
+          onOpen == null
+              ? 'generated-document-loading'
+              : 'generated-document-preview',
+        ),
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1956,7 +2047,7 @@ class GeneratedDocumentPreviewCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 2, left: 2),
             child: Text(
-              '$name · ${_formatFileBytes(sizeBytes)}',
+              size == null ? name : '$name · ${_formatFileBytes(size)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: colors.textSecondary, fontSize: 12),

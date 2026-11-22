@@ -127,6 +127,146 @@ void main() {
     });
   });
 
+  group('an HTML page downloaded for the first time', () {
+    late Directory temp;
+
+    setUp(() {
+      temp = Directory.systemTemp.createTempSync('preview-first-');
+      GeneratedMediaAttachmentCard.clearReadyMemoForTesting();
+      MediaPrefetcher.instance.resetForTesting();
+      GeneratedMediaService.cacheRootForTesting = temp;
+      WebViewPlatform.instance = FakeWebViewPlatform();
+    });
+
+    tearDown(() {
+      GeneratedMediaService.cacheRootForTesting = null;
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+
+    GeneratedMediaReference page(String name, {int? size}) =>
+        GeneratedMediaReference(
+          source: '/workspace/out/$name',
+          kind: GeneratedMediaKind.file,
+          sourceKind: GeneratedMediaSourceKind.serverPath,
+          displayName: name,
+          mimeType: 'text/html',
+          sizeBytes: size,
+        );
+
+    double height(WidgetTester tester) =>
+        tester.getSize(find.byType(GeneratedMediaAttachmentCard)).height;
+
+    final loading = find.byKey(
+      const ValueKey<String>('generated-document-loading'),
+    );
+    final ready = find.byKey(
+      const ValueKey<String>('generated-document-preview'),
+    );
+
+    // The compact download card grew into the preview when the file came
+    // and pushed the rest of the reply down. The card now has the size of
+    // its preview from the first frame of the download.
+    testWidgets('holds the place of its preview while it downloads: the '
+        'card is as tall before the file as with it, in every frame', (
+      tester,
+    ) async {
+      final file = File('${temp.path}/report.html')
+        ..writeAsStringSync('<!doctype html><p>report</p>');
+      final arrived = Completer<File>();
+      await tester.pumpWidget(
+        _host(
+          GeneratedMediaAttachmentCard(
+            reference: page('report.html'),
+            autoLoad: true,
+            readyMemoKey: _scope,
+            load: (onProgress, _) {
+              onProgress(10, 40);
+              return arrived.future;
+            },
+          ),
+        ),
+      );
+      final progress = find.byType(LinearProgressIndicator);
+      for (var i = 0; i < 40 && progress.evaluate().isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        // Waiting to start it already holds the place: never the row.
+        expect(find.byType(GeneratedFileCard), findsNothing);
+      }
+      expect(loading, findsOneWidget);
+      expect(find.byType(GeneratedFileCard), findsNothing);
+      expect(
+        find.byKey(const ValueKey('inline-web-preview-placeholder')),
+        findsOneWidget,
+      );
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 400));
+      final reserved = height(tester);
+      expect(reserved, greaterThan(200), reason: 'a preview, not a row');
+
+      arrived.complete(file);
+      for (var i = 0; i < 80 && ready.evaluate().isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(height(tester), reserved, reason: 'frame $i');
+      }
+      expect(ready, findsOneWidget);
+      expect(loading, findsNothing);
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(height(tester), reserved, reason: 'frame $i after the file');
+      }
+      expect(find.byKey(const ValueKey('inline-web-preview')), findsOneWidget);
+    });
+
+    testWidgets('Cancel is in the box and goes back to the compact card '
+        'with its Download button', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          GeneratedMediaAttachmentCard(
+            reference: page('report.html'),
+            autoLoad: true,
+            readyMemoKey: _scope,
+            load: (_, _) => Completer<File>().future,
+          ),
+        ),
+      );
+      final progress = find.byType(LinearProgressIndicator);
+      for (var i = 0; i < 40 && progress.evaluate().isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        // Waiting to start it already holds the place: never the row.
+        expect(find.byType(GeneratedFileCard), findsNothing);
+      }
+      final strings = Strings.of(tester.element(find.byType(Scaffold)));
+      await tester.tap(
+        find.byKey(const ValueKey<String>('generated-document-cancel')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(loading, findsNothing);
+      expect(find.byType(GeneratedFileCard), findsOneWidget);
+      expect(find.text(strings.commonDownload), findsOneWidget);
+    });
+
+    testWidgets('a page too big for the inline preview keeps the compact '
+        'card', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          GeneratedMediaAttachmentCard(
+            reference: page('huge.html', size: 900 * 1024 * 1024),
+            autoLoad: true,
+            readyMemoKey: _scope,
+            load: (_, _) => Completer<File>().future,
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(loading, findsNothing);
+      expect(find.byType(GeneratedFileCard), findsOneWidget);
+    });
+  });
+
   testWidgets('a page preview keeps its page under the picture until the '
       'picture has a frame, and is its picture at once when built again', (
     tester,
