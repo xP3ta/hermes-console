@@ -482,7 +482,10 @@ void main() {
     expect(text.style?.fontSize, 13);
   });
 
-  for (final (width, scale) in [(660.0, 1.0), (360.0, 2.0)]) {
+  // One row while the whole summary fits beside the actions (it is 662 wide
+  // in the test font); otherwise the actions go above it. The row used to be
+  // decided by a fixed width, which squeezed the summary into two lines.
+  for (final (width, scale) in [(900.0, 1.0), (360.0, 2.0)]) {
     testWidgets('the footer keeps summary and history aligned at $width / $scale',
         (tester) async {
       tester.view
@@ -530,7 +533,7 @@ void main() {
         closeTo(tester.getRect(summary).center.dy, 0.01),
       );
       expect(tester.getSize(rows).width, lessThanOrEqualTo(HermesLiveTurn.historyWidth));
-      if (width == 660) {
+      if (width == 900) {
         expect(tester.getRect(surface).right, lessThan(tester.getRect(actions).left));
       } else {
         expect(tester.getRect(actions).bottom, lessThanOrEqualTo(tester.getRect(summary).top));

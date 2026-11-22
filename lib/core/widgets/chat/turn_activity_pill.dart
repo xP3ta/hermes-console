@@ -1,5 +1,6 @@
 import 'package:hermes_android/core/design/hicons.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../design/floating.dart' show HermesFloatingSurface;
@@ -34,12 +35,25 @@ class TurnInlineActivity extends StatefulWidget {
     required this.open,
     required this.onTap,
     this.spokenLabel,
+    this.shortLabel,
     this.failed = false,
     this.glyph,
     this.startedAt,
     this.clock,
     super.key,
   });
+
+  /// The height of the settled capsule at the default text size: that of
+  /// the «Δ N files» chip above it.
+  static const double capsuleHeight = 36;
+
+  /// The size the settled line shrinks to before it gives anything up.
+  static const double tightFontSize = 12;
+
+  /// [label] with its counts abbreviated, same order and same numbers, for
+  /// when the whole line does not fit («Trabajó · 6 cmd · 51 herr.» for
+  /// «Trabajó · 6 comandos · Usó 51 herramientas»).
+  final String? shortLabel;
 
   /// What the live row is doing, as one of the chat's ten icons; settled it
   /// shows the outcome (check, or error when it failed).
@@ -133,47 +147,89 @@ class _TurnInlineActivityState extends State<TurnInlineActivity>
               shadow: false,
               padding: const EdgeInsetsDirectional.fromSTEB(
                 HermesSpace.gap,
-                6,
+                0,
                 HermesSpace.x2,
-                6,
+                0,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (widget.failed)
-                    ChatLiveIcon(
-                      ChatLiveGlyph.error,
-                      size: HermesIcon.sm,
-                      color: colors.error,
-                    )
-                  else
-                    Icon(
-                      HIcons.done_rounded,
-                      size: HermesIcon.sm,
-                      color: colors.success,
-                    ),
-                  const SizedBox(width: HermesSpace.x2),
-                  Flexible(
-                    child: Text(
-                      widget.label,
-                      key: const ValueKey('chat-inline-activity-text'),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: HermesType.support.copyWith(
-                        fontSize: TurnType.status,
-                        fontWeight: FontWeight.w600,
-                        color: colors.textPrimary,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minHeight: TurnInlineActivity.capsuleHeight,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.failed)
+                      ChatLiveIcon(
+                        ChatLiveGlyph.error,
+                        size: HermesIcon.sm,
+                        color: colors.error,
+                      )
+                    else
+                      Icon(
+                        HIcons.done_rounded,
+                        size: HermesIcon.sm,
+                        color: colors.success,
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: HermesSpace.x2),
-                  _caret(context, colors.textSecondary, size: HermesIcon.sm),
-                ],
+                    const SizedBox(width: HermesSpace.x2),
+                    Flexible(child: _settledLine(context, colors)),
+                    const SizedBox(width: HermesSpace.x2),
+                    _caret(context, colors.textSecondary, size: HermesIcon.sm),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// The settled summary, always on one line. It was allowed two and made
+  /// the capsule tall and wide beside the reply's actions. Short of room it
+  /// first tightens its size, then abbreviates its counts, and only if that
+  /// does not fit either ends in an ellipsis; the spoken label keeps the
+  /// whole line.
+  Widget _settledLine(BuildContext context, HermesThemeColors colors) {
+    final style = HermesType.support.copyWith(
+      fontSize: TurnType.status,
+      fontWeight: FontWeight.w600,
+      color: colors.textPrimary,
+    );
+    final tight = style.copyWith(fontSize: TurnInlineActivity.tightFontSize);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaler = MediaQuery.textScalerOf(context);
+        final direction = Directionality.of(context);
+        // Measured as the Text below is drawn: over the inherited style.
+        final inherited = DefaultTextStyle.of(context).style;
+        bool fits(String text, TextStyle style) {
+          if (!constraints.maxWidth.isFinite) return true;
+          final painter = TextPainter(
+            text: TextSpan(text: text, style: inherited.merge(style)),
+            textDirection: direction,
+            textScaler: scaler,
+            maxLines: 1,
+          )..layout();
+          final fit = painter.width.ceilToDouble() <= constraints.maxWidth;
+          painter.dispose();
+          return fit;
+        }
+
+        final short = widget.shortLabel;
+        final (text, chosen) = fits(widget.label, style)
+            ? (widget.label, style)
+            : fits(widget.label, tight)
+            ? (widget.label, tight)
+            : (short ?? widget.label, tight);
+        return Text(
+          text,
+          key: const ValueKey('chat-inline-activity-text'),
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.ellipsis,
+          style: chosen,
+        );
+      },
     );
   }
 
@@ -315,34 +371,100 @@ class TurnActivityFooter extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: actions,
     );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide =
-            constraints.maxWidth >=
-            344 * MediaQuery.textScalerOf(context).scale(1);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (wide)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(child: summary),
-                  const SizedBox(width: HermesSpace.x2),
-                  controls,
-                ],
-              )
-            else ...[
-              controls,
-              summary,
-            ],
-            details,
-          ],
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _FooterHead(children: [summary, controls]),
+        details,
+      ],
     );
   }
+}
+
+/// The summary and the reply's actions: on one row when the summary fits
+/// whole beside them, otherwise the actions on a row of their own above and
+/// the summary under them with the whole width. A fixed width decided it
+/// before, so on a phone a long summary was squeezed beside the actions and
+/// lost its end.
+class _FooterHead extends MultiChildRenderObjectWidget {
+  const _FooterHead({required super.children});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderFooterHead(Directionality.of(context));
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant _RenderFooterHead renderObject,
+  ) => renderObject.textDirection = Directionality.of(context);
+}
+
+class _FooterHeadParentData extends ContainerBoxParentData<RenderBox> {}
+
+class _RenderFooterHead extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _FooterHeadParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _FooterHeadParentData> {
+  _RenderFooterHead(this._textDirection);
+
+  static const double _gap = HermesSpace.x2;
+
+  TextDirection _textDirection;
+  set textDirection(TextDirection value) {
+    if (_textDirection == value) return;
+    _textDirection = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _FooterHeadParentData) {
+      child.parentData = _FooterHeadParentData();
+    }
+  }
+
+  @override
+  void performLayout() {
+    final summary = firstChild!;
+    final controls = childAfter(summary)!;
+    final loose = BoxConstraints(maxWidth: constraints.maxWidth);
+    // The summary at the whole width says how wide its whole line is.
+    summary.layout(loose, parentUsesSize: true);
+    controls.layout(loose, parentUsesSize: true);
+    final s = summary.size;
+    final c = controls.size;
+    final ltr = _textDirection != TextDirection.rtl;
+    final summaryData = summary.parentData! as _FooterHeadParentData;
+    final controlsData = controls.parentData! as _FooterHeadParentData;
+    if (s.width + _gap + c.width <= constraints.maxWidth) {
+      final height = s.height > c.height ? s.height : c.height;
+      final width = s.width + _gap + c.width;
+      summaryData.offset = Offset(
+        ltr ? 0 : width - s.width,
+        (height - s.height) / 2,
+      );
+      controlsData.offset = Offset(
+        ltr ? s.width + _gap : 0,
+        (height - c.height) / 2,
+      );
+      size = constraints.constrain(Size(width, height));
+    } else {
+      final width = s.width > c.width ? s.width : c.width;
+      controlsData.offset = Offset(ltr ? 0 : width - c.width, 0);
+      summaryData.offset = Offset(ltr ? 0 : width - s.width, c.height);
+      size = constraints.constrain(Size(width, c.height + s.height));
+    }
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
+
+  @override
+  void paint(PaintingContext context, Offset offset) =>
+      defaultPaint(context, offset);
 }
 
 /// Keeps the header outside the height animation so its hit target never moves.

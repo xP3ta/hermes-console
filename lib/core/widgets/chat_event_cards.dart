@@ -2840,6 +2840,15 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         _inlineAgents = math.max(_inlineAgents, status.delegatedCount);
       }
       final tools = entries.where((entry) => entry.isToolStep).toList();
+      final summaryActions = [
+        for (final entry in tools)
+          (
+            tool: entry.toolName,
+            target: entry.detail,
+            failed: entry.failed,
+            duration: entry.duration,
+          ),
+      ];
       final words = current == null
           ? (status.headline == s.chaPipelineStreaming
                 ? s.livePWriting
@@ -2865,21 +2874,29 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                 : words
           : inlineTurnSummary(
               s,
-              [
-                for (final entry in tools)
-                  (
-                    tool: entry.toolName,
-                    target: entry.detail,
-                    failed: entry.failed,
-                    duration: entry.duration,
-                  ),
-              ],
+              summaryActions,
               duration: widget.duration,
               agentCount: math.max(_inlineAgents, widget.delegatedCount),
             );
       final label = !widget.active && outcomeIcon != null
           ? '${entries.last.title} · $activityLabel'
           : activityLabel;
+      // The same line with its counts abbreviated, for a row too narrow
+      // for the whole one.
+      final compactSummary = widget.active
+          ? null
+          : inlineTurnSummary(
+              s,
+              summaryActions,
+              duration: widget.duration,
+              agentCount: math.max(_inlineAgents, widget.delegatedCount),
+              compact: true,
+            );
+      final compactLabel = compactSummary == null
+          ? null
+          : outcomeIcon != null
+          ? '${entries.last.title} · $compactSummary'
+          : compactSummary;
       // The approved live look (9 nov): while it runs the card says
       // «Trabajando»; what is being done is in the window of actions under
       // it, and the full words stay in the card's spoken label. States that
@@ -2950,6 +2967,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
         TurnInlineActivity(
           label: shownLabel,
           spokenLabel: label,
+          shortLabel: compactLabel == label ? null : compactLabel,
           startedAt:
               status.startedAt ??
               _turnEvents.firstOrNull?.startedAt ??

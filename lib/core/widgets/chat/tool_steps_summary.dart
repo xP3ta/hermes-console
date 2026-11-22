@@ -293,11 +293,14 @@ class StepsBarMemory {
 
 /// The approved quiet summary: measured time, action counts and delegated
 /// children, without changing the richer summaries used on other surfaces.
+/// [compact] abbreviates the counts («6 cmds · 51 tools»), same order and
+/// same numbers, for a line that does not fit whole.
 String inlineTurnSummary(
   Strings s,
   Iterable<TurnSummaryAction> actions, {
   Duration? duration,
   int agentCount = 0,
+  bool compact = false,
 }) {
   final all = actions.toList();
   final commands = all
@@ -321,13 +324,17 @@ String inlineTurnSummary(
     measured == null
         ? s.turnLineWorked
         : s.tk140WorkedFor(workedSpan(s, measured)),
-    if (commands > 0) s.chatLiveCommands(commands),
+    if (commands > 0)
+      compact
+          ? s.turnLineCommandsShort(commands)
+          : s.chatLiveCommands(commands),
     // Calls are not a child roster. Preserve their honest existing wording.
     if (agentCount > 0)
       s.chatLiveAgents(agentCount)
     else if (delegated > 0)
       s.turnLineDelegated(delegated),
-    if (other > 0) s.turnLineUsedTools(other),
+    if (other > 0)
+      compact ? s.turnLineToolsShort(other) : s.turnLineUsedTools(other),
     if (all.any((a) => a.failed))
       s.turnLineFailed(all.where((a) => a.failed).length),
   ].join(' · ');
