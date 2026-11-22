@@ -406,8 +406,14 @@ List<AttachmentCard> _roomComposerCards(WidgetTester tester) => tester
     .toList();
 
 /// Lets the real file I/O behind the paste finish, then paints it.
-Future<void> _settlePaste(WidgetTester tester, {bool Function()? until}) async {
-  for (var i = 0; i < 100 && !(until?.call() ?? false); i++) {
+///
+/// The wait ends as soon as [until] holds, so [rounds] is only a ceiling.
+Future<void> _settlePaste(
+  WidgetTester tester, {
+  bool Function()? until,
+  int rounds = 100,
+}) async {
+  for (var i = 0; i < rounds && !(until?.call() ?? false); i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 20)),
     );
@@ -2668,9 +2674,12 @@ void main() {
       await _pump(tester, events: const [], fileStore: _FakeFileStore.new);
       await _pickFrom(tester, AttachmentSourceChoice.files);
       const notice = 'You can attach up to 8 files per message.';
+      // Nine real file copies: on a loaded host they outlast two seconds,
+      // and the notice only comes after the last one.
       await _settlePaste(
         tester,
         until: () => find.text(notice).evaluate().isNotEmpty,
+        rounds: 1500,
       );
       await tester.pump();
       expect(_roomComposerCards(tester), hasLength(8));
