@@ -2996,7 +2996,12 @@ void main() {
           ),
         ],
       );
-    await _waitUntil(() => chat.isStreaming && sink.live.isNotEmpty);
+    // The first row waits for a face rendered off the event loop: on a loaded
+    // host that takes longer than the two seconds the other waits allow.
+    await _waitUntil(
+      () => chat.isStreaming && sink.live.isNotEmpty,
+      timeout: const Duration(seconds: 10),
+    );
 
     expect(await service.settleLiveTurnRowsFromRoster(), 0);
     expect(sink.cancelled, isEmpty);
