@@ -1203,7 +1203,7 @@
   "cevResolveInRuns": "请在活动 → 运行记录中处理批准请求。",
   "cevResolvedRecord": "已处理的批准请求记录。",
   "cevTraceFailed": "错误 · 查看详情",
-  "cevTraceRecovered": "已完成 · 已重试（查看详情）",
+  "cevTraceRecovered": "已完成 · 有错误（查看详情）",
   "cevTraceStopped": "已停止",
   "cevPatternKey": "模式：{key}",
   "commonDownload": "下载",
@@ -7496,7 +7496,7 @@
     }
   },
   "q9TurnOutcomeFailed": "错误",
-  "q9TurnOutcomeRecovered": "重试后完成",
+  "q9TurnOutcomeRecovered": "已完成，但有错误",
   "constellationTitle": "你的星座",
   "constellationLoading": "正在加载记忆…",
   "constellationEmpty": "暂无可显示的内容",

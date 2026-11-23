@@ -1203,7 +1203,7 @@
   "cevResolveInRuns": "承認はアクティビティ → 実行で処理します。",
   "cevResolvedRecord": "解決済みの承認の記録です。",
   "cevTraceFailed": "エラー · 詳細を表示",
-  "cevTraceRecovered": "完了 · 再試行済み（詳細を表示）",
+  "cevTraceRecovered": "完了 · エラーあり（詳細を表示）",
   "cevTraceStopped": "停止",
   "cevPatternKey": "パターン: {key}",
   "commonDownload": "ダウンロード",
@@ -7496,7 +7496,7 @@
     }
   },
   "q9TurnOutcomeFailed": "エラー",
-  "q9TurnOutcomeRecovered": "再試行後に完了",
+  "q9TurnOutcomeRecovered": "エラーありで完了",
   "constellationTitle": "あなたの星座",
   "constellationLoading": "メモリを読み込み中…",
   "constellationEmpty": "まだ表示するものがありません",

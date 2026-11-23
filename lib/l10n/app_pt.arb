@@ -1689,7 +1689,7 @@
   "cevResolveInRuns": "As aprovações são resolvidas em Atividade → Execuções.",
   "cevResolvedRecord": "Registro de uma aprovação já resolvida.",
   "cevTraceFailed": "Erro · ver detalhes",
-  "cevTraceRecovered": "Concluído · com nova tentativa (ver detalhes)",
+  "cevTraceRecovered": "Concluído · com erros (ver detalhes)",
   "cevTraceStopped": "Parado",
   "cevPatternKey": "padrão: {key}",
   "@cevPatternKey": {
@@ -12395,7 +12395,7 @@
     }
   },
   "q9TurnOutcomeFailed": "Erro",
-  "q9TurnOutcomeRecovered": "Concluído após nova tentativa",
+  "q9TurnOutcomeRecovered": "Concluído com erros",
   "constellationTitle": "Sua constelação",
   "constellationLoading": "Carregando memória…",
   "constellationEmpty": "Ainda não há nada para mostrar",

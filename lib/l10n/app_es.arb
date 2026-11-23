@@ -1932,7 +1932,7 @@
   "cevResolveInRuns": "Las aprobaciones se resuelven desde Actividad → Ejecuciones.",
   "cevResolvedRecord": "Registro de una aprobación ya resuelta.",
   "cevTraceFailed": "Error · ver detalles",
-  "cevTraceRecovered": "Completado · se reintentó (ver detalles)",
+  "cevTraceRecovered": "Completado · con errores (ver detalles)",
   "cevTraceStopped": "Detenido",
   "cevPatternKey": "patrón: {key}",
   "@cevPatternKey": {
@@ -13152,9 +13152,9 @@
   "@q9TurnOutcomeFailed": {
     "description": "Q9-CHAT5: tarjeta con la que cierra un turno que falló (no se abre: los pasos de encima cuentan el detalle)."
   },
-  "q9TurnOutcomeRecovered": "Completado tras reintentar",
+  "q9TurnOutcomeRecovered": "Completado con errores",
   "@q9TurnOutcomeRecovered": {
-    "description": "Q9-CHAT5: tarjeta con la que cierra un turno que terminó bien tras reintentar algún paso fallido."
+    "description": "Q9-CHAT5: tarjeta con la que cierra un turno que terminó aunque algún paso falló (haya habido reintento o no)."
   },
   "constellationTitle": "Tu constelación",
   "constellationLoading": "Cargando memoria…",

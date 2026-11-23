@@ -1203,7 +1203,7 @@
   "cevResolveInRuns": "활동 → 실행에서 승인 요청을 처리합니다.",
   "cevResolvedRecord": "이미 처리된 승인의 기록입니다.",
   "cevTraceFailed": "오류 · 상세 정보 보기",
-  "cevTraceRecovered": "완료 · 다시 시도함(상세 정보 보기)",
+  "cevTraceRecovered": "완료 · 오류 있음(상세 정보 보기)",
   "cevTraceStopped": "중지됨",
   "cevPatternKey": "패턴: {key}",
   "commonDownload": "다운로드",
@@ -7496,7 +7496,7 @@
     }
   },
   "q9TurnOutcomeFailed": "오류",
-  "q9TurnOutcomeRecovered": "다시 시도 후 완료",
+  "q9TurnOutcomeRecovered": "오류와 함께 완료",
   "constellationTitle": "나의 별자리",
   "constellationLoading": "메모리 불러오는 중…",
   "constellationEmpty": "아직 표시할 내용이 없습니다",

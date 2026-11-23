@@ -1203,7 +1203,7 @@
   "cevResolveInRuns": "Le approvazioni si risolvono da Attività → Esecuzioni.",
   "cevResolvedRecord": "Registrazione di un'approvazione già risolta.",
   "cevTraceFailed": "Errore · mostra dettagli",
-  "cevTraceRecovered": "Completato · nuovo tentativo effettuato (mostra dettagli)",
+  "cevTraceRecovered": "Completato · con errori (mostra dettagli)",
   "cevTraceStopped": "Interrotto",
   "cevPatternKey": "schema: {key}",
   "commonDownload": "Scarica",
@@ -7496,7 +7496,7 @@
     }
   },
   "q9TurnOutcomeFailed": "Errore",
-  "q9TurnOutcomeRecovered": "Completato dopo un nuovo tentativo",
+  "q9TurnOutcomeRecovered": "Completato con errori",
   "constellationTitle": "La tua costellazione",
   "constellationLoading": "Caricamento della memoria…",
   "constellationEmpty": "Ancora niente da mostrare",

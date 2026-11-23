@@ -1203,7 +1203,7 @@
   "cevResolveInRuns": "Les approbations se traitent dans Activité → Exécutions.",
   "cevResolvedRecord": "Journal d’une approbation déjà résolue.",
   "cevTraceFailed": "Erreur · voir les détails",
-  "cevTraceRecovered": "Terminé · nouvelle tentative effectuée (voir les détails)",
+  "cevTraceRecovered": "Terminé · avec des erreurs (voir les détails)",
   "cevTraceStopped": "Arrêté",
   "cevPatternKey": "motif : {key}",
   "commonDownload": "Télécharger",
@@ -7496,7 +7496,7 @@
     }
   },
   "q9TurnOutcomeFailed": "Erreur",
-  "q9TurnOutcomeRecovered": "Terminé après une nouvelle tentative",
+  "q9TurnOutcomeRecovered": "Terminé avec des erreurs",
   "constellationTitle": "Ta constellation",
   "constellationLoading": "Chargement de la mémoire…",
   "constellationEmpty": "Rien à afficher pour le moment",

@@ -1203,7 +1203,7 @@
   "cevResolveInRuns": "Genehmigungen werden unter Aktivität → Ausführungen bearbeitet.",
   "cevResolvedRecord": "Eintrag einer bereits erledigten Genehmigung.",
   "cevTraceFailed": "Fehler · Details anzeigen",
-  "cevTraceRecovered": "Abgeschlossen · erneut versucht (Details anzeigen)",
+  "cevTraceRecovered": "Abgeschlossen · mit Fehlern (Details anzeigen)",
   "cevTraceStopped": "Angehalten",
   "cevPatternKey": "Muster: {key}",
   "commonDownload": "Herunterladen",
@@ -7496,7 +7496,7 @@
     }
   },
   "q9TurnOutcomeFailed": "Fehler",
-  "q9TurnOutcomeRecovered": "Nach erneutem Versuch abgeschlossen",
+  "q9TurnOutcomeRecovered": "Mit Fehlern abgeschlossen",
   "constellationTitle": "Deine Konstellation",
   "constellationLoading": "Speicher wird geladen…",
   "constellationEmpty": "Noch nichts anzuzeigen",

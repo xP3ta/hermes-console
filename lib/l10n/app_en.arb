@@ -1555,7 +1555,7 @@
   "cevResolveInRuns": "Approvals are resolved from Activity → Runs.",
   "cevResolvedRecord": "Record of an approval that was already resolved.",
   "cevTraceFailed": "Error · view details",
-  "cevTraceRecovered": "Completed · retried (view details)",
+  "cevTraceRecovered": "Completed · with errors (view details)",
   "cevTraceStopped": "Stopped",
   "cevPatternKey": "pattern: {key}",
   "@cevPatternKey": {
@@ -10453,7 +10453,7 @@
     }
   },
   "q9TurnOutcomeFailed": "Error",
-  "q9TurnOutcomeRecovered": "Completed after a retry",
+  "q9TurnOutcomeRecovered": "Completed with errors",
   "constellationTitle": "Your constellation",
   "constellationLoading": "Loading memory…",
   "constellationEmpty": "Nothing to show yet",
