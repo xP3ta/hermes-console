@@ -39,6 +39,15 @@ Future<Color> _pixel(List<int> png, double fx, double fy) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // These tests check which face is drawn, not the three seconds a
+  // notification waits for it: on a loaded host a face takes longer.
+  setUp(
+    () => BotFaceBitmapCache.debugRenderTimeout = const Duration(minutes: 2),
+  );
+  tearDown(
+    () => BotFaceBitmapCache.debugRenderTimeout =
+        BotFaceBitmapCache.defaultRenderTimeout,
+  );
 
   group('shared identity resolver (a → b → c)', () {
     test('a) a configured photo avatar wins', () {

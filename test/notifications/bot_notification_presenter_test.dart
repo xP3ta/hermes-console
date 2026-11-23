@@ -18,8 +18,15 @@ void main() {
       'notif_hide_sensitive_content': false, // these tests read the text of the notices
     });
     dir = await Directory.systemTemp.createTemp('faces');
+    // These tests check the drawing, not the three seconds a notification
+    // waits for it: on a loaded host a face takes longer than that.
+    BotFaceBitmapCache.debugRenderTimeout = const Duration(minutes: 2);
   });
-  tearDown(() => dir.delete(recursive: true));
+  tearDown(() {
+    BotFaceBitmapCache.debugRenderTimeout =
+        BotFaceBitmapCache.defaultRenderTimeout;
+    return dir.delete(recursive: true);
+  });
 
   test('face bitmap renders a PNG once and reuses the file', () async {
     final cache = BotFaceBitmapCache(directory: () async => dir);

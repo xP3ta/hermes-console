@@ -108,8 +108,16 @@ void main() {
       directory = await Directory.systemTemp.createTemp('cron-quiet-');
       path = '${directory.path}/delivery.db';
       now = 1800000000000;
+      // Twelve writers on two engines take turns at one database: on a
+      // loaded host the turns outlast the three seconds the app waits. What
+      // is checked here is that the slot is shared, not how long it takes.
+      NotificationDeliveryStore.debugTransactionRetryWindow = const Duration(
+        minutes: 2,
+      );
     });
     tearDown(() async {
+      NotificationDeliveryStore.debugTransactionRetryWindow =
+          NotificationDeliveryStore.transactionRetryWindow;
       for (final store in stores) {
         await store.close();
       }

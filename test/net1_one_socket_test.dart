@@ -353,9 +353,16 @@ void main() {
     await _waitUntil(() => !client.isConnected, reason: 'cut noticed');
     service.release('conn-one-socket', 'stored-a', profile: 'default');
     await _waitUntil(() => client.isClosed, reason: 'released socket closed');
-    final attempts = gateway.attempts;
+    final atRelease = gateway.attempts;
+    // A dial that left before the release can still reach the gateway after
+    // it (on a loaded host the upgrade request lands late): that one is not
+    // a redial. A client that kept redialling adds attempts in the second
+    // window too, which is as long as the one this test always watched.
     await Future<void>.delayed(const Duration(seconds: 2));
-    expect(gateway.attempts, attempts);
+    final settled = gateway.attempts;
+    expect(settled - atRelease, lessThanOrEqualTo(1));
+    await Future<void>.delayed(const Duration(seconds: 2));
+    expect(gateway.attempts, settled);
     expect(gateway.liveSockets, 0);
   });
 

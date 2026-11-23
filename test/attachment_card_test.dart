@@ -1492,6 +1492,22 @@ void main() {
     });
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
+    // The page is read and decoded in real time: wait for the thumbnail
+    // itself, which on a loaded host takes longer than those 50 ms.
+    for (
+      var i = 0;
+      i < 400 &&
+          find
+              .byKey(const ValueKey('generated-pdf-thumbnail'))
+              .evaluate()
+              .isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
+      await tester.pump();
+    }
 
     expect(renderCall?.method, 'renderPdfPage');
     final arguments = renderCall?.arguments as Map<Object?, Object?>;
