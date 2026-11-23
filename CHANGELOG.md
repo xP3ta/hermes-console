@@ -3,6 +3,108 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.4.4 (14036) — 2026-11-23
+
+Console 1.4.4 is a corrective release for 1.4.3, with two additions: /steer in the composer, and the
+memory provider of a profile can be chosen and configured from the phone, as
+in Hermes Desktop. It still talks only to the Dashboard.
+
+### Added
+
+- *Memory provider settings.* The Memory screen shows the active provider
+  apart from the one selected, with its readiness, and the built-in
+  MEMORY.md / USER.md layer that no provider replaces. Choose the provider
+  from the server's list and fill in the settings its plugin declares.
+  Credentials are write-only and never shown; «Full config…» and OAuth
+  connect appear when the provider has them. Hermes keeps one external
+  provider active at a time: choosing another replaces it in that role. A
+  server without these routes says so and is not written to.
+- *Traffic in the local diagnostic (#226).* The diagnostic report you export
+  by hand now includes how much the app talked to your server in the last 48
+  hours: requests and bytes per kind of route, WebSocket messages and
+  reconnections, in the foreground and in the background. It keeps no
+  addresses, identifiers or content, and is counted on the phone only.
+
+- */steer from the composer.* Typing `/steer <prompt>` (or `/s`) guides the
+  turn in flight without cutting it, the same as the queue's steer button.
+  With no prompt it shows the usage line; with nothing running the prompt
+  goes as the next message, as in Hermes. A normal message sent while the
+  agent works still waits in the queue.
+
+### Fixed
+
+- *A message shown twice while the agent worked.* A message that reached
+  the running turn as a correction was shown as its own bubble and again,
+  sometimes several times, under «Added while … was working» until the turn
+  ended. It is shown once.
+- *Files the in-app browser cannot draw (#232).* A PDF, an archive or an
+  office file left the spinner turning with «Open in browser» disabled. A PDF
+  now opens in the app's viewer; anything else says it cannot be shown here
+  and offers the system browser and a retry.
+- *A download that stops arriving* no longer leaves an image as a skeleton
+  for ever or keeps later images waiting behind it.
+- *Attachments you sent* can be retried after a timeout or a moment offline,
+  and their preview offers Share and Save.
+- *Chat previews no longer blink or jump* when a chat with pages, notes or
+  PDFs is opened: files already on the phone are drawn at once, and a page
+  preview keeps its page until its picture is ready. The changed-files line
+  under the last reply no longer comes and goes, and reopening a chat no
+  longer flashes its last message. An HTML page downloaded for the first
+  time holds the place of its preview while it arrives, instead of growing
+  when the file comes.
+- *The summary under a reply* («Worked · 6 commands · Used 51 tools») is
+  one quiet line of small text, like «Memory updated», instead of a tall
+  two-line capsule; it shortens its counts before it cuts anything. Opened,
+  its steps are plain lines hanging from the connector, without outlined
+  pills.
+- *The self-improvement notice* («Self-improvement review: Skill … patched»)
+  is a small one-line receipt like «Memory updated», not a block of large
+  text; tap it to read all of it. A patched skill is named once, not twice.
+- *A long folder scrolls.* The folder opened with «Open folder» from a
+  file of a reply could not be scrolled past the first screen.
+- *A step that failed says so.* A command that exits with an error, or a
+  tool whose result reports a failure, shows as failed in the steps of the
+  turn and in its summary, as in Hermes Desktop; it used to show as done.
+  A turn that ended with a failed step reads «Completed with errors».
+- *Less repeated reading (#226).* After every reply the app downloaded the
+  newest page of the chat twice and the whole session record once; it now
+  reads the page once and the record at most once a minute. Measured on a
+  phone over 20 replies: about a third of the REST traffic it used before.
+- *The profile strip in Conversations* appears at once with its last counts
+  instead of filling in face by face, and the list reads activity at most
+  once per second while an agent is busy.
+- *Rooms.* Every queued message keeps its own record, so a message and its
+  files waiting for the server survive Android closing the app; a file is
+  uploaded once per message; a message that lost its file returns to the
+  composer.
+- *Messaging.* With no profile picked, calls no longer name `default` (on a
+  Dashboard launched for a named profile that reached another bot's
+  credentials). Credential fields never teach the keyboard; Save and Test no
+  longer overlap; a slow server still loads the page; a gateway that stops
+  answering is not reported as restarted.
+- *Background updates.* A never-run cron job of another profile, a room with
+  unread pages, a Kanban board switch and an edited connection endpoint are
+  all followed without waiting for the long backstop.
+- *Bots.* Dismissed delivery failures stay dismissed per bot; a covered bot
+  chat stops polling; `moa.*` events that arrive while a chat recovers are
+  kept.
+- *Activity.* A bot token or a drive-relative path is never shown as a skill
+  name; reading a skill file is not counted as loading the skill.
+- *Terminal.* Back to the shell lasts for the live connection only; Compose
+  text is given back when the link was already dead; a localhost link tapped
+  in a terminal opened from Herdr agents goes through the SSH profile.
+- *Browser over SSH.* Uploads are forwarded intact while the channel opens,
+  and a page from elsewhere asks before sending the browser to the server's
+  loopback.
+- *Files.* The editor stays open with its unsaved text when the panel's
+  folder or session changes, and leaving the chat with unsaved text (Back, a
+  new chat, another conversation, the menu, the dock, a notification) asks
+  «Discard changes?» first. The Views menu follows the panels a chat can
+  open.
+- *Local storage.* Every write of an encrypted file uses its own temporary
+  file, and transcripts an older version kept in secure storage are moved to
+  encrypted files after launch, without waiting for their chats to be opened.
+
 ## 1.4.3 (14035)
 
 - The chat's Views button selects the layout. Open Terminal, Files, Changes

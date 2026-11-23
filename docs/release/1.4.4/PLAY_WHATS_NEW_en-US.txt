@@ -1,0 +1,8 @@
+What's new in 1.4.4:
+• Memory: choose and configure the memory provider of a profile, as in Hermes Desktop.
+• PDFs and other files no longer leave the in-app browser spinning.
+• Chat previews no longer blink or jump when a chat opens.
+• The profile strip in Conversations appears at once.
+• Room messages waiting to be sent survive the app being closed.
+• The local diagnostic shows how much data the app used.
+• /steer in the composer guides the running turn.
