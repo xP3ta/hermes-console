@@ -408,12 +408,16 @@ List<AttachmentCard> _roomComposerCards(WidgetTester tester) => tester
 /// Lets the real file I/O behind the paste finish, then paints it.
 ///
 /// The wait ends as soon as [until] holds, so [rounds] is only a ceiling.
+/// Lets a paste finish. With [until] it waits for that condition: the copy
+/// of the pasted file is real disk work, and on a loaded host it takes longer
+/// than the two seconds a fixed number of rounds allowed.
 Future<void> _settlePaste(
   WidgetTester tester, {
   bool Function()? until,
-  int rounds = 100,
+  int? rounds,
 }) async {
-  for (var i = 0; i < rounds && !(until?.call() ?? false); i++) {
+  final limit = rounds ?? (until == null ? 100 : 1500);
+  for (var i = 0; i < limit && !(until?.call() ?? false); i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 20)),
     );
