@@ -15,6 +15,8 @@ import 'package:http/testing.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// Desktop `lib/stt-lease.ts` over `POST /api/audio/stt-lease`
 /// (`hermes_cli/web_routers/audio.py:482-513`), with fakes only.
 class _Wire {
@@ -134,7 +136,7 @@ void main() {
     });
 
     tearDown(() async {
-      if (dir.existsSync()) await dir.delete(recursive: true);
+      await removeTestDir(dir);
     });
 
     HermesServerSttRuntime runtime() => HermesServerSttRuntime(
@@ -312,7 +314,7 @@ void main() {
 
     test('the transcription goes on after the warm-up wait', () async {
       final dir = await Directory.systemTemp.createTemp('stt-lease-hang');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       final wire = _Wire()..hold = Completer<void>();
       final uploads = <String>[];
       final rt = HermesServerSttRuntime(

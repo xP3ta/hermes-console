@@ -8,6 +8,8 @@ import 'package:hermes_android/core/services/voice/stt_engine.dart';
 import 'package:hermes_android/core/services/voice/voice_server_prefs.dart';
 import 'package:record/record.dart';
 
+import '../../support/remove_test_dir.dart';
+
 /// The profile's barge-in sensitivity and silence hold reach the Desktop
 /// ports that use them: the barge-in monitor (`voice-barge-in.ts:82-88`,
 /// `:354`) and the clip loop (`use-voice-conversation.ts:391`).
@@ -202,7 +204,7 @@ void main() {
     });
 
     tearDown(() async {
-      if (dir.existsSync()) await dir.delete(recursive: true);
+      await removeTestDir(dir);
     });
 
     Future<(WhisperSttEngine, _Runtime, List<SttResult>)> speak({

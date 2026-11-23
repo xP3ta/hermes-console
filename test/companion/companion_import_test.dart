@@ -19,6 +19,8 @@ import 'package:hermes_android/core/models/profile_pet.dart';
 import 'package:hermes_android/core/screens/companion/mascotas_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// WebP mínimo válido para `_isWebp` (RIFF…WEBP). No es decodificable como
 /// imagen, pero los tests no renderizan: solo validan los magic bytes.
 Uint8List _fakeWebp([int extra = 64]) {
@@ -154,7 +156,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (await root.exists()) await root.delete(recursive: true);
+    await removeTestDir(root);
   });
 
   group('CompanionImportService', () {

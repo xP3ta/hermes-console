@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/companion/data/companion_repository.dart';
 import 'package:hermes_android/core/models/profile_pet.dart';
 
+import '../support/remove_test_dir.dart';
+
 const _png1x1Base64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
@@ -40,7 +42,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (await root.exists()) await root.delete(recursive: true);
+    await removeTestDir(root);
   });
 
   group('CompanionRepository profile pet cache', () {

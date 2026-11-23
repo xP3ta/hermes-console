@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:http/http.dart' as http;
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   DashboardClient dashboard(http.Client client) => DashboardClient(
     host: 'hermes.local',
@@ -104,7 +106,7 @@ void main() {
   test('descarga a archivo no sigue redirects con cookies de sesión', () async {
     DashboardClient.resetSharedPasswordSessionsForTesting();
     final temp = await Directory.systemTemp.createTemp('dashboard-redirect-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final target = File('${temp.path}/report.bin');
     final transport = _RedirectingClient();
     final client = DashboardClient(
@@ -160,7 +162,7 @@ void main() {
     'descarga grande escribe por chunks sin construir el body en memoria',
     () async {
       final temp = await Directory.systemTemp.createTemp('dashboard-download-');
-      addTearDown(() => temp.delete(recursive: true));
+      addTearDown(() => removeTestDir(temp));
       final target = File('${temp.path}/generated.mp4');
       final transport = _StreamingClient((request, _) async {
         expect(request.headers['X-Hermes-Session-Token'], 'session-token');
@@ -194,7 +196,7 @@ void main() {
 
   test('descarga a archivo elimina el parcial si supera el límite', () async {
     final temp = await Directory.systemTemp.createTemp('dashboard-download-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final target = File('${temp.path}/generated.mp4');
     final tracked = _TrackedStream([
       [1, 2, 3],
@@ -235,7 +237,7 @@ void main() {
     test('a file download gives up, deletes its partial file and frees the '
         'connection', () async {
       final temp = await Directory.systemTemp.createTemp('dashboard-stall-');
-      addTearDown(() => temp.delete(recursive: true));
+      addTearDown(() => removeTestDir(temp));
       final target = File('${temp.path}/picture.png');
       final body = stalled();
       final client = dashboard(
@@ -279,7 +281,7 @@ void main() {
       // than the limit, and no pause comes near it on a loaded machine.
       DashboardClient.bodyIdleTimeout = const Duration(seconds: 1);
       final temp = await Directory.systemTemp.createTemp('dashboard-slow-');
-      addTearDown(() => temp.delete(recursive: true));
+      addTearDown(() => removeTestDir(temp));
       final target = File('${temp.path}/slow.bin');
       Stream<List<int>> trickle() async* {
         for (var i = 0; i < 6; i++) {
@@ -303,7 +305,7 @@ void main() {
 
   test('descarga informa progreso determinista con Content-Length', () async {
     final temp = await Directory.systemTemp.createTemp('dashboard-progress-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final target = File('${temp.path}/report.bin');
     final transport = _StreamingClient((_, _) async {
       return http.StreamedResponse(
@@ -340,7 +342,7 @@ void main() {
 
   test('cancelación durante stream elimina el archivo parcial', () async {
     final temp = await Directory.systemTemp.createTemp('dashboard-cancel-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final target = File('${temp.path}/report.bin');
     final transport = _StreamingClient((_, _) async {
       return http.StreamedResponse(
@@ -377,7 +379,7 @@ void main() {
 
   test('stream truncado respecto a Content-Length elimina el parcial', () async {
     final temp = await Directory.systemTemp.createTemp('dashboard-truncated-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final target = File('${temp.path}/report.bin');
     final transport = _StreamingClient((_, _) async {
       return http.StreamedResponse(
@@ -400,7 +402,7 @@ void main() {
     'respuesta multipart queda acotada y cancela el stream excesivo',
     () async {
       final temp = await Directory.systemTemp.createTemp('dashboard-upload-');
-      addTearDown(() => temp.delete(recursive: true));
+      addTearDown(() => removeTestDir(temp));
       final file = File('${temp.path}/trace.txt');
       await file.writeAsString('trace');
       final tracked = _TrackedStream([
@@ -428,7 +430,7 @@ void main() {
 
   test('multipart reintenta una sola vez tras 401 sin perder auth', () async {
     final temp = await Directory.systemTemp.createTemp('dashboard-upload-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final file = File('${temp.path}/trace.txt');
     await file.writeAsString('trace');
     final unauthorized = _TrackedStream([utf8.encode('unauthorized')]);
@@ -461,7 +463,7 @@ void main() {
     // R5C C-V3: a server that sends a little and then nothing must not hold
     // the download forever.
     final temp = await Directory.systemTemp.createTemp('dashboard-deadline-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final target = File('${temp.path}/slow.png');
     final trickle = StreamController<List<int>>();
     addTearDown(trickle.close);

@@ -10,6 +10,8 @@ import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/connection_diagnostics.dart';
 import 'package:hermes_android/core/services/diagnostic_bundle_service.dart';
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   late Directory cache;
   final now = DateTime.utc(2026, 7, 14, 20);
@@ -19,7 +21,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (await cache.exists()) await cache.delete(recursive: true);
+    await removeTestDir(cache);
   });
 
   DiagnosticBundleService service() => DiagnosticBundleService(

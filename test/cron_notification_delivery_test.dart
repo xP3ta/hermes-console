@@ -13,6 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -674,7 +676,7 @@ void main() {
     'cron sin sessionId deriva IDs Android de executionId y jobId',
     () async {
       final directory = await Directory.systemTemp.createTemp('cron-identity-');
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final prefs = await SharedPreferences.getInstance();
       final service = NotificationService(
         prefs,
@@ -713,7 +715,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'service-delivery-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final store = NotificationDeliveryStore(
         databaseFactory: databaseFactoryFfi,
         databasePath: '${directory.path}/notification_delivery_v1.db',

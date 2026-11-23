@@ -18,6 +18,8 @@ import 'package:hermes_android/core/models/launcher_widget_cron.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'launcher_widget_fixtures.dart';
 
 class _Store implements LauncherWidgetImageStore {
@@ -152,7 +154,7 @@ void main() {
   });
 
   tearDown(() async {
-    await tmp.delete(recursive: true);
+    await removeTestDir(tmp);
   });
 
   test('without an environment the caller redraws itself', () async {

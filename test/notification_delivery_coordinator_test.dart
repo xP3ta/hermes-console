@@ -6,12 +6,14 @@ import 'package:hermes_android/core/services/notifications/notification_delivery
 import 'package:hermes_android/core/services/notifications/notification_delivery_store.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   sqfliteFfiInit();
 
   test('failed database initialization can be retried', () async {
     final directory = await Directory.systemTemp.createTemp('delivery-open-');
-    addTearDown(() => directory.delete(recursive: true));
+    addTearDown(() => removeTestDir(directory));
     final store = _FailOnceOpenStore(
       '${directory.path}/notification_delivery_v1.db',
     );
@@ -31,7 +33,7 @@ void main() {
     final directory = await Directory.systemTemp.createTemp(
       'delivery-retention-',
     );
-    addTearDown(() => directory.delete(recursive: true));
+    addTearDown(() => removeTestDir(directory));
     final store = _RetentionTrackingStore(
       '${directory.path}/notification_delivery_v1.db',
     );
@@ -331,7 +333,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-discovery-atomic-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final path = '${directory.path}/notification_delivery_v1.db';
       final inserted = Completer<void>();
       final release = Completer<void>();
@@ -410,7 +412,7 @@ void main() {
     await dispatch;
     await close;
     expect(() => fixture.store.eventCount(), throwsStateError);
-    await fixture.directory.delete(recursive: true);
+    await removeTestDir(fixture.directory);
   });
 
   test(
@@ -565,7 +567,7 @@ class _Fixture {
 
   Future<void> close() async {
     await coordinator.close();
-    await directory.delete(recursive: true);
+    await removeTestDir(directory);
   }
 }
 

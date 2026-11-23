@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/voice/tts_engine.dart';
 
+import '../support/remove_test_dir.dart';
+
 class CountedFile implements File {
   CountedFile(this.real);
   final File real;
@@ -83,7 +85,7 @@ void main() {
       );
     } finally {
       await e.dispose();
-      await dir.delete(recursive: true);
+      await removeTestDir(dir);
     }
   });
 }

@@ -9,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'package:http/testing.dart';
 
+import 'support/remove_test_dir.dart';
+
 class _Real extends HttpOverrides {}
 
 Future<void> _runFixtureCommand(
@@ -62,7 +64,7 @@ Future<SecurityContext> _ephemeralTlsContext() async {
       ..useCertificateChain(certificate.path)
       ..usePrivateKey(key.path);
   } finally {
-    await temporary.delete(recursive: true);
+    await removeTestDir(temporary);
   }
 }
 

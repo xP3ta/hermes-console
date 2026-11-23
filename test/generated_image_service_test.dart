@@ -7,13 +7,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/generated_image_service.dart';
 import 'package:http/http.dart' as http;
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
     'image security rejects PNG signature without actual image before cache write',
     () async {
       final dir = await Directory.systemTemp.createTemp('image-security-');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       await expectLater(
         GeneratedImageService.ensureDownloaded(
           'security',
@@ -29,7 +31,7 @@ void main() {
   );
   test('image security revoked owner cannot publish pending bytes', () async {
     final dir = await Directory.systemTemp.createTemp('image-revoked-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     var current = true;
     await expectLater(
       GeneratedImageService.ensureDownloaded(
@@ -48,7 +50,7 @@ void main() {
   });
   test('image security revoked HTTPS owner cannot publish bytes', () async {
     final dir = await Directory.systemTemp.createTemp('https-revoked-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     var current = true;
     await expectLater(
       GeneratedImageService.ensureHttpsDownloaded(
@@ -85,7 +87,7 @@ void main() {
   );
   test('image security oversized header leaves no cache file', () async {
     final dir = await Directory.systemTemp.createTemp('image-pixels-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final bytes = Uint8List.fromList(_pngBytes);
     bytes.buffer.asByteData().setUint32(16, 100000);
     await expectLater(
@@ -101,7 +103,7 @@ void main() {
   });
   test('image security invalid existing cache is not reused', () async {
     final dir = await Directory.systemTemp.createTemp('image-invalid-cache-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final old = await GeneratedImageService.localFileFor(
       'invalid-cache',
       'same.png',
@@ -128,7 +130,7 @@ void main() {
     'image security sensitive name makes zero fetch and zero cache files',
     () async {
       final dir = await Directory.systemTemp.createTemp('image-sensitive-');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       var calls = 0;
       await expectLater(
         GeneratedImageService.ensureDownloaded(
@@ -161,7 +163,7 @@ void main() {
   });
   test('legacy unscoped generated images are never reused', () async {
     final dir = await Directory.systemTemp.createTemp('media-migration-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final oldDir = Directory('${dir.path}/generated_images')..createSync();
     final png = Uint8List.fromList(_pngBytes);
     // Legacy connection hash for synthetic owner c, without a profile.

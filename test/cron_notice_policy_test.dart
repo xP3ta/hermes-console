@@ -7,6 +7,8 @@ import 'package:hermes_android/core/services/notifications/notification_mute_sto
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -122,7 +124,7 @@ void main() {
         await store.close();
       }
       stores.clear();
-      await directory.delete(recursive: true);
+      await removeTestDir(directory);
     });
 
     test('12 successes per hour show once; exact 60 minute boundary', () async {

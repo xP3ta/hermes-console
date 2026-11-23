@@ -24,6 +24,8 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/remove_test_dir.dart';
 import 'support/quiet_feedback.dart';
 import 'support/test_api_client.dart';
 
@@ -612,7 +614,7 @@ void main() {
 
     tearDown(() async {
       if (temp != null && temp!.existsSync()) {
-        await temp!.delete(recursive: true);
+        await removeTestDir(temp!);
       }
       temp = null;
     });

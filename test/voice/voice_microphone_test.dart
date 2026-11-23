@@ -8,6 +8,8 @@ import 'package:hermes_android/core/services/voice/voice_settings.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// Backlog 1.4.x item 7: «Microphone: automatic / the phone's». `record`
 /// starts Bluetooth SCO by default (`manageBluetooth: true`), which hands the
 /// take to a car kit or a headset.
@@ -109,7 +111,7 @@ void main() {
     });
 
     tearDown(() async {
-      if (dir.existsSync()) await dir.delete(recursive: true);
+      await removeTestDir(dir);
     });
 
     Future<RecordConfig> take(

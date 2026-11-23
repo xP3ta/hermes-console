@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/services/attachment_uploader.dart';
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   late Directory temp;
 
@@ -14,7 +16,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (await temp.exists()) await temp.delete(recursive: true);
+    await removeTestDir(temp);
   });
 
   Future<File> sparseFile(String name, int sizeBytes) async {

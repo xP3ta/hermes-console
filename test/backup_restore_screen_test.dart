@@ -17,6 +17,8 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/fake_backup_gateway.dart';
 
 final _connection = SavedConnection(
@@ -53,7 +55,7 @@ void main() {
         });
   });
 
-  tearDown(() async => dir.delete(recursive: true));
+  tearDown(() async => removeTestDir(dir));
 
   Future<AppLockService> lock({required bool enabled}) async {
     SharedPreferences.setMockInitialValues({'app_lock_enabled': enabled});

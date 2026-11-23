@@ -23,6 +23,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../support/remove_test_dir.dart';
+
 const _connId = 'kanban-follow';
 
 Map<String, dynamic> _task(String status) => {
@@ -159,7 +161,7 @@ void main() {
 
   setUp(() async {
     final dir = await Directory.systemTemp.createTemp('kanban-follow-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     HttpOverrides.global = null;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();

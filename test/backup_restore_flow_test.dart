@@ -11,6 +11,8 @@ import 'package:hermes_android/core/services/action_follower.dart';
 import 'package:hermes_android/core/services/backup_restore_flow.dart';
 import 'package:hermes_android/core/services/backup_zip_summary.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/fake_backup_gateway.dart';
 
 Future<File> _zip(Directory dir) async {
@@ -41,7 +43,7 @@ void main() {
     verifyResult = true;
   });
 
-  tearDown(() async => dir.delete(recursive: true));
+  tearDown(() async => removeTestDir(dir));
 
   BackupRestoreFlow flow({String profile = 'default'}) {
     final f = BackupRestoreFlow(

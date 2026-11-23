@@ -18,6 +18,8 @@ import 'package:hermes_android/core/services/notifications/notification_strings.
 import 'package:hermes_android/core/services/notifications/rich_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../support/memory_sealed_files.dart';
 
 // Scope probe: real drainer/router/dedupe; opaque synthetic reply and ids.
@@ -907,7 +909,7 @@ final class _DiskRescueFixture {
 
   Future<void> dispose() async {
     MemorySealedFileIo.install();
-    await directory.delete(recursive: true);
+    await removeTestDir(directory);
   }
 }
 

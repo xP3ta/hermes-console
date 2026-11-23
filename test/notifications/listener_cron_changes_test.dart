@@ -23,6 +23,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../support/remove_test_dir.dart';
+
 import 'listener_idle_support.dart';
 
 /// The Dashboard routes of the cron pass: `cron/jobs` and the cron sessions.
@@ -82,7 +84,7 @@ void main() {
 
     setUp(() async {
       final dir = await Directory.systemTemp.createTemp('listener-idle-');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       HttpOverrides.global = null;
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       AndroidFlutterLocalNotificationsPlugin.registerWith();

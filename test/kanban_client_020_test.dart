@@ -7,6 +7,8 @@ import 'package:hermes_android/core/services/kanban_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   SavedConnection connection({bool readOnly = false}) => SavedConnection(
     id: 'kanban-020',
@@ -172,7 +174,7 @@ void main() {
 
   test('adjuntos usan multipart oficial y descarga autenticada', () async {
     final temp = await Directory.systemTemp.createTemp('kanban-attachment-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final file = File('${temp.path}/trace.txt');
     await file.writeAsString('trace-body');
     final requests = <http.Request>[];
@@ -250,7 +252,7 @@ void main() {
 
   test('adjunto mayor de 25 MiB falla antes de tocar la red', () async {
     final temp = await Directory.systemTemp.createTemp('kanban-oversize-');
-    addTearDown(() => temp.delete(recursive: true));
+    addTearDown(() => removeTestDir(temp));
     final file = File('${temp.path}/large.bin');
     final handle = await file.open(mode: FileMode.write);
     await handle.truncate(kKanbanAttachmentMaxBytes + 1);

@@ -40,6 +40,8 @@ import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 import 'package:hermes_android/core/design/hicons.dart';
 
+import 'support/remove_test_dir.dart';
+
 class _SlashGateway
     implements
         HermesDesktopGateway,
@@ -1957,7 +1959,7 @@ void main() {
           () => Directory.systemTemp.createTemp('compress-file-draft-'),
         ))!;
         addTearDown(() async {
-          if (await temp.exists()) await temp.delete(recursive: true);
+          await removeTestDir(temp);
         });
         final file = (await tester.runAsync(() async {
           final value = File('${temp.path}/evidence.txt');

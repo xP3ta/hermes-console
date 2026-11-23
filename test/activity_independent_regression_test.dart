@@ -16,6 +16,8 @@ import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'session_authority_probe_test.dart' as helpers;
 import 'support/memory_sealed_files.dart';
 import 'support/official_resume_server.dart';
@@ -77,7 +79,7 @@ void main() {
   });
   tearDown(() async {
     MemorySealedFileIo.install();
-    await files.delete(recursive: true);
+    await removeTestDir(files);
   });
 
   /// Nothing durable: no secure entry but the files' key, no sealed file.

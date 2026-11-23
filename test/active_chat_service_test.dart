@@ -38,6 +38,8 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_error.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/desktop_chat_socket.dart';
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
@@ -2148,7 +2150,7 @@ void main() {
             final directory = await Directory.systemTemp.createTemp(
               'lost-ack-',
             );
-            addTearDown(() => directory.delete(recursive: true));
+            addTearDown(() => removeTestDir(directory));
             final attachment = await _privateTestAttachment(
               directory,
               localId: 'pasted',
@@ -2255,7 +2257,7 @@ void main() {
           final directory = await Directory.systemTemp.createTemp(
             'parked-ack-',
           );
-          addTearDown(() => directory.delete(recursive: true));
+          addTearDown(() => removeTestDir(directory));
           final attachment = await _privateTestAttachment(
             directory,
             localId: 'pasted_content',
@@ -2507,7 +2509,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-retry-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-retry',
@@ -2555,7 +2557,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'hermes-attachment-runtime-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final attachment = await _privateTestAttachment(
         directory,
         localId: 'attachment-runtime',
@@ -2603,7 +2605,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-remove-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-remove',
@@ -2642,7 +2644,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'hermes-attachment-detach-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final attachment = await _privateTestAttachment(
         directory,
         localId: 'attachment-image',
@@ -2682,7 +2684,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-detach-after-attach-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final first = await _privateTestAttachment(
           directory,
           localId: 'attachment-image-first',
@@ -2740,7 +2742,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-persist-failure-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-persist-failure',
@@ -2798,7 +2800,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-order-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-order',
@@ -2841,7 +2843,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-reuse-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-reuse',

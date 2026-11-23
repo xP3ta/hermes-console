@@ -7,6 +7,8 @@ import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/backup_zip_summary.dart';
 
+import 'support/remove_test_dir.dart';
+
 Future<File> _zip(
   Directory dir,
   Map<String, int> entries, {
@@ -25,7 +27,7 @@ void main() {
   late Directory dir;
 
   setUp(() async => dir = await Directory.systemTemp.createTemp('bk-zip-'));
-  tearDown(() async => dir.delete(recursive: true));
+  tearDown(() async => removeTestDir(dir));
 
   test('lists what the restore will replace and what it keeps', () async {
     final file = await _zip(dir, {

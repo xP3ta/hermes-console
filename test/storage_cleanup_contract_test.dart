@@ -14,6 +14,8 @@ import 'package:hermes_android/core/services/local_transcript_store.dart';
 import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/official_resume_server.dart';
 
@@ -229,7 +231,7 @@ void main() {
       'B1 shared physical copy survives distinct localId $ownerKind owner',
       () async {
         final dir = await Directory.systemTemp.createTemp('cleanup-fix2-');
-        addTearDown(() => dir.delete(recursive: true));
+        addTearDown(() => removeTestDir(dir));
         final file = File('${dir.path}/shared.txt')
           ..writeAsStringSync('fixture');
         AttachmentDraft attachment(String id) => AttachmentDraft(
