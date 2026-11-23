@@ -14,6 +14,8 @@ import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import 'listener_idle_support.dart';
 
 void main() {
@@ -31,7 +33,7 @@ void main() {
     });
     final prefs = await SharedPreferences.getInstance();
     final dir = await Directory.systemTemp.createTemp('faces');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
 
     final dialled = <String?>[];
     final clients = <TuiGatewayClient>[];

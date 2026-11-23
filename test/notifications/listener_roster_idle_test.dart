@@ -12,6 +12,8 @@ import 'package:hermes_android/core/services/notifications/bot_face_bitmap.dart'
 import 'package:hermes_android/core/services/notifications/bot_mode_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../bots/room/room_fixtures.dart';
 import 'listener_idle_support.dart';
 
@@ -31,7 +33,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'last_connection_id': 'a'});
     final prefs = await SharedPreferences.getInstance();
     final dir = await Directory.systemTemp.createTemp('faces');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final seq = EventSeq();
     final rooms = IdleRooms()
       ..events = [

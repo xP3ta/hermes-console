@@ -9,6 +9,8 @@ import 'package:hermes_android/core/services/notifications/room_watcher.dart';
 import 'package:hermes_android/core/widgets/bot_face_identity.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../bots/room/room_fixtures.dart';
 
 // Each Bot tints its own notifications with the colour of its face, so the
@@ -29,7 +31,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'app_locale': 'en'});
     dir = await Directory.systemTemp.createTemp('accent');
   });
-  tearDown(() => dir.delete(recursive: true));
+  tearDown(() => removeTestDir(dir));
 
   Future<(RichRoomNoticePresenter, _Sink)> presenter() async {
     final sink = _Sink();

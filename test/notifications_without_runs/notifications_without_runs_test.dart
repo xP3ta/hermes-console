@@ -24,6 +24,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../support/desktop_chat_socket.dart' show HostCounter;
 
 const _legacy =
@@ -347,7 +349,7 @@ void main() {
       await gateway.server.close(force: true);
       messenger.setMockMethodCallHandler(MethodChannel(channels.last), null);
       debugDefaultTargetPlatformOverride = null;
-      await dir.delete(recursive: true);
+      await removeTestDir(dir);
     });
 
     Future<void> deliver(SessionAttentionKind kind, [String? requestId]) =>

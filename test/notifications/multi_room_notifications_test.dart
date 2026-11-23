@@ -12,6 +12,8 @@ import 'package:hermes_android/core/widgets/bot_face_identity.dart';
 import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../bots/room/room_fixtures.dart';
 
 HostedGroupRoom namedRoom(String id, String name, List<String> handles) =>
@@ -46,7 +48,7 @@ void main() {
     });
     dir = await Directory.systemTemp.createTemp('faces');
   });
-  tearDown(() => dir.delete(recursive: true));
+  tearDown(() => removeTestDir(dir));
 
   group('face frames per state', () {
     test('every state renders a distinct, non-empty PNG', () async {

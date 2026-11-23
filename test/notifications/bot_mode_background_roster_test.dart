@@ -12,6 +12,8 @@ import 'package:hermes_android/core/services/notifications/bot_face_bitmap.dart'
 import 'package:hermes_android/core/services/notifications/bot_mode_background.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 final connection = SavedConnection(
   id: 'a',
   label: 'A',
@@ -48,7 +50,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'last_connection_id': 'a'});
       final prefs = await SharedPreferences.getInstance();
       final dir = await Directory.systemTemp.createTemp('faces');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       final gateway = RosterOnlyGateway();
       final monitor = BotModeBackgroundMonitor(
         faces: BotFaceBitmapCache(directory: () async => dir),
@@ -77,7 +79,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'last_connection_id': 'a'});
       final prefs = await SharedPreferences.getInstance();
       final dir = await Directory.systemTemp.createTemp('faces');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       final gateway = HeldRosterGateway();
       final monitor = BotModeBackgroundMonitor(
         faces: BotFaceBitmapCache(directory: () async => dir),
@@ -124,7 +126,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'last_connection_id': 'a'});
     final prefs = await SharedPreferences.getInstance();
     final dir = await Directory.systemTemp.createTemp('faces');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final registry = BotRosterRegistry(now: () => DateTime(2026, 10, 3, 11))
       ..attachPersistence(prefs, [connection]);
     registry.publish('a', 'A', const [

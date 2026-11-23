@@ -17,6 +17,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../bots/room/room_fixtures.dart';
 
 void main() {
@@ -59,7 +61,7 @@ void main() {
   tearDown(() async {
     messenger.setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
-    await dir.delete(recursive: true);
+    await removeTestDir(dir);
   });
 
   for (final rejection in ['false', 'missing', 'error']) {

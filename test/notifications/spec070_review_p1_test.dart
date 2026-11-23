@@ -27,6 +27,8 @@ import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../bots/room/room_fixtures.dart';
 
 const en = NotifL10n(false);
@@ -638,7 +640,7 @@ void main() {
         prefs = await SharedPreferences.getInstance();
         dir = await Directory.systemTemp.createTemp('faces');
       });
-      tearDown(() => dir.delete(recursive: true));
+      tearDown(() => removeTestDir(dir));
 
       Future<
         (
@@ -729,7 +731,7 @@ void main() {
       prefs = await SharedPreferences.getInstance();
       dir = await Directory.systemTemp.createTemp('faces');
     });
-    tearDown(() => dir.delete(recursive: true));
+    tearDown(() => removeTestDir(dir));
 
     test('approval and round-finished are posted once each', () async {
       var now = DateTime(2026, 9, 26, 12);
@@ -847,7 +849,7 @@ void main() {
       prefs = await SharedPreferences.getInstance();
       dir = await Directory.systemTemp.createTemp('faces');
     });
-    tearDown(() => dir.delete(recursive: true));
+    tearDown(() => removeTestDir(dir));
 
     test('no rooms: no room RPCs until the backoff elapses', () async {
       var now = DateTime(2026, 9, 26, 12);

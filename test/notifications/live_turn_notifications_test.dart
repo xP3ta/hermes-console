@@ -15,6 +15,8 @@ import 'package:hermes_android/core/services/notifications/notification_strings.
 import 'package:hermes_android/core/services/notifications/rich_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 const es = NotifL10n(true);
 const en = NotifL10n(false);
 
@@ -655,7 +657,7 @@ void main() {
         );
     });
 
-    tearDown(() => dir.delete(recursive: true));
+    tearDown(() => removeTestDir(dir));
 
     /// The face of the row is rendered off the event loop: wait for what the
     /// test expects instead of a fixed time.
