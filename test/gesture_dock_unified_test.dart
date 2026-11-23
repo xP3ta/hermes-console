@@ -2,11 +2,14 @@
 // Control) mount the same dock with the same items. Where each item goes
 // from each of them is test/dock_destinations_test.dart; this file is about
 // the dock being one and the same in both modes.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/config/feature_flags.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
+import 'package:hermes_android/core/navigation/unsaved_work_guard.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/dock_preferences_store.dart';
@@ -493,6 +496,134 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('place-bots')), findsNothing);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  // The dock leaves the screen it is on and everything under it down to
+  // Home, a chat with unsaved text in its Files panel included: Inicio, Bots
+  // and every place ask first; staying moves nothing.
+  group('unsaved text under the dock', () {
+    Future<void> pump(WidgetTester tester) async {
+      _phone(tester);
+      final manager = await _manager();
+      GestureDockController.instance.resetForTesting(
+        settings: const GestureDockSettings(
+          tabs: [
+            GestureDockTab.home,
+            GestureDockTab.search,
+            GestureDockTab.bots,
+          ],
+        ),
+      );
+      GestureDockHost.debugPlace = (context, tab) => Scaffold(
+        body: Center(child: Text(tab.name, key: ValueKey('place-${tab.name}'))),
+      );
+      await tester.pumpWidget(
+        _app(const Scaffold(body: Text('raiz', key: ValueKey('root')))),
+      );
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => Scaffold(
+              body: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const Center(child: Text('chat', key: ValueKey('chat'))),
+                  GestureDockHost(
+                    current: GestureDockTab.settings,
+                    connection: _connection,
+                    connManager: manager,
+                    actions: const {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final hold = UnsavedWorkGuard.hold(navigator, onDiscarded: () {});
+      addTearDown(hold.release);
+    }
+
+    Future<void> asks(
+      WidgetTester tester,
+      GestureDockTab tab,
+      Finder arrives,
+    ) async {
+      await pump(tester);
+      final question = find.text(_strings(tester).pw1215DiscardTitle);
+      await tester.tap(_tab(tab));
+      await tester.pumpAndSettle();
+      expect(question, findsOneWidget);
+      await tester.tap(find.byKey(UnsavedWorkGuard.keepKey));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('chat')), findsOneWidget);
+      expect(arrives, findsNothing);
+
+      await tester.tap(_tab(tab));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(UnsavedWorkGuard.discardKey));
+      await tester.pumpAndSettle();
+      expect(question, findsNothing);
+      expect(find.byKey(const ValueKey('chat')), findsNothing);
+      expect(arrives, findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    }
+
+    testWidgets('Inicio asks', (tester) async {
+      await asks(tester, GestureDockTab.home, find.byKey(const ValueKey('root')));
+    });
+
+    testWidgets('Bots asks', (tester) async {
+      await asks(
+        tester,
+        GestureDockTab.bots,
+        find.byKey(const ValueKey('place-bots')),
+      );
+    });
+
+    testWidgets('a place (Chats) asks', (tester) async {
+      await asks(
+        tester,
+        GestureDockTab.search,
+        find.byKey(const ValueKey('place-search')),
+      );
+    });
+
+    testWidgets('Inicio from the Bots home asks', (tester) async {
+      _phone(tester);
+      final manager = await _manager();
+      await tester.pumpWidget(
+        _generalHome(manager, (_) => _realBotsHome(manager)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('open-bots')));
+      await tester.pumpAndSettle();
+      final mission = find.byKey(const ValueKey('mission-title'));
+      expect(mission, findsOneWidget);
+      final hold = UnsavedWorkGuard.hold(
+        Navigator.of(tester.element(mission)),
+        onDiscarded: () {},
+      );
+      addTearDown(hold.release);
+      final question = find.text(_strings(tester).pw1215DiscardTitle);
+
+      await tester.tap(_tab(GestureDockTab.home).last);
+      await tester.pumpAndSettle();
+      expect(question, findsOneWidget);
+      await tester.tap(find.byKey(UnsavedWorkGuard.keepKey));
+      await tester.pumpAndSettle();
+      expect(mission, findsOneWidget);
+
+      await tester.tap(_tab(GestureDockTab.home).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(UnsavedWorkGuard.discardKey));
+      await tester.pumpAndSettle();
+      expect(mission, findsNothing);
+      expect(find.byKey(const ValueKey('open-bots')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
   });
 
   // QA 9494/9495 owner report: "estoy en Inicio y me lleva a Bots" (a swipe

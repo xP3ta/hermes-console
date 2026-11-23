@@ -27,6 +27,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../support/remove_test_dir.dart';
+
 const es = NotifL10n(true);
 const languages = ['es', 'en', 'de', 'fr', 'it', 'pt', 'ja', 'ko', 'zh'];
 const started = 1800000000000;
@@ -215,7 +217,7 @@ void main() {
         ..liveTurnCheckSchedulerForTesting = scheduler;
     });
 
-    tearDown(() => dir.delete(recursive: true));
+    tearDown(() => removeTestDir(dir));
 
     Future<void> until(bool Function() done) async {
       for (var i = 0; i < 400 && !done(); i++) {
@@ -490,7 +492,7 @@ void main() {
       await service.closeDelivery();
       messenger.setMockMethodCallHandler(plugin, null);
       debugDefaultTargetPlatformOverride = null;
-      if (dir.existsSync()) await dir.delete(recursive: true);
+      await removeTestDir(dir);
     });
 
     Future<Map<String, Object?>> notice({required bool check}) async {

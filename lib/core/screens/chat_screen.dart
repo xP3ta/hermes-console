@@ -128,6 +128,7 @@ import '../models/session_live_status.dart';
 import '../models/subagent_activity.dart';
 import '../models/tool_output.dart';
 import '../navigation/chat_route.dart';
+import '../navigation/unsaved_work_guard.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
 import '../services/account_limits_controller.dart';
@@ -277,6 +278,7 @@ import '../widgets/chat_approval_dock.dart';
 import '../utils/approval_display.dart';
 import '../widgets/chat/tool_output_cards.dart';
 import '../widgets/chat/turn_changes_sheet.dart';
+import '../widgets/chat/review_notice_row.dart';
 import '../widgets/chat/turn_memory_pill.dart';
 import '../widgets/chat_control_sheet.dart';
 import '../services/git_review_controller.dart';
@@ -2059,6 +2061,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// persisted snapshot has (a provider that publishes no window).
   static const Duration _pillContextSettleAfter = Duration(seconds: 2);
 
+  /// How long the screen's read after a turn end waits for the turn's own
+  /// newest-page read before it reads by itself.
+  static const Duration _terminalReadWait = Duration(seconds: 5);
+
   /// Last known pill state of each conversation in this run, newest last and
   /// capped: the next opening paints it from the first frame.
   static final Map<String, _RememberedPill> _rememberedPills =
@@ -3494,11 +3500,20 @@ class _ChatScreenState extends State<ChatScreen>
     final unread = found.count;
     final newestRead = found.newestRead;
     _entryLandingPending = true;
+    // No row has been painted yet (the first transcript of this entry): the
+    // rows stay hidden from their very first frame until the landing has
+    // decided where the reader stands. Hiding only once the landing ran, a
+    // frame later, showed the bottom of the chat, then nothing, then the
+    // landing. Rows already on screen (a cached transcript painted first)
+    // are not blanked for a landing that may not even have to move.
+    final nothingPainted = !_messageAnchors.values.any((box) => box.attached);
+    if (nothingPainted) _transcriptConcealed.value = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(
         _landOnNewSinceYouLeft(firstUnread, newestRead, unread).whenComplete(
           () {
             _entryLandingPending = false;
+            if (!_disposed) _transcriptConcealed.value = false;
             _scheduleStickyPromptUpdate();
           },
         ),
@@ -6626,6 +6641,38 @@ class _ChatScreenState extends State<ChatScreen>
     _commitSessionContextMetrics(next);
   }
 
+  /// After a reply the session row is read again at most once a minute.
+  /// The row is the only place Hermes publishes the session's cache
+  /// counters (the socket's usage has none, `tui_gateway/server.py`
+  /// `_get_usage`), but it comes whole, with the system prompt and the tool
+  /// list: tens of kB for a few numbers, on every reply (#226). The context
+  /// the footer shows comes from the socket; the panel that shows the
+  /// counters reads the row when it is opened. A reply inside the minute
+  /// leaves one read owed for when the minute ends, so the last reply's
+  /// counters still land. A cron run's verdict lives in the row: no gap.
+  Future<void> _refreshSessionUsageAfterTurn() {
+    if (CronRunWriteGate.appliesTo(widget.session)) {
+      return _refreshPublishedSessionUsage(force: true);
+    }
+    final refreshedAt = _sessionUsageRefreshedAt;
+    final since = refreshedAt == null
+        ? null
+        : DateTime.now().difference(refreshedAt);
+    if (since == null || since >= _sessionUsageAfterTurnGap) {
+      _sessionUsageOwedTimer?.cancel();
+      _sessionUsageOwedTimer = null;
+      return _refreshPublishedSessionUsage(force: true);
+    }
+    _sessionUsageOwedTimer ??= Timer(_sessionUsageAfterTurnGap - since, () {
+      _sessionUsageOwedTimer = null;
+      unawaited(_refreshPublishedSessionUsage(force: true));
+    });
+    return Future<void>.value();
+  }
+
+  static const Duration _sessionUsageAfterTurnGap = Duration(minutes: 1);
+  Timer? _sessionUsageOwedTimer;
+
   Future<void> _refreshPublishedSessionUsage({bool force = false}) {
     if (_disposed || !mounted || !_chatBound) return Future<void>.value();
     // Un draft `mob-*` todavía no existe en state.db. Consultar su detalle
@@ -7695,6 +7742,12 @@ class _ChatScreenState extends State<ChatScreen>
       }
       unawaited(_loadDesktopCommandCatalog());
       unawaited(_chat.loadMentionRoster());
+      // Rows already here (a chat still in memory, or painted from the kept
+      // transcript) get their media asked for now, like a page that has
+      // just loaded: no event will announce them.
+      if (_chat.messages.isNotEmpty) {
+        _prefetchArrivedMedia(ActiveChatEvent.messagesHydrated);
+      }
       // Observa el modo voz global: re-renderiza el overlay al cambiar de fase,
       // y muestra el diálogo de "dictado no disponible" cuando el servicio lo
       // pida (necesita un BuildContext, que el servicio no tiene).
@@ -8361,6 +8414,19 @@ class _ChatScreenState extends State<ChatScreen>
     if (!_canProbePassiveRemoteActivity) {
       _traceSync('skip', detail: 'not-visible');
       return true;
+    }
+    // A turn that just ended is already reading its newest page. Reading it
+    // here at the same time asked the server for the same rows twice per
+    // reply, and this read could retire the turn's own (#226). Wait for
+    // that one, bounded: the probe below then proves the page it published,
+    // or finds it did not land and reads as before.
+    final terminalRead = _chat.terminalTranscriptRead;
+    if (terminalRead != null) {
+      await terminalRead.timeout(_terminalReadWait, onTimeout: () {});
+      if (!mounted || !_canProbePassiveRemoteActivity) {
+        _traceSync('skip', detail: 'not-visible');
+        return true;
+      }
     }
     // `sessions.changed` is direct evidence the durable store moved — unlike
     // the roster-derived heuristics below, it does not depend on catching
@@ -10584,7 +10650,7 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _surfaceTurnTerminal = _surfaceTurnSerial == _assistantEntranceSerial;
       if (event == ActiveChatEvent.done) {
-        unawaited(_refreshPublishedSessionUsage(force: true));
+        unawaited(_refreshSessionUsageAfterTurn());
         unawaited(_accountLimits.refresh(afterTurn: true));
       }
       // Si el lector se apartó del fondo, conserva el mismo RenderObject hasta
@@ -11166,6 +11232,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _sessionUsageOwedTimer?.cancel();
     _subagentChildClient?.close();
     _subagentChildClient = null;
     _subagentChildDashboard?.close();
@@ -14687,22 +14754,28 @@ class _ChatScreenState extends State<ChatScreen>
       startedAt: DateTime.now().millisecondsSinceEpoch.toDouble() / 1000,
       profile: _effectiveSessionProfile,
     );
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder<void>(
-        transitionDuration: const Duration(milliseconds: 250),
-        pageBuilder: (context, animation, _) => CoveredRouteMediaQueryFreeze(
-          child: ChatScreen(connection: widget.connection, session: session),
+    // Replaces this chat's route: text not saved in its Files panel goes
+    // with it, so the user is asked first.
+    final navigator = Navigator.of(context);
+    UnsavedWorkGuard.leave(navigator, () {
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder<void>(
+          transitionDuration: const Duration(milliseconds: 250),
+          pageBuilder: (context, animation, _) => CoveredRouteMediaQueryFreeze(
+            child: ChatScreen(connection: widget.connection, session: session),
+          ),
+          transitionsBuilder: (context, animation, _, child) {
+            final curved = CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            );
+            return FadeTransition(opacity: curved, child: child);
+          },
         ),
-        transitionsBuilder: (context, animation, _, child) {
-          final curved = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-          );
-          return FadeTransition(opacity: curved, child: child);
-        },
-      ),
-    );
+      );
+    });
   }
 
   // ── Comandos slash ─────────────────────────────────────────────────────────
@@ -14809,6 +14882,10 @@ class _ChatScreenState extends State<ChatScreen>
       _consumeSlashInvocation(invocation);
       return;
     }
+    if (cmd.action == SlashAction.steer) {
+      await _runSteerSlash(arg);
+      return;
+    }
     if (cmd.action == SlashAction.branch) {
       final invocation = _textController.text;
       final opened = await _branchChat();
@@ -14859,10 +14936,51 @@ class _ChatScreenState extends State<ChatScreen>
       case SlashAction.btw:
       case SlashAction.background:
       case SlashAction.branch:
+      case SlashAction.steer:
       case SlashAction.remote:
         // Se manejan antes de limpiar el compositor para conservarlo si fallan.
         return;
     }
+  }
+
+  /// `/steer <prompt>`, as Hermes runs it (tui_gateway/methods_tools.py
+  /// `_cmd_steer`): no prompt, the usage line; a turn in flight, the prompt
+  /// is steered into it (`session.steer`, the route of the queue's «steer»
+  /// button: the task is not cut); nothing running, or a steer Hermes cannot
+  /// take, the prompt goes as the next message, said so. The composer keeps
+  /// its text unless the prompt went somewhere.
+  Future<void> _runSteerSlash(String arg) async {
+    final str = Strings.of(context);
+    final prompt = arg.trim();
+    if (prompt.isEmpty) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(str.slashSteerUsage)),
+        kind: HermesNoticeKind.warning,
+      );
+      return;
+    }
+    if (widget.connection.readOnly) {
+      showReadOnlyNotice(context);
+      return;
+    }
+    final invocation = _textController.text;
+    _slashSuggestions.value = const [];
+    if (_sending) {
+      final steered = await _steerLiveCorrection(prompt, invocation, true);
+      // Null: the turn ended meanwhile or Hermes cannot steer it; the
+      // prompt is then the next message, as below.
+      if (steered != null || !mounted) return;
+    } else {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(str.slashSteerIdle)),
+      );
+    }
+    final sent = await _sendMessageOnce(
+      skipSlashRouting: true,
+      textOverride: prompt,
+      includeComposerAttachments: false,
+    );
+    if (sent && mounted) _consumeSlashInvocation(invocation);
   }
 
   /// `/btw` and `/bg`: one direct request, allowed while a reply streams and
@@ -17133,6 +17251,11 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (isReadOnly()) {
       showReadOnlyNotice(context);
+      return;
+    }
+    // Deleting closes this chat: text not saved in its Files panel is asked
+    // about before anything is deleted.
+    if (!await UnsavedWorkGuard.confirm(Navigator.of(context)) || !mounted) {
       return;
     }
     final client = ApiClient.forConnection(widget.connection);
@@ -21965,7 +22088,18 @@ class _ChatScreenState extends State<ChatScreen>
           _surfaceTurnSerial == _assistantEntranceSerial &&
           (_chat.isStreaming || _surfaceTurnTerminal);
       if (index == 0 && key != null && !belongsToSurfaceTurn) {
-        result = MotionEntrance(key: ValueKey<Object>(key), child: result);
+        // A read can replace the newest row with the same row under another
+        // identity (the id-less projection of a resumed session, then its
+        // durable copy a moment later). The new key remounts the entrance;
+        // the row was already on screen, so it does not fade in again.
+        final shown = _entranceContent(groupStart ?? unit, entries.length);
+        final arrives = shown != _lastEntranceContent;
+        _lastEntranceContent = shown;
+        result = MotionEntrance(
+          key: ValueKey<Object>(key),
+          animate: arrives,
+          child: result,
+        );
       }
       if (reportsPreservedTurnInsertion) {
         result = _SurfaceTurnInitialExtentReporter(
@@ -22504,6 +22638,25 @@ class _ChatScreenState extends State<ChatScreen>
     return [for (final index in indexes) _messages[index]];
   }
 
+  /// What the newest row shows, whatever identity it carries: its author,
+  /// its text and how many rows the transcript has. A new message changes
+  /// it; the same row read again does not.
+  Object? _lastEntranceContent;
+
+  Object? _entranceContent(Object unit, int rows) {
+    final message = unit is _UserTurnGroup
+        ? unit.primary
+        : unit is Map<String, dynamic>
+        ? unit
+        : null;
+    if (message == null) return null;
+    return (
+      message['role']?.toString() ?? '',
+      message['content']?.toString() ?? '',
+      rows,
+    );
+  }
+
   /// Stable key for the newest-row entrance. Durable transcript coordinates are
   /// preferred; identityless rows use bounded display fields. Map identity is
   /// never part of the key, so an identical passive refresh cannot remount the
@@ -22759,6 +22912,19 @@ class _ChatScreenState extends State<ChatScreen>
       }
     }
 
+    // `review.summary`: a quiet one-line receipt, like the memory one above
+    // it; its full text opens on tap.
+    if (msg case {
+      'display_kind': 'side_answer',
+      'display_metadata': {'kind': 'review'},
+    }) {
+      final answer = (msg['display_metadata'] as Map)['answer'];
+      final text = answer is String && answer.trim().isNotEmpty
+          ? answer
+          : content;
+      if (text.trim().isNotEmpty) return ReviewNoticeRow(text: text);
+    }
+
     final timelineEvent = _timelineSystemEventPresentation(context, msg);
     if (timelineEvent != null) {
       return _TimelineSystemEventRow(
@@ -22768,7 +22934,6 @@ class _ChatScreenState extends State<ChatScreen>
         raw: content,
         titleMaxLines: switch (msg) {
           {'display_kind': 'process_complete'} => 2,
-          {'display_metadata': {'kind': 'review'}} => 4,
           _ => null,
         },
       );

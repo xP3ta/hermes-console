@@ -25,7 +25,8 @@ import '../theme/theme_contrast.dart';
 import '../design/tokens.dart' show HermesRadius;
 import '../theme/motion.dart' show HermesMotion;
 import 'artifact_viewer/pdf_document_view.dart' show kPdfRenderDeadline;
-import 'artifact_viewer/web_preview.dart' show kModelMaxBytes;
+import 'artifact_viewer/web_preview.dart'
+    show InlineWebPreviewPlaceholder, kModelMaxBytes;
 import 'chat/embeds/document_previews.dart';
 import 'generated_image_card.dart';
 import 'hermes_app_bar.dart';
@@ -1010,6 +1011,10 @@ class _GeneratedMediaAttachmentCardState
   bool _canRetry = true;
   bool _cancelled = false;
   bool _autoLimitExceeded = false;
+
+  /// The reader pressed Cancel: the file waits to be asked for, in its
+  /// compact card, instead of holding the place of a preview.
+  bool _stoppedByUser = false;
   bool _visible = false;
   bool _visibilityCheckScheduled = false;
   int _generation = 0;
@@ -1052,13 +1057,19 @@ class _GeneratedMediaAttachmentCardState
   /// Synchronous so the very first frame is already the ready card: the
   /// in-process memo, then a finished prefetch, then the private disk cache
   /// (reopen / app restart), none of which touch the network.
+  ///
+  /// A file (a page, a PDF, text) is restored the same way. It used to be
+  /// left to a real load, so the first time a chat was opened in a run of
+  /// the app a file already on the phone showed its Download button, then
+  /// a progress bar, then the file, each a different height, in a list
+  /// that grows upwards: the rows above jumped twice per file.
   void _restoreRemembered() {
     final key = _memoKey;
     if (key == null) return;
     var remembered = GeneratedMediaAttachmentCard._recallReady(key);
-    if (remembered == null &&
-        widget.reference.kind != GeneratedMediaKind.file) {
-      // Files (text/PDF) keep the async inline-safety check of a real load.
+    var countLines = false;
+    if (remembered == null) {
+      final isFile = widget.reference.kind == GeneratedMediaKind.file;
       final cached =
           MediaPrefetcher.instance.readyFile(key) ??
           GeneratedMediaService.cachedFileSync(
@@ -1068,12 +1079,29 @@ class _GeneratedMediaAttachmentCardState
       if (cached != null) {
         try {
           final length = cached.lengthSync();
-          if (length > 0 && length <= _autoLimit) {
-            GeneratedMediaAttachmentCard._rememberReady(key, cached, length);
+          if (length > 0 &&
+              length <= _autoLimit &&
+              (!isFile ||
+                  GeneratedMediaService.isSafeForInlinePreviewSync(
+                    widget.reference,
+                    cached,
+                  ))) {
+            final text = isFile ? _readTextPreview(cached, length) : null;
+            // The whole file's line count is read off the frame; the card
+            // is already the right size without it.
+            countLines = text != null && length > _textPreviewMaxBytes;
+            if (!countLines) {
+              GeneratedMediaAttachmentCard._rememberReady(
+                key,
+                cached,
+                length,
+                text: text,
+              );
+            }
             remembered = (
               file: cached,
               length: length,
-              text: null,
+              text: text,
               lines: null,
             );
           }
@@ -1090,6 +1118,28 @@ class _GeneratedMediaAttachmentCardState
     _receivedBytes = remembered.length;
     _totalBytes = remembered.length;
     _status = GeneratedFileStatus.ready;
+    if (countLines) unawaited(_countRestoredLines(key, remembered));
+  }
+
+  Future<void> _countRestoredLines(String key, _ReadyEntry restored) async {
+    final generation = _generation;
+    final int lines;
+    try {
+      lines = await _countLines(restored.file);
+    } catch (_) {
+      return;
+    }
+    GeneratedMediaAttachmentCard._rememberReady(
+      key,
+      restored.file,
+      restored.length,
+      text: restored.text,
+      lines: lines,
+    );
+    if (!mounted || generation != _generation || _file != restored.file) {
+      return;
+    }
+    setState(() => _textLines = lines);
   }
 
   @override
@@ -1226,6 +1276,7 @@ class _GeneratedMediaAttachmentCardState
     }
     setState(() {
       _cancelled = false;
+      _stoppedByUser = false;
       _autoLimitExceeded = false;
       _receivedBytes = 0;
       _totalBytes = widget.reference.sizeBytes;
@@ -1448,6 +1499,7 @@ class _GeneratedMediaAttachmentCardState
   void _cancel() {
     _generation++;
     _cancelled = true;
+    _stoppedByUser = true;
     _autoLoadCancellation?.cancel();
     _autoLoadCancellation = null;
     setState(() {
@@ -1601,6 +1653,78 @@ class _GeneratedMediaAttachmentCardState
     );
   }
 
+  /// The place of an HTML page that is about to load by itself: the card
+  /// of its preview, already at its size, with the progress in the box and
+  /// the actions not yet active. The compact download card grew into the
+  /// preview when the file arrived and pushed the reply down. Null when
+  /// the page will not be previewed (too big, asked for by hand, failed).
+  Widget? _buildPendingHtmlPreview(BuildContext context) {
+    if (widget.reference.kind != GeneratedMediaKind.file ||
+        widget.reference.htmlPreview ||
+        _stoppedByUser ||
+        !_mayAutoLoad ||
+        _autoLimitExceeded ||
+        (_status != GeneratedFileStatus.consent &&
+            _status != GeneratedFileStatus.downloading)) {
+      return null;
+    }
+    final name = widget.reference.displayName;
+    if (artifactViewerKindFor(
+          name: name,
+          mimeType: widget.reference.mimeType,
+        ) !=
+        ArtifactViewerKind.html) {
+      return null;
+    }
+    final limit = math.min(_autoLimit, kInlineDocumentMaxBytes);
+    final knownSize = widget.reference.sizeBytes;
+    final total = _totalBytes;
+    if ((knownSize != null && knownSize > limit) ||
+        (total != null && total > limit) ||
+        _receivedBytes > limit) {
+      return null;
+    }
+    final strings = Strings.of(context);
+    final downloading = _status == GeneratedFileStatus.downloading;
+    return GeneratedDocumentPreviewCard(
+      name: name,
+      sizeBytes: total ?? knownSize,
+      preview: InlineWebPreviewPlaceholder(
+        label: 'HTML',
+        icon: HIcons.language_rounded,
+        footer: !downloading
+            ? null
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: 160,
+                    child: Semantics(
+                      container: true,
+                      label: strings.genMediaLoading,
+                      child: LinearProgressIndicator(
+                        value: total != null && total > 0 && _receivedBytes > 0
+                            ? (_receivedBytes / total).clamp(0.0, 1.0)
+                            : null,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const ValueKey<String>('generated-document-cancel'),
+                    onPressed: _cancel,
+                    icon: const Icon(HIcons.close_rounded),
+                    label: Text(strings.commonCancel),
+                  ),
+                ],
+              ),
+      ),
+      onOpen: null,
+      onShare: null,
+      onSave: null,
+    );
+  }
+
   /// A document shown as it looks, not as its source: a page, an SVG, a
   /// diagram, a 3D model, a note. Null for everything else (code, data,
   /// plain text keep the text preview; media has its own cards).
@@ -1745,6 +1869,8 @@ class _GeneratedMediaAttachmentCardState
         if (ready != null) return ready;
       }
     }
+    final pending = _buildPendingHtmlPreview(context);
+    if (pending != null) return pending;
     return GeneratedFileCard(
       key: ValueKey<String>('generated-${widget.reference.kind.name}-card'),
       name: widget.reference.displayName,
@@ -1890,20 +2016,30 @@ class GeneratedDocumentPreviewCard extends StatelessWidget {
   });
 
   final String name;
-  final int sizeBytes;
+
+  /// Null while the size is not known (a download not yet answered).
+  final int? sizeBytes;
   final Widget preview;
-  final VoidCallback onOpen;
-  final VoidCallback onShare;
-  final VoidCallback onSave;
+
+  /// Null while the file is on its way: the actions are there, not yet
+  /// active, so the card is already as tall as it will be.
+  final VoidCallback? onOpen;
+  final VoidCallback? onShare;
+  final VoidCallback? onSave;
 
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
+    final size = sizeBytes;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Column(
-        key: const ValueKey<String>('generated-document-preview'),
+        key: ValueKey<String>(
+          onOpen == null
+              ? 'generated-document-loading'
+              : 'generated-document-preview',
+        ),
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1911,7 +2047,7 @@ class GeneratedDocumentPreviewCard extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 2, left: 2),
             child: Text(
-              '$name · ${_formatFileBytes(sizeBytes)}',
+              size == null ? name : '$name · ${_formatFileBytes(size)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: colors.textSecondary, fontSize: 12),

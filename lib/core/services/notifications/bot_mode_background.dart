@@ -557,15 +557,38 @@ class BotModeBackgroundMonitor {
   SharedGatewayLease? _lease;
   String? _leaseConnId;
 
+  /// Where the kept socket goes and what it signs in with. Editing a saved
+  /// connection keeps its id, so the id alone would keep the socket of the
+  /// previous host, and its silence would be read as "nothing changed" on
+  /// the new one.
+  int? _leaseTarget;
+
+  static int _targetOf(SavedConnection c) => Object.hash(
+    c.id,
+    c.baseUrl,
+    c.dashboardUrl,
+    c.apiKey,
+    c.kind,
+    c.readOnly,
+  );
+
   SharedGatewayLease _leaseFor(SavedConnection connection) {
     final current = _lease;
+    final target = _targetOf(connection);
     if (current != null &&
         _leaseConnId == connection.id &&
+        _leaseTarget == target &&
         !current.client.isClosed) {
       return current;
     }
+    // Same id, another target: the pool would hand back the socket of the
+    // previous host (it lingers under the id).
+    if (current != null && _leaseConnId == connection.id) {
+      _pool.retire(connection);
+    }
     current?.release();
     _leaseConnId = connection.id;
+    _leaseTarget = target;
     return _lease = _pool.acquire(connection, factory: _gatewayClient);
   }
 
@@ -582,6 +605,7 @@ class BotModeBackgroundMonitor {
     _lease?.release();
     _lease = null;
     _leaseConnId = null;
+    _leaseTarget = null;
   }
 
   /// Age at which a pass reads the roster again. It names and draws the

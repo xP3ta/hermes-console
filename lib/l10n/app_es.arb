@@ -747,6 +747,28 @@
   "brwAddressPlaceholder": "Introduce una dirección",
   "brwBlankPage": "Escribe una dirección arriba para navegar.",
   "brwOpenExternal": "Abrir en el navegador",
+  "brwNotShownTitle": "Este archivo no se puede mostrar aquí",
+  "brwNotShownBody": "El navegador de Console muestra páginas web. Ábrelo en tu navegador para verlo o descargarlo.",
+  "brwServerAskTitle": "¿Abrir una dirección de tu servidor?",
+  "brwServerAskBody": "{page} quiere abrir {address}. Esa dirección está en tu servidor y se alcanza por SSH. Continúa solo si lo esperabas.",
+  "@brwServerAskBody": {
+    "placeholders": {
+      "page": {
+        "type": "String"
+      },
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "brwServerAskBodyNoPage": "Una página quiere abrir {address}. Esa dirección está en tu servidor y se alcanza por SSH. Continúa solo si lo esperabas.",
+  "@brwServerAskBodyNoPage": {
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
   "brwServerNotFound": "Servidor no encontrado",
   "brwFailedToLoad": "No se pudo cargar la página",
   "brwUnreachable": "No se pudo acceder a la página.",
@@ -1910,7 +1932,7 @@
   "cevResolveInRuns": "Las aprobaciones se resuelven desde Actividad → Ejecuciones.",
   "cevResolvedRecord": "Registro de una aprobación ya resuelta.",
   "cevTraceFailed": "Error · ver detalles",
-  "cevTraceRecovered": "Completado · se reintentó (ver detalles)",
+  "cevTraceRecovered": "Completado · con errores (ver detalles)",
   "cevTraceStopped": "Detenido",
   "cevPatternKey": "patrón: {key}",
   "@cevPatternKey": {
@@ -4592,6 +4614,7 @@
   "diagBundleSubtitle": "Vista previa sanitizada; no se envía nada automáticamente",
   "diagBundlePreviewTitle": "Revisar diagnóstico",
   "diagBundlePrivacy": "Incluye solo estados y contadores. No contiene servidores, credenciales, conversaciones, rutas ni identificadores.",
+  "diagBundleTraffic": "También incluye cuánto ha hablado la app con tu servidor en las últimas 48 horas: peticiones y bytes por tipo de ruta, mensajes de WebSocket y reconexiones, en primer y segundo plano. Sin direcciones, identificadores ni contenido. Se cuenta solo en este teléfono.",
   "diagBundleError": "No se pudo preparar el diagnóstico local",
   "dependencyDashboardTitle": "El Dashboard necesita configuración",
   "dependencyDashboardBody": "Esta función usa el Dashboard de Hermes. Configura su acceso para que la app pueda cargar y guardar estos datos.",
@@ -5902,6 +5925,14 @@
   "@roomAttachFailed": {
     "placeholders": {
       "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomAttachLost": "{names} ya no está en este dispositivo. Adjúntalo de nuevo antes de enviar.",
+  "@roomAttachLost": {
+    "placeholders": {
+      "names": {
         "type": "String"
       }
     }
@@ -7766,6 +7797,10 @@
   "tc1215SlashArgBg": "<tarea>",
   "tc1215SlashDescBranch": "Ramifica este chat en uno nuevo",
   "tc1215BtwUsage": "Uso: /btw <pregunta>",
+  "slashSteerDesc": "Insertar un mensaje tras la siguiente llamada a herramienta sin interrumpir",
+  "slashSteerArg": "<mensaje>",
+  "slashSteerUsage": "Uso: /steer <mensaje>",
+  "slashSteerIdle": "No hay ningún agente trabajando; enviado como siguiente turno",
   "tc1215BgUsage": "Uso: /bg <tarea>",
   "tc1215BgStarted": "Tarea en segundo plano iniciada",
   "tc1215BtwStarted": "Pregunta enviada",
@@ -13117,9 +13152,9 @@
   "@q9TurnOutcomeFailed": {
     "description": "Q9-CHAT5: tarjeta con la que cierra un turno que falló (no se abre: los pasos de encima cuentan el detalle)."
   },
-  "q9TurnOutcomeRecovered": "Completado tras reintentar",
+  "q9TurnOutcomeRecovered": "Completado con errores",
   "@q9TurnOutcomeRecovered": {
-    "description": "Q9-CHAT5: tarjeta con la que cierra un turno que terminó bien tras reintentar algún paso fallido."
+    "description": "Q9-CHAT5: tarjeta con la que cierra un turno que terminó aunque algún paso falló (haya habido reintento o no)."
   },
   "constellationTitle": "Tu constelación",
   "constellationLoading": "Cargando memoria…",
@@ -13374,6 +13409,173 @@
   "memShareVerdictSafe": "seguro",
   "memShareVerdictCaution": "con precaución",
   "memShareVerdictDangerous": "peligroso",
+  "mempSelectedProvider": "Proveedor de memoria seleccionado",
+  "mempSelectedDesc": "Aún no está activo: las sesiones siguen usando {current} hasta que se guarde esta elección.",
+  "@mempSelectedDesc": {
+    "placeholders": {
+      "current": {
+        "type": "String"
+      }
+    }
+  },
+  "mempBuiltinMemory": "solo la memoria integrada",
+  "mempActiveProvider": "Proveedor de memoria activo",
+  "mempNoProvider": "Ninguno: solo la memoria integrada",
+  "mempNoProviderDesc": "Hermes usa solo la capa integrada de abajo. Elige un proveedor externo aquí para añadir uno.",
+  "mempProviderDesc": "{name} añade su propio recuerdo a cada sesión, por encima de la capa integrada.",
+  "@mempProviderDesc": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mempProviderNotReadyDesc": "{name} es el proveedor guardado, pero no aporta recuerdo hasta que esté listo. La capa integrada funciona igualmente.",
+  "@mempProviderNotReadyDesc": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mempProviderUnknownDesc": "{name} es el proveedor guardado; Hermes no pudo leer si está listo.",
+  "@mempProviderUnknownDesc": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mempStatusReady": "listo",
+  "mempStatusNeedsSetup": "falta configurar",
+  "mempStatusUnavailable": "no disponible",
+  "mempStatusMissing": "no instalado",
+  "mempBuiltinLayer": "Capa integrada",
+  "mempOnByDefault": "Activa por defecto",
+  "mempOn": "Activa",
+  "mempOff": "Desactivada",
+  "mempOnlyFile": "Solo {file}",
+  "@mempOnlyFile": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
+  "mempBuiltinDesc": "MEMORY.md y USER.md son la memoria propia de Hermes, aparte de cualquier proveedor externo. Ambos se cargan en las sesiones por defecto. Un proveedor se añade a esta capa; nunca la sustituye.",
+  "mempProviderField": "Proveedor de memoria",
+  "mempBuiltinOnly": "Solo integrada",
+  "mempProviderSaveFailed": "No se pudo guardar el proveedor de memoria.",
+  "mempSelectUnsupported": "Este servidor Hermes no permite elegir el proveedor desde aquí.",
+  "mempConfigUnavailable": "No se pudo leer la configuración de memoria de este perfil.",
+  "mempSettingsTitle": "Ajustes de {label}",
+  "@mempSettingsTitle": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempSecretSet": "{label}: guardado",
+  "@mempSecretSet": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempSecretNotSet": "{label}: sin guardar",
+  "@mempSecretNotSet": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempFullConfig": "Configuración completa…",
+  "mempLoading": "Cargando los ajustes del proveedor de memoria…",
+  "mempLoadFailed": "No se pudieron cargar los ajustes del proveedor de memoria: {error}",
+  "@mempLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "mempUnsupported": "Este servidor Hermes no ofrece los ajustes del proveedor. Actualiza Hermes para configurarlo desde aquí.",
+  "mempSaveFieldFailed": "No se pudo guardar {label}",
+  "@mempSaveFieldFailed": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempFullTitle": "{label}: configuración completa",
+  "@mempFullTitle": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempFullDesc": "Todas las opciones de {label} para el perfil {profile}. Los campos en blanco usan el valor resuelto del servidor o el predeterminado.",
+  "@mempFullDesc": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "mempDocsLink": "Referencia de configuración de {label}",
+  "@mempDocsLink": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempGroupOther": "Otros",
+  "mempSaveChanges": "Guardar cambios",
+  "mempSaved": "{label} guardado. Configuración del proveedor de memoria actualizada.",
+  "@mempSaved": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempSaveFailed": "No se pudieron guardar los ajustes de {label}",
+  "@mempSaveFailed": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempSecretKeep": "Déjalo en blanco para conservar el valor actual",
+  "mempSecretIsSet": "guardado",
+  "mempAboutField": "Acerca de {label}",
+  "@mempAboutField": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempConnect": "Conectar",
+  "mempConnectOAuth": "Conectar por OAuth",
+  "mempReconnect": "Volver a conectar",
+  "mempApiKeySet": "clave de API guardada",
+  "mempOAuthSet": "OAuth conectado",
+  "mempWaitingConsent": "Esperando el consentimiento en el navegador…",
+  "mempConsentWhere": "La página de consentimiento se abre en el navegador del equipo donde corre Hermes, no en este teléfono.",
+  "mempConnectStartFailed": "No se pudo iniciar la conexión.",
+  "mempConnectTimedOut": "Se agotó el tiempo; inténtalo de nuevo.",
+  "mempConnectFailed": "La conexión falló.",
   "scanDocMenuLabel": "Escanear documento",
   "scanDocTitle": "Escanear documento",
   "scanDocStartHint": "Haz una foto del documento o elige una imagen. Todo se procesa en este dispositivo y no se sube nada.",
@@ -16323,5 +16525,21 @@
   "tg143ComposeDeliveryUncertain": "La conexión cayó justo al enviar; comprueba el terminal antes de reenviar.",
   "bg143LoopbackHttpsTitle": "Vista previa HTTPS en localhost no disponible",
   "bg143LoopbackHttpsBody": "Android no puede aislar un reenvío HTTPS en loopback por SSH sin debilitar TLS. Usa http:// sobre el túnel SSH o un nombre de host con certificado válido.",
-  "bg143LoopbackUnavailableBody": "No se pudo abrir el túnel SSH de vista previa. Inténtalo de nuevo o revisa tu perfil SSH."
+  "bg143LoopbackUnavailableBody": "No se pudo abrir el túnel SSH de vista previa. Inténtalo de nuevo o revisa tu perfil SSH.",
+  "turnLineCommandsShort": "{count} cmd",
+  "@turnLineCommandsShort": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "turnLineToolsShort": "{count} herr.",
+  "@turnLineToolsShort": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

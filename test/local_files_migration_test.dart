@@ -770,6 +770,80 @@ void main() {
       );
     });
 
+    test('the launch sweep moves every older transcript into its file '
+        'without its chat being opened, one value at a time', () async {
+      for (var i = 0; i < 5; i++) {
+        secure[key('c1', 'old-$i')] = jsonEncode({
+          'version': 1,
+          'older_history_truncated': false,
+          'messages': [
+            {'role': 'assistant', 'content': 'antigua $i'},
+          ],
+        });
+      }
+      // Not a transcript the store can use: left where it is, as a read does.
+      secure[key('c1', 'broken')] = '{not json';
+      secure['unrelated_secret'] = 'kept';
+      calls.clear();
+
+      final moved = await LocalTranscriptStore.migrateLegacyEntries(
+        pause: Duration.zero,
+      );
+
+      expect(moved, 5);
+      expect(disk.files(SealedLocalFiles.transcripts), hasLength(5));
+      expect(
+        secure.keys.where((k) => k.startsWith('hermes.transcript.v3.')),
+        [key('c1', 'broken')],
+      );
+      expect(secure['unrelated_secret'], 'kept');
+      // Values are read one by one, never the unrelated ones.
+      expect(calls, isNot(contains('read unrelated_secret')));
+      expect(prefs.getBool(LocalTranscriptStore.legacySweepDoneKey), isTrue);
+      newProcess();
+      expect(
+        (await LocalTranscriptStore.loadSnapshot('c1', 'old-3'))
+            .messages
+            .single['content'],
+        'antigua 3',
+      );
+
+      // A finished pass is not repeated.
+      calls.clear();
+      expect(
+        await LocalTranscriptStore.migrateLegacyEntries(pause: Duration.zero),
+        0,
+      );
+      expect(calls, isEmpty);
+    });
+
+    test('a sweep that is told to stop leaves the rest for the next launch', (
+    ) async {
+      for (var i = 0; i < 4; i++) {
+        secure[key('c1', 'old-$i')] = jsonEncode({
+          'version': 1,
+          'older_history_truncated': false,
+          'messages': [
+            {'role': 'assistant', 'content': 'antigua $i'},
+          ],
+        });
+      }
+      var asked = 0;
+      await LocalTranscriptStore.migrateLegacyEntries(
+        pause: Duration.zero,
+        mayContinue: () => ++asked <= 2,
+      );
+      expect(disk.files(SealedLocalFiles.transcripts), hasLength(2));
+      expect(prefs.getBool(LocalTranscriptStore.legacySweepDoneKey), isNull);
+
+      await LocalTranscriptStore.migrateLegacyEntries(pause: Duration.zero);
+      expect(disk.files(SealedLocalFiles.transcripts), hasLength(4));
+      expect(
+        secure.keys.where((k) => k.startsWith('hermes.transcript.v3.')),
+        isEmpty,
+      );
+    });
+
     test('large local history retains its truncation flag with the '
         'production cipher isolate after reopening', () async {
       final previous = ColdStartTailCipher.debugOnCallingIsolate;

@@ -623,9 +623,7 @@ List<Widget> settingsSectionRows(
               MaterialPageRoute(
                 builder: (_) => MessagingPlatformsScreen(
                   connection: conn,
-                  profile: Session.profileOwner(
-                    connManager.activeProfileFor(conn.id),
-                  ),
+                  profile: connManager.credentialProfileFor(conn.id),
                 ),
               ),
             ),
@@ -642,9 +640,7 @@ List<Widget> settingsSectionRows(
               MaterialPageRoute(
                 builder: (_) => MessagingPairingScreen(
                   connection: conn,
-                  profile: Session.profileOwner(
-                    connManager.activeProfileFor(conn.id),
-                  ),
+                  profile: connManager.credentialProfileFor(conn.id),
                 ),
               ),
             ),

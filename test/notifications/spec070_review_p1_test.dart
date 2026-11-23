@@ -27,6 +27,8 @@ import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../bots/room/room_fixtures.dart';
 
 const en = NotifL10n(false);
@@ -638,7 +640,7 @@ void main() {
         prefs = await SharedPreferences.getInstance();
         dir = await Directory.systemTemp.createTemp('faces');
       });
-      tearDown(() => dir.delete(recursive: true));
+      tearDown(() => removeTestDir(dir));
 
       Future<
         (
@@ -729,7 +731,7 @@ void main() {
       prefs = await SharedPreferences.getInstance();
       dir = await Directory.systemTemp.createTemp('faces');
     });
-    tearDown(() => dir.delete(recursive: true));
+    tearDown(() => removeTestDir(dir));
 
     test('approval and round-finished are posted once each', () async {
       var now = DateTime(2026, 9, 26, 12);
@@ -847,7 +849,7 @@ void main() {
       prefs = await SharedPreferences.getInstance();
       dir = await Directory.systemTemp.createTemp('faces');
     });
-    tearDown(() => dir.delete(recursive: true));
+    tearDown(() => removeTestDir(dir));
 
     test('no rooms: no room RPCs until the backoff elapses', () async {
       var now = DateTime(2026, 9, 26, 12);
@@ -977,7 +979,56 @@ void main() {
       expect(gateway.since, [0, 2, 4]);
       expect(seen.whereType<RoomMentionNotice>(), hasLength(5));
     });
+
+    test('a room with pages still unread is not idle: the pushed-room skip '
+        'waits until the backlog is read', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final gateway = _PushedPagedGateway();
+      final seen = <RoomNotice>[];
+      final watcher = RoomWatcher(
+        connId: 'c1',
+        prefs: prefs,
+        presenter: _Presenter(seen),
+        claim: (_, _, _) async => true,
+        pageLimit: 2,
+        maxPagesPerTick: 1,
+      );
+      await watcher.tick(gateway);
+      expect(watcher.pushesChanges, isTrue);
+      final seq = EventSeq();
+      gateway.events = [
+        for (var i = 0; i < 5; i++)
+          seq.member('m-builder', 'builder', '@user ping $i', 'd'),
+      ];
+      // Two of five events read: the server has reported the rest already
+      // and will push nothing more for them.
+      await watcher.tick(gateway);
+      expect(watcher.pushesChanges, isFalse);
+      await watcher.tick(gateway);
+      expect(watcher.pushesChanges, isFalse);
+      await watcher.tick(gateway);
+      expect(watcher.pushesChanges, isTrue);
+      expect(seen.whereType<RoomMentionNotice>(), hasLength(5));
+    });
   });
+}
+
+/// [_PagedGateway] on a server that pushes `groups.changed`.
+final class _PushedPagedGateway extends _PagedGateway
+    implements BotModeRoomEventsGateway {
+  @override
+  Future<
+    ({HostedGroupRoom room, RoomDriverStatus? driverStatus, bool changeEvents})
+  >
+  groupStateWithEvents(String roomId, {required int generation}) async {
+    final state = await groupState(roomId, generation: generation);
+    return (
+      room: state.room,
+      driverStatus: state.driverStatus,
+      changeEvents: true,
+    );
+  }
 }
 
 const _open = NotificationOpen(

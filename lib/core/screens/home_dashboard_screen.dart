@@ -110,6 +110,7 @@ import 'tasks_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/instance_status_panel.dart';
 import '../../l10n/app_localizations.dart';
+import '../navigation/unsaved_work_guard.dart';
 
 typedef HomeRoomApprove =
     Future<void> Function(
@@ -1965,7 +1966,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         builder: (_) => OnboardingScreen(
           connManager: widget.connManager,
           onDone: () {
-            Navigator.of(context).popUntil((r) => r.isFirst);
+            UnsavedWorkGuard.popToFirst(Navigator.of(context));
           },
         ),
       ),

@@ -23,6 +23,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../support/remove_test_dir.dart';
+
 import 'listener_idle_support.dart';
 
 /// The Dashboard routes of the cron pass: `cron/jobs` and the cron sessions.
@@ -82,7 +84,7 @@ void main() {
 
     setUp(() async {
       final dir = await Directory.systemTemp.createTemp('listener-idle-');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       HttpOverrides.global = null;
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       AndroidFlutterLocalNotificationsPlugin.registerWith();
@@ -232,6 +234,29 @@ void main() {
         await tick(d);
       }
       expect(dashboard.jobReads, 3);
+      dashboard.jobs = [
+        _job('e1', 'completed'),
+        {..._job('e8', 'failed'), 'id': 'job-7', 'profile': 'radar'},
+      ];
+      await tick(d);
+      expect(dashboard.jobReads, 4);
+      expect(shown, ['Scheduled task failed']);
+    });
+
+    test('a routine of another profile that has never run still keeps the '
+        'listing read on every tick, so its first results are not skipped',
+        () async {
+      await client.connect();
+      // No `latest_execution`, no `last_run_at`: the job has no execution
+      // to show yet.
+      const neverRan = {'id': 'job-7', 'name': 'Radar', 'profile': 'radar'};
+      dashboard.jobs = [_job('e1', 'completed'), neverRan];
+      final d = discovery();
+      for (var i = 0; i < 3; i++) {
+        await tick(d);
+      }
+      expect(dashboard.jobReads, 3);
+      // Its first run fails; no `cron.changed` arrives for that profile.
       dashboard.jobs = [
         _job('e1', 'completed'),
         {..._job('e8', 'failed'), 'id': 'job-7', 'profile': 'radar'},

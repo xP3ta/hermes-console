@@ -138,9 +138,16 @@ Future<bool> Function(Uri) browser(
     unawaited(() async {
       await Future<void>.delayed(backgroundFor);
       hermes.clock = hermes.clock.add(lingerOnServer);
-      final req = await c.getUrl(callback);
-      final res = await req.close();
-      await res.drain<void>();
+      try {
+        final req = await c.getUrl(callback);
+        final res = await req.close();
+        await res.drain<void>();
+      } on SocketException {
+        // The test that opened this browser already ended and stopped its
+        // Hermes: the late return has nowhere to go and is not a failure.
+        c.close(force: true);
+        return;
+      }
       c.close();
       await Future<void>.delayed(backgroundFor);
       phone.resume();

@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/widgets/workspace/profile_rail_chats.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // The rail's reads of the profiles the list of chats is not scoped to: one
 // sweep per scope at most once a minute, one request at a time, a failing
@@ -73,8 +75,8 @@ void main() {
 
   setUp(() => now = DateTime(2026, 11, 8, 12));
 
-  test('one request at a time, in the order given; each page lands as it '
-      'comes and notifies', () async {
+  test('one request at a time, in the order given; the pages are shown '
+      'together when the sweep ends, with one notification', () async {
     final server = _Server();
     final rail = store();
     var notified = 0;
@@ -88,16 +90,144 @@ void main() {
     await pumpEventQueue();
     expect(server.requests, ['forja']);
     await server.answer('forja', rows: 3, more: true);
-    expect(rail.page('chats', 'forja')!.sessions, hasLength(3));
-    expect(rail.page('chats', 'forja')!.more, isTrue);
+    // Read, not shown yet: a count per answer made the strip fill in one
+    // face at a time and re-sort on each.
+    expect(rail.page('chats', 'forja'), isNull);
+    expect(notified, 0);
     expect(server.requests, ['forja', 'pi']);
     await server.answer('pi', rows: 1);
+    expect(notified, 0);
     await server.answer('oficina', rows: 0);
     expect(server.maxInFlight, 1);
-    expect(notified, 3);
+    expect(notified, 1);
+    expect(rail.page('chats', 'forja')!.sessions, hasLength(3));
+    expect(rail.page('chats', 'forja')!.more, isTrue);
     expect(rail.page('chats', 'pi')!.sessions, hasLength(1));
     expect(rail.page('chats', 'pi')!.more, isFalse);
+    expect(rail.page('chats', 'oficina')!.sessions, isEmpty);
     expect(rail.sweeping, isFalse);
+  });
+
+  test('a later sweep keeps the previous pages on show until it ends', () async {
+    final server = _Server();
+    final rail = store();
+    rail.refresh(scope: 'chats', owners: const ['forja', 'pi'], load: server.load);
+    await pumpEventQueue();
+    await server.answer('forja', rows: 2);
+    await server.answer('pi', rows: 2);
+    now = now.add(const Duration(minutes: 2));
+    var notified = 0;
+    rail.addListener(() => notified++);
+    rail.refresh(scope: 'chats', owners: const ['forja', 'pi'], load: server.load);
+    await pumpEventQueue();
+    await server.answer('forja', rows: 5);
+    expect(rail.page('chats', 'forja')!.sessions, hasLength(2));
+    await server.answer('pi', rows: 6);
+    expect(notified, 1);
+    expect(rail.page('chats', 'forja')!.sessions, hasLength(5));
+    expect(rail.page('chats', 'pi')!.sessions, hasLength(6));
+  });
+
+  test('a sweep cut short shows what it had read', () async {
+    final server = _Server();
+    final rail = store();
+    final screen = Object();
+    rail.refresh(
+      scope: 'chats',
+      owners: const ['forja', 'pi', 'oficina'],
+      load: server.load,
+      requester: screen,
+    );
+    await pumpEventQueue();
+    await server.answer('forja', rows: 4);
+    rail.cancel(screen);
+    await server.answer('pi', rows: 1);
+    expect(rail.page('chats', 'forja')!.sessions, hasLength(4));
+    expect(rail.page('chats', 'pi'), isNull, reason: 'answered after cancel');
+    expect(server.requests, ['forja', 'pi']);
+  });
+
+  group('hints kept between runs', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    Future<ProfileRailChats> open() async {
+      final rail = ProfileRailChats(
+        spacing: Duration.zero,
+        connectionId: 'c1',
+        now: () => now,
+      );
+      await pumpEventQueue();
+      return rail;
+    }
+
+    test('numbers only: no title and no id reach the disk', () async {
+      final rail = await open();
+      rail.rememberHints('chats|all', const {
+        'forja': ProfileRailHint(count: 7, more: true, newestAt: 1700000500),
+        'pi': ProfileRailHint(count: 0, more: false, newestAt: 0),
+      });
+      await pumpEventQueue();
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString(ProfileRailChats.hintsKey('c1'))!;
+      expect(stored, isNot(contains('chats|all')), reason: 'a digest only');
+      final decoded = jsonDecode(stored) as Map<String, dynamic>;
+      expect(decoded.values.single, {
+        'forja': [7, true, 1700000500.0],
+        'pi': [0, false, 0.0],
+      });
+    });
+
+    test('a new process starts with the last counts and order', () async {
+      final first = await open();
+      first.rememberHints('chats|all', const {
+        'forja': ProfileRailHint(count: 7, more: true, newestAt: 1700000500),
+      });
+      await pumpEventQueue();
+
+      final second = await open();
+      expect(
+        second.hint('chats|all', 'forja'),
+        const ProfileRailHint(count: 7, more: true, newestAt: 1700000500),
+      );
+      expect(second.hint('chats|archived', 'forja'), isNull);
+      expect(second.hint('chats|all', 'pi'), isNull);
+    });
+
+    test('unchanged values are not written again; old scopes are dropped', (
+    ) async {
+      final rail = await open();
+      const hint = ProfileRailHint(count: 1, more: false, newestAt: 5);
+      rail.rememberHints('s0', const {'a': hint});
+      await pumpEventQueue();
+      final prefs = await SharedPreferences.getInstance();
+      final before = prefs.getString(ProfileRailChats.hintsKey('c1'));
+      rail.rememberHints('s0', const {'a': hint});
+      await pumpEventQueue();
+      expect(prefs.getString(ProfileRailChats.hintsKey('c1')), before);
+
+      for (var i = 1; i <= ProfileRailChats.maxHintScopes; i++) {
+        rail.rememberHints('s$i', const {'a': hint});
+      }
+      await pumpEventQueue();
+      expect(rail.hint('s0', 'a'), isNull);
+      expect(rail.hint('s1', 'a'), hint);
+    });
+
+    test('a removed connection forgets them; a damaged value is no hints', (
+    ) async {
+      final rail = await open();
+      rail.rememberHints('s', const {
+        'a': ProfileRailHint(count: 1, more: false, newestAt: 5),
+      });
+      await pumpEventQueue();
+      await ProfileRailChats.forgetConnection('c1');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(ProfileRailChats.hintsKey('c1')), isNull);
+
+      await prefs.setString(ProfileRailChats.hintsKey('c1'), '{not json');
+      final again = await open();
+      expect(again.hint('s', 'a'), isNull);
+    });
   });
 
   test(
@@ -204,9 +334,9 @@ void main() {
     rail.cancel(screenB);
     expect(rail.sweeping, isTrue);
     await server.answer('forja');
-    expect(rail.page('chats', 'forja'), isNotNull);
     expect(server.requests, ['forja', 'pi']);
     await server.answer('pi');
+    expect(rail.page('chats', 'forja'), isNotNull);
 
     // Its own screen cuts it before any page: the next build sweeps again
     // at once, not a minute later.

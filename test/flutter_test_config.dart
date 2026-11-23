@@ -9,6 +9,8 @@ import 'package:hermes_android/core/widgets/mascot/mascot_sprite.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/memory_sealed_files.dart';
 
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
@@ -47,7 +49,7 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
     await testMain();
   } finally {
     try {
-      await databaseDirectory.delete(recursive: true);
+      await removeTestDir(databaseDirectory);
     } on FileSystemException {
       // A failed test may leave a native handle alive until its process exits.
     }

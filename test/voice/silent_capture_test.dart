@@ -7,6 +7,8 @@ import 'package:hermes_android/core/services/voice/stt_hermes_server.dart';
 import 'package:hermes_android/core/services/voice/voice_language.dart';
 import 'package:record/record.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// Backlog 1.4.x item 7: a take that is shorter than 0.3 s or has no energy
 /// (a car or headset microphone that delivers nothing) is never sent in
 /// silence; the user is told nothing can be heard.
@@ -97,7 +99,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (dir.existsSync()) await dir.delete(recursive: true);
+    await removeTestDir(dir);
   });
 
   WhisperSttEngine engine({bool reject = true}) {

@@ -5,13 +5,9 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
-import '../browser/browser_loopback_reach.dart';
-import '../browser/open_web_link.dart';
+import '../browser/ssh_terminal_link.dart';
 import '../services/connection_manager.dart';
 import '../services/ssh_manager.dart';
-import '../services/ssh_profile_presence.dart';
-import '../services/ssh_session_service.dart' show SshSessionPhase;
-import '../widgets/ssh_host_key_dialog.dart';
 import '../theme/app_theme.dart';
 import '../theme/hermes_tokens.dart';
 import '../theme/terminal_palette.dart';
@@ -107,33 +103,11 @@ class _SshScreenState extends State<SshScreen> {
       open(uri);
       return;
     }
-    final app = context.findAncestorStateOfType<HermesAppState>();
-    final id = widget.connection.id;
-    if (app == null || _config == null) {
-      openWebLinkInApp(context, uri);
-      return;
-    }
-    openWebLinkInApp(
+    openSshTerminalLink(
       context,
-      uri,
-      loopbackReach: () => BrowserLoopbackReach.overSsh(
-        live: () {
-          final session = app.sshSessions.of(id);
-          return session?.phase.value == SshSessionPhase.ready
-              ? session?.client
-              : null;
-        },
-        connect: () => app.sshManager.connect(
-          id,
-          onHostKey: (prompt) async =>
-              mounted && await showSshHostKeyDialog(context, prompt),
-        ),
-      ),
-      loopbackReachScope: () => _config == null
-          ? null
-          : '$id|${_config!.target}|${_config!.method.name}|'
-                '${SshProfilePresence.instance.revision.value}',
-      loopbackReachChanges: SshProfilePresence.instance.revision,
+      connectionId: widget.connection.id,
+      uri: uri,
+      config: () => _config,
     );
   }
 

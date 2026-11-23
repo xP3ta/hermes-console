@@ -13,6 +13,8 @@ import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/save_to_device.dart';
 
+import 'support/remove_test_dir.dart';
+
 const _channel = MethodChannel('hermes/save_to_device');
 const _doc = 'content://com.android.providers.downloads.documents/document/7';
 
@@ -63,7 +65,7 @@ void main() {
     test('the dialog closed is no error: nothing is written', () async {
       final calls = _android((call) => null);
       final dir = await Directory.systemTemp.createTemp('save-cancel');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       final file = File('${dir.path}/a.txt')..writeAsStringSync('abc');
       final saved = await const SaveToDevice().saveFile(file, name: 'a.txt');
       expect(saved, isNull);
@@ -76,7 +78,7 @@ void main() {
     setUp(() async {
       dir = await Directory.systemTemp.createTemp('save-file');
     });
-    tearDown(() => dir.delete(recursive: true));
+    tearDown(() => removeTestDir(dir));
 
     test('is copied by blocks from its path, never its bytes', () async {
       final file = File('${dir.path}/informe.pdf')

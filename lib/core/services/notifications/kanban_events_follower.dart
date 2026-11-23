@@ -39,6 +39,7 @@ class KanbanEventsFollower {
   KanbanEventsFollower({
     KanbanEventsOpen? open,
     this.backstop = const Duration(minutes: 30),
+    this.unpinnedBackstop = const Duration(minutes: 10),
     this.refusedRetry = const Duration(minutes: 10),
   }) : _open = open ?? _kanbanClientEvents;
 
@@ -56,6 +57,15 @@ class KanbanEventsFollower {
   final KanbanEventsOpen _open;
   final Duration backstop;
 
+  /// The backstop of a follow that names no board. The server pins such a
+  /// socket to the board that was current at the handshake, while every
+  /// plain read resolves the board current at that moment: once the server
+  /// switches boards, a healthy socket on the old one says nothing about
+  /// the new one. Its silence is therefore trusted for this long only, and
+  /// the socket is opened again on the read that follows, which pins it to
+  /// the board current then.
+  final Duration unpinnedBackstop;
+
   /// How long a server that refused the upgrade is left alone before the
   /// socket is asked for again (its board is read on every tick meanwhile).
   final Duration refusedRetry;
@@ -66,7 +76,8 @@ class KanbanEventsFollower {
     final follow = _follows[key];
     if (follow == null || !follow.live) return true;
     final readAt = follow.readAt;
-    if (readAt == null || clock.now().difference(readAt) >= backstop) {
+    final limit = follow.pinned ? backstop : unpinnedBackstop;
+    if (readAt == null || clock.now().difference(readAt) >= limit) {
       return true;
     }
     return follow.seen > follow.readEventId;
@@ -86,6 +97,16 @@ class KanbanEventsFollower {
     final follow = _follows[key] ??= _Follow();
     follow.readEventId = latestEventId;
     follow.readAt = clock.now();
+    follow.pinned = board != null;
+    final openedAt = follow.openedAt;
+    if (follow.subscription != null &&
+        !follow.pinned &&
+        openedAt != null &&
+        clock.now().difference(openedAt) >= unpinnedBackstop) {
+      // The server may have switched boards since this socket was pinned.
+      follow.drop();
+      follow.seen = latestEventId;
+    }
     if (follow.seen < latestEventId) follow.seen = latestEventId;
     if (follow.subscription != null) return;
     final refusedAt = follow.refusedAt;
@@ -94,6 +115,7 @@ class KanbanEventsFollower {
       return;
     }
     final generation = ++follow.generation;
+    follow.openedAt = clock.now();
     bool current() => follow.generation == generation;
     follow.subscription =
         _open(
@@ -154,6 +176,10 @@ class _Follow {
 
   /// When the server last refused the upgrade.
   DateTime? refusedAt;
+
+  /// Whether the follow names its board, and when its socket was opened.
+  bool pinned = true;
+  DateTime? openedAt;
 
   /// `latest_event_id` of the last board read, and when it happened.
   int readEventId = 0;

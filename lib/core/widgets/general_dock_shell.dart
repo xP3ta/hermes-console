@@ -19,6 +19,7 @@ import 'dock.dart';
 import 'dock_shortcuts.dart';
 import 'dock_style.dart' show dockShowsBack;
 import 'dock_scroll_clearance.dart';
+import '../navigation/unsaved_work_guard.dart';
 
 /// Envuelve el `body` de una pantalla de navegación del perfil "General"
 /// (fuera de una conversación abierta) con el mismo dock flotante que ya usa
@@ -269,7 +270,8 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
               // la que ya estamos).
               actions: {
                 DockItemId.home: DockItemAction(
-                  onTap: () => Navigator.of(context).popUntil((r) => r.isFirst),
+                  onTap: () =>
+                      UnsavedWorkGuard.popToFirst(Navigator.of(context)),
                 ),
                 DockItemId.create: DockItemAction(
                   onTap: _handleCreate,

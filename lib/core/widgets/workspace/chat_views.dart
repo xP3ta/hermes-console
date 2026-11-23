@@ -10,6 +10,7 @@ import 'package:hermes_android/core/design/hicons.dart';
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -81,8 +82,9 @@ class ChatViewsButton extends StatelessWidget {
     builder: (context, _) {
       final strings = Strings.of(context);
       final last = chatWorkspaceTabFor(controller, availableTabs);
-      return Builder(
-        builder: (buttonContext) => FloatingHeaderButton(
+      return ChatViewsLiveTabs(
+        tabs: availableTabs,
+        builder: (buttonContext, liveTabs) => FloatingHeaderButton(
           icon: HIcons.view_sidebar_outlined,
           selectedIcon: HIcons.view_sidebar,
           highlighted: chatWorkspaceShownBeside(controller),
@@ -95,6 +97,7 @@ class ChatViewsButton extends StatelessWidget {
               buttonContext,
               controller: controller,
               availableTabs: availableTabs,
+              liveTabs: liveTabs,
             ).whenComplete(closed.complete).ignore();
           },
           // The panel last used, at once: beside the chat where it fits,
@@ -113,6 +116,56 @@ class ChatViewsButton extends StatelessWidget {
   );
 }
 
+/// Keeps the panels a chat can open as something the OPEN «Vistas» menu
+/// can follow. The menu floats in its own route, so the list it was opened
+/// with would stay as it was: a panel that stops being available while the
+/// menu is up (SSH removed, a profile switched) left «Dividido» and
+/// «Trabajo» offering what could no longer open (review A18).
+class ChatViewsLiveTabs extends StatefulWidget {
+  const ChatViewsLiveTabs({
+    required this.tabs,
+    required this.builder,
+    super.key,
+  });
+
+  final List<ChatWorkspaceTab> tabs;
+  final Widget Function(
+    BuildContext context,
+    ValueListenable<List<ChatWorkspaceTab>> liveTabs,
+  )
+  builder;
+
+  @override
+  State<ChatViewsLiveTabs> createState() => _ChatViewsLiveTabsState();
+}
+
+class _ChatViewsLiveTabsState extends State<ChatViewsLiveTabs> {
+  late final ValueNotifier<List<ChatWorkspaceTab>> _tabs = ValueNotifier(
+    widget.tabs,
+  );
+
+  @override
+  void didUpdateWidget(ChatViewsLiveTabs old) {
+    super.didUpdateWidget(old);
+    if (listEquals(old.tabs, widget.tabs)) return;
+    // The menu listens from another route: told after this frame, never
+    // while this one builds.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _tabs.value = widget.tabs;
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      Builder(builder: (context) => widget.builder(context, _tabs));
+}
+
 /// the owner's «Vistas» menu, anchored to [context] (the button that opens it):
 /// how the screen is shared, «Chat · Dividido · Trabajo». The controller
 /// decides what fits and what makes way; this only asks it. A choice closes
@@ -124,6 +177,7 @@ Future<void> showChatWorkspaceViews(
   BuildContext context, {
   required ChatWorkspaceController controller,
   required List<ChatWorkspaceTab> availableTabs,
+  ValueListenable<List<ChatWorkspaceTab>>? liveTabs,
   ValueChanged<ChatWorkspaceTab>? openTab,
   Map<ChatWorkspaceTab, ChatViewsBadge> badges = const {},
 }) => showHermesSurface<void>(
@@ -139,7 +193,8 @@ Future<void> showChatWorkspaceViews(
   lifted: true,
   builder: (surfaceContext) => _ViewsPanel(
     controller: controller,
-    availableTabs: availableTabs,
+    initialTabs: availableTabs,
+    liveTabs: liveTabs,
     onChosen: () => Navigator.of(surfaceContext).maybePop(),
   ),
 );
@@ -169,16 +224,23 @@ IconData chatWorkspaceLayoutIcon(ChatWorkspaceMode mode) => switch (mode) {
 class _ViewsPanel extends StatelessWidget {
   const _ViewsPanel({
     required this.controller,
-    required this.availableTabs,
+    required this.initialTabs,
     required this.onChosen,
+    this.liveTabs,
   });
 
   /// The menu's width: its circles and their names (ref-ventanas-1).
   static const double width = 240;
 
   final ChatWorkspaceController controller;
-  final List<ChatWorkspaceTab> availableTabs;
+
+  /// The panels when the menu opened, and the list that follows them while
+  /// it is open (see [ChatViewsLiveTabs]).
+  final List<ChatWorkspaceTab> initialTabs;
+  final ValueListenable<List<ChatWorkspaceTab>>? liveTabs;
   final VoidCallback onChosen;
+
+  List<ChatWorkspaceTab> get availableTabs => liveTabs?.value ?? initialTabs;
 
   void _layout(ChatWorkspaceMode mode) {
     final c = controller;
@@ -198,7 +260,7 @@ class _ViewsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: controller,
+    listenable: Listenable.merge([controller, liveTabs]),
     builder: (context, _) {
       final strings = Strings.of(context);
       final colors = Theme.of(context).hermes;

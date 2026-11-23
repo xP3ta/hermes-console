@@ -536,6 +536,28 @@
   "brwAddressPlaceholder": "Enter address",
   "brwBlankPage": "Type an address above to browse.",
   "brwOpenExternal": "Open in browser",
+  "brwNotShownTitle": "This file can't be shown here",
+  "brwNotShownBody": "Console's browser shows web pages. Open it in your browser to view or download it.",
+  "brwServerAskTitle": "Open an address on your server?",
+  "brwServerAskBody": "{page} wants to open {address}. That address is on your server and is reached over SSH. Continue only if you expected it.",
+  "@brwServerAskBody": {
+    "placeholders": {
+      "page": {
+        "type": "String"
+      },
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "brwServerAskBodyNoPage": "A page wants to open {address}. That address is on your server and is reached over SSH. Continue only if you expected it.",
+  "@brwServerAskBodyNoPage": {
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
   "brwServerNotFound": "Server not found",
   "brwFailedToLoad": "The page failed to load",
   "brwUnreachable": "The page could not be reached.",
@@ -1533,7 +1555,7 @@
   "cevResolveInRuns": "Approvals are resolved from Activity → Runs.",
   "cevResolvedRecord": "Record of an approval that was already resolved.",
   "cevTraceFailed": "Error · view details",
-  "cevTraceRecovered": "Completed · retried (view details)",
+  "cevTraceRecovered": "Completed · with errors (view details)",
   "cevTraceStopped": "Stopped",
   "cevPatternKey": "pattern: {key}",
   "@cevPatternKey": {
@@ -3800,6 +3822,7 @@
   "diagBundleSubtitle": "Sanitized preview; nothing is sent automatically",
   "diagBundlePreviewTitle": "Review diagnostic",
   "diagBundlePrivacy": "Includes only states and counters. It contains no servers, credentials, conversations, paths, or identifiers.",
+  "diagBundleTraffic": "It also includes how much the app talked to your server in the last 48 hours: requests and bytes per kind of route, WebSocket messages and reconnections, in the foreground and in the background. No addresses, identifiers or content. It is counted on this phone only.",
   "diagBundleError": "The local diagnostic could not be prepared",
   "dependencyDashboardTitle": "The Dashboard needs configuration",
   "dependencyDashboardBody": "This feature uses the Hermes Dashboard. Configure access so the app can load and save this data.",
@@ -5037,6 +5060,14 @@
   "@roomAttachFailed": {
     "placeholders": {
       "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomAttachLost": "{names} is no longer on this device. Attach it again before sending.",
+  "@roomAttachLost": {
+    "placeholders": {
+      "names": {
         "type": "String"
       }
     }
@@ -6367,6 +6398,10 @@
   "tc1215SlashArgBg": "<task>",
   "tc1215SlashDescBranch": "Branch this chat into a new one",
   "tc1215BtwUsage": "Usage: /btw <question>",
+  "slashSteerDesc": "Inject a message after the next tool call without interrupting",
+  "slashSteerArg": "<prompt>",
+  "slashSteerUsage": "Usage: /steer <prompt>",
+  "slashSteerIdle": "No agent running; sent as next turn",
   "tc1215BgUsage": "Usage: /bg <task>",
   "tc1215BgStarted": "Background task started",
   "tc1215BtwStarted": "Question sent",
@@ -10418,7 +10453,7 @@
     }
   },
   "q9TurnOutcomeFailed": "Error",
-  "q9TurnOutcomeRecovered": "Completed after a retry",
+  "q9TurnOutcomeRecovered": "Completed with errors",
   "constellationTitle": "Your constellation",
   "constellationLoading": "Loading memory…",
   "constellationEmpty": "Nothing to show yet",
@@ -10610,6 +10645,173 @@
   "memShareVerdictSafe": "safe",
   "memShareVerdictCaution": "caution",
   "memShareVerdictDangerous": "dangerous",
+  "mempSelectedProvider": "Selected memory provider",
+  "mempSelectedDesc": "Not active yet: sessions keep using {current} until this choice is saved.",
+  "@mempSelectedDesc": {
+    "placeholders": {
+      "current": {
+        "type": "String"
+      }
+    }
+  },
+  "mempBuiltinMemory": "built-in memory only",
+  "mempActiveProvider": "Active memory provider",
+  "mempNoProvider": "None — built-in memory only",
+  "mempNoProviderDesc": "Hermes uses only the built-in layer below. Choose an external provider here to add one.",
+  "mempProviderDesc": "{name} adds its own recall to every session, on top of the built-in layer.",
+  "@mempProviderDesc": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mempProviderNotReadyDesc": "{name} is the saved provider but adds no recall until it is ready. The built-in layer works either way.",
+  "@mempProviderNotReadyDesc": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mempProviderUnknownDesc": "{name} is the saved provider; Hermes couldn't read whether it is ready.",
+  "@mempProviderUnknownDesc": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mempStatusReady": "ready",
+  "mempStatusNeedsSetup": "needs setup",
+  "mempStatusUnavailable": "unavailable",
+  "mempStatusMissing": "not installed",
+  "mempBuiltinLayer": "Built-in layer",
+  "mempOnByDefault": "On by default",
+  "mempOn": "On",
+  "mempOff": "Off",
+  "mempOnlyFile": "{file} only",
+  "@mempOnlyFile": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
+  "mempBuiltinDesc": "MEMORY.md and USER.md are Hermes’s own memory, separate from any external provider. Both load into sessions by default. A provider adds to this layer; it never replaces it.",
+  "mempProviderField": "Memory provider",
+  "mempBuiltinOnly": "Built-in only",
+  "mempProviderSaveFailed": "The memory provider could not be saved.",
+  "mempSelectUnsupported": "This Hermes server does not allow choosing the provider from here.",
+  "mempConfigUnavailable": "The memory configuration of this profile could not be read.",
+  "mempSettingsTitle": "{label} settings",
+  "@mempSettingsTitle": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempSecretSet": "{label} set",
+  "@mempSecretSet": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempSecretNotSet": "{label} not set",
+  "@mempSecretNotSet": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempFullConfig": "Full config…",
+  "mempLoading": "Loading memory provider settings...",
+  "mempLoadFailed": "Memory provider settings failed to load: {error}",
+  "@mempLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "mempUnsupported": "This Hermes server does not offer provider settings. Update Hermes to configure it from here.",
+  "mempSaveFieldFailed": "Failed to save {label}",
+  "@mempSaveFieldFailed": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempFullTitle": "{label} — full configuration",
+  "@mempFullTitle": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempFullDesc": "Every {label} option for the {profile} profile. Blank fields fall back to the resolved host or built-in default.",
+  "@mempFullDesc": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "mempDocsLink": "{label} configuration reference",
+  "@mempDocsLink": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempGroupOther": "Other",
+  "mempSaveChanges": "Save changes",
+  "mempSaved": "{label} saved. Memory provider configuration updated.",
+  "@mempSaved": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempSaveFailed": "Failed to save {label} settings",
+  "@mempSaveFailed": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempSecretKeep": "Leave blank to keep current value",
+  "mempSecretIsSet": "set",
+  "mempAboutField": "About {label}",
+  "@mempAboutField": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "mempConnect": "Connect",
+  "mempConnectOAuth": "Connect via OAuth",
+  "mempReconnect": "Reconnect",
+  "mempApiKeySet": "api key set",
+  "mempOAuthSet": "oauth set",
+  "mempWaitingConsent": "Waiting for browser consent…",
+  "mempConsentWhere": "The consent page opens in the browser of the computer that runs Hermes, not on this phone.",
+  "mempConnectStartFailed": "Could not start the connection.",
+  "mempConnectTimedOut": "Timed out — try again.",
+  "mempConnectFailed": "Connection failed.",
   "scanDocMenuLabel": "Scan document",
   "scanDocTitle": "Scan document",
   "scanDocStartHint": "Take a photo of the document or pick an image. Everything is processed on this device and nothing is uploaded.",
@@ -13088,5 +13290,21 @@
   "tg143ComposeDeliveryUncertain": "Connection dropped right after sending; check the terminal before sending again.",
   "bg143LoopbackHttpsTitle": "HTTPS localhost preview unavailable",
   "bg143LoopbackHttpsBody": "Android cannot isolate an HTTPS loopback forward over SSH without weakening TLS. Use http:// over the SSH tunnel or a hostname with a valid certificate.",
-  "bg143LoopbackUnavailableBody": "The SSH preview tunnel could not be opened. Try again or check your SSH profile."
+  "bg143LoopbackUnavailableBody": "The SSH preview tunnel could not be opened. Try again or check your SSH profile.",
+  "turnLineCommandsShort": "{count, plural, =1{1 cmd} other{{count} cmds}}",
+  "@turnLineCommandsShort": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "turnLineToolsShort": "{count, plural, =1{1 tool} other{{count} tools}}",
+  "@turnLineToolsShort": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

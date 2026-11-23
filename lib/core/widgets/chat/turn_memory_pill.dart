@@ -6,8 +6,8 @@ import '../../design/modal.dart' show showHermesSurface;
 import '../../models/activity_snapshot.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/hermes_tokens.dart';
-import '../../theme/readable_ink.dart';
 import '../chat_event_cards.dart' show ChatTraceEvent, memoryWriteLabel;
+import 'turn_receipt_pill.dart';
 import 'turn_step_motion.dart';
 
 typedef ConfirmedMemoryWrite = ({String id, MemoryWrite write});
@@ -56,8 +56,6 @@ class TurnMemoryPill extends StatelessWidget {
     final writes = confirmedTurnMemory(events);
     if (writes.isEmpty) return const SizedBox.shrink();
     final label = confirmedMemoryLabel(Strings.of(context), writes);
-    final colors = Theme.of(context).hermes;
-    final ink = readableInkOnTint(colors.textSecondary, colors.surface, colors);
     void open() => showHermesSurface<void>(
       context: context,
       surfaceKey: const ValueKey('turn-memory-preview'),
@@ -71,59 +69,11 @@ class TurnMemoryPill extends StatelessWidget {
           id: 'confirmed-memory',
           child: Padding(
             padding: const EdgeInsets.only(top: HermesSpace.x2),
-            child: Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: IntrinsicWidth(
-                child: Semantics(
-                  button: true,
-                  label: label,
-                  onTap: open,
-                  excludeSemantics: true,
-                  child: Material(
-                    color: Colors.transparent,
-                    shape: const StadiumBorder(),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      key: const ValueKey('turn-memory-pill'),
-                      onTap: open,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(minHeight: 28),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: HermesSpace.x1,
-                            vertical: 2,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                HIcons.psychology_outlined,
-                                size: HermesIcon.sm,
-                                color: ink,
-                              ),
-                              const SizedBox(width: HermesSpace.x1),
-                              Flexible(
-                                child: Text(
-                                  label,
-                                  style: HermesType.support.copyWith(
-                                    color: ink,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: HermesSpace.x1),
-                              Icon(
-                                HIcons.chevron_right_rounded,
-                                size: HermesIcon.sm,
-                                color: ink,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+            child: TurnReceiptPill(
+              inkKey: const ValueKey('turn-memory-pill'),
+              icon: HIcons.psychology_outlined,
+              label: label,
+              onTap: open,
             ),
           ),
         ),

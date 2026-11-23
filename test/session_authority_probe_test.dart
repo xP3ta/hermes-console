@@ -15,6 +15,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/sealed_local_files.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/memory_sealed_files.dart';
 
 const rows = <Map<String, dynamic>>[
@@ -114,7 +116,7 @@ void main() {
   });
   tearDown(() async {
     MemorySealedFileIo.install();
-    await files.delete(recursive: true);
+    await removeTestDir(files);
   });
   Future<AttachmentDraft> attachment() async {
     final file = File('${files.path}/private.txt');

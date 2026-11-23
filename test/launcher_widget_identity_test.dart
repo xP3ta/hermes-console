@@ -20,6 +20,8 @@ import 'package:hermes_android/core/models/profile_identity.dart';
 import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'launcher_widget_fixtures.dart';
 
 const _connection = 'widget-identity-test';
@@ -124,7 +126,7 @@ void main() {
     BotRosterRegistry.shared.forget(_connection);
     BotCharacterStore.debugUse(null);
     ProfileIdentities.instance.reset();
-    await temp.delete(recursive: true);
+    await removeTestDir(temp);
   });
 
   test('roster list names win in every scene, scoped to the connection', () {

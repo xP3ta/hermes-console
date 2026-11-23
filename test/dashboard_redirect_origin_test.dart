@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/connection_diagnostics.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/test_api_client.dart';
 
 class _Real extends HttpOverrides {}
@@ -122,7 +124,7 @@ void main() {
             );
             final file = File('${dir.path}/synthetic.txt');
             await file.writeAsString('synthetic-body-secret');
-            addTearDown(() => dir.delete(recursive: true));
+            addTearDown(() => removeTestDir(dir));
             addTearDown(dashboard.close);
             addTearDown(gateway.close);
             addTearDown(diagnostics.close);

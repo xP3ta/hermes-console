@@ -225,9 +225,12 @@ MessagingPlatformUpdate messagingChanges(
   MessagingPlatform platform,
   Map<String, String> draft,
 ) {
+  final fields = {for (final field in platform.envVars) field.key: field};
   final env = <String, String>{
     for (final entry in draft.entries)
-      if (entry.value.trim().isNotEmpty) entry.key: entry.value.trim(),
+      if (entry.value.trim().isNotEmpty &&
+          !_isShownMask(fields[entry.key], entry.value.trim()))
+        entry.key: entry.value.trim(),
   };
   final clear = [
     for (final field in platform.envVars)
@@ -235,6 +238,21 @@ MessagingPlatformUpdate messagingChanges(
         field.key,
   ];
   return MessagingPlatformUpdate(env: env, clearEnv: clear);
+}
+
+/// Whether [typed] is only the mask the form shows for the saved value of
+/// [field] (its preview, the server's redacted form, or bullets). Typing the
+/// mask back is not an edit: the saved value stays, and the mask is never
+/// sent as if it were the credential.
+bool _isShownMask(MessagingEnvField? field, String typed) {
+  if (typed.startsWith('«redacted') || RegExp(r'^[•*]+$').hasMatch(typed)) {
+    return true;
+  }
+  if (field == null || !field.isSet || field.redactedValue.isEmpty) {
+    return false;
+  }
+  return typed == field.redactedValue ||
+      typed == credentialPreview(field.redactedValue);
 }
 
 /// Desktop `settings/helpers.ts` `credentialPreview`: the text a saved
@@ -398,9 +416,11 @@ enum RelayLinkState { pending, inactive, refused }
 /// Messaging platform setup: `/api/messaging/platforms`, its update and
 /// test, Telegram's QR onboarding, Team Gateway account links and the
 /// gateway restart (Desktop `api/messaging.ts`, `api/system.ts`
-/// `restartGateway` / `getActionStatus`). Every call names the profile,
-/// `default` included, the way the webhooks and pairing calls do: an unnamed
-/// call acts on the profile the server was started as.
+/// `restartGateway` / `getActionStatus`). A selected profile is named on
+/// every call. An empty one travels unnamed, and the server then acts on the
+/// profile it was launched for: naming `default` instead would read and write
+/// the installation root's credentials on a Dashboard that serves a named
+/// profile.
 class MessagingPlatformsClient {
   MessagingPlatformsClient(
     this._dashboard, {
@@ -411,8 +431,9 @@ class MessagingPlatformsClient {
   final Future<void> Function(Duration) _sleep;
 
   static String _scoped(String endpoint, String profile) {
+    final named = profile.trim();
+    if (named.isEmpty) return endpoint;
     final separator = endpoint.contains('?') ? '&' : '?';
-    final named = profile.trim().isEmpty ? 'default' : profile.trim();
     return '$endpoint${separator}profile=${Uri.encodeQueryComponent(named)}';
   }
 
@@ -542,13 +563,16 @@ class MessagingPlatformsClient {
     List<String> allowedUserIds,
     String profile,
   ) => _guard(() async {
-    final named = profile.trim().isEmpty ? 'default' : profile.trim();
+    final named = profile.trim();
     final answer = await _dashboard.apiPost(
       _scoped(
         'messaging/telegram/onboarding/${_segment(pairingId)}/apply',
         profile,
       ),
-      body: {'allowed_user_ids': allowedUserIds, 'profile': named},
+      body: {
+        'allowed_user_ids': allowedUserIds,
+        if (named.isNotEmpty) 'profile': named,
+      },
     );
     return TelegramOnboardingApplied(
       botUsername: _text(answer['bot_username']),
@@ -659,12 +683,15 @@ class MessagingPlatformsClient {
   /// does. The poll talks to the server the restart takes down, so a
   /// refused read mid-window is expected, and a fresh process that never
   /// saw the action answers "not running, no exit code": both keep waiting.
-  /// Only a recorded non-zero exit is a failure, and a window in which no
-  /// read was ever answered is one too. Still running when the window
-  /// closes counts as done (a no-service install keeps the child as the
-  /// foreground gateway).
+  /// Only a recorded non-zero exit is a failure, and so is a window that
+  /// closes with the server not answering. Still running, and answering,
+  /// when the window closes counts as done (a no-service install keeps the
+  /// child as the foreground gateway).
   Future<bool> awaitGatewayRestart(String profile) async {
-    var answered = false;
+    // Whether the latest read of the window was answered. One early answer
+    // followed by refusals until the window closes is a server that went
+    // down and did not come back, not a restart that completed.
+    var lastAnswered = false;
     for (var attempt = 0; attempt < restartPollAttempts; attempt += 1) {
       await _sleep(restartPollInterval);
       final Map<String, dynamic> status;
@@ -673,14 +700,15 @@ class MessagingPlatformsClient {
           _scoped('actions/gateway-restart/status?lines=200', profile),
         );
       } catch (_) {
+        lastAnswered = false;
         continue;
       }
-      answered = true;
+      lastAnswered = true;
       final code = status['exit_code'];
       if (status['running'] == true || code == null) continue;
       return code == 0;
     }
-    return answered;
+    return lastAnswered;
   }
 }
 

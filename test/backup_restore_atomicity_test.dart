@@ -19,6 +19,8 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/restore_refresh.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/fake_backup_gateway.dart';
 
 final _conn = SavedConnection(
@@ -89,7 +91,7 @@ void main() {
     await refreshRoster();
   });
 
-  tearDown(() async => dir.delete(recursive: true));
+  tearDown(() async => removeTestDir(dir));
 
   BackupRestoreFlow flow({Future<void> Function()? refresh}) {
     final f = BackupRestoreFlow(

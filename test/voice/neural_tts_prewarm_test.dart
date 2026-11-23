@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/voice/neural_tts_worker.dart';
 import 'package:hermes_android/core/services/voice/tts_engine.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// Spec 048 / US2+US3 — precarga del motor neuronal
 /// (contracts/engine-prewarm.md): `prewarm()` paga el arranque del worker
 /// durante la espera del agente y `prewarm(texto)` deja la primera frase
@@ -138,7 +140,7 @@ void main() {
     );
     addTearDown(() async {
       await engine.dispose();
-      if (directory.existsSync()) await directory.delete(recursive: true);
+      await removeTestDir(directory);
     });
 
     await engine.prewarm('Primera privada.');
@@ -170,7 +172,7 @@ void main() {
     addTearDown(() async {
       if (!worker.releaseFirst.isCompleted) worker.releaseFirst.complete();
       await engine.dispose();
-      if (directory.existsSync()) await directory.delete(recursive: true);
+      await removeTestDir(directory);
     });
 
     final prewarmA = engine.prewarm('Primera privada.');
@@ -209,7 +211,7 @@ void main() {
       addTearDown(() async {
         if (!playRelease.isCompleted) playRelease.complete();
         await engine.dispose();
-        if (directory.existsSync()) await directory.delete(recursive: true);
+        await removeTestDir(directory);
       });
 
       await engine.prewarm('Primera privada.');
@@ -249,7 +251,7 @@ void main() {
     );
     addTearDown(() async {
       await engine.dispose();
-      if (directory.existsSync()) await directory.delete(recursive: true);
+      await removeTestDir(directory);
     });
     final firstSentence = '${'A' * 241}.';
 
@@ -291,7 +293,7 @@ void main() {
     );
     addTearDown(() async {
       await engine.dispose();
-      if (directory.existsSync()) await directory.delete(recursive: true);
+      await removeTestDir(directory);
     });
 
     await expectLater(engine.speak('Audio privado.'), throwsStateError);

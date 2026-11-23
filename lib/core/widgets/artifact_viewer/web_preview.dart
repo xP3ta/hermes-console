@@ -1048,6 +1048,11 @@ double? _pngAspect(Uint8List png) {
 /// image and not over a live page. A tap opens the live page full screen
 /// ([onOpen]). Where no picture can be taken the live page stays, as one of
 /// at most two.
+/// The corners of an inline preview's box and of the box holding its place.
+const BorderRadius _inlinePreviewRadius = BorderRadius.all(
+  Radius.circular(14),
+);
+
 class InlineWebPreview extends StatefulWidget {
   const InlineWebPreview({
     super.key,
@@ -1065,11 +1070,17 @@ class InlineWebPreview extends StatefulWidget {
     this.captureScript,
     this.autoLoad = true,
     this.resolveSnapshotKey,
+    this.knownSnapshotKey,
     this.deadline = kWebPageDeadline,
     this.model = false,
   });
 
   final Future<String> Function() document;
+
+  /// What [resolveSnapshotKey] answered for these very bytes earlier in
+  /// this run, without any work, or null. With it a picture already in
+  /// memory is on the preview's first frame instead of after a placeholder.
+  final String? Function()? knownSnapshotKey;
 
   /// Gives the picture's key when it takes work to know (the digest of a
   /// file); used instead of [snapshotKey].
@@ -1106,8 +1117,107 @@ class InlineWebPreview extends StatefulWidget {
   final double maxWidth;
   final ArtifactWebViewSettingsFactory settingsFor;
 
+  /// The height of a box [width] wide that does not follow its content.
+  static double heightFor(
+    double width, {
+    required double aspectRatio,
+    required double screenHeight,
+  }) => (width / aspectRatio).clamp(72.0, screenHeight * 0.6);
+
   @override
   State<InlineWebPreview> createState() => _InlineWebPreviewState();
+}
+
+/// The box of an [InlineWebPreview] whose document is not here yet: the same
+/// place, size and frame, so the preview takes it over without moving what
+/// is below (a page still being downloaded).
+class InlineWebPreviewPlaceholder extends StatelessWidget {
+  const InlineWebPreviewPlaceholder({
+    super.key,
+    required this.label,
+    required this.icon,
+    this.aspectRatio = 4 / 3,
+    this.maxWidth = 640,
+    this.footer,
+  });
+
+  final String label;
+  final IconData icon;
+  final double aspectRatio;
+  final double maxWidth;
+
+  /// Under the label: the progress of the download and its Cancel.
+  final Widget? footer;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final screen = MediaQuery.sizeOf(context).height;
+    final footer = this.footer;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth.isFinite
+                ? constraints.maxWidth.clamp(0.0, maxWidth)
+                : maxWidth;
+            return SizedBox(
+              key: const ValueKey('inline-web-preview-placeholder'),
+              width: width,
+              height: InlineWebPreview.heightFor(
+                width,
+                aspectRatio: aspectRatio,
+                screenHeight: screen,
+              ),
+              child: ClipRRect(
+                borderRadius: _inlinePreviewRadius,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant,
+                    border: Border.all(color: colors.divider),
+                    borderRadius: _inlinePreviewRadius,
+                  ),
+                  // A box too short for it all (a tiny pane) cuts it
+                  // instead of overflowing.
+                  child: SingleChildScrollView(
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: InlineWebPreview.heightFor(
+                          width,
+                          aspectRatio: aspectRatio,
+                          screenHeight: screen,
+                        ),
+                      ),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(icon, color: colors.textSecondary),
+                            const SizedBox(height: 6),
+                            Text(
+                              label,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                            ?footer,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 
 class _InlineWebPreviewState extends State<InlineWebPreview> {
@@ -1121,12 +1231,31 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
   bool _looking = false;
   String? _key;
 
+  /// The picture has been taken and is being decoded: the live page stays
+  /// under it until it has a frame. Dropping the page in the same frame the
+  /// picture was set left the box empty for a frame or more.
+  bool _handingOver = false;
+
   @override
   void initState() {
     super.initState();
     _key = widget.snapshotKey;
     final resolve = widget.resolveSnapshotKey;
-    if (resolve == null) _snapshot = _Snapshots.get(_key);
+    if (resolve == null) {
+      _snapshot = _Snapshots.get(_key);
+    } else {
+      String? known;
+      try {
+        known = widget.knownSnapshotKey?.call();
+      } catch (_) {
+        known = null;
+      }
+      final kept = _Snapshots.get(known);
+      if (kept != null) {
+        _key = known;
+        _snapshot = kept;
+      }
+    }
     if (_snapshot == null &&
         widget.autoLoad &&
         (_key != null || resolve != null)) {
@@ -1211,15 +1340,33 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
     if (!mounted) return;
     setState(() {
       _snapshot = png;
-      _live = false;
+      _handingOver = _live;
     });
-    _LivePreviews.drop(this);
+  }
+
+  /// The picture is on screen (or cannot be drawn): the page under it goes.
+  void _pictureShown() {
+    if (!_handingOver) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_handingOver) return;
+      _LivePreviews.drop(this);
+      if (!mounted) return;
+      setState(() {
+        _handingOver = false;
+        _live = false;
+      });
+    });
   }
 
   void _release() {
     _LivePreviews.drop(this);
     if (!_live) return;
-    if (mounted) setState(() => _live = false);
+    if (mounted) {
+      setState(() {
+        _live = false;
+        _handingOver = false;
+      });
+    }
   }
 
   void _checkVisibility() {
@@ -1278,39 +1425,35 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                 : _contentHeight;
             final height = widget.fitContent && content != null
                 ? content.clamp(72.0, screen * 0.6)
-                : (width / widget.aspectRatio).clamp(72.0, screen * 0.6);
+                : InlineWebPreview.heightFor(
+                    width,
+                    aspectRatio: widget.aspectRatio,
+                    screenHeight: screen,
+                  );
             return SizedBox(
               key: const ValueKey('inline-web-preview'),
               width: width,
               height: height,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: _inlinePreviewRadius,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: colors.surfaceVariant,
                     border: Border.all(color: colors.divider),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: _inlinePreviewRadius,
                   ),
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      if (_snapshot != null)
-                        Image.memory(
-                          _snapshot!,
-                          key: const ValueKey('inline-web-preview-picture'),
-                          fit: BoxFit.cover,
-                          alignment: Alignment.topCenter,
-                          gaplessPlayback: true,
-                          excludeFromSemantics: true,
-                        )
-                      else if (failure != null)
+                      if (failure != null && _snapshot == null)
                         WebPageFailureView(
                           failure: failure,
                           model: widget.model,
                           onRetry: _retry,
                         )
-                      else if (_live)
+                      else if (_live && (_snapshot == null || _handingOver))
                         WebDocumentView(
+                          key: const ValueKey('inline-web-preview-page'),
                           document: widget.document,
                           interactive: false,
                           settingsFor: widget.settingsFor,
@@ -1332,7 +1475,7 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                             _LivePreviews.drop(this);
                           }),
                         )
-                      else
+                      else if (_snapshot == null)
                         Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -1348,6 +1491,23 @@ class _InlineWebPreviewState extends State<InlineWebPreview> {
                               ),
                             ],
                           ),
+                        ),
+                      if (_snapshot != null)
+                        Image.memory(
+                          _snapshot!,
+                          key: const ValueKey('inline-web-preview-picture'),
+                          fit: BoxFit.cover,
+                          alignment: Alignment.topCenter,
+                          gaplessPlayback: true,
+                          excludeFromSemantics: true,
+                          frameBuilder: (context, child, frame, sync) {
+                            if (sync || frame != null) _pictureShown();
+                            return child;
+                          },
+                          errorBuilder: (context, error, stack) {
+                            _pictureShown();
+                            return const SizedBox.shrink();
+                          },
                         ),
                       // A failure keeps its own button reachable.
                       if (failure == null)

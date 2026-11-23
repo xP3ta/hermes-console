@@ -20,6 +20,7 @@ import '../chat_turn_activity.dart'
     show LiveTurnScope, TurnType, turnToolIconFor;
 import 'chat_live_icon.dart' show ChatLiveGlyph, chatLiveGlyphForTool;
 import 'tool_steps_summary.dart' show turnLineDuration;
+import 'turn_receipt_pill.dart';
 import 'turn_step_cards.dart' show TurnStepCardEntry;
 import 'turn_step_motion.dart';
 
@@ -169,6 +170,15 @@ String liveMemoryLabel(Strings s, LiveTurnRow row) {
   };
 }
 
+/// A `skill_view` either loads a skill or reads one of its files (its
+/// detail is then «skill → file», `skillStepTitle`). They are worded apart,
+/// so a file read is never counted into a run of loads, nor the reverse.
+bool _sameSkillStep(String tool, String? before, String? now) {
+  if (!isSkillLoadTool(tool)) return true;
+  bool resource(String? detail) => detail != null && detail.contains(' → ');
+  return resource(before) == resource(now);
+}
+
 /// The rows of the window for [tools], oldest first: consecutive steps of
 /// the same tool are one row (a failed step is never folded into a run, so
 /// a failure is always seen on its own row).
@@ -181,6 +191,7 @@ List<LiveTurnRow> liveTurnRows(Iterable<TurnStepCardEntry> tools) {
         tool != null &&
         tool == last.toolName &&
         !isMemoryTool(tool) &&
+        _sameSkillStep(tool, last.detail, step.detail) &&
         !step.failed &&
         !last.failed &&
         !last.running) {
@@ -448,12 +459,19 @@ class LiveTurnRowPill extends StatelessWidget {
     this.showTime = false,
     this.open,
     this.quiet = false,
+    this.plain = false,
     this.progress,
     this.markKey,
     super.key,
   });
 
   final LiveTurnRow row;
+
+  /// The opened list of a turn: the same row with nothing drawn around it,
+  /// only its icon, its words in the receipt rows' size and ink
+  /// ([TurnReceiptPill.styleOf]), its time and its state mark, hanging from
+  /// the connector. The live window keeps the outlined pill.
+  final bool plain;
 
   /// The unfolded level of an opened run: the same pill, shorter and
   /// quieter ([HermesLiveTurn.nestedRowHeight], hairline outline, fainter
@@ -492,11 +510,25 @@ class LiveTurnRowPill extends StatelessWidget {
     final title = memory ? liveMemoryLabel(strings, row) : row.name;
     final detail = row.detail;
     final started = row.startedAt;
-    final nameStyle = HermesType.support.copyWith(
-      fontWeight: quiet || history ? FontWeight.w500 : FontWeight.w600,
-      color: colors.textPrimary,
-    );
-    final detailStyle = HermesType.support.copyWith(color: colors.textSecondary);
+    final receipt = TurnReceiptPill.styleOf(context);
+    final nameStyle = plain
+        // Only the call in hand stands out; a failure is said by its mark,
+        // its word and the error ink.
+        ? receipt.copyWith(
+            fontWeight: s ? FontWeight.w600 : FontWeight.w400,
+            color: row.failed && !memory ? colors.error : receipt.color,
+          )
+        : HermesType.support.copyWith(
+            fontWeight: quiet || history ? FontWeight.w500 : FontWeight.w600,
+            color: colors.textPrimary,
+          );
+    final detailStyle = plain
+        ? receipt.copyWith(
+            color: receipt.color!.withValues(
+              alpha: HermesLiveTurn.historyAlpha,
+            ),
+          )
+        : HermesType.support.copyWith(color: colors.textSecondary);
     final timeStyle = HermesType.caption.copyWith(
       fontWeight: FontWeight.w400,
       letterSpacing: 0,
@@ -542,23 +574,21 @@ class LiveTurnRowPill extends StatelessWidget {
     final fill = s || (memory && memState != LiveMemoryState.unconfirmed)
         ? accent.withValues(alpha: 0.10)
         : chrome.fill;
-    final surface = DecoratedBox(
-      decoration: BoxDecoration(
-        color: fill.withValues(alpha: fill.a * surfaceAlpha),
-        borderRadius: BorderRadius.circular(HermesRadius.tag),
-        border: Border.all(
-          color: line.withValues(alpha: line.a * surfaceAlpha),
-          width: quiet ? HermesLiveTurn.hairline : 1,
-        ),
-      ),
-      child: ConstrainedBox(
+    final content = ConstrainedBox(
         constraints: BoxConstraints(
-          minHeight: quiet
+          minHeight: plain
+              ? TurnReceiptPill.height
+              : quiet
               ? HermesLiveTurn.nestedRowHeight
               : HermesLiveTurn.rowHeight,
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: HermesSpace.gap),
+          padding: plain
+              ? const EdgeInsetsDirectional.only(
+                  start: HermesSpace.x1,
+                  end: HermesSpace.x1,
+                )
+              : const EdgeInsets.symmetric(horizontal: HermesSpace.gap),
           child: Row(
             children: [
               Icon(
@@ -624,7 +654,12 @@ class LiveTurnRowPill extends StatelessWidget {
               ],
               if (failure != null) ...[
                 const SizedBox(width: HermesSpace.x2),
-                Text(failure, style: timeStyle),
+                Text(
+                  failure,
+                  style: plain
+                      ? timeStyle.copyWith(color: colors.error)
+                      : timeStyle,
+                ),
               ],
               if (s && started != null) ...[
                 const SizedBox(width: HermesSpace.x2),
@@ -651,7 +686,18 @@ class LiveTurnRowPill extends StatelessWidget {
             ],
           ),
         ),
+    );
+    if (plain) return content;
+    final surface = DecoratedBox(
+      decoration: BoxDecoration(
+        color: fill.withValues(alpha: fill.a * surfaceAlpha),
+        borderRadius: BorderRadius.circular(HermesRadius.tag),
+        border: Border.all(
+          color: line.withValues(alpha: line.a * surfaceAlpha),
+          width: quiet ? HermesLiveTurn.hairline : 1,
+        ),
       ),
+      child: content,
     );
     return history && !quiet
         ? HermesGelSurface(

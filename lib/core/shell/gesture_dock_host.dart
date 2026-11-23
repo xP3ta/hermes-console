@@ -29,6 +29,7 @@ import 'dock_edit_sheet.dart';
 import 'dock_mode.dart';
 import 'gesture_dock.dart';
 import 'gesture_dock_state.dart';
+import '../navigation/unsaved_work_guard.dart';
 
 /// Wires the [GestureDock] to the app: where each item goes, the menu of
 /// each one, the "Actividad" sheet, the edit mode and the "needs you" dot.
@@ -181,8 +182,11 @@ class _GestureDockHostState extends State<GestureDockHost> {
   /// the first route (General Home) otherwise. Nothing moves on a home.
   void _popToModeHome(NavigatorState navigator) {
     final botsHome = DockModes.instance.botsHome;
-    navigator.popUntil(
-      (route) => botsHome == null ? route.isFirst : route == botsHome,
+    UnsavedWorkGuard.leave(
+      navigator,
+      () => navigator.popUntil(
+        (route) => botsHome == null ? route.isFirst : route == botsHome,
+      ),
     );
   }
 
@@ -190,8 +194,11 @@ class _GestureDockHostState extends State<GestureDockHost> {
   /// pile up.
   void _goPlace(WidgetBuilder builder) {
     final navigator = Navigator.of(context);
-    _popToModeHome(navigator);
-    unawaited(navigator.push(MaterialPageRoute<void>(builder: builder)));
+    UnsavedWorkGuard.leave(navigator, () {
+      // Already asked: the guard lets this through at once.
+      _popToModeHome(navigator);
+      unawaited(navigator.push(MaterialPageRoute<void>(builder: builder)));
+    });
   }
 
   /// What [tab] opens, or null when it cannot be opened now (no server).
@@ -247,7 +254,13 @@ class _GestureDockHostState extends State<GestureDockHost> {
   /// Inicio is the General Home, from every screen and in both modes.
   VoidCallback? get _goHome => _onGeneralHome
       ? null
-      : () => Navigator.of(context).popUntil((route) => route.isFirst);
+      : () {
+          final navigator = Navigator.of(context);
+          UnsavedWorkGuard.leave(
+            navigator,
+            () => navigator.popUntil((route) => route.isFirst),
+          );
+        };
 
   /// Bots is the Bots home: nothing to do on it, back to it from a screen
   /// opened above it, and from General it opens above the General Home.
@@ -263,8 +276,10 @@ class _GestureDockHostState extends State<GestureDockHost> {
     if (screen == null) return null;
     return () {
       final navigator = Navigator.of(context);
-      navigator.popUntil((route) => route.isFirst);
-      unawaited(navigator.push(MaterialPageRoute<void>(builder: screen)));
+      UnsavedWorkGuard.leave(navigator, () {
+        navigator.popUntil((route) => route.isFirst);
+        unawaited(navigator.push(MaterialPageRoute<void>(builder: screen)));
+      });
     };
   }
 

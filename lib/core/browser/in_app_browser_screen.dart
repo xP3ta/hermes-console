@@ -1,15 +1,20 @@
 import 'package:hermes_android/core/design/hicons.dart';
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../design/modal.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 import '../design/tokens.dart';
 import '../feedback/feedback_policy.dart';
 import '../theme/app_theme.dart';
 import '../widgets/artifact_viewer/artifact_html_policy.dart';
+import '../widgets/artifact_viewer/pdf_document_view.dart';
 import '../widgets/chat/back_to_chat_notch.dart';
+import '../widgets/console_loader.dart';
 import '../widgets/workspace/chat_workspace_host.dart'
     show ChatWorkspacePaneScope;
 import '../widgets/workspace/workspace_panel_frame.dart'
@@ -17,6 +22,7 @@ import '../widgets/workspace/workspace_panel_frame.dart'
 import 'agent_browser_bridge.dart';
 import 'agent_preview_offer_card.dart';
 import 'browser_loopback_reach.dart';
+import 'in_app_browser_download.dart';
 import 'webview_render_guard.dart';
 import 'in_app_browser_policy.dart';
 
@@ -132,8 +138,19 @@ class InAppBrowserScreen extends StatefulWidget {
     this.rendererWatch,
     this.tab,
     this.loopbackReach,
+    this.probeDownload,
+    this.pdfPageRenderer,
     super.key,
   });
+
+  /// Looks at an address the WebView handed off as a download;
+  /// [probeInAppBrowserDownload] when null (tests inject their own).
+  final InAppBrowserDownloadProber? probeDownload;
+
+  /// Test seam of the PDF viewer ([PdfDocumentView.renderPage]).
+  @visibleForTesting
+  final Future<({Uint8List png, int pageCount})?> Function(String key, int index)?
+  pdfPageRenderer;
 
   /// Set when the screen is one tab of an `InAppTabbedBrowser`.
   final InAppBrowserTabHooks? tab;
@@ -224,6 +241,28 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   bool _invalid = false;
   InAppBrowserLoadError? _error;
 
+  /// The main-frame address the WebView was last told to load and has not
+  /// finished. Android's WebView reports a file it cannot draw (a PDF, an
+  /// archive) as a download, which the plugin turns into a second navigation
+  /// request for that same address (`webview_flutter_android`
+  /// `AndroidNavigationDelegate`, `onDownloadStart` → `_handleNavigation`):
+  /// answered with «navigate» it loads again, downloads again, for ever, and
+  /// no «finished» or «failed» ever comes (#232).
+  String? _awaited;
+
+  /// The address on screen is a file, not a page ([_onDownload]).
+  _BrowserDownload? _download;
+
+  /// The page the WebView last finished, which stays under a file: Back
+  /// from the file returns to it.
+  String _pageUnder = '';
+
+  bool get _backToPageUnder => _download != null && _pageUnder.isNotEmpty;
+
+  /// Addresses the WebView may be asked for once more after a probe said
+  /// they are pages: a second hand-off of the same one is final.
+  final Set<String> _retriedAsPage = <String>{};
+
   /// The agent's label for the page on screen ('' for the user's own).
   late String _agentLabel = widget.agentLabel;
 
@@ -311,7 +350,8 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
       widget.agentConnectionId != null && widget.agentSessionId != null;
 
   /// Nothing loaded and nothing on its way: the blank start page.
-  bool get _blank => _error == null && !_loading && _url.isEmpty;
+  bool get _blank =>
+      _error == null && _download == null && !_loading && _url.isEmpty;
 
   void _setAgentReading(bool reading) {
     if (reading) {
@@ -490,12 +530,24 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
     final decision = inAppBrowserNavigationDecision(request);
     if (decision != NavigationDecision.navigate) return decision;
     final uri = Uri.tryParse(request.url);
+    if (request.isMainFrame && uri != null && _awaited == request.url) {
+      // The address already on its way, asked for again: a download.
+      _onDownload(uri);
+      return NavigationDecision.prevent;
+    }
     final reach = widget.loopbackReach;
     if (reach != null && uri != null) {
       if (browserLoopbackTarget(uri) != null) {
         if (request.isMainFrame) {
           if (_agentReads == 0) _setAgentOwned(false);
-          _navigate(uri);
+          if (_onServerPage) {
+            _navigate(uri);
+          } else {
+            // A page from anywhere else sending the browser to the
+            // server's loopback: it cannot read the answer, but the
+            // request would reach a local port there. The user decides.
+            unawaited(_askServerAddress(uri));
+          }
         }
         return NavigationDecision.prevent;
       }
@@ -504,6 +556,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
           if (request.isMainFrame && _agentReads == 0) {
             _setAgentOwned(false);
           }
+          if (request.isMainFrame) _awaited = request.url;
           return NavigationDecision.navigate;
         }
         if (request.isMainFrame && reach.isRetiredForwardUri(uri)) {
@@ -522,7 +575,111 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
     if (request.isMainFrame && _agentReads == 0) {
       _setAgentOwned(false);
     }
+    if (request.isMainFrame) _awaited = request.url;
     return decision;
+  }
+
+  /// The WebView handed [uri] off as a download. Nothing is downloaded to
+  /// the device: a PDF opens in the app's own viewer, anything else says it
+  /// cannot be shown here and offers the system browser.
+  void _onDownload(Uri uri) {
+    if (!mounted) return;
+    final raw = uri.toString();
+    final shown = _asked(raw);
+    final loadSeq = ++_loadSeq;
+    _awaited = null;
+    setState(() {
+      _error = null;
+      _url = shown;
+      _pending = null;
+      _loading = true;
+      _download = _BrowserDownload(url: shown);
+    });
+    _syncAddressField();
+    _reportUrl();
+    // A forward's local end only answers the WebView that owns it.
+    final forwarded = shown != raw;
+    final prober = widget.probeDownload ?? probeInAppBrowserDownload;
+    unawaited(() async {
+      var probe = const InAppBrowserDownloadProbe(
+        InAppBrowserDownloadKind.other,
+      );
+      if (!forwarded) {
+        try {
+          probe = await prober(uri);
+        } catch (_) {
+          // Not knowing what it is leaves the way out, never a spinner.
+        }
+      }
+      if (!mounted || loadSeq != _loadSeq) return;
+      if (probe.kind == InAppBrowserDownloadKind.page &&
+          _retriedAsPage.add(raw)) {
+        setState(() => _download = null);
+        // Handed off again, it is a download after all: no third try.
+        _awaited = raw;
+        try {
+          await _controller.loadRequest(uri);
+        } catch (_) {
+          if (mounted && loadSeq == _loadSeq) {
+            setState(() {
+              _loading = false;
+              _download = _BrowserDownload(url: shown, settled: true);
+            });
+          }
+        }
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _download = _BrowserDownload(
+          url: shown,
+          settled: true,
+          pdf: probe.kind == InAppBrowserDownloadKind.pdf ? probe.bytes : null,
+        );
+      });
+    }());
+  }
+
+  /// The page on screen is itself on the server's loopback (shown as the
+  /// address the user asked for): its links and redirects to loopback are
+  /// the dev server moving around its own pages.
+  bool get _onServerPage {
+    final current = Uri.tryParse(_url);
+    return current != null && browserLoopbackTarget(current) != null;
+  }
+
+  bool _askingServerAddress = false;
+
+  /// Asks before a page that is NOT the server's sends the browser to a
+  /// loopback address reached over SSH. One question at a time: a page
+  /// that keeps trying gets no pile of dialogs.
+  Future<void> _askServerAddress(Uri uri) async {
+    if (_askingServerAddress || !mounted) return;
+    _askingServerAddress = true;
+    final strings = Strings.of(context);
+    final from = Uri.tryParse(_url)?.host ?? '';
+    final shown = browserDisplayUrl(uri.toString());
+    bool? open;
+    try {
+      open = await showHermesDialog<bool>(
+        context: context,
+        title: strings.brwServerAskTitle,
+        message: from.isEmpty
+            ? strings.brwServerAskBodyNoPage(shown)
+            : strings.brwServerAskBody(from, shown),
+        actions: [
+          HermesDialogAction(
+            label: strings.commonCancel,
+            value: false,
+            style: HermesDialogActionStyle.cancel,
+          ),
+          HermesDialogAction(label: strings.commonOpen, value: true),
+        ],
+      );
+    } finally {
+      _askingServerAddress = false;
+    }
+    if (open == true && mounted) _navigate(uri);
   }
 
   void _releaseForwardIfOffOrigin(String rawUrl) {
@@ -538,9 +695,16 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   void _onPageStarted(String url) {
     if (!mounted) return;
     _releaseForwardIfOffOrigin(url);
+    // The WebView may announce the start of the very load it then hands
+    // off as a download: that one keeps its state.
+    final download = _download;
+    if (download != null && (url.isEmpty || _asked(url) == download.url)) {
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
+      _download = null;
       if (url.isNotEmpty) _url = _asked(url);
       _pending = null;
     });
@@ -550,11 +714,18 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
 
   void _onPageFinished(String url) {
     if (!mounted) return;
+    _awaited = null;
+    // The page left behind settling under a file: the file stays.
+    if (_download != null) {
+      unawaited(_syncHistory());
+      return;
+    }
     setState(() {
       _loading = false;
       if (url.isNotEmpty) _url = _asked(url);
       _pending = null;
     });
+    _pageUnder = _url;
     _syncAddressField();
     _reportUrl();
     unawaited(_reportTitle());
@@ -569,9 +740,16 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
     final url = change.url;
     if (!mounted || url == null || url.isEmpty) return;
     _releaseForwardIfOffOrigin(url);
+    final download = _download;
+    if (download != null) {
+      // Back or forward away from the file is a page again.
+      if (_asked(url) == download.url) return;
+      _loadSeq++;
+    }
     setState(() {
       _url = _asked(url);
       _pending = null;
+      _download = null;
     });
     _syncAddressField();
     _reportUrl();
@@ -581,6 +759,9 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   void _onWebResourceError(WebResourceError error) {
     // A blocked ad or tracking frame must not replace a healthy page.
     if (!mounted || error.isForMainFrame == false) return;
+    _awaited = null;
+    // The load a download cut short reports as cancelled: not a failure.
+    if (_download != null) return;
     setState(() {
       _error = InAppBrowserLoadError(
         url: _asked(error.url ?? _pending ?? _url),
@@ -614,6 +795,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
       if (!mounted || loadSeq != _loadSeq) return;
       final reach = widget.loopbackReach;
       if (reach == null) {
+        _awaited = uri.toString();
         await _controller.loadRequest(uri);
         return;
       }
@@ -621,8 +803,10 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
       if (!mounted || loadSeq != _loadSeq) return;
       switch (resolution.status) {
         case BrowserLoopbackStatus.passthrough:
+          _awaited = resolution.uri.toString();
           await _controller.loadRequest(resolution.uri);
         case BrowserLoopbackStatus.forwarded:
+          _awaited = resolution.uri.toString();
           await _controller.loadRequest(
             resolution.uri,
             headers: resolution.headers,
@@ -676,8 +860,10 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   String _asked(String url) => widget.loopbackReach?.reveal(url) ?? url;
 
   void _navigate(Uri uri) {
+    _retriedAsPage.clear();
     setState(() {
       _error = null;
+      _download = null;
       _loading = true;
       _pending = uri.toString();
     });
@@ -686,6 +872,19 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   }
 
   Future<void> _goBack() async {
+    if (_backToPageUnder) {
+      // The WebView never left the page the file was opened from.
+      _loadSeq++;
+      setState(() {
+        _download = null;
+        _loading = false;
+        _pending = null;
+        _url = _pageUnder;
+      });
+      _syncAddressField();
+      _reportUrl();
+      return;
+    }
     try {
       if (await _controller.canGoBack()) await _controller.goBack();
     } catch (_) {
@@ -708,6 +907,13 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
     final again = failed == null ? null : browserExternalUri(failed.url);
     if (again != null) {
       _navigate(again);
+      return;
+    }
+    // A file is asked for again; so is an address that never arrived.
+    final stuck = _download?.url ?? (_url.isEmpty ? _pending : null);
+    final retry = stuck == null ? null : browserExternalUri(stuck);
+    if (retry != null) {
+      _navigate(retry);
       return;
     }
     if (_url.isEmpty) return;
@@ -829,6 +1035,13 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
             onRetry: _reload,
             onOpenExternal: (uri) => unawaited(_openExternal(uri)),
           )
+        else if (_download case final download?)
+          _InAppBrowserDownloadView(
+            download: download,
+            renderPage: widget.pdfPageRenderer,
+            onRetry: _reload,
+            onOpenExternal: (uri) => unawaited(_openExternal(uri)),
+          )
         else if (blank)
           const _InAppBrowserBlankView(),
       ],
@@ -836,7 +1049,7 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
     return PopScope(
       // Back walks the page's history first (Desktop: Escape goes back when
       // the page has somewhere to go back to); the notch always leaves.
-      canPop: !(foreground && _canGoBack),
+      canPop: !(foreground && (_canGoBack || _backToPageUnder)),
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && foreground) unawaited(_goBack());
       },
@@ -938,7 +1151,9 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
   }
 
   Widget _buildBar(Strings strings, HermesThemeColors colors) {
-    final external = browserExternalUri(_url.isNotEmpty ? _url : '');
+    // The address on its way counts: a load that never arrives must not
+    // lock the way out (#232).
+    final external = browserExternalUri(_pending ?? _url);
     return Padding(
       key: const ValueKey('in-app-browser-bar'),
       padding: const EdgeInsets.symmetric(
@@ -951,7 +1166,9 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
             key: const ValueKey('in-app-browser-back'),
             tooltip: strings.brwBack,
             color: colors.textPrimary,
-            onPressed: _canGoBack ? () => unawaited(_goBack()) : null,
+            onPressed: _canGoBack || _backToPageUnder
+                ? () => unawaited(_goBack())
+                : null,
             icon: const Icon(HIcons.arrow_back_rounded),
           ),
           IconButton(
@@ -965,7 +1182,9 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
             key: const ValueKey('in-app-browser-reload'),
             tooltip: strings.brwReload,
             color: colors.textPrimary,
-            onPressed: _url.isEmpty && _error == null ? null : _reload,
+            onPressed: _url.isEmpty && _error == null && _pending == null
+                ? null
+                : _reload,
             icon: const Icon(HIcons.refresh_rounded),
           ),
           if (widget.tab?.barTrailing case final trailing?) ...[
@@ -1038,6 +1257,121 @@ class _InAppBrowserScreenState extends State<InAppBrowserScreen>
           border: pill(null),
           enabledBorder: pill(_invalid ? colors.error : null),
           focusedBorder: pill(_invalid ? colors.error : colors.accent),
+        ),
+      ),
+    );
+  }
+}
+
+/// A file the WebView handed off as a download.
+@immutable
+final class _BrowserDownload {
+  const _BrowserDownload({required this.url, this.settled = false, this.pdf});
+
+  /// The address as the user asked for it.
+  final String url;
+
+  /// False while the app is still finding out what the file is.
+  final bool settled;
+
+  /// The document, when it is a PDF the app's viewer can take.
+  final Uint8List? pdf;
+}
+
+/// What stands in for a page the WebView cannot draw: the PDF in the app's
+/// own viewer, or «this file can't be shown here» with the way out. Never a
+/// spinner with nothing to tap.
+class _InAppBrowserDownloadView extends StatelessWidget {
+  const _InAppBrowserDownloadView({
+    required this.download,
+    required this.onRetry,
+    required this.onOpenExternal,
+    this.renderPage,
+  });
+
+  final _BrowserDownload download;
+  final VoidCallback onRetry;
+  final ValueChanged<Uri> onOpenExternal;
+  final Future<({Uint8List png, int pageCount})?> Function(String key, int index)?
+  renderPage;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final pdf = download.pdf;
+    final Widget body;
+    if (!download.settled) {
+      body = const Center(
+        key: ValueKey('in-app-browser-download-checking'),
+        child: ConsoleLoader.large(),
+      );
+    } else if (pdf != null) {
+      body = PdfDocumentView(
+        key: const ValueKey('in-app-browser-pdf'),
+        bytes: pdf,
+        renderPage: renderPage,
+        fallback: _notShown(context),
+      );
+    } else {
+      body = _notShown(context);
+    }
+    return ColoredBox(
+      key: const ValueKey('in-app-browser-download'),
+      color: colors.surface,
+      child: body,
+    );
+  }
+
+  Widget _notShown(BuildContext context) {
+    final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final external = browserExternalUri(download.url);
+    final support = HermesType.style(HermesType.support, colors.textSecondary);
+    return Center(
+      key: const ValueKey('in-app-browser-not-shown'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(HermesSpace.x6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              HIcons.insert_drive_file_outlined,
+              size: HermesSpace.x8,
+              color: colors.textSecondary,
+            ),
+            const SizedBox(height: HermesSpace.x3),
+            Text(
+              strings.brwNotShownTitle,
+              textAlign: TextAlign.center,
+              style: HermesType.style(HermesType.title, colors.textPrimary),
+            ),
+            const SizedBox(height: HermesSpace.x2),
+            Text(
+              browserDisplayUrl(download.url),
+              textAlign: TextAlign.center,
+              style: support.copyWith(fontFamily: 'monospace'),
+            ),
+            const SizedBox(height: HermesSpace.x1),
+            Text(
+              strings.brwNotShownBody,
+              textAlign: TextAlign.center,
+              style: support,
+            ),
+            const SizedBox(height: HermesSpace.x4),
+            if (external != null)
+              FilledButton.icon(
+                key: const ValueKey('in-app-browser-download-open-external'),
+                onPressed: () => onOpenExternal(external),
+                icon: const Icon(HIcons.open_in_new_rounded),
+                label: Text(strings.brwOpenExternal),
+              ),
+            const SizedBox(height: HermesSpace.x1),
+            TextButton(
+              key: const ValueKey('in-app-browser-download-retry'),
+              onPressed: onRetry,
+              child: Text(strings.commonRetry),
+            ),
+          ],
         ),
       ),
     );

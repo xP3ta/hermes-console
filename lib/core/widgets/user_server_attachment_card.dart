@@ -2,17 +2,21 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
 import '../services/artifact_viewer_kind.dart';
 import '../services/attachment_uploader.dart';
+import '../services/connection_manager.dart'
+    show DashboardHttpException;
 import '../services/generated_media_service.dart';
 import 'artifact_viewer/artifact_viewer_screen.dart';
 import 'attachment_card.dart';
 import 'attachment_history_preview.dart';
 import 'attachment_preview.dart';
 import 'hermes_notice.dart';
+import 'save_to_device_feedback.dart';
 
 /// One `@image:<path>` / `@file:<path>` directive line that Hermes persists in
 /// a user turn. [path] is the server-side value; it is never rendered, only
@@ -169,6 +173,23 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
     }
   }
 
+  /// A failure another try may not repeat: no answer in time, the network
+  /// down, the server busy or restarting.
+  static bool _isTransient(Object error) =>
+      error is TimeoutException ||
+      error is IOException ||
+      error is http.ClientException ||
+      (error is DashboardHttpException &&
+          (error.statusCode >= 500 ||
+              error.statusCode == 408 ||
+              error.statusCode == 429));
+
+  /// The last try failed, but trying again may work: a tap retries.
+  bool get _mayRetry =>
+      _status == _ServerAttachmentStatus.unavailable &&
+      !_failed.contains(_memoKey) &&
+      widget.serverRef.fetchReference != null;
+
   static void _rememberFailure(String key) {
     _failed.remove(key);
     _failed.add(key);
@@ -280,7 +301,10 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
         debugPrint(
           '[attachment] server copy unavailable (${error.runtimeType})',
         );
-        _rememberFailure(key);
+        // Only an answer that will not change is remembered. A timeout or
+        // a moment offline used to mark the attachment unavailable for the
+        // whole session, with nothing to tap.
+        if (!_isTransient(error)) _rememberFailure(key);
         return null;
       } finally {
         _inFlight.remove(key);
@@ -302,7 +326,10 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
     var file = _file;
     if (file == null) {
       final reference = widget.serverRef.fetchReference;
-      if (reference == null || _status != _ServerAttachmentStatus.idle) return;
+      if (reference == null ||
+          (_status != _ServerAttachmentStatus.idle && !_mayRetry)) {
+        return;
+      }
       final generation = _generation;
       setState(() => _status = _ServerAttachmentStatus.loading);
       file = await _download(generation, reference);
@@ -362,11 +389,22 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
     }
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => AttachmentBytesPreviewScreen(
+        builder: (routeContext) => AttachmentBytesPreviewScreen(
           name: widget.name,
           sizeLabel: widget.sizeLabel,
           reference: reference!,
           file: previewFile,
+          // A document the app cannot draw (docx, zip, a PDF its renderer
+          // rejects) is never a dead end: it can leave by Share or Save.
+          onShare: () => unawaited(shareMediaFile(previewFile)),
+          onSave: () => unawaited(
+            saveFileToDevice(
+              routeContext,
+              previewFile,
+              name: widget.name,
+              source: 'user_attachment',
+            ),
+          ),
         ),
       ),
     );
@@ -393,7 +431,8 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
         file: file,
       );
     }
-    final mayOpen = ready || _status == _ServerAttachmentStatus.idle;
+    final mayOpen =
+        ready || _status == _ServerAttachmentStatus.idle || _mayRetry;
     final card = AttachmentCard(
       name: widget.name,
       mimeType:

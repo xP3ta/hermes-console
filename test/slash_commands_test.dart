@@ -13,6 +13,7 @@ import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/navigation/unsaved_work_guard.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -38,6 +39,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'support/memory_sealed_files.dart';
 import 'support/test_api_client.dart';
 import 'package:hermes_android/core/design/hicons.dart';
+
+import 'support/remove_test_dir.dart';
 
 class _SlashGateway
     implements
@@ -642,6 +645,17 @@ void main() {
   group('slashSuggestionsFor', () {
     test('vacío si no empieza por /', () {
       expect(slashSuggestionsFor('hola', s), isEmpty);
+    });
+
+    test('/steer is offered and parsed with its prompt; /s is its alias '
+        '(hermes_cli/commands.py)', () {
+      expect(slashSuggestionsFor('/ste', s).map((c) => c.name), ['steer']);
+      final parsed = parseSlashCommand('/steer mira  esto\notra línea')!;
+      expect(parsed.command.action, SlashAction.steer);
+      expect(parsed.arg, 'mira  esto\notra línea');
+      expect(parseSlashCommand('/steer')!.arg, isEmpty);
+      expect(parseSlashCommand('/s por aquí')!.command.action,
+          SlashAction.steer);
     });
 
     test('todos los comandos con solo /', () {
@@ -1718,6 +1732,54 @@ void main() {
       expect(gateway.slashCalls, isEmpty);
     });
 
+    // A new chat replaces this chat's route: text not saved in its Files
+    // panel went with it. It is asked about first, and staying keeps this
+    // very chat.
+    testWidgets('/new asks before replacing a chat with unsaved text', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final before = tester.state(find.byType(ChatScreen));
+      final hold = UnsavedWorkGuard.hold(
+        Navigator.of(tester.element(find.byType(ChatScreen))),
+        onDiscarded: () {},
+      );
+      addTearDown(hold.release);
+      final composer = find.byType(TextField).last;
+
+      await tester.enterText(composer, '/new');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text(s.pw1215DiscardTitle), findsOneWidget);
+      await tester.tap(find.byKey(UnsavedWorkGuard.keepKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text(s.pw1215DiscardTitle), findsNothing);
+      expect(
+        identical(tester.state(find.byType(ChatScreen)), before),
+        isTrue,
+        reason: 'the user stayed: the same chat, not a new one',
+      );
+
+      await tester.enterText(find.byType(TextField).last, '/new');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(UnsavedWorkGuard.discardKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(find.byType(ChatScreen), findsOneWidget);
+      expect(
+        identical(tester.state(find.byType(ChatScreen)), before),
+        isFalse,
+        reason: 'discarded: the new chat took the route',
+      );
+      expect(gateway.submissions, isEmpty);
+    });
+
     testWidgets('typed /skills opens the capabilities hub without sending', (
       tester,
     ) async {
@@ -1897,7 +1959,7 @@ void main() {
           () => Directory.systemTemp.createTemp('compress-file-draft-'),
         ))!;
         addTearDown(() async {
-          if (await temp.exists()) await temp.delete(recursive: true);
+          await removeTestDir(temp);
         });
         final file = (await tester.runAsync(() async {
           final value = File('${temp.path}/evidence.txt');
@@ -2427,6 +2489,36 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('💾'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a review.summary is a quiet one-line receipt, said once', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+
+      gateway.emit('review.summary', const {
+        'text':
+            "💾 Self-improvement review: Skill 'html-mockup-iteration' "
+            "patched · Skill 'html-mockup-iteration' patched "
+            '(references/mobile-prototype-verification.md)',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final pill = find.byKey(const ValueKey('review-notice-pill'));
+      expect(pill, findsOneWidget);
+      final label = tester.widget<Text>(
+        find.descendant(of: pill, matching: find.byType(Text)),
+      );
+      expect(label.maxLines, 1);
+      expect(
+        label.data,
+        "Self-improvement review: Skill 'html-mockup-iteration' patched "
+        '(references/mobile-prototype-verification.md)',
+      );
+      expect(tester.getSize(pill).height, 28);
       expect(tester.takeException(), isNull);
     });
   });

@@ -7780,6 +7780,198 @@ void main() {
     });
   }
 
+  // Seen on a foldable: one message sent while the agent
+  // worked was shown as its own bubble and again, several times, under
+  // «Añadido mientras … trabajaba» until the turn ended. Hermes keeps an
+  // accepted correction in `inflight.corrections` for the rest of the turn
+  // AND stores it as a row of the transcript as soon as it reaches the
+  // model (a redirect: a plain user row). Each was painted.
+  group('a correction Hermes already stored is painted once', () {
+    const prompt = 'Dame la lista exacta de reglas WAF';
+    const correction = 'ahora cuando puedas mira esto';
+
+    DesktopSessionSnapshot snapshot({
+      required int progress,
+      int accepted = 1,
+      int stored = 1,
+      bool steerKind = false,
+      bool offsets = false,
+    }) => _snapshot({
+      'session_id': 'runtime-stored-correction',
+      'session_key': 'stored-chat',
+      'messages': [
+        {'role': 'user', 'content': prompt, 'row_id': 10},
+        {'role': 'tool', 'content': 'lookup', 'name': 'terminal', 'row_id': 11},
+        for (var i = 0; i < stored; i++)
+          {
+            'role': 'user',
+            'content': correction,
+            'row_id': 20 + i,
+            if (steerKind) 'display_kind': 'steer',
+          },
+        for (var i = 0; i < progress; i++)
+          {
+            'role': 'tool',
+            'content': 'step $i',
+            'name': 'terminal',
+            'row_id': 40 + i,
+          },
+      ],
+      'running': true,
+      'inflight': {
+        'user': prompt,
+        'assistant': offsets ? 'hola ' * (progress + 1) : '',
+        'streaming': true,
+        'corrections': [for (var i = 0; i < accepted; i++) correction],
+        if (offsets) 'correction_offsets': [for (var i = 0; i < accepted; i++) 5],
+      },
+    });
+
+    Iterable<Map<String, dynamic>> copies(ActiveChat chat) =>
+        chat.internalMessagesForTesting.where(
+          (m) => m['role'] == 'user' && m['content'] == correction,
+        );
+
+    /// What the transcript paints under «Añadido mientras…».
+    Iterable<Map<String, dynamic>> supplements(ActiveChat chat) =>
+        copies(chat).where((m) => m['_steer'] == true);
+
+    for (final offsets in [false, true]) {
+      test('a redirect from the queue: its stored row, nothing under it '
+          '(stream offsets: $offsets)', () async {
+        final gateway = _SnapshotGateway()
+          ..snapshot = snapshot(progress: 0, accepted: 0, stored: 0);
+        final chat = _chat('stored-correction-redirect-$offsets', gateway);
+        addTearDown(chat.dispose);
+        await chat.loadMessages();
+        gateway.onRedirect = () async {
+          gateway.snapshot = snapshot(progress: 0, offsets: offsets);
+        };
+        // The queued turn's own id, as the queue's «steer» sends it.
+        await chat.steer(correction, interrupt: true, clientTurnId: 'q-1');
+        expect(gateway.steerCalls, 1);
+        // The turn goes on for a while: tools, refreshes, a resume.
+        for (var round = 1; round <= 5; round++) {
+          gateway.snapshot = snapshot(progress: round, offsets: offsets);
+          await chat.loadMessages();
+          expect(copies(chat), hasLength(1), reason: 'refresh $round');
+          await chat.reconcileAfterResume();
+          expect(copies(chat), hasLength(1), reason: 'resume $round');
+          expect(supplements(chat), isEmpty, reason: 'round $round');
+        }
+      });
+    }
+
+    test('a normal message the Gateway redirected because the turn was '
+        'busy: one row before it is stored and one after', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = snapshot(progress: 0, accepted: 0, stored: 0);
+      final chat = _chat('stored-correction-busy-submit', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(
+        await chat.send(
+          fullText: correction,
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      expect(copies(chat), hasLength(1));
+      // Accepted into the live turn, not yet a row of the transcript.
+      for (var round = 0; round < 3; round++) {
+        gateway.snapshot = snapshot(progress: round, stored: 0);
+        await chat.loadMessages();
+        await chat.reconcileAfterResume();
+        expect(copies(chat), hasLength(1), reason: 'live round $round');
+      }
+      // Stored: the live entry stays in the snapshot until the turn ends.
+      for (var round = 3; round < 6; round++) {
+        gateway.snapshot = snapshot(progress: round);
+        await chat.loadMessages();
+        await chat.reconcileAfterResume();
+        expect(copies(chat), hasLength(1), reason: 'stored round $round');
+        expect(supplements(chat), isEmpty);
+      }
+    });
+
+    test('a steer stored as its own display_kind=steer row is that one '
+        'row', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = snapshot(progress: 2, steerKind: true);
+      final chat = _chat('stored-correction-steer-kind', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.reconcileAfterResume();
+      expect(copies(chat), hasLength(1));
+      expect(supplements(chat), hasLength(1));
+    });
+
+    test('two real identical corrections stay two: one stored so far, the '
+        'other still live', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = snapshot(progress: 1, accepted: 2, stored: 1);
+      final chat = _chat('stored-correction-two', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.reconcileAfterResume();
+      expect(copies(chat), hasLength(2));
+      expect(supplements(chat), hasLength(1));
+
+      gateway.snapshot = snapshot(progress: 2, accepted: 2, stored: 2);
+      await chat.loadMessages();
+      expect(copies(chat), hasLength(2));
+      expect(supplements(chat), isEmpty);
+    });
+
+    test('the same text as the prompt of an earlier, finished turn hides '
+        'nothing', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-stored-correction',
+          'session_key': 'stored-chat',
+          'messages': [
+            {'role': 'user', 'content': correction, 'row_id': 1},
+            {'role': 'assistant', 'content': 'hecho', 'row_id': 2},
+            {'role': 'user', 'content': prompt, 'row_id': 10},
+            {'role': 'tool', 'content': 'lookup', 'name': 'terminal', 'row_id': 11},
+          ],
+          'running': true,
+          'inflight': {
+            'user': prompt,
+            'assistant': '',
+            'streaming': true,
+            'corrections': [correction],
+          },
+        });
+      final chat = _chat('stored-correction-old-turn', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(copies(chat), hasLength(2));
+      expect(supplements(chat), hasLength(1));
+    });
+
+    test('one send is one row while its correction is only live, across '
+        'refreshes and resumes', () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = snapshot(progress: 0, accepted: 0, stored: 0);
+      final chat = _chat('stored-correction-live-only', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      gateway.onRedirect = () async {
+        gateway.snapshot = snapshot(progress: 0, stored: 0);
+      };
+      await chat.steer(correction, interrupt: true, clientTurnId: 'q-1');
+      for (var round = 1; round <= 5; round++) {
+        gateway.snapshot = snapshot(progress: round, stored: 0);
+        await chat.loadMessages();
+        await chat.reconcileAfterResume();
+        expect(copies(chat), hasLength(1), reason: 'round $round');
+        expect(copies(chat).single['_clientTurnId'], 'q-1');
+      }
+    });
+  });
+
   test(
     'equal real steers keep distinct IDs across inflight and durable refresh',
     () async {

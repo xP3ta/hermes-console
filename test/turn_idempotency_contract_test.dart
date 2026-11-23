@@ -26,6 +26,8 @@ import 'package:hermes_android/core/services/session_config_reducer.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
 
@@ -3007,7 +3009,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'hermes-turn-ownership-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final image = File('${directory.path}/evidence.png');
       await image.writeAsBytes(const [1, 2, 3]);
       const rejection = TuiGatewayRpcError(

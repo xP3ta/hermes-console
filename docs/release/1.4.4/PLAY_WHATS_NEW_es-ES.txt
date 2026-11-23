@@ -1,0 +1,8 @@
+Novedades de la 1.4.4:
+• Memoria: elige y configura el proveedor de memoria de un perfil, como en Hermes Desktop.
+• Los PDF y otros archivos ya no dejan el navegador integrado cargando.
+• Las vistas previas del chat ya no parpadean ni saltan al abrirlo.
+• La fila de perfiles de Conversaciones aparece de una vez.
+• Los mensajes de sala pendientes sobreviven al cierre de la app.
+• El diagnóstico local muestra cuántos datos usó la app.
+• /steer en el compositor guía el turno en curso.

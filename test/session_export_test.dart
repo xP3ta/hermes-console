@@ -15,6 +15,8 @@ import 'package:hermes_android/core/services/session_export_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/test_api_client.dart';
 
 Session _session({
@@ -158,7 +160,7 @@ void main() {
     });
 
     tearDown(() async {
-      if (temp.existsSync()) await temp.delete(recursive: true);
+      await removeTestDir(temp);
     });
 
     SessionExportService service(

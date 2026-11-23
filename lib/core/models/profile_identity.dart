@@ -59,7 +59,63 @@ final class ProfileIdentities extends ChangeNotifier {
     if (!_asked.add(key)) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_asked.contains(key)) return;
+      _cacheFirst(key);
+    });
+  }
+
+  /// Profiles asked about in the same frame whose device copy is being
+  /// read together.
+  final List<(String, String)> _cacheBatch = [];
+
+  /// The device copies of every profile asked about in one frame are read
+  /// TOGETHER and shown with one notification; only then do the server
+  /// reads start, two at a time. Each profile used to read its copy inside
+  /// its network turn, so the last face of a strip waited for the server
+  /// answers of all the others before showing a pet that was already on
+  /// the phone, and the faces filled in one by one.
+  void _cacheFirst((String, String) key) {
+    final cached = cacheReader;
+    if (cached == null || _known.contains(key)) {
       _queue.add(key);
+      _pump();
+      return;
+    }
+    _cacheBatch.add(key);
+    if (_cacheBatch.length > 1) return;
+    scheduleMicrotask(() async {
+      final batch = List.of(_cacheBatch);
+      _cacheBatch.clear();
+      final epochs = {for (final key in batch) key: _epochs[key] ?? 0};
+      final answers = await Future.wait([
+        for (final key in batch)
+          cached(key.$1, key.$2).then<({Companion? pet, bool known})?>(
+            (answer) => (pet: answer.pet, known: answer.known),
+            onError: (Object _) => null,
+          ),
+      ]);
+      var changed = false;
+      for (var i = 0; i < batch.length; i++) {
+        final key = batch[i];
+        final answer = answers[i];
+        if (answer == null ||
+            !answer.known ||
+            (_epochs[key] ?? 0) != epochs[key] ||
+            !_asked.contains(key)) {
+          continue;
+        }
+        changed =
+            changed || !identical(_pets[key], answer.pet) || _known.add(key);
+        _known.add(key);
+        if (answer.pet == null) {
+          _pets.remove(key);
+        } else {
+          _pets[key] = answer.pet!;
+        }
+      }
+      if (changed) notifyListeners();
+      for (final key in batch) {
+        if (_asked.contains(key)) _queue.add(key);
+      }
       _pump();
     });
   }
@@ -73,15 +129,6 @@ final class ProfileIdentities extends ChangeNotifier {
       _loading++;
       unawaited(() async {
         try {
-          final cached = cacheReader;
-          if (cached != null && !_known.contains(key)) {
-            final local = await cached(key.$1, key.$2);
-            if ((_epochs[key] ?? 0) == epoch &&
-                _asked.contains(key) &&
-                local.known) {
-              publish(key.$1, key.$2, local.pet);
-            }
-          }
           final answer = await read(key.$1, key.$2);
           if ((_epochs[key] ?? 0) == epoch &&
               _asked.contains(key) &&
@@ -129,6 +176,7 @@ final class ProfileIdentities extends ChangeNotifier {
   void detach() {
     _asked.clear();
     _queue.clear();
+    _cacheBatch.clear();
     _epochs.clear();
     loader = null;
     cacheReader = null;

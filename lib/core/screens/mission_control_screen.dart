@@ -96,6 +96,7 @@ import '../design/hermes_design.dart'
         HermesOption,
         HermesSelectField,
         showHermesDialog;
+import '../navigation/unsaved_work_guard.dart';
 
 /// Mobile composition surface over Hermes profiles, sessions and native Kanban.
 ///
@@ -201,8 +202,10 @@ class MissionControlScreen extends StatefulWidget {
           state._targetKey == _targetKeyOf(target)) {
         return true;
       }
-      navigator.popUntil((candidate) => identical(candidate, route));
-      state._requestTarget(target);
+      UnsavedWorkGuard.leave(navigator, () {
+        navigator.popUntil((candidate) => identical(candidate, route));
+        state._requestTarget(target);
+      });
       return true;
     }
     return false;
@@ -2128,7 +2131,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
     if (!deleted || !mounted) return;
     // Leave the deleted bot's card.
-    Navigator.of(context).popUntil((route) => route == missionRoute);
+    final navigator = Navigator.of(context);
+    UnsavedWorkGuard.leave(
+      navigator,
+      () => navigator.popUntil((route) => route == missionRoute),
+    );
     await _load(refresh: true);
   }
 
@@ -3534,7 +3541,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       // incluye por defecto (antes no había forma de volver a Inicio desde
       // aquí, bug confirmado en dispositivo real).
       DockItemId.home: DockItemAction(
-        onTap: () => Navigator.of(context).popUntil((r) => r.isFirst),
+        onTap: () => UnsavedWorkGuard.popToFirst(Navigator.of(context)),
       ),
       DockItemId.bots: DockItemAction(
         onTap: () {},

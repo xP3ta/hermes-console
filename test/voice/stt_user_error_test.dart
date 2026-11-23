@@ -7,6 +7,8 @@ import 'package:hermes_android/core/services/voice/voice_client_direct.dart';
 import 'package:hermes_android/core/services/voice/voice_language.dart';
 import 'package:record/record.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// REVIEW-R5-B #12: the voice provider's rejection must reach the user, as
 /// Desktop does (`notifyError(error, …)` with the provider's text), instead
 /// of a generic "Transcription failed".
@@ -70,7 +72,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (dir.existsSync()) await dir.delete(recursive: true);
+    await removeTestDir(dir);
   });
 
   Future<Object?> failureOf(Object thrown) async {

@@ -199,6 +199,68 @@ void main() {
     });
   });
 
+  group('a Compose write whose delivery is not known (A7)', () {
+    SshComposeDraft draft() {
+      final draft = SshComposeDraft(SshComposeUploader(() async => _ControlledSftp()));
+      addTearDown(draft.dispose);
+      return draft;
+    }
+
+    final sentAt = DateTime(2026, 11, 21, 10);
+
+    test('a link found dead by the keep-alive a minute later still gives '
+        'the text back', () {
+      final compose = draft()..markQueuedSend('deploy now', at: sentAt);
+      // Nothing came from the server; the watchdog needs ~75 s.
+      expect(
+        compose.recoverUncertainSend(
+          now: sentAt.add(const Duration(seconds: 75)),
+        ),
+        isTrue,
+      );
+      expect(compose.text.text, 'deploy now');
+      expect(compose.deliveryUncertain.value, isTrue);
+    });
+
+    test('a write the server answered after is not in doubt', () {
+      final compose = draft()
+        ..markQueuedSend('ls', at: sentAt)
+        ..noteRemoteOutput();
+      expect(
+        compose.recoverUncertainSend(
+          now: sentAt.add(const Duration(seconds: 2)),
+        ),
+        isFalse,
+      );
+      expect(compose.text.text, isEmpty);
+      expect(compose.deliveryUncertain.value, isFalse);
+    });
+
+    test('a drop long after the write says nothing', () {
+      final compose = draft()..markQueuedSend('ls', at: sentAt);
+      expect(
+        compose.recoverUncertainSend(
+          now: sentAt.add(const Duration(minutes: 5)),
+        ),
+        isFalse,
+      );
+      expect(compose.deliveryUncertain.value, isFalse);
+    });
+
+    test('text typed since is never overwritten', () {
+      final compose = draft()..markQueuedSend('first', at: sentAt);
+      compose.text.text = 'second';
+      expect(
+        compose.recoverUncertainSend(
+          now: sentAt.add(const Duration(seconds: 30)),
+        ),
+        isTrue,
+      );
+      expect(compose.text.text, 'second');
+      expect(compose.deliveryUncertain.value, isTrue);
+    });
+  });
+
   group('SFTP symlink safety, verified removal, and unsent cleanup', () {
     test('pre-existing symlink never receives setStat and uses private fallback', () async {
       final sftp = _ControlledSftp()

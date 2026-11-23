@@ -12,6 +12,8 @@ import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 
+import 'support/remove_test_dir.dart';
+
 class _Captured {
   final String method;
   final Uri url;
@@ -293,7 +295,7 @@ void main() {
     'uploads with multipart /api/files/upload-stream, never overwriting',
     () async {
       final temp = await Directory.systemTemp.createTemp('pw1215-upload-');
-      addTearDown(() => temp.delete(recursive: true));
+      addTearDown(() => removeTestDir(temp));
       final local = File('${temp.path}/photo.jpg')..writeAsBytesSync([1, 2, 3]);
       final h = _client(
         (_) => (200, {'ok': true, 'path': '/srv/repo/photo.jpg'}),

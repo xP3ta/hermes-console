@@ -204,11 +204,49 @@ void main() {
     expect(telegram.envVars[2].isAdvanced, isTrue);
   });
 
-  test('the default profile is named on every call too', () async {
+  test('a picked default profile is named; no selection travels unnamed, so '
+      'a Dashboard serving a named profile keeps its own credentials', () async {
     server.routes['GET /api/messaging/platforms'] = (200, _platformsJson());
-    await real(() => client.load('default'));
+    server.routes['PUT /api/messaging/platforms/telegram'] = (
+      200,
+      {'ok': true, 'platform': 'telegram', 'hot_served': false},
+    );
+    final telegram = (await real(() => client.load('default'))).first;
     await real(() => client.load(''));
-    expect(server.seen.map((r) => r.query['profile']), ['default', 'default']);
+    await real(
+      () => client.update(
+        'telegram',
+        messagingChanges(telegram, {'TELEGRAM_PROXY': 'socks5://p.test:1'}),
+        '',
+      ),
+    );
+    expect(server.seen.map((r) => r.query.containsKey('profile')), [
+      true,
+      false,
+      false,
+    ]);
+    expect(server.seen.first.query['profile'], 'default');
+  });
+
+  test('typing the shown mask back is not an edit: it is never sent as the '
+      'credential', () async {
+    server.routes['GET /api/messaging/platforms'] = (200, _platformsJson());
+    final telegram = (await real(() => client.load('research'))).first;
+    for (final typed in [
+      '1234…wxyz',
+      '«redacted:1234…wxyz»',
+      '••••••••',
+      ' 1234…wxyz ',
+    ]) {
+      final update = messagingChanges(telegram, {'TELEGRAM_BOT_TOKEN': typed});
+      expect(update.env, isEmpty, reason: typed);
+      expect(update.hasChanges, isFalse, reason: typed);
+    }
+    // A real new value still goes out.
+    expect(
+      messagingChanges(telegram, {'TELEGRAM_BOT_TOKEN': 'new-value'}).env,
+      {'TELEGRAM_BOT_TOKEN': 'new-value'},
+    );
   });
 
   test('saving sends only what was typed: never a saved secret, never its '
@@ -530,6 +568,26 @@ void main() {
       ]);
       expect(await real(() => client.awaitGatewayRestart('research')), isFalse);
       expect(server.seen, hasLength(2));
+    });
+
+    test('one early answer and then refusals until the window closes is a '
+        'gateway that did not come back', () async {
+      server.restartReads.addAll([
+        {'running': true, 'exit_code': null},
+        ...List.filled(17, null),
+      ]);
+      expect(await real(() => client.awaitGatewayRestart('research')), isFalse);
+      expect(slept, hasLength(MessagingPlatformsClient.restartPollAttempts));
+    });
+
+    test('refusals in the middle of the window are expected when it answers '
+        'again before the end', () async {
+      server.restartReads.addAll([
+        {'running': true, 'exit_code': null},
+        ...List.filled(10, null),
+        ...List.filled(7, {'running': true, 'exit_code': null}),
+      ]);
+      expect(await real(() => client.awaitGatewayRestart('research')), isTrue);
     });
 
     test('a window in which no read was answered is a failure, and one '

@@ -6,6 +6,8 @@ import 'package:hermes_android/core/services/voice/stt_hermes_server.dart';
 import 'package:record/record.dart';
 import 'package:whisper_ggml_plus/whisper_ggml_plus.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// Spec 048 / US5 — runtime STT contra /api/audio/transcribe
 /// (contracts/native-voice.md): el clip WAV local viaja como data_url base64
 /// y el transcript del servidor vuelve como final; errores limpios.
@@ -37,7 +39,7 @@ void main() {
 
   Future<String> clip(List<int> bytes) async {
     final dir = await Directory.systemTemp.createTemp('hermes-stt');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final file = File('${dir.path}/turno.wav');
     await file.writeAsBytes(bytes);
     return file.path;

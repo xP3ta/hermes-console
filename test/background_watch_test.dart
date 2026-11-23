@@ -12,6 +12,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:hermes_android/core/services/notifications/background_listener.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 
+import 'support/remove_test_dir.dart';
+
 KanbanTask _kanbanTask(String id, String status) =>
     KanbanTask(id: id, title: 'Task $id', body: '', status: status);
 
@@ -69,7 +71,7 @@ void main() {
     'watch transaction serializes overlapping isolate/process owners',
     () async {
       final dir = await Directory.systemTemp.createTemp('hermes-watch-mutex-');
-      addTearDown(() => dir.delete(recursive: true));
+      addTearDown(() => removeTestDir(dir));
       final databasePath = '${dir.path}/watch-mutex.db';
       final first = BackgroundWatchTransactionMutex(
         databasePath,
@@ -110,7 +112,7 @@ void main() {
 
   test('watch transaction recovers when an owner connection dies', () async {
     final dir = await Directory.systemTemp.createTemp('hermes-watch-death-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final databasePath = '${dir.path}/watch-mutex.db';
     final abandonedOwner = await databaseFactoryFfi.openDatabase(
       databasePath,
@@ -145,7 +147,7 @@ void main() {
 
   test('watch transaction rolls back a failed owner before hand-off', () async {
     final dir = await Directory.systemTemp.createTemp('hermes-watch-rollback-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final databasePath = '${dir.path}/watch-mutex.db';
     final first = BackgroundWatchTransactionMutex(
       databasePath,

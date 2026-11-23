@@ -302,6 +302,11 @@ class NotificationDeliveryStore {
   static const schemaVersionNumber = 3;
   static const busyTimeoutMilliseconds = 2000;
   static const transactionRetryWindow = Duration(seconds: 3);
+
+  /// How long a writer keeps retrying while another engine holds the
+  /// database. A test that makes many writers contend on a loaded host
+  /// raises it; the app keeps [transactionRetryWindow].
+  static Duration debugTransactionRetryWindow = transactionRetryWindow;
   static const transactionRetryBackoff = Duration(milliseconds: 10);
 
   /// Closed routing vocabulary: presentation text has no place here.
@@ -687,7 +692,7 @@ CREATE TABLE IF NOT EXISTS cron_notice_event (
       } on sqflite.DatabaseException catch (error) {
         final primaryCode = (error.getResultCode() ?? -1) & 0xff;
         final locked = primaryCode == 5 || primaryCode == 6;
-        if (!locked || stopwatch.elapsed >= transactionRetryWindow) {
+        if (!locked || stopwatch.elapsed >= debugTransactionRetryWindow) {
           rethrow;
         }
         await Future<void>.delayed(transactionRetryBackoff);

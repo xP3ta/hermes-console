@@ -14,6 +14,8 @@ import 'package:hermes_android/core/services/profile_pet_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 Companion _pet(
   String slug, {
   CompanionOrigin origin = CompanionOrigin.base,
@@ -307,7 +309,7 @@ class _Harness {
   }) async {
     root = await Directory.systemTemp.createTemp('profile_pet_scope_test');
     addTearDown(() async {
-      if (await root.exists()) await root.delete(recursive: true);
+      await removeTestDir(root);
     });
     repository = repositoryBuilder?.call(root) ?? _FakeRepo(pets, root: root);
     final prefs = await CompanionPreferences.load();

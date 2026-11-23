@@ -3,13 +3,15 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/voice/device_memory_profile.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// Spec 048 / US4 — perfil de memoria del dispositivo
 /// (contracts/model-residency.md): lectura de /proc/meminfo inyectable,
 /// umbral conservador de 7,5 GiB y cero excepciones ante datos corruptos.
 void main() {
   Future<File> meminfo(String content) async {
     final dir = await Directory.systemTemp.createTemp('hermes-meminfo');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final file = File('${dir.path}/meminfo');
     await file.writeAsString(content);
     return file;

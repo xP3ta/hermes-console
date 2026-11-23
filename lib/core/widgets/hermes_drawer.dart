@@ -42,6 +42,7 @@ import 'owned_resource_host.dart';
 import 'profile_switcher.dart';
 import '../feedback/feedback_policy.dart';
 import 'seasonal_mark.dart';
+import '../navigation/unsaved_work_guard.dart';
 
 /// Top-level app sections reachable from [HermesDrawer].
 enum DrawerSection {
@@ -172,6 +173,16 @@ class HermesDrawer extends StatelessWidget {
     DrawerSection section,
     Widget Function() builder,
   ) {
+    final leaving = Navigator.of(context, rootNavigator: true);
+    if (section != current &&
+        current != DrawerSection.home &&
+        UnsavedWorkGuard.affects(leaving)) {
+      // Asked once; then this runs again with nothing left to ask.
+      UnsavedWorkGuard.confirm(leaving).then((discard) {
+        if (discard && context.mounted) _go(context, section, builder);
+      });
+      return;
+    }
     Navigator.pop(context); // close drawer
     if (section == current) return;
     // The root navigator, not the nearest one: inside a tablet detail pane the
@@ -185,6 +196,13 @@ class HermesDrawer extends StatelessWidget {
   }
 
   void _goHome(BuildContext context) {
+    final leaving = Navigator.of(context, rootNavigator: true);
+    if (current != DrawerSection.home && UnsavedWorkGuard.affects(leaving)) {
+      UnsavedWorkGuard.confirm(leaving).then((discard) {
+        if (discard && context.mounted) _goHome(context);
+      });
+      return;
+    }
     Navigator.pop(context);
     if (current == DrawerSection.home) return;
     Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
@@ -256,6 +274,10 @@ class HermesDrawer extends StatelessWidget {
         connManager.activeConnectionId.value ?? connection?.id ?? '';
     if (selectedId == activeId) return;
     if (!connManager.getConnections().any((saved) => saved.id == selectedId)) {
+      return;
+    }
+    if (UnsavedWorkGuard.affects(navigator) &&
+        !await UnsavedWorkGuard.confirm(navigator)) {
       return;
     }
 

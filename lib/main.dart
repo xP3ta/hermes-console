@@ -30,6 +30,8 @@ import 'core/services/bot_roster_store.dart';
 import 'core/characters/bot_motion.dart';
 import 'core/characters/character_library.dart';
 import 'core/services/release_log.dart';
+import 'core/services/local_transcript_store.dart';
+import 'core/widgets/workspace/profile_rail_chats.dart';
 import 'core/services/message_reaction_prefs.dart';
 import 'core/services/pinned_prompt_prefs.dart';
 import 'core/services/release_logging.dart';
@@ -122,6 +124,7 @@ import 'core/services/screen_security.dart';
 import 'core/services/session_archive.dart';
 import 'core/services/sftp_transfer_service.dart';
 import 'core/services/ssh_dashboard_tunnel.dart';
+import 'core/services/traffic_counter.dart';
 import 'core/services/ssh_manager.dart';
 import 'core/services/ssh_tunnel_connector.dart';
 import 'core/services/ssh_session_service.dart';
@@ -165,6 +168,7 @@ import 'l10n/app_localizations.dart';
 import 'core/feedback/feedback_policy.dart';
 import 'core/feedback/haptics.dart';
 import 'core/services/drawer_swipe_prefs.dart';
+import 'core/navigation/unsaved_work_guard.dart';
 
 /// Observador global de rutas. Lo usa [ChatScreen] (vía RouteAware) para saber
 /// cuándo su pantalla es la visible en pila y fijar/limpiar
@@ -310,7 +314,10 @@ MissionControlOpenTarget? missionControlTargetForSession(Session session) {
 Future<T?> pushNotificationOwnerRoute<T>(
   NavigatorState navigator,
   Route<T> route,
-) => navigator.pushAndRemoveUntil(route, (candidate) => candidate.isFirst);
+) => UnsavedWorkGuard.leaveWith<T>(
+  navigator,
+  () => navigator.pushAndRemoveUntil(route, (candidate) => candidate.isFirst),
+);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -383,6 +390,7 @@ Future<Widget> bootstrapHermesApp() async {
       // cs1215: the connection's cached tails and remembered route go too.
       await (coldStartOwner?.forgetColdStartConnection(connectionId) ??
           coldStartStore.forgetScope(connectionId).catchError((_) {}));
+      await ProfileRailChats.forgetConnection(connectionId);
       if (firstError != null) {
         Error.throwWithStackTrace(firstError, firstStack!);
       }
@@ -1760,6 +1768,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _syncBackgroundCronConnections,
     );
     unawaited(BackgroundListener.setUiForeground(true));
+    final lifecycleNow = WidgetsBinding.instance.lifecycleState;
+    TrafficCounter.instance
+      ..attach(widget.connManager.prefs)
+      ..foreground =
+          lifecycleNow == null || lifecycleNow == AppLifecycleState.resumed;
     BackgroundListener.restoreIfEnabled(widget.connManager.prefs);
     voice.prepareReadAloudPlayback = _prepareReadAloudPlayback;
     voice.readAloud.addListener(_onReadAloudRuntimeChanged);
@@ -1976,6 +1989,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     }
     // Solo molestamos con notificaciones cuando la app no está en primer plano.
     widget.notifications.appInForeground = state == AppLifecycleState.resumed;
+    TrafficCounter.instance.foreground = state == AppLifecycleState.resumed;
     unawaited(
       BackgroundListener.setUiForeground(state == AppLifecycleState.resumed),
     );
@@ -2558,7 +2572,22 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _openCatalogLinks();
     unawaited(_openVoiceOwnerChatIfReady());
     unawaited(_startupDestinationRun = _openConfiguredStartupDestination());
+    // Well after the launch work: older transcripts still in secure storage
+    // move to their sealed files without waiting for their chats to open.
+    _legacyTranscriptSweep = Timer(const Duration(seconds: 45), () {
+      unawaited(
+        LocalTranscriptStore.migrateLegacyEntries(
+          mayContinue: () =>
+              mounted &&
+              !widget.appLock.locked.value &&
+              WidgetsBinding.instance.lifecycleState ==
+                  AppLifecycleState.resumed,
+        ),
+      );
+    });
   }
+
+  Timer? _legacyTranscriptSweep;
 
   Future<void>? _startupDestinationRun;
 
@@ -2957,6 +2986,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (navigator == null || !navigator.mounted) {
       throw StateError('root navigator unavailable');
     }
+    if (UnsavedWorkGuard.affects(navigator) &&
+        !await UnsavedWorkGuard.confirm(navigator)) {
+      return;
+    }
     _appNavigationFence.begin(navigator, intent: 'widget:open-app');
     navigator.popUntil((route) => route.isFirst);
     await WidgetsBinding.instance.endOfFrame;
@@ -2969,7 +3002,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     }
     _appNavigationFence.begin(navigator, intent: 'widget:open-setup');
     if (_showOnboarding) {
-      navigator.popUntil((route) => route.isFirst);
+      UnsavedWorkGuard.popToFirst(navigator);
     } else {
       unawaited(
         navigator.push<void>(
@@ -3171,7 +3204,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                 initialLink: link,
                 onDone: () {
                   unawaited(_finishOnboarding());
-                  nav.popUntil((r) => r.isFirst);
+                  UnsavedWorkGuard.popToFirst(nav);
                 },
               )
             : InstanceEditScreen(
@@ -3380,6 +3413,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _legacyTranscriptSweep?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_networkAvailabilityListener?.dispose());
     widget.appLock.locked.removeListener(_releaseHomeOnUnlock);

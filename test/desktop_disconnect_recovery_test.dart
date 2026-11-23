@@ -38,6 +38,8 @@ import 'package:hermes_android/core/services/turn_keepalive_hold.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
 import 'support/qrc_fake_gateway_socket.dart';
@@ -2951,7 +2953,7 @@ void main() {
     });
     final prefs = await SharedPreferences.getInstance();
     final dir = await Directory.systemTemp.createTemp('dp-f-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final sink = _DpLiveSink();
     final notifications = NotificationService(prefs)
       ..setRichForTesting(
@@ -2994,7 +2996,12 @@ void main() {
           ),
         ],
       );
-    await _waitUntil(() => chat.isStreaming && sink.live.isNotEmpty);
+    // The first row waits for a face rendered off the event loop: on a loaded
+    // host that takes longer than the two seconds the other waits allow.
+    await _waitUntil(
+      () => chat.isStreaming && sink.live.isNotEmpty,
+      timeout: const Duration(seconds: 10),
+    );
 
     expect(await service.settleLiveTurnRowsFromRoster(), 0);
     expect(sink.cancelled, isEmpty);

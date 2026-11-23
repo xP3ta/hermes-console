@@ -162,6 +162,69 @@ class LocalTranscriptStore {
         : null;
   }
 
+  /// Set once a full pass of [migrateLegacyEntries] has ended.
+  static const legacySweepDoneKey = 'hermes.transcript.legacy_sweep_v1';
+
+  static Future<int>? _legacySweep;
+
+  /// Moves every transcript an older version left in secure storage into
+  /// its sealed file, one at a time, without waiting for each chat to be
+  /// opened again.
+  ///
+  /// Until 1.4.4 an entry was only moved when its chat was read, so the
+  /// transcripts (up to 2 MB each) of chats nobody reopened stayed in
+  /// secure storage for good, where every whole-store read still loads
+  /// them. Only the NAMES are listed here; each value is read on its own,
+  /// through the same path a chat uses ([_readSealed]), which proves the
+  /// file before deleting the entry. A pass that is interrupted starts
+  /// again on the next launch; one that ends is not repeated.
+  ///
+  /// [mayContinue] is asked before every entry (App Lock, the app leaving
+  /// the foreground): false stops the pass without marking it done.
+  /// Returns how many entries were moved.
+  static Future<int> migrateLegacyEntries({
+    Duration pause = const Duration(seconds: 2),
+    bool Function()? mayContinue,
+  }) => _legacySweep ??= _migrateLegacyEntries(pause, mayContinue)
+      .whenComplete(() => _legacySweep = null);
+
+  static Future<int> _migrateLegacyEntries(
+    Duration pause,
+    bool Function()? mayContinue,
+  ) async {
+    var moved = 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(legacySweepDoneKey) == true) return 0;
+      final pending = [
+        for (final key in await SecureStorage.listKeys(_storage))
+          if (_parseKey(key) != null) key,
+      ];
+      for (final key in pending) {
+        if (mayContinue != null && !mayContinue()) return moved;
+        final identity = _parseKey(key)!;
+        final name = _name(
+          identity.connectionId,
+          identity.sessionId,
+          profile: identity.profile,
+        );
+        // Behind this chat's own saves and deletes, as a read of it is.
+        await _serialize(key, () => _readSealed(name));
+        if (pause > Duration.zero) await Future<void>.delayed(pause);
+      }
+      if (pending.isNotEmpty) {
+        final left = (await SecureStorage.listKeys(_storage)).toSet();
+        moved = pending.where((key) => !left.contains(key)).length;
+      }
+      await prefs.setBool(legacySweepDoneKey, true);
+    } catch (error) {
+      // Nothing is lost: the entries are where they were, and the next
+      // launch tries again.
+      debugPrint('[transcript-store] legacy sweep stopped (${error.runtimeType})');
+    }
+    return moved;
+  }
+
   /// Guarda el transcript a partir de la lista viva del chat ([ActiveChat]
   /// usa index 0 = más nuevo). Filtra placeholders del pipeline, errores y
   /// turnos vacíos: solo user/assistant con contenido o reasoning durable. Si

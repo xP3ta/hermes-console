@@ -17,6 +17,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../support/remove_test_dir.dart';
+
 const es = NotifL10n(true);
 const en = NotifL10n(false);
 const open = NotificationOpen(connId: 'conn-a', sessionId: 'sess-1');
@@ -248,7 +250,7 @@ void main() {
       await service.closeDelivery();
       messenger.setMockMethodCallHandler(plugin, null);
       debugDefaultTargetPlatformOverride = null;
-      if (dir.existsSync()) await dir.delete(recursive: true);
+      await removeTestDir(dir);
     });
 
     Future<void> approval({String? command = 'rm -rf build/'}) =>

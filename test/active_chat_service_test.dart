@@ -38,6 +38,8 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/chat_error.dart';
 import 'package:hermes_android/core/utils/chat_turn.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/desktop_chat_socket.dart';
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/test_api_client.dart';
@@ -2148,7 +2150,7 @@ void main() {
             final directory = await Directory.systemTemp.createTemp(
               'lost-ack-',
             );
-            addTearDown(() => directory.delete(recursive: true));
+            addTearDown(() => removeTestDir(directory));
             final attachment = await _privateTestAttachment(
               directory,
               localId: 'pasted',
@@ -2255,7 +2257,7 @@ void main() {
           final directory = await Directory.systemTemp.createTemp(
             'parked-ack-',
           );
-          addTearDown(() => directory.delete(recursive: true));
+          addTearDown(() => removeTestDir(directory));
           final attachment = await _privateTestAttachment(
             directory,
             localId: 'pasted_content',
@@ -2507,7 +2509,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-retry-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-retry',
@@ -2555,7 +2557,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'hermes-attachment-runtime-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final attachment = await _privateTestAttachment(
         directory,
         localId: 'attachment-runtime',
@@ -2603,7 +2605,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-remove-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-remove',
@@ -2642,7 +2644,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'hermes-attachment-detach-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final attachment = await _privateTestAttachment(
         directory,
         localId: 'attachment-image',
@@ -2682,7 +2684,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-detach-after-attach-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final first = await _privateTestAttachment(
           directory,
           localId: 'attachment-image-first',
@@ -2740,7 +2742,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-persist-failure-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-persist-failure',
@@ -2798,7 +2800,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-order-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-order',
@@ -2841,7 +2843,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'hermes-attachment-reuse-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final attachment = await _privateTestAttachment(
           directory,
           localId: 'attachment-reuse',
@@ -4454,6 +4456,67 @@ void main() {
         service.dispose();
       },
     );
+
+    for (final fails in [false, true]) {
+      test('the newest-page read of a finished turn is announced while it is '
+          'on the wire and settles without an error (fails=$fails)', () async {
+        var messageReads = 0;
+        final firstReadStarted = Completer<void>();
+        final releaseFirstRead = Completer<void>();
+        final socket = DesktopChatSocket();
+        final service = ActiveChatService(
+          compressionRestoreStore: testCompressionRestoreStore(),
+        );
+        addTearDown(socket.close);
+        final chat = service.attach(
+          connection: _conn(id: 'conn-terminal-announced-$fails'),
+          sessionId: 'sess-1',
+          sessionTitle: 'Lectura terminal',
+          api: _socketApi(),
+          desktopGateway: socket,
+          storedMessageLoader: (_, _) async {
+            messageReads++;
+            if (messageReads == 1) {
+              firstReadStarted.complete();
+              await releaseFirstRead.future;
+              if (fails) throw const SocketException('transcript not ready');
+            }
+            return const [
+              {'role': 'user', 'content': 'consulta'},
+              {'role': 'assistant', 'content': 'Respuesta persistida'},
+            ];
+          },
+        );
+        final firstDone = chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.done,
+        );
+        expect(chat.terminalTranscriptRead, isNull);
+
+        await chat.send(
+          fullText: 'consulta',
+          model: 'hermes-agent',
+          history: const [],
+        );
+        socket.token(1, 'Respuesta por streaming');
+        socket.complete(1, 'Respuesta por streaming');
+        await firstDone.timeout(const Duration(seconds: 3));
+        await firstReadStarted.future;
+        final pending = chat.terminalTranscriptRead;
+        expect(pending, isNotNull);
+        var settled = false;
+        unawaited(pending!.then((_) => settled = true));
+        await Future<void>.delayed(Duration.zero);
+        expect(settled, isFalse);
+
+        releaseFirstRead.complete();
+        await pending.timeout(const Duration(seconds: 3));
+        await Future<void>.delayed(Duration.zero);
+        expect(settled, isTrue);
+        expect(chat.terminalTranscriptRead, isNull);
+        await _waitFor(() => chat.assistantContent == 'Respuesta persistida');
+        service.dispose();
+      });
+    }
   });
 
   group('ActiveChat — política de aprobaciones (YOLO se aplica en el chat)', () {

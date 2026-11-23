@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../../models/attachment_draft.dart';
@@ -169,7 +171,7 @@ Future<Map<String, dynamic>> pooledRoomPromptRequest(
 
 /// Room drafts in the encrypted `ChatDraftStore`, same key as before
 /// (`mob-room-<base64(authority, room)>`) so existing drafts survive.
-final class ChatDraftRoomStore implements RoomDraftStore {
+final class ChatDraftRoomStore implements RoomDraftStore, RoomOutboxStore {
   final ChatDraftStore store;
   final String connectionId;
   final String profile;
@@ -193,6 +195,7 @@ final class ChatDraftRoomStore implements RoomDraftStore {
       preparedId: draft.preparedTurnClientTurnId,
       preparedText: draft.preparedTurnText,
       files: draft.attachments,
+      missingFiles: draft.missingAttachmentNames,
     );
   }
 
@@ -228,4 +231,127 @@ final class ChatDraftRoomStore implements RoomDraftStore {
   @override
   Future<void> retire(List<AttachmentDraft> files) =>
       store.retireAttachments(files);
+
+  // ── The room's durable outbox ────────────────────────────────────────
+  //
+  // One encrypted record per queued message, next to the composer's own
+  // (`<room>.q.<send id>`), and one more that lists their ids in order
+  // (`<room>.q`). The composer's record is a single slot that the next
+  // save replaces, so a queued message never lives only there. Every key
+  // starts with `mob-room-`: none of them is listed as a conversation.
+
+  String get _queueIndexId => '$sessionId.q';
+  String _queueEntryId(String id) => '$sessionId.q.$id';
+
+  /// Index updates of one room, one after another, across store objects.
+  static final Map<String, Future<void>> _queueTails = {};
+
+  Future<T> _queueSerial<T>(Future<T> Function() action) {
+    final scope = '$connectionId\u0000$profile\u0000$sessionId';
+    final previous = _queueTails[scope] ?? Future<void>.value();
+    final result = previous.then((_) => action());
+    final tail = result.then<void>((_) {}, onError: (Object _) {});
+    _queueTails[scope] = tail;
+    unawaited(
+      tail.whenComplete(() {
+        if (identical(_queueTails[scope], tail)) _queueTails.remove(scope);
+      }),
+    );
+    return result;
+  }
+
+  Future<List<String>> _queueIds() async {
+    final index = await store.load(
+      connectionId,
+      _queueIndexId,
+      profile: profile,
+    );
+    if (index.text.isEmpty) return [];
+    try {
+      return [
+        for (final id in jsonDecode(index.text) as List)
+          if (id is String && id.isNotEmpty) id,
+      ];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _writeQueueIds(List<String> ids) async {
+    if (ids.isEmpty) {
+      await store.clear(connectionId, _queueIndexId, profile: profile);
+      return;
+    }
+    final saved = await store.save(
+      connectionId,
+      _queueIndexId,
+      jsonEncode(ids),
+      const [],
+      profile: profile,
+    );
+    if (!saved) throw const SensitiveReadUnavailable();
+  }
+
+  @override
+  Future<void> enqueue(
+    String id,
+    String text, {
+    required String threadId,
+    List<AttachmentDraft> files = const [],
+  }) => _queueSerial(() async {
+    // The message first, its index entry second: an entry never names a
+    // message that was not written.
+    final saved = await store.save(
+      connectionId,
+      _queueEntryId(id),
+      text,
+      files,
+      profile: profile,
+      replyThreadId: threadId,
+    );
+    if (!saved) throw const SensitiveReadUnavailable();
+    final ids = await _queueIds();
+    if (!ids.contains(id)) await _writeQueueIds([...ids, id]);
+  });
+
+  @override
+  Future<List<RoomQueuedSend>> queued() => _queueSerial(() async {
+    final ticket = store.captureDisclosure();
+    final ids = await _queueIds();
+    final entries = <RoomQueuedSend>[];
+    final live = <String>[];
+    for (final id in ids) {
+      final draft = await store.load(
+        connectionId,
+        _queueEntryId(id),
+        profile: profile,
+      );
+      ticket.ensureCurrent();
+      final thread = draft.replyThreadId;
+      if (thread == null ||
+          (draft.text.isEmpty &&
+              draft.attachments.isEmpty &&
+              draft.missingAttachmentNames.isEmpty)) {
+        // Expired or never written: nothing left to deliver.
+        continue;
+      }
+      live.add(id);
+      entries.add((
+        id: id,
+        text: draft.text,
+        threadId: thread,
+        files: draft.attachments,
+        missingFiles: draft.missingAttachmentNames,
+      ));
+    }
+    if (live.length != ids.length) await _writeQueueIds(live);
+    return entries;
+  });
+
+  @override
+  Future<void> dequeue(String id) => _queueSerial(() async {
+    await store.clear(connectionId, _queueEntryId(id), profile: profile);
+    final ids = await _queueIds();
+    if (ids.remove(id)) await _writeQueueIds(ids);
+  });
 }

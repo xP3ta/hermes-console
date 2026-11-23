@@ -278,6 +278,10 @@ class DiagnosticBundleInput {
   /// Local secure-storage failures ([SecureStorageDiagnostics]).
   final List<SecureStorageFailure> secureStorage;
 
+  /// [TrafficCounter.report]: how much the app talked to its server, as
+  /// counts and route shapes. Null leaves the section out.
+  final Map<String, dynamic>? traffic;
+
   const DiagnosticBundleInput({
     required this.appVersion,
     required this.buildNumber,
@@ -289,6 +293,7 @@ class DiagnosticBundleInput {
     this.caches = const {},
     this.recentErrors = const [],
     this.secureStorage = const [],
+    this.traffic,
   });
 }
 
@@ -325,8 +330,9 @@ class DiagnosticBundleService {
     final connections = input.connections.take(64).toList(growable: false);
     Map<String, dynamic> json;
     String preview;
+    var traffic = input.traffic;
     do {
-      json = _buildJson(input, connections, errors);
+      json = _buildJson(input, connections, errors, traffic);
       preview = jsonEncode(json);
       if (utf8.encode(preview).length <= maxBytes) break;
       if (errors.isNotEmpty) {
@@ -335,6 +341,14 @@ class DiagnosticBundleService {
         // más recientes y un JSON completo (nunca bytes truncados).
         final removeCount = max(1, errors.length ~/ 2);
         errors.removeRange(errors.length - removeCount, errors.length);
+        continue;
+      }
+      if (traffic != null) {
+        // The per-hour lines go first, then the whole section: the report
+        // is always complete JSON under the limit.
+        traffic = traffic.containsKey('hourly')
+            ? (Map<String, dynamic>.of(traffic)..remove('hourly'))
+            : null;
         continue;
       }
       throw const FormatException('Diagnostic bundle exceeds size limit');
@@ -346,6 +360,7 @@ class DiagnosticBundleService {
     DiagnosticBundleInput input,
     List<DiagnosticConnectionSnapshot> connections,
     List<DiagnosticErrorEvent> errors,
+    Map<String, dynamic>? traffic,
   ) => {
     'schemaVersion': schemaVersion,
     'generatedAt': _now().toUtc().toIso8601String(),
@@ -366,6 +381,7 @@ class DiagnosticBundleService {
     },
     'recentErrors': errors.map((item) => item.toJson()).toList(),
     'secureStorage': _secureStorageJson(input.secureStorage),
+    'traffic': ?traffic,
   };
 
   /// Most recent first: operation, error type, how often and when.

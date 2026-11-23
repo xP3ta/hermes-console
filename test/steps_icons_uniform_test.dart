@@ -15,6 +15,7 @@ import 'package:hermes_android/core/theme/hermes_tokens.dart';
 import 'package:hermes_android/core/widgets/chat/chat_live_icon.dart';
 import 'package:hermes_android/core/widgets/chat/live_motion.dart';
 import 'package:hermes_android/core/widgets/chat/turn_activity_pill.dart';
+import 'package:hermes_android/core/widgets/chat/turn_receipt_pill.dart';
 import 'package:hermes_android/core/widgets/chat/turn_step_cards.dart';
 import 'package:hermes_android/core/widgets/chat/tool_steps_summary.dart';
 import 'package:hermes_android/core/widgets/subagent_work_pill.dart';
@@ -216,8 +217,9 @@ void main() {
           ),
         ),
       );
-      // A settled turn uses the glass capsule with its success check;
-      // a failed turn keeps the outline error glyph.
+      // A settled turn is a quiet receipt row with a check in the row's own
+      // ink (the owner, 22 nov: as discreet as «Memory updated»); a failed
+      // turn keeps the outline error glyph in the error colour.
       if (failed) {
         final icon = tester.widget<ChatLiveIcon>(find.byType(ChatLiveIcon));
         expect(icon.glyph, ChatLiveGlyph.error);
@@ -226,14 +228,18 @@ void main() {
         expect(find.byType(ChatLiveIcon), findsNothing);
         expect(find.byKey(const ValueKey('live-ring-check')), findsNothing);
         final check = tester.widget<Icon>(find.byIcon(HIcons.done_rounded));
-        expect(check.color, _colors.success);
+        final ink = TurnReceiptPill.inkOf(
+          tester.element(find.byType(TurnInlineActivity)),
+        );
+        expect(check.color, ink);
+        expect(check.color, isNot(_colors.error));
         final line = tester.widget<Text>(
           find.byKey(const ValueKey('chat-inline-activity-text')),
         );
-        expect(line.style?.color, _colors.textPrimary);
+        expect(line.style?.color, ink);
         expect(
           tester.getSize(find.byType(TurnInlineActivity)).height,
-          greaterThanOrEqualTo(HermesSpace.tap),
+          TurnReceiptPill.height,
         );
       }
     }

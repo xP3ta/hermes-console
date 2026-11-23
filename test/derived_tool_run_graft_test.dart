@@ -837,6 +837,35 @@ void main() {
       timeout: t3,
     );
 
+    test(
+      'the tool results of a finished turn stay folded in its row whichever read published last',
+      () async {
+        // The changes chip and the diff cards of a settled turn are read
+        // from this evidence. A publication that dropped it and a later
+        // one that brought it back made them come and go on every open.
+        final rows = [
+          ..._padTurns(1, 1000, 2, 'Q', 'A'),
+          _user(10, 'QT', 2000),
+          _caller(11, 'cT', 2001),
+          _tool(12, 'cT', 2002),
+          _answer(13, 'AT', 2005),
+        ];
+        final server = _Server(_history(rows), _rest(rows));
+        final chat = await _opened(server);
+        bool folded() => chat.internalMessagesForTesting.any((m) {
+          final evidence = m[assistantToolResultEvidenceKey];
+          return evidence is List &&
+              evidence.any((r) => r is Map && r['tool_call_id'] == 'cT');
+        });
+        expect(folded(), isTrue, reason: 'after the open');
+        await _reconcile('s', chat, server);
+        expect(folded(), isTrue, reason: 'after the resume');
+        await _passive('s', chat, server);
+        expect(folded(), isTrue, reason: 'after the passive read');
+      },
+      timeout: t3,
+    );
+
     test('a tool row without a call id does not hold the view', () async {
       final g1 = _g1(callId: null);
       final server = _Server(_history(g1), _rest(g1));

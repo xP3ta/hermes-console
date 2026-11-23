@@ -23,6 +23,7 @@ import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/memory_draft_store.dart';
 import '../services/memory_entries_repository.dart';
+import '../services/memory_settings_api.dart';
 import '../design/hermes_design.dart' as d show HermesListRow;
 import '../design/hermes_design.dart'
     show
@@ -45,6 +46,7 @@ import '../theme/app_theme.dart';
 import '../theme/hermes_tokens.dart';
 import '../utils/api_error.dart';
 import '../widgets/hermes_pill.dart';
+import '../widgets/memory_provider_settings.dart';
 import 'constellation_screen.dart';
 import 'memory_draft_screen.dart';
 import 'memory_entries_screen.dart';
@@ -228,6 +230,32 @@ class _MemoryScreenState extends State<MemoryScreen>
         _dependencyFailure = classifyDashboardDependencyFailure(e);
         _loading = false;
       });
+    }
+  }
+
+  /// The profile a settings call names, as Hermes Desktop's settings do
+  /// (`store/settings-scope.ts`): the one in scope; `default` only when
+  /// the user picked the default profile themselves; and no name at all
+  /// while nothing was picked, which the server resolves to the profile it
+  /// was launched for. Naming `default` there would reach the installation
+  /// root even on a Dashboard that serves a named profile.
+  String get _settingsProfile {
+    final scoped = _profile.trim();
+    if (scoped.isNotEmpty) return scoped;
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    return app?.connManager.credentialProfileFor(widget.connection.id) ?? '';
+  }
+
+  /// The status again, without the loader: what is on screen (a form being
+  /// filled, a choice just made) stays where it is.
+  Future<void> _reloadStatus() async {
+    final ticket = profileReadTicket();
+    try {
+      final info = await _client.getMemoryInfo(profile: ticket.name);
+      if (!mounted || !ticket.isCurrent) return;
+      setState(() => _info = info);
+    } catch (_) {
+      // The last status stays; the refresh button reads it again.
     }
   }
 
@@ -559,9 +587,21 @@ class _MemoryScreenState extends State<MemoryScreen>
             const SizedBox(height: 16),
           ],
 
-          // Only show active section when not filtering (it's always visible)
+          // Which provider is active, which one is selected, and the
+          // provider's own settings (Hermes Desktop parity). Not while
+          // filtering: the filter is over providers and files.
           if (_filter.isEmpty) ...[
-            _buildActiveSection(info, colors),
+            MemoryProviderSettings(
+              // A profile's settings never carry over to another's.
+              key: ValueKey('memory-settings-$_settingsProfile'),
+              api: MemorySettingsApi(_client, profile: _settingsProfile),
+              status: info,
+              onStatusChanged: _reloadStatus,
+              profileLabel: _settingsProfile.isEmpty
+                  ? (_profile.isEmpty ? 'default' : _profile)
+                  : _settingsProfile,
+              readOnly: widget.connection.readOnly,
+            ),
             const SizedBox(height: 16),
           ],
           if (filteredFiles.isNotEmpty) ...[
@@ -584,73 +624,6 @@ class _MemoryScreenState extends State<MemoryScreen>
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildActiveSection(MemoryInfo info, HermesThemeColors colors) {
-    final active = info.activeProvider;
-    return Card(
-      color: colors.surfaceVariant.withValues(alpha: 0.35),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(HermesRadius.control),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(HermesSpace.x4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(HIcons.psychology, size: 18, color: colors.accent),
-                const SizedBox(width: 8),
-                Text(
-                  Strings.of(context).memActiveProviderLabel,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.textSecondary,
-                    letterSpacing: 0.6,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: colors.success,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  info.active.isEmpty
-                      ? Strings.of(context).memNoneValue
-                      : info.active,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: colors.textPrimary,
-                  ),
-                ),
-              ],
-            ),
-            if (active != null && active.description.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                active.description,
-                style: TextStyle(
-                  fontSize: HermesType.valueSize,
-                  color: colors.textSecondary,
-                ),
-              ),
-            ],
-          ],
-        ),
       ),
     );
   }

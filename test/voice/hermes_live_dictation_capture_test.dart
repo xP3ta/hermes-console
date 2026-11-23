@@ -11,6 +11,8 @@ import 'package:hermes_android/core/services/voice/stt_engine.dart';
 import 'package:hermes_android/core/services/voice/stt_hermes_server.dart';
 import 'package:record/record.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// Live dictation over the recording, copied from Desktop
 /// `use-voice-recorder.ts:118-238`: the live final when there is one, the
 /// recording exactly as before otherwise. Fake recorder and sockets only.
@@ -146,7 +148,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (dir.existsSync()) await dir.delete(recursive: true);
+    await removeTestDir(dir);
   });
 
   HermesServerSttRuntime runtime({bool liveOffered = true}) =>

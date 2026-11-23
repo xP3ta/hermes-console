@@ -220,6 +220,36 @@ void main() {
     }
   });
 
+  test('a bot token or a drive-relative path is never shown as a skill '
+      'name', () {
+    // Shaped like a Telegram bot token (numeric id, colon, 35-character
+    // key) and assembled here so that no scanner reads it as a real one.
+    final botToken = '${'1234567' '89'}:${'AA'}${'x1Y2' * 8}q';
+    expect(botToken.length, lessThanOrEqualTo(48));
+    for (final name in [
+      botToken,
+      'bot:$botToken',
+      'C:customer/config.yaml',
+      'C:notes',
+      'omh:${'aB3' * 8}',
+      '12345:web-research',
+    ]) {
+      expect(activityToolDetail('skill_view', {'name': name}), isNull);
+      expect(sanitizeActivityDetail('skill_view', name), isNull);
+      expect(sanitizeActivityDetail('skill_view', '$name → api.md'), isNull);
+      for (final kind in ['tool', 'skill']) {
+        expect(
+          ActivityStep.fromTrace({
+            'kind': kind,
+            'label': 'skill_view',
+            'detail': name,
+          })?.detail,
+          isNull,
+        );
+      }
+    }
+  });
+
   test('skill details reject relative paths deeper than category/name', () {
     for (final name in ['a/b/c', 'home/user/x', 'home/xpeta/proyecto']) {
       expect(activityToolDetail('skill_view', {'name': name}), isNull);

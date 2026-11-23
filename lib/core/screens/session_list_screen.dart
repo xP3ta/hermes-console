@@ -100,6 +100,15 @@ import '../feedback/feedback_policy.dart';
 
 const sessionLibraryRefreshGap = Duration(seconds: 10);
 
+/// The least time between two activity reads (`session.active_list` and the
+/// per-row process snapshots) started by `sessions.changed`. The first event
+/// reads at once, so a row that finished goes to rest without waiting for a
+/// poll; the events of a burst after it share ONE more read when the gap
+/// ends, which carries the final state. 1.4.3 read on every event: a busy
+/// agent emits many a second, each one a round trip and a snapshot per
+/// working row (#226).
+const sessionActivityRefreshGap = Duration(seconds: 1);
+
 /// Roster refreshes driven by events of runtimes the aggregate does not route
 /// are coalesced to one per 30 s, like Desktop's event-driven `active_list`.
 const sessionLibraryActivityRefreshGap = Duration(seconds: 30);
@@ -641,7 +650,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     _sessionSafetyTimer = Timer.periodic(sessionLibrarySafetyRefreshInterval, (
       _,
     ) {
-      if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
+      if (_libraryRefreshAllowed) {
+        unawaited(_fetchSessions(showLoader: false, joinInFlight: true));
+      }
     });
   }
 
@@ -705,7 +716,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     setState(() {});
     if (ok) {
       // Rows already on screen stay while the read lands (Desktop's way).
-      unawaited(_fetchSessions(showLoader: false));
+      unawaited(_fetchSessions(showLoader: false, joinInFlight: true));
       unawaited(_refreshRemoteActivity());
     } else {
       await _showLocalDrafts();
@@ -807,6 +818,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _moveLease = null;
     _retryTimer?.cancel();
     _searchTimer?.cancel();
+    _activityEventGate?.cancel();
     _eventRefreshTimer?.cancel();
     _activityRefreshTimer?.cancel();
     _activityPollTimer?.cancel();
@@ -925,7 +937,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       _remoteActivityDirty = true;
       return;
     }
-    unawaited(_refreshRemoteActivity());
+    _refreshActivityFromEvent();
     final now = DateTime.now();
     final last = _lastEventRefreshAt;
     final elapsed = last == null
@@ -949,6 +961,37 @@ class _SessionListScreenState extends State<SessionListScreen>
       unawaited(_refreshFromSessionEvent());
     });
   }
+
+  Timer? _activityEventGate;
+  bool _activityEventOwed = false;
+
+  /// One activity read now, and at most one more per
+  /// [sessionActivityRefreshGap] while events keep coming.
+  void _refreshActivityFromEvent() {
+    if (_activityEventGate != null) {
+      _activityEventOwed = true;
+      return;
+    }
+    unawaited(_refreshRemoteActivity());
+    _activityEventGate = Timer(sessionActivityRefreshGap, _onActivityEventGate);
+  }
+
+  void _onActivityEventGate() {
+    _activityEventGate = null;
+    if (!_activityEventOwed) return;
+    _activityEventOwed = false;
+    if (!mounted) return;
+    if (!_foreground || !_listVisible) {
+      _remoteActivityDirty = true;
+      return;
+    }
+    unawaited(_refreshRemoteActivity());
+    _activityEventGate = Timer(sessionActivityRefreshGap, _onActivityEventGate);
+  }
+
+  /// Rows whose process snapshot is on the wire: a second activity read
+  /// that lands meanwhile does not ask for the same row again.
+  final Set<String> _processSnapshotsInFlight = <String>{};
 
   /// False while another route covers the list (a chat pushed over it keeps
   /// the list mounted). Without a route (tests, embedding) it counts visible.
@@ -1181,6 +1224,11 @@ class _SessionListScreenState extends State<SessionListScreen>
     required GlobalActivityScope scope,
   }) async {
     final rosterBusy = rosterStatusIsBusy(rosterStatus);
+    // These reads are not awaited by the activity read that starts them, so
+    // its single-flight does not cover them: without this, a second read
+    // landing meanwhile launched a second batch for the same rows.
+    final flight = '${scope.durableSessionId}\u0000${scope.runtimeSessionId}';
+    if (!_processSnapshotsInFlight.add(flight)) return;
     try {
       final snapshot = await loadSnapshot(scope.runtimeSessionId);
       if (!mounted || !snapshot.processesFullyParsed) {
@@ -1243,6 +1291,8 @@ class _SessionListScreenState extends State<SessionListScreen>
       // Optional/legacy process.list cannot erase the last proven state.
       if (!rosterBusy) return;
       aggregate.markTransportStale(scope.connectionId, scope.profile);
+    } finally {
+      _processSnapshotsInFlight.remove(flight);
     }
   }
 
@@ -1697,13 +1747,24 @@ class _SessionListScreenState extends State<SessionListScreen>
       !_showArchived &&
       Session.profileOwner(_profileScope.name) == _coldListOwner;
 
-  Future<bool> _fetchSessions({bool showLoader = true}) => _underListRead(
-    (listRead) => _fetchSessionsRead(listRead, showLoader: showLoader),
+  /// [joinInFlight]: the caller has no news of its own, so a read of this
+  /// same list already on the wire answers it too (see
+  /// [SessionRepository.refresh]). Ignored while a change event is owed.
+  Future<bool> _fetchSessions({
+    bool showLoader = true,
+    bool joinInFlight = false,
+  }) => _underListRead(
+    (listRead) => _fetchSessionsRead(
+      listRead,
+      showLoader: showLoader,
+      joinInFlight: joinInFlight,
+    ),
   );
 
   Future<bool> _fetchSessionsRead(
     SessionListRead listRead, {
     bool showLoader = true,
+    bool joinInFlight = false,
   }) async {
     // Puede invocarse desde un closure del drawer después de que la pantalla se
     // haya desmontado (HermesDrawer._go) → setState() after dispose(). Guard.
@@ -1728,7 +1789,11 @@ class _SessionListScreenState extends State<SessionListScreen>
       final repository = _repository;
       final SessionLibrarySnapshot? library = repository == null
           ? null
-          : await repository.refresh(scope, keepIds: _sessionKeepIds);
+          : await repository.refresh(
+              scope,
+              keepIds: _sessionKeepIds,
+              joinInFlight: joinInFlight && invalidationEpoch == null,
+            );
       final rawRemoteSessions =
           library?.sessions ??
           await _client.getSessions(profile: scope.profile);
@@ -3538,17 +3603,74 @@ class _SessionListScreenState extends State<SessionListScreen>
     BotRosterStore roster,
     Map<String, List<Session>> byOwner,
   ) {
-    final owners = byOwner.keys.toList()
-      ..sort(
-        (a, b) => byOwner[b]!.first.lastActivityAt.compareTo(
-          byOwner[a]!.first.lastActivityAt,
-        ),
-      );
+    // A profile whose page has not been read yet in this run keeps the
+    // place its last known newest chat gives it ([ProfileRailChats.hint]):
+    // the strip does not start in the roster's order and jump when the
+    // sweep lands.
+    final scope = _railScope;
+    final newest = <String, double>{
+      for (final MapEntry(key: owner, value: chats) in byOwner.entries)
+        owner: chats.first.lastActivityAt,
+    };
     for (final profile in roster.profiles) {
       final owner = _profileOwner(profile);
-      if (!byOwner.containsKey(owner)) owners.add(owner);
+      if (newest.containsKey(owner)) continue;
+      if (_railChats.page(scope, owner) != null) continue;
+      final hint = _railChats.hint(scope, owner);
+      if (hint != null && hint.count > 0) newest[owner] = hint.newestAt;
+    }
+    final owners = newest.keys.toList()
+      ..sort((a, b) => newest[b]!.compareTo(newest[a]!));
+    for (final profile in roster.profiles) {
+      final owner = _profileOwner(profile);
+      if (!newest.containsKey(owner)) owners.add(owner);
     }
     return owners;
+  }
+
+  /// What the strip shows for [owner]: the chats the rail lists for it, or,
+  /// until its page is read in this run, what it showed last time.
+  ({int count, bool more}) _stripCount(
+    ({Map<String, List<Session>> byOwner, Map<String, bool> more}) chats,
+    String owner,
+  ) {
+    final listed = chats.byOwner[owner];
+    if (listed != null) {
+      return (count: listed.length, more: chats.more[owner] ?? false);
+    }
+    final scope = _railScope;
+    if (_railChats.page(scope, owner) == null) {
+      final hint = _railChats.hint(scope, owner);
+      if (hint != null) return (count: hint.count, more: hint.more);
+    }
+    return (count: 0, more: chats.more[owner] ?? false);
+  }
+
+  /// Keeps, for the next launch, what the strip shows for every profile
+  /// whose chats are known in this run.
+  void _rememberStripCounts(
+    BotRosterStore roster,
+    ({Map<String, List<Session>> byOwner, Map<String, bool> more}) chats,
+  ) {
+    final scope = _railScope;
+    final active = Session.profileOwner(_profileScope.name);
+    final shown = <String, ProfileRailHint>{};
+    for (final profile in roster.profiles) {
+      final owner = _profileOwner(profile);
+      final known = owner == active
+          ? !_loading
+          : _railChats.page(scope, owner) != null;
+      if (!known) continue;
+      final listed = chats.byOwner[owner];
+      shown[owner] = ProfileRailHint(
+        count: listed?.length ?? 0,
+        more: chats.more[owner] ?? false,
+        newestAt: listed == null || listed.isEmpty
+            ? 0
+            : listed.first.lastActivityAt,
+      );
+    }
+    _railChats.rememberHints(scope, shown);
   }
 
   /// The rail's agents: those with chats in the list, newest chat first,
@@ -3983,6 +4105,9 @@ class _SessionListScreenState extends State<SessionListScreen>
                   if (byOwner[owner] != null) byOwner[owner]!,
               ];
         if (counted) _scheduleRailRead(roster);
+        if (counts != null && !_railChats.sweeping) {
+          _rememberStripCounts(roster, counts);
+        }
         return Padding(
           padding: const EdgeInsets.only(bottom: HermesSpace.x2),
           child: Semantics(
@@ -3997,12 +4122,17 @@ class _SessionListScreenState extends State<SessionListScreen>
                 children: [
                   for (final profile in ordered)
                     _BotFilterChip(
+                      // The chip follows its profile when the order changes:
+                      // its face is not rebuilt from nothing.
+                      key: ValueKey('bot-chip-${_profileOwner(profile)}'),
                       profile: profile,
                       label: profileDisplayLabel(s, profile),
                       count: counts == null
                           ? null
-                          : counts.byOwner[_profileOwner(profile)]?.length ?? 0,
-                      more: counts?.more[_profileOwner(profile)] ?? false,
+                          : _stripCount(counts, _profileOwner(profile)).count,
+                      more: counts == null
+                          ? false
+                          : _stripCount(counts, _profileOwner(profile)).more,
                       cache: faces,
                       selected: _profileOwner(profile) == _profileScope.owner,
                       onTap: () => unawaited(
@@ -4234,6 +4364,7 @@ class _BotFilterChip extends StatelessWidget {
     required this.onTap,
     this.count,
     this.more = false,
+    super.key,
   });
 
   /// The face of the strip, a touch smaller than a row's tap target.
@@ -4294,18 +4425,19 @@ class _BotFilterChip extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (count == null || count == 0)
-                  face
-                else
-                  // The badge stays within the face's height (the name
+                // Always the same tree around the face: a count arriving
+                // (0 → 3) used to swap `face` for `Stack(face, badge)`,
+                // which rebuilt the face from nothing and it blinked.
+                // The badge stays within the face's height (the name
                   // sits 2 px under it) and leans out of the face's corner
                   // by 10 dp: no wider than the face and the chip's padding
                   // (a «10+» in large text over a short name's chip shrinks
                   // rather than cover the next face).
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      face,
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    face,
+                    if (count != null && count > 0)
                       Positioned(
                         // On the face's top corner and leaning out of it:
                         // the face and the name under it stay whole.

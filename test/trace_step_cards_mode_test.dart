@@ -71,6 +71,26 @@ Finder _line(String id) => find.byKey(ValueKey('turn-line-$id'));
 Finder _label() => find.byKey(const ValueKey('turn-line-label'));
 
 void main() {
+  test('a turn with a failed step ends «with errors», not «retried»', () {
+    // The agent may or may not have retried: the words only say what is known.
+    final en = lookupStrings(const Locale('en'));
+    final es = lookupStrings(const Locale('es'));
+    expect(en.q9TurnOutcomeRecovered, 'Completed with errors');
+    expect(es.q9TurnOutcomeRecovered, 'Completado con errores');
+    for (final text in [
+      en.q9TurnOutcomeRecovered,
+      en.cevTraceRecovered,
+      es.q9TurnOutcomeRecovered,
+      es.cevTraceRecovered,
+    ]) {
+      expect(text.toLowerCase(), isNot(contains('retr')));
+      expect(text.toLowerCase(), isNot(contains('reint')));
+    }
+    for (final locale in Strings.supportedLocales) {
+      expect(lookupStrings(locale).q9TurnOutcomeRecovered, isNotEmpty);
+    }
+  });
+
   setUp(StepsBarMemory.reset);
 
   testWidgets(
@@ -265,7 +285,7 @@ void main() {
     expect(
       find.descendant(
         of: _card('outcome'),
-        matching: find.text('Completado tras reintentar'),
+        matching: find.text('Completado con errores'),
       ),
       findsOneWidget,
     );
@@ -300,26 +320,26 @@ void main() {
         _host(_turn([_tool('a', status: 'failed'), _tool('b')], active: false)),
       );
       expect(
-        find.bySemanticsLabel('Completado tras reintentar'),
+        find.bySemanticsLabel('Completado con errores'),
         findsOneWidget,
       );
-      expect(find.semantics.byLabel('Completado tras reintentar'), findsOne);
+      expect(find.semantics.byLabel('Completado con errores'), findsOne);
       await tester.pumpWidget(_host(_turn([_tool('a')], active: false)));
       expect(_card('outcome'), findsOneWidget);
       expect(
-        find.bySemanticsLabel('Completado tras reintentar'),
+        find.bySemanticsLabel('Completado con errores'),
         findsOneWidget,
         reason: 'the departing widget still owns its cached semantics data',
       );
       expect(
-        find.semantics.byLabel('Completado tras reintentar'),
+        find.semantics.byLabel('Completado con errores'),
         findsNothing,
         reason: 'the connected accessibility tree excludes the old outcome',
       );
       await tester.pump(HermesMotion.base);
       await tester.pump();
       expect(_card('outcome'), findsNothing);
-      expect(find.bySemanticsLabel('Completado tras reintentar'), findsNothing);
+      expect(find.bySemanticsLabel('Completado con errores'), findsNothing);
       expect(_line('a'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {

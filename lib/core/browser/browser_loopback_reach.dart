@@ -1334,6 +1334,7 @@ class _StreamHeadSplitter {
 
     final completer = Completer<Uint8List?>();
     _headCompleter = completer;
+    if (_sub.isPaused) _sub.resume();
     return completer.future.timeout(timeout);
   }
 
@@ -1344,8 +1345,13 @@ class _StreamHeadSplitter {
       _buffer.clear();
       sink(leftover);
     }
+    if (_sub.isPaused) _sub.resume();
     if (_done) _onDone();
   }
+
+  /// Body bytes kept while nobody reads them (the SSH channel still
+  /// opening) before the sender is held back.
+  static const int _heldBodyBytes = 64 * 1024;
 
   void cancel() {
     _done = true;
@@ -1364,6 +1370,16 @@ class _StreamHeadSplitter {
       return;
     }
     _buffer.addAll(chunk);
+    final waiting = _headCompleter;
+    if (waiting == null || waiting.isCompleted) {
+      // The head was already read and its body has nowhere to go yet (the
+      // SSH channel is still opening). These bytes are the BODY: they are
+      // kept as they came. Looking for the next «\r\n\r\n» in them took a
+      // multipart upload's own blank lines for a head and threw away what
+      // came before, and a body past the head limit ended the request.
+      if (_buffer.length >= _heldBodyBytes && !_sub.isPaused) _sub.pause();
+      return;
+    }
     final head = _tryTakeHead();
     if (head != null) {
       final pending = _headCompleter;

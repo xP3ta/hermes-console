@@ -18,6 +18,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../support/remove_test_dir.dart';
+
 Future<ui.Image> _decode(List<int> png) async {
   final codec = await ui.instantiateImageCodec(Uint8List.fromList(png));
   return (await codec.getNextFrame()).image;
@@ -39,6 +41,15 @@ Future<Color> _pixel(List<int> png, double fx, double fy) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // These tests check which face is drawn, not the three seconds a
+  // notification waits for it: on a loaded host a face takes longer.
+  setUp(
+    () => BotFaceBitmapCache.debugRenderTimeout = const Duration(minutes: 2),
+  );
+  tearDown(
+    () => BotFaceBitmapCache.debugRenderTimeout =
+        BotFaceBitmapCache.defaultRenderTimeout,
+  );
 
   group('shared identity resolver (a → b → c)', () {
     test('a) a configured photo avatar wins', () {
@@ -205,7 +216,7 @@ void main() {
       'botFacePath passes the avatar image only for avatar identities',
       () async {
         final dir = await Directory.systemTemp.createTemp('ident');
-        addTearDown(() => dir.delete(recursive: true));
+        addTearDown(() => removeTestDir(dir));
         final faces = BotFaceBitmapCache(directory: () async => dir);
         var imageCalls = 0;
         final photo = Uint8List.fromList(
@@ -305,7 +316,7 @@ void main() {
       tearDown(() async {
         messenger.setMockMethodCallHandler(channel, null);
         debugDefaultTargetPlatformOverride = null;
-        await dir.delete(recursive: true);
+        await removeTestDir(dir);
       });
 
       Future<(NotificationService, _Sink)> service() async {

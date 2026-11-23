@@ -15,6 +15,7 @@ import '../models/agent_profile.dart';
 import '../models/kanban.dart';
 import '../models/kanban_orchestration.dart';
 import 'connection_manager.dart';
+import 'traffic_counter.dart';
 
 const int kKanbanAttachmentMaxBytes = 25 * 1024 * 1024;
 const List<String> kKanbanReasoningEfforts = <String>[
@@ -782,8 +783,12 @@ class KanbanClient {
     // pantalla nunca se entera. Con ping, el onDone llega y se reconecta solo.
     ws.pingInterval = const Duration(seconds: 30);
     onOpen?.call();
+    // Counted as a connection, not as a reconnection: the board decides
+    // when to open it again and the counter cannot tell the two apart.
+    TrafficCounter.instance.socketOpened(again: false);
     try {
       await for (final msg in ws) {
+        TrafficCounter.instance.socketReceived(msg);
         if (msg is! String) continue;
         final decoded = jsonDecode(msg);
         if (decoded is! Map<String, dynamic>) continue;

@@ -23,6 +23,7 @@ enum SlashAction {
   btw,
   background,
   branch,
+  steer,
   remote,
   unavailable,
 }
@@ -289,6 +290,15 @@ List<SlashCommand> slashCommands(
     action: SlashAction.find,
     takesArg: true,
   ),
+  // `/steer <prompt>` (hermes_cli/commands.py `steer`): guidance for the
+  // turn in flight, delivered after its next tool call.
+  SlashCommand(
+    name: 'steer',
+    argHint: s.slashSteerArg,
+    description: s.slashSteerDesc,
+    action: SlashAction.steer,
+    takesArg: true,
+  ),
   if (sideAgents) ...[
     SlashCommand(
       name: 'btw',
@@ -411,6 +421,9 @@ ParsedSlash? parseSlashCommand(String text) {
     'bg': SlashAction.background,
     'background': SlashAction.background,
     'branch': SlashAction.branch,
+    'steer': SlashAction.steer,
+    // Its alias in Hermes (commands.py: aliases=("s",)).
+    's': SlashAction.steer,
   };
   final action = nameToAction[name];
   if (action != null) {

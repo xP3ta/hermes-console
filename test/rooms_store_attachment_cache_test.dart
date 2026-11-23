@@ -15,6 +15,8 @@ import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/services/generated_media_service.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'bots/room/room_fixtures.dart';
 
 const _attId = 'att_0123456789abcdef0123456789abcdef';
@@ -71,7 +73,7 @@ void main() {
   tearDown(() async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(preview, null);
-    await root.delete(recursive: true);
+    await removeTestDir(root);
   });
 
   StoreRoomAttachmentActions actions(List<Uint8List> answers) =>

@@ -257,6 +257,19 @@ class SharedGatewayPool {
     }
   }
 
+  /// Retires the shared socket of [connection] after its saved endpoint or
+  /// credentials changed (the pool key is the id, which an edit keeps): the
+  /// next [acquire] dials the connection as it is now. Whoever still rides
+  /// the old socket keeps it until they let go; it then closes at once.
+  void retire(SavedConnection connection) {
+    final key = _keyFor(connection);
+    final entry = _entries.remove(key);
+    if (entry == null) return;
+    entry.linger?.cancel();
+    entry.linger = null;
+    if (entry.refs <= 0) unawaited(entry.client.close());
+  }
+
   /// Retires every chat socket after a credential change (Dashboard secret
   /// or auth mode, which the pool key cannot see). A retired socket serves
   /// no new chat: the next [acquireChat] dials with the new credentials.

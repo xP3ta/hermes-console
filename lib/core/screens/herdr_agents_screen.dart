@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../browser/ssh_terminal_link.dart';
 import '../config/feature_flags.dart';
 import '../design/hermes_design.dart'
     show
@@ -159,6 +160,10 @@ class _HerdrAgentsScreenState extends State<HerdrAgentsScreen> {
   bool _configured = false;
   bool _loadFailed = false;
 
+  /// The profile's SSH settings as last read, for links tapped in the
+  /// terminal this screen opens.
+  SshConfig? _sshConfig;
+
   /// The App Lock check was refused: a tab cannot pop itself like the
   /// terminal's route, so it says so and offers to ask again.
   bool _denied = false;
@@ -188,6 +193,7 @@ class _HerdrAgentsScreenState extends State<HerdrAgentsScreen> {
       return;
     }
     if (!mounted) return;
+    _sshConfig = config;
     if (config == null) {
       setState(() {
         _loading = false;
@@ -334,6 +340,14 @@ class _HerdrAgentsScreenState extends State<HerdrAgentsScreen> {
         builder: (_) => SshTerminalScreen(
           connection: widget.connection,
           initialCommand: line,
+          // The same hook as the profile's own terminal: a `localhost`
+          // link is the server's, reached over this profile's SSH.
+          onOpenLink: (uri) => openSshTerminalLink(
+            context,
+            connectionId: widget.connection.id,
+            uri: uri,
+            config: () => _sshConfig,
+          ),
         ),
       ),
     );

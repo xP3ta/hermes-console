@@ -490,6 +490,37 @@ void main() {
     },
   );
 
+  test(
+    'going back to the shell lasts for the connection: a reconnect opens '
+    'the profile\'s program again',
+    () async {
+      final ssh = _FakeSshManager(kind: SshSessionKind.herdr);
+      final service = SshSessionService(ssh);
+      final root = await service.connect('c1', onHostKey: (_) async => true);
+      final client = ssh.clients.single;
+      expect(client.attachments, hasLength(1));
+
+      service.showPlainShell(root);
+      expect(root.visibleTerminal, same(root));
+      expect(root.kind, SshSessionKind.shell);
+
+      client.shellSession.end();
+      await _settle();
+      final reconnected = await service.connect(
+        'c1',
+        onHostKey: (_) async => true,
+      );
+      await _settle();
+      expect(reconnected.kind, SshSessionKind.herdr);
+      expect(ssh.clients.last.attachments, hasLength(1));
+      expect(
+        reconnected.visibleTerminal,
+        isNot(same(reconnected)),
+        reason: 'the profile opens with Herdr; Back did not change that',
+      );
+    },
+  );
+
   test('one-shot ctrl turns the next key into a control character', () async {
     final ssh = _FakeSshManager(kind: SshSessionKind.shell);
     final service = SshSessionService(ssh);

@@ -1295,9 +1295,10 @@ TextStyle turnStepTimeStyle(HermesThemeColors colors) =>
       fontFeatures: const [FontFeature.tabularFigures()],
     );
 
-/// One row of the pill's opened list, in the live turn's own look: each
-/// step its own small outlined pill ([LiveTurnRowPill], the closed window's)
-/// hanging from the connector down the side ([LiveTurnBranch]). A run of
+/// One row of the summary's opened list: each step a plain line (its icon,
+/// its words, its time and its state mark; [LiveTurnRowPill.plain], with
+/// nothing drawn around it) hanging from the connector down the side
+/// ([LiveTurnBranch]), as if it grew out of it. A run of
 /// consecutive calls of one kind is ONE pill, «Skill cargada ×5», with what
 /// they acted on, their time together and the state ring of the run; a tap
 /// shows its calls as pills of their own one level in, on a connector of
@@ -1408,6 +1409,7 @@ class _FeedBranch extends StatelessWidget {
                 row: row,
                 showTime: true,
                 open: open,
+                plain: true,
               ),
             ),
           ),
@@ -1517,6 +1519,7 @@ class _FeedCall extends StatelessWidget {
                 showTime: true,
                 open: openable ? open : null,
                 quiet: quiet,
+                plain: true,
                 progress: entry.running ? entry.progress : null,
                 markKey: ValueKey('turn-step-mark-${entry.id}'),
               ),

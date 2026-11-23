@@ -208,6 +208,11 @@ class BotFaceBitmapCache {
   final Future<Directory> Function() _directory;
   final Map<String, Future<String?>> _inFlight = {};
 
+  /// How long a notification waits for a face before it goes out without
+  /// one. A test that checks the drawing itself, on a loaded host, raises it.
+  static Duration debugRenderTimeout = defaultRenderTimeout;
+  static const defaultRenderTimeout = Duration(seconds: 3);
+
   static Future<Directory> _defaultDirectory() async {
     final base = await getApplicationSupportDirectory();
     return Directory('${base.path}/bot_faces');
@@ -270,7 +275,7 @@ class BotFaceBitmapCache {
       imageDigest: imageDigest,
     );
     return _inFlight[key] ??= _render(key, id, state, size, frame, plate, photo)
-        .timeout(const Duration(seconds: 3), onTimeout: () => null)
+        .timeout(debugRenderTimeout, onTimeout: () => null)
         .catchError((Object _) => null)
         .whenComplete(() {
           // Block body: returning the removed Future would make
@@ -381,7 +386,7 @@ class BotFaceBitmapCache {
               await _write(dir, file, bytes);
               return file.path;
             }()
-            .timeout(const Duration(seconds: 3), onTimeout: () => null)
+            .timeout(debugRenderTimeout, onTimeout: () => null)
             .catchError((Object _) => null)
             .whenComplete(() {
               _inFlight.remove(key);
@@ -642,7 +647,7 @@ class BotFaceBitmapCache {
               await _write(dir, file, bytes);
               return file.path;
             }()
-            .timeout(const Duration(seconds: 3), onTimeout: () => null)
+            .timeout(debugRenderTimeout, onTimeout: () => null)
             .catchError((Object _) => null)
             .whenComplete(() {
               _inFlight.remove(key);

@@ -284,6 +284,88 @@ void main() {
   );
 
   testWidgets(
+    'a burst of sessions.changed costs two activity reads, the second with '
+    'the final state, and one process snapshot per working row at a time',
+    (tester) async {
+      final aggregate = GlobalActivityAggregate.inMemory(
+        now: () => tester.binding.clock.now(),
+      );
+      addTearDown(aggregate.dispose);
+      final events = StreamController<TuiGatewayEvent>.broadcast();
+      addTearDown(events.close);
+      final probe = _RosterProbe();
+      final snapshots = <String>[];
+      final held = <Completer<AgentCenterSnapshot>>[];
+
+      await _mountList(
+        tester,
+        aggregate: aggregate,
+        events: events,
+        probe: probe,
+        // Slow snapshots: they are still on the wire when the next read ends.
+        agentCenterSnapshotLoader: (runtime) {
+          snapshots.add(runtime);
+          final answer = Completer<AgentCenterSnapshot>();
+          held.add(answer);
+          return answer.future;
+        },
+      );
+      // Let the reads of mounting settle and count from here.
+      await tester.pump(sessionActivityRefreshGap * 2);
+      final readsBefore = probe.reads;
+      final snapshotsBefore = snapshots.length;
+
+      // An agent at work: twenty events in well under the gap.
+      for (var i = 0; i < 20; i++) {
+        events.add(
+          const TuiGatewayEvent(
+            type: 'sessions.changed',
+            sessionId: '',
+            payload: {},
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      expect(
+        probe.reads - readsBefore,
+        1,
+        reason: 'the first event reads at once; the rest wait for the gap',
+      );
+
+      // The burst ends with A finished: the one trailing read must see it.
+      probe.rows = const [
+        DesktopActiveSession(
+          runtimeSessionId: 'runtime-b',
+          storedSessionId: _sessionB,
+          status: 'working',
+        ),
+      ];
+      await tester.pump(sessionActivityRefreshGap);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(probe.reads - readsBefore, 2);
+      expect(
+        find.byKey(const ValueKey('session-running-$_sessionA')),
+        findsNothing,
+        reason: 'the trailing read carried the final state',
+      );
+
+      // No third read once the events stop.
+      await tester.pump(sessionActivityRefreshGap * 2);
+      expect(probe.reads - readsBefore, 2);
+
+      // The snapshots never answered: each row was asked once, not once
+      // per read.
+      final asked = snapshots.sublist(snapshotsBefore);
+      expect(asked.toSet().length, asked.length, reason: '$asked');
+
+      for (final answer in held) {
+        answer.complete(const AgentCenterSnapshot(snapshots: [], processes: []));
+      }
+      await _unmount(tester);
+    },
+  );
+
+  testWidgets(
     'session.info with running false clears row, stop button and header '
     'immediately without polling active_list',
     (tester) async {

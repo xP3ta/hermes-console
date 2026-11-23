@@ -33,6 +33,7 @@ import '../../design/hermes_design.dart'
         HermesMenuButton,
         HermesScrim;
 import '../../feedback/haptics.dart';
+import '../../navigation/unsaved_work_guard.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/hermes_tokens.dart' show HermesSpace;
 import '../../theme/motion.dart' show HermesMotion;
@@ -104,10 +105,114 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
 
   ChatWorkspaceController get _controller => widget.controller;
 
+  /// Screens of each tab holding work the user has not saved
+  /// ([ChatWorkspacePaneScope.holdUnsaved]).
+  final Map<ChatWorkspaceTab, ValueNotifier<int>> _unsaved = {};
+
+  ValueNotifier<int> _unsavedFor(ChatWorkspaceTab tab) =>
+      _unsaved.putIfAbsent(tab, () {
+        final holds = ValueNotifier<int>(0);
+        holds.addListener(() {
+          _syncLeaveGuard();
+          if (holds.value != 0) return;
+          // The last hold may go while the tree is being torn down: the
+          // route stack waiting behind it is replaced on the next frame.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() {});
+          });
+          WidgetsBinding.instance.ensureVisualUpdate();
+        });
+        return holds;
+      });
+
+  // Leaving the chat itself (Back, a new chat, another conversation) with
+  // unsaved text in a tab. The tab's own routes are kept by the holds
+  // above; these keep the chat's route: Back asks here, and every other
+  // way out asks through UnsavedWorkGuard.
+  ModalRoute<Object?>? _route;
+  NavigatorState? _routeNavigator;
+  UnsavedWorkHold? _leaveHold;
+  bool _leaveDiscarded = false;
+  late final _LeavePopEntry _leaveEntry = _LeavePopEntry(_onLeavePop);
+
+  bool get _hasUnsaved => _unsaved.values.any((holds) => holds.value > 0);
+
+  void _syncLeaveGuard() {
+    final unsaved = _hasUnsaved;
+    if (!unsaved) _leaveDiscarded = false;
+    if (unsaved && _leaveHold == null && !_leaveDiscarded) {
+      final navigator = _routeNavigator;
+      if (navigator == null) return;
+      _leaveHold = UnsavedWorkGuard.hold(
+        navigator,
+        onDiscarded: () {
+          _leaveDiscarded = true;
+          _dropLeaveGuard();
+        },
+      );
+      _leaveEntry.canPopNotifier.value = false;
+      _route?.registerPopEntry(_leaveEntry);
+    } else if (!unsaved && _leaveHold != null) {
+      _dropLeaveGuard();
+    }
+  }
+
+  void _dropLeaveGuard() {
+    final hold = _leaveHold;
+    if (hold == null) return;
+    _leaveHold = null;
+    hold.release();
+    _leaveEntry.canPopNotifier.value = true;
+    _route?.unregisterPopEntry(_leaveEntry);
+  }
+
+  /// Back was refused on the chat's route while a tab holds unsaved text.
+  void _onLeavePop(bool didPop, Object? result) {
+    final route = _route;
+    final navigator = _routeNavigator;
+    if (didPop || route == null || navigator == null || !mounted) return;
+    // What would happen without this guard. Something else in the chat
+    // takes this Back (an open menu, the panel's own tab, the editor's own
+    // question): it is not a way out of the chat, nothing to ask.
+    _leaveEntry.canPopNotifier.value = true;
+    final otherwise = route.popDisposition;
+    final closesInside = route.willHandlePopInternally;
+    _leaveEntry.canPopNotifier.value = false;
+    if (otherwise == RoutePopDisposition.doNotPop) return;
+    Future<void>.microtask(() async {
+      if (!mounted || !navigator.mounted) return;
+      if (closesInside) {
+        // A drawer or another entry of the route's own history closes.
+        navigator.pop();
+        return;
+      }
+      if (!await UnsavedWorkGuard.confirm(navigator)) return;
+      if (navigator.mounted && route.isCurrent) await navigator.maybePop(result);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    final navigator = Navigator.maybeOf(context);
+    if (identical(route, _route) && identical(navigator, _routeNavigator)) {
+      return;
+    }
+    _dropLeaveGuard();
+    _route = route;
+    _routeNavigator = navigator;
+    _syncLeaveGuard();
+  }
+
   GlobalKey<NavigatorState> _navigatorFor(ChatWorkspaceTab tab) {
     final scope = widget.tabRouteScope?.call(tab);
     final current = _navigators[tab];
     if (current != null && current.scope == scope) return current.key;
+    // Another folder or session id replaces the tab's routes, pushed
+    // editors included. One with unsaved text is never thrown away under
+    // the user: the routes stay until it is saved or discarded there.
+    if (current != null && (_unsaved[tab]?.value ?? 0) > 0) return current.key;
     final key = GlobalKey<NavigatorState>(debugLabel: 'workspace-${tab.name}');
     _navigators[tab] = (scope: scope, key: key);
     _observers.remove(tab);
@@ -378,6 +483,12 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
     FocusManager.instance.removeListener(_onFocusMoved);
     _chatFocus.dispose();
     _workspaceFocus.dispose();
+    _dropLeaveGuard();
+    _routeNavigator = null;
+    for (final holds in _unsaved.values) {
+      holds.dispose();
+    }
+    _leaveEntry.canPopNotifier.dispose();
     for (final toolbar in _toolbars.values) {
       toolbar.dispose();
     }
@@ -508,6 +619,7 @@ class _ChatWorkspaceHostState extends State<ChatWorkspaceHost>
           navigatorFor: _navigatorFor,
           observerFor: _observerFor,
           toolbarFor: _toolbarFor,
+          unsavedFor: _unsavedFor,
           hidden: hidden,
           compact: !fits || fullscreen,
         ),
@@ -1227,6 +1339,7 @@ class _WorkspacePane extends StatelessWidget {
     required this.navigatorFor,
     required this.observerFor,
     required this.toolbarFor,
+    required this.unsavedFor,
     required this.hidden,
     required this.compact,
   });
@@ -1240,6 +1353,7 @@ class _WorkspacePane extends StatelessWidget {
   final _TabRootObserver Function(ChatWorkspaceTab) observerFor;
   final ValueNotifier<ChatWorkspaceToolbar> Function(ChatWorkspaceTab)
   toolbarFor;
+  final ValueNotifier<int> Function(ChatWorkspaceTab) unsavedFor;
 
   /// Mounted out of sight (chat only): no tab takes Back, and the Terminal
   /// is not built at all (see [ChatWorkspaceHost]).
@@ -1331,6 +1445,7 @@ class _WorkspacePane extends StatelessWidget {
                                 tab: tab,
                                 controller: controller,
                                 toolbar: toolbarFor(tab),
+                                unsaved: unsavedFor(tab),
                                 child: Navigator(
                                   key: navigatorFor(tab),
                                   observers: [observerFor(tab)],
@@ -1420,6 +1535,21 @@ class _WorkspaceTabBackState extends State<_WorkspaceTabBack> {
       child: widget.child,
     ),
   );
+}
+
+/// The chat route's veto while a tab holds unsaved text (see
+/// `_ChatWorkspaceHostState._onLeavePop`).
+class _LeavePopEntry extends PopEntry<Object?> {
+  _LeavePopEntry(this._onPop);
+
+  final void Function(bool didPop, Object? result) _onPop;
+
+  @override
+  final ValueNotifier<bool> canPopNotifier = ValueNotifier<bool>(true);
+
+  @override
+  void onPopInvokedWithResult(bool didPop, Object? result) =>
+      _onPop(didPop, result);
 }
 
 IconData chatWorkspaceTabIcon(ChatWorkspaceTab tab) => switch (tab) {
@@ -2243,8 +2373,9 @@ class _PaneActions extends StatelessWidget {
             // «Vistas» lives here while the chat is hidden (its own header
             // has it otherwise): always one tap away.
             if (!controller.chatVisible || chatWorkspaceOpensOverChat(controller))
-              Builder(
-                builder: (buttonContext) => button(
+              ChatViewsLiveTabs(
+                tabs: availableTabs,
+                builder: (buttonContext, liveTabs) => button(
                   key: const ValueKey('chat-workspace-views-button'),
                   icon: HIcons.view_column_outlined,
                   tooltip: chatWorkspaceViewsLabel(strings, controller),
@@ -2252,6 +2383,7 @@ class _PaneActions extends StatelessWidget {
                     buttonContext,
                     controller: controller,
                     availableTabs: availableTabs,
+                    liveTabs: liveTabs,
                   ),
                 ),
               ),
@@ -2446,12 +2578,32 @@ class ChatWorkspacePaneScope extends InheritedWidget {
     this.tab,
     this.controller,
     this.toolbar,
+    this.unsaved,
     super.key,
   });
 
   final ChatWorkspaceTab? tab;
   final ChatWorkspaceController? controller;
   final ValueNotifier<ChatWorkspaceToolbar>? toolbar;
+
+  /// How many screens of this tab hold unsaved work ([holdUnsaved]).
+  final ValueNotifier<int>? unsaved;
+
+  /// Says a screen pushed in this pane has work the user has not saved:
+  /// until the returned callback is called, the pane keeps its routes even
+  /// if what the tab shows changes underneath (another folder, a new
+  /// session id). Outside a pane it does nothing. Call it outside build.
+  static VoidCallback holdUnsaved(BuildContext context) {
+    final holds = _of(context)?.unsaved;
+    if (holds == null) return () {};
+    holds.value++;
+    var released = false;
+    return () {
+      if (released) return;
+      released = true;
+      holds.value--;
+    };
+  }
 
   static ChatWorkspacePaneScope? _of(BuildContext context) =>
       context

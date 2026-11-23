@@ -14,6 +14,8 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/diagnostic_bundle_tile.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
+import 'support/remove_test_dir.dart';
+
 class _FakeController extends DiagnosticBundleController {
   _FakeController(ConnectionManager manager) : super(manager: manager) {
     bundle = DiagnosticBundleService(now: () => DateTime.utc(2026, 7, 14, 20))
@@ -121,7 +123,7 @@ void main() {
   test('archivo existe solo durante share y se elimina después', () async {
     final cache = await Directory.systemTemp.createTemp('hermes-share-test-');
     addTearDown(() async {
-      if (await cache.exists()) await cache.delete(recursive: true);
+      await removeTestDir(cache);
     });
     final service = DiagnosticBundleService(
       cacheDirectory: () async => cache,
@@ -176,7 +178,7 @@ void main() {
       StackTrace.current,
     );
     final support = await Directory.systemTemp.createTemp('hermes-diag-');
-    addTearDown(() => support.delete(recursive: true));
+    addTearDown(() => removeTestDir(support));
     final controller = DiagnosticBundleController(
       manager: await manager(),
       service: DiagnosticBundleService(

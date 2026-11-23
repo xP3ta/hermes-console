@@ -122,8 +122,11 @@ Future<void> _drive(WidgetTester tester, {int rounds = 10}) async {
 
 /// [_drive] until [done] holds (the digest of the file is read in another
 /// isolate, which takes a moment of real time before a page is made).
+///
+/// The bound is only a ceiling: the wait ends as soon as [done] holds, and on
+/// a loaded host that moment can be seconds away.
 Future<void> _until(WidgetTester tester, bool Function() done) async {
-  for (var i = 0; i < 100 && !done(); i++) {
+  for (var i = 0; i < 500 && !done(); i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 40)),
     );
@@ -325,6 +328,15 @@ void main() {
       web.answer = _drawn;
       await tester.tap(find.byKey(const ValueKey('artifact-viewer-retry')));
       await _until(tester, () => web.controllers.length == 2);
+      // The second page answers «drawn» a moment later: wait for the view
+      // itself, not for a fixed number of frames.
+      await _until(
+        tester,
+        () => find
+            .byKey(const ValueKey('fake-platform-webview'))
+            .evaluate()
+            .isNotEmpty,
+      );
       await _drive(tester, rounds: 2);
       expect(web.controllers, hasLength(2));
       expect(

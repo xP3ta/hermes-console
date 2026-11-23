@@ -16,6 +16,8 @@ import 'package:hermes_android/core/services/notifications/rich_notifications.da
 import 'package:hermes_android/core/services/notifications/session_attention.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 const es = NotifL10n(true);
 const languages = ['es', 'en', 'de', 'fr', 'it', 'pt', 'ja', 'ko', 'zh'];
 
@@ -614,7 +616,7 @@ void main() {
         ..liveTurnCheckSchedulerForTesting = scheduler;
     });
 
-    tearDown(() => dir.delete(recursive: true));
+    tearDown(() => removeTestDir(dir));
 
     Future<void> until(bool Function() done) async {
       for (var i = 0; i < 400 && !done(); i++) {

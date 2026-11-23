@@ -492,7 +492,7 @@ void main() {
       expect(
         listener,
         contains(
-          'executions = await BackgroundCronWatch.loadExecutions(\n'
+          'final listing = await BackgroundCronWatch.loadListing(\n'
           '          launcherWidgetCronTap(connection.id, dashboard.apiGet),\n'
           '        );',
         ),

@@ -15,12 +15,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/kanban_watch_board.dart';
 import 'package:hermes_android/core/services/notifications/background_listener.dart';
 import 'package:hermes_android/core/services/notifications/notification_delivery_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../support/remove_test_dir.dart';
 
 const _connId = 'kanban-follow';
 
@@ -158,7 +161,7 @@ void main() {
 
   setUp(() async {
     final dir = await Directory.systemTemp.createTemp('kanban-follow-');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     HttpOverrides.global = null;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
@@ -305,8 +308,10 @@ void main() {
     expect(server.boardReads, 2);
   });
 
-  test('with the socket up, the board is read again only every thirty '
-      'minutes with nothing moving', () async {
+  test('with the socket up on a board the phone names, the board is read '
+      'again only every thirty minutes with nothing moving', () async {
+    // A named board: its socket follows exactly the board the reads ask for.
+    await KanbanWatchBoard.write(prefs, _connId, 'main');
     var now = DateTime(2026, 11, 20, 9);
     await withClock(Clock(() => now), () async {
       await tick();
@@ -325,6 +330,32 @@ void main() {
         server.requests.where((r) => r == 'GET /api/plugins/kanban/events'),
         hasLength(1),
         reason: 'the same socket all along',
+      );
+    });
+  });
+
+  test('with no board named, the server may switch boards under a healthy '
+      'socket: the board is read every ten minutes and the socket reopened',
+      () async {
+    var now = DateTime(2026, 11, 20, 9);
+    await withClock(Clock(() => now), () async {
+      await tick();
+      for (var i = 0; i < 3; i++) {
+        now = now.add(const Duration(minutes: 3));
+        await tick();
+      }
+      expect(server.boardReads, 1, reason: 'nine idle minutes, one read');
+      // The server's current board is another one now; it blocks a task
+      // there. The old socket, pinned to the first board, stays silent.
+      server.task = _task('blocked');
+      now = now.add(const Duration(minutes: 3));
+      await tick();
+      expect(server.boardReads, 2, reason: 'read at ten minutes, not thirty');
+      expect(shown, isNotEmpty, reason: 'the blocked task is announced');
+      expect(
+        server.requests.where((r) => r == 'GET /api/plugins/kanban/events'),
+        hasLength(2),
+        reason: 'pinned again, to the board current now',
       );
     });
   });

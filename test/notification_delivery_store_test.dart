@@ -7,6 +7,8 @@ import 'package:hermes_android/core/services/notifications/notification_delivery
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   sqfliteFfiInit();
 
@@ -101,7 +103,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-race-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final path = '${directory.path}/notification_delivery_v1.db';
         final now = DateTime.utc(2026, 8, 28, 12).millisecondsSinceEpoch;
         final first = NotificationDeliveryStore(
@@ -173,7 +175,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-busy-lease-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final path = '${directory.path}/notification_delivery_v1.db';
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
@@ -228,7 +230,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-fence-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final clock = _MutableClock(
           DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
         );
@@ -313,7 +315,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-clock-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final clock = _MutableClock(
         DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
       );
@@ -386,7 +388,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-renew-cap-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final clock = _MutableClock(
         DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
       );
@@ -427,7 +429,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-future-lease-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final clock = _MutableClock(
         DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
       );
@@ -468,7 +470,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-exact-expiry-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final clock = _MutableClock(
         DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
       );
@@ -509,7 +511,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-generation-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
           databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -576,7 +578,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-identity-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
           databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -644,7 +646,7 @@ void main() {
           final directory = await Directory.systemTemp.createTemp(
             'delivery-batch-',
           );
-          addTearDown(() => directory.delete(recursive: true));
+          addTearDown(() => removeTestDir(directory));
           var token = 0;
           final store = NotificationDeliveryStore(
             databaseFactory: databaseFactoryFfi,
@@ -680,7 +682,7 @@ void main() {
           final directory = await Directory.systemTemp.createTemp(
             'delivery-rollback-',
           );
-          addTearDown(() => directory.delete(recursive: true));
+          addTearDown(() => removeTestDir(directory));
           final store = NotificationDeliveryStore(
             databaseFactory: databaseFactoryFfi,
             databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -720,7 +722,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-collision-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final path = '${directory.path}/notification_delivery_v1.db';
         List<int> collidingDigest(List<int> input) {
           final second = utf8.decode(input).contains('execution-b');
@@ -780,7 +782,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-cancel-lease-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
           databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -829,7 +831,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-approval-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final store = NotificationDeliveryStore(
         databaseFactory: databaseFactoryFfi,
         databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -895,7 +897,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-machine-state-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
           databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -967,7 +969,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-privacy-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
           databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -1083,7 +1085,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-shape-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final path = '${directory.path}/notification_delivery_v1.db';
       final store = NotificationDeliveryStore(
         databaseFactory: databaseFactoryFfi,
@@ -1149,7 +1151,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-cron-running-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
           databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -1224,7 +1226,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-cron-new-terminal-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
           databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -1276,7 +1278,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-cron-unhydrated-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final store = NotificationDeliveryStore(
           databaseFactory: databaseFactoryFfi,
           databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -1340,7 +1342,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-cron-retention-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final clock = _MutableClock(
           DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
         );
@@ -1447,7 +1449,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-retention-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final clock = _MutableClock(
           DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
         );
@@ -1515,7 +1517,7 @@ void main() {
         final directory = await Directory.systemTemp.createTemp(
           'delivery-dedup-',
         );
-        addTearDown(() => directory.delete(recursive: true));
+        addTearDown(() => removeTestDir(directory));
         final clock = _MutableClock(
           DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
         );
@@ -1573,7 +1575,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-mapping-retention-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final clock = _MutableClock(
         DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
       );
@@ -1631,7 +1633,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-reopen-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final path = '${directory.path}/notification_delivery_v1.db';
       final clock = _MutableClock(
         DateTime.utc(2026, 8, 28).millisecondsSinceEpoch,
@@ -1695,7 +1697,7 @@ void main() {
   group('lifecycle serialization', () {
     test('concurrent open uses exactly one database handle', () async {
       final directory = await Directory.systemTemp.createTemp('delivery-open-');
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final factory = _CountingFactory(databaseFactoryFfi);
       final store = NotificationDeliveryStore(
         databaseFactory: factory,
@@ -1711,7 +1713,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-close-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final store = NotificationDeliveryStore(
         databaseFactory: databaseFactoryFfi,
         databasePath: '${directory.path}/notification_delivery_v1.db',
@@ -1730,7 +1732,7 @@ void main() {
       final directory = await Directory.systemTemp.createTemp(
         'delivery-store-',
       );
-      addTearDown(() => directory.delete(recursive: true));
+      addTearDown(() => removeTestDir(directory));
       final path = '${directory.path}/notification_delivery_v1.db';
 
       final first = NotificationDeliveryStore(

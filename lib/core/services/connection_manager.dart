@@ -170,6 +170,22 @@ class ConnectionManager {
   String activeProfileFor(String connId) =>
       prefs.getString(_activeProfileKey(connId)) ?? '';
 
+  static String _explicitDefaultKey(String connId) =>
+      'active_profile_default_$connId';
+
+  /// The profile a credential write for [connId] names: the selected one,
+  /// `default` once the user picked the default profile themselves, and
+  /// empty while nothing was ever picked. An empty answer must travel as an
+  /// unnamed request, which the server resolves to the profile it was
+  /// launched for; naming `default` there reaches the installation root even
+  /// on a Dashboard that serves a named profile (Desktop
+  /// `store/settings-scope.ts` `$settingsRequestProfile`).
+  String credentialProfileFor(String connId) {
+    final selected = activeProfileFor(connId).trim();
+    if (selected.isNotEmpty) return selected;
+    return prefs.getBool(_explicitDefaultKey(connId)) == true ? 'default' : '';
+  }
+
   void _ensureNotDisposed() {
     if (_disposed) throw StateError('ConnectionManager has been disposed');
   }
@@ -278,6 +294,13 @@ class ConnectionManager {
       await prefs.remove(_activeProfileKey(connId));
     } else {
       await prefs.setString(_activeProfileKey(connId), normalized);
+    }
+    // Only a literal `default` is the user's own pick of the default
+    // profile; an empty name is "no selection".
+    if (profile.trim() == 'default') {
+      await prefs.setBool(_explicitDefaultKey(connId), true);
+    } else {
+      await prefs.remove(_explicitDefaultKey(connId));
     }
     if (changed) {
       PrivateRenderCaches.clearAll();
@@ -3475,6 +3498,13 @@ class DashboardClient {
     );
   }
 
+  /// Longest a download's body may go without a single byte before the read
+  /// is given up with a [TimeoutException] (and its partial file deleted).
+  /// It bounds silence, not size: a slow download that keeps arriving goes
+  /// on.
+  @visibleForTesting
+  static Duration bodyIdleTimeout = const Duration(seconds: 30);
+
   /// Streams an authenticated download directly to [target]. Unlike
   /// [apiDownload], this keeps memory bounded for generated videos while
   /// preserving the same auth retry and response-size limits.
@@ -3572,7 +3602,12 @@ class DashboardClient {
       throw const DashboardNotAFileException();
     }
 
-    final iterator = StreamIterator<List<int>>(streamed.stream);
+    // [timeout] only covered the headers: a body that stops arriving (a
+    // half-open connection after a Wi-Fi to mobile hand-off) left the read
+    // waiting for ever, with the card's spinner and its download slot.
+    final iterator = StreamIterator<List<int>>(
+      streamed.stream.timeout(bodyIdleTimeout),
+    );
     // Past the deadline the stream is cancelled: a pending moveNext then
     // answers false and the loop below ends.
     var expired = false;
@@ -3644,7 +3679,9 @@ class DashboardClient {
     required int maxBytes,
     bool truncate = false,
   }) async {
-    final iterator = StreamIterator<List<int>>(stream);
+    final iterator = StreamIterator<List<int>>(
+      stream.timeout(bodyIdleTimeout),
+    );
     final builder = BytesBuilder(copy: false);
     var received = 0;
     try {

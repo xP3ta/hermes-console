@@ -487,7 +487,11 @@ final class SealedLocalFiles {
         final file = key.cipher.scopedFileName(name.scope, name.key);
         await _io.deleteFile(file);
         if (unfinished) {
-          await _io.deleteFile('$file${SecureColdStartStorage.partialSuffix}');
+          for (final other in await _io.fileNames()) {
+            if (SecureColdStartStorage.partialTarget(other) == file) {
+              await _io.deleteFile(other);
+            }
+          }
         }
       });
 
@@ -509,18 +513,15 @@ final class SealedLocalFiles {
     final key = await _key();
     fence?.call();
     if (key != null) {
-      const suffix = SecureColdStartStorage.partialSuffix;
       final names = await _namesIn(key, scope);
       fence?.call();
       for (final file in names) {
-        final isPartial = file.endsWith(suffix);
+        final target = SecureColdStartStorage.partialTarget(file);
+        final isPartial = target != null;
         final sealed = await _io.readFile(file);
         fence?.call();
         if (sealed == null) continue;
-        final content = await key.cipher.open(
-          isPartial ? file.substring(0, file.length - suffix.length) : file,
-          sealed,
-        );
+        final content = await key.cipher.open(target ?? file, sealed);
         fence?.call();
         final framed = content == null ? null : _unframe(content);
         if (isPartial) {

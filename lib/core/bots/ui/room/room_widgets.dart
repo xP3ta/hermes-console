@@ -208,6 +208,9 @@ class RoomPendingMessageTile extends StatelessWidget {
   final bool failed;
   final VoidCallback onRetry;
 
+  /// Takes a message that was not sent back to the composer.
+  final VoidCallback? onEdit;
+
   const RoomPendingMessageTile({
     super.key,
     required this.id,
@@ -215,6 +218,7 @@ class RoomPendingMessageTile extends StatelessWidget {
     required this.attachments,
     required this.failed,
     required this.onRetry,
+    this.onEdit,
   });
 
   @override
@@ -298,6 +302,12 @@ class RoomPendingMessageTile extends StatelessWidget {
                   onPressed: onRetry,
                   child: Text(s.rs1215Retry),
                 ),
+                if (onEdit != null)
+                  TextButton(
+                    key: ValueKey('room-pending-edit-$id'),
+                    onPressed: onEdit,
+                    child: Text(s.commonEdit),
+                  ),
               ],
             )
           else

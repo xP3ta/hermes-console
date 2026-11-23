@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/generated_media_service.dart';
 
+import '../support/remove_test_dir.dart';
+
 /// Loopback server shaped like the real Dashboard: `/api/files/download`
 /// serves files, other `/api/*` paths 404 as JSON, and every non-`/api`
 /// path (including the Gateway-only `/p/<profile>/` prefix) gets the SPA
@@ -80,7 +82,7 @@ void main() {
   });
   tearDown(() async {
     await dash.server.close(force: true);
-    await root.delete(recursive: true);
+    await removeTestDir(root);
   });
 
   String q(String path) =>
@@ -171,7 +173,7 @@ void main() {
       '${root.path}/profiles/pi/spa-trap.pdf',
     )!;
     final cache = await Directory.systemTemp.createTemp('media-p-cache-');
-    addTearDown(() => cache.delete(recursive: true));
+    addTearDown(() => removeTestDir(cache));
     final client = dash.client();
     addTearDown(client.close);
     await expectLater(

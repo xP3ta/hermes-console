@@ -19,6 +19,8 @@ import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/remove_test_dir.dart';
+
 const _channel = MethodChannel('hermes/save_to_device');
 const _doc = 'content://com.android.externalstorage.documents/document/1';
 const _secureStorage = MethodChannel(
@@ -170,7 +172,7 @@ void main() {
 
   test('a temporary copy to share is deleted when it fails', () async {
     final dir = await Directory.systemTemp.createTemp('sftp-share');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     final file = File('${dir.path}/a.bin');
     await expectLater(
       writeRemoteFile(
@@ -201,8 +203,8 @@ void main() {
     });
 
     tearDown(() async {
-      await support.delete(recursive: true);
-      await cache.delete(recursive: true);
+      await removeTestDir(support);
+      await removeTestDir(cache);
     });
 
     Future<SftpTransferService> service() async {

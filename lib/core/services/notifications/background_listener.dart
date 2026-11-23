@@ -26,6 +26,7 @@ import '../kanban_watch_board.dart';
 import '../launcher_widget_cron.dart';
 import '../launcher_widget_tasks.dart';
 import '../shared_gateway_pool.dart';
+import '../traffic_counter.dart';
 import '../tui_gateway_client.dart';
 import '../../utils/session_title.dart';
 import '../../utils/transport_privacy.dart';
@@ -756,8 +757,17 @@ class BackgroundCronWatch {
   static Set<
     ({String profile, bool syntheticExecutionId, bool sessionAuthority})
   >
-  discoveryGroups(List<CronExecutionSnapshot> executions) {
-    final profiles = discoveryProfiles(executions);
+  discoveryGroups(
+    List<CronExecutionSnapshot> executions, {
+    Set<String> listedProfiles = const {},
+  }) {
+    // A profile whose routines have never run gets its baseline now, as
+    // the default one does: their first results are news, not history.
+    final profiles = {
+      ...discoveryProfiles(executions),
+      for (final profile in listedProfiles)
+        profile.trim().isEmpty ? 'default' : profile.trim().toLowerCase(),
+    };
     return {
       for (final profile in profiles)
         (
@@ -907,6 +917,15 @@ class BackgroundCronWatch {
 
   static Future<List<CronExecutionSnapshot>?> loadExecutions(
     Future<Map<String, dynamic>> Function(String endpoint) apiGet,
+  ) async => (await loadListing(apiGet))?.executions;
+
+  /// The latest execution of every job that has run, and the profile of
+  /// every listed job, a job that has never run included: such a job has no
+  /// execution yet, but its profile still decides whether `cron.changed`
+  /// covers the listing.
+  static Future<({List<CronExecutionSnapshot> executions, Set<String> profiles})?>
+  loadListing(
+    Future<Map<String, dynamic>> Function(String endpoint) apiGet,
   ) async {
     final endpoints = cronJobEndpoints();
     late final Map<String, dynamic> data;
@@ -924,11 +943,17 @@ class BackgroundCronWatch {
         rethrow;
       }
     }
-    final raw = data['jobs'] ?? data['data'];
-    return (raw as List? ?? const [])
-        .map(CronExecutionSnapshot.fromJob)
-        .whereType<CronExecutionSnapshot>()
-        .toList(growable: false);
+    final raw = (data['jobs'] ?? data['data']) as List? ?? const [];
+    return (
+      executions: raw
+          .map(CronExecutionSnapshot.fromJob)
+          .whereType<CronExecutionSnapshot>()
+          .toList(growable: false),
+      profiles: {
+        for (final job in raw)
+          if (job is Map) (job['profile'] ?? '').toString().trim(),
+      },
+    );
   }
 
   @visibleForTesting
@@ -1594,6 +1619,8 @@ class _HermesTaskHandler extends TaskHandler {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
+    // This isolate keeps its own traffic counts, always as background.
+    TrafficCounter.instance.attach(prefs, service: true);
     final automationOptIn = prefs.getBool(BackgroundListener.prefKey) == true;
     // Cada TaskHandler vive en su propio isolate: los estáticos inicializados
     // por la UI no cruzan esa frontera. Hidratar el gate antes de construir el
@@ -2101,11 +2128,14 @@ class BackgroundAutomationDiscovery {
       _cronChanges.reading(connection.id, gateway);
       final dashboard = _dashboardClients.clientFor(connection);
       List<CronExecutionSnapshot>? executions;
+      var listedProfiles = const <String>{};
       try {
         // The same read also feeds the Cron launcher widget (no extra call).
-        executions = await BackgroundCronWatch.loadExecutions(
+        final listing = await BackgroundCronWatch.loadListing(
           launcherWidgetCronTap(connection.id, dashboard.apiGet),
         );
+        executions = listing?.executions;
+        listedProfiles = listing?.profiles ?? const <String>{};
       } catch (error) {
         notifTrace(() => 'cron load error ${error.runtimeType}');
         _cronChanges.readFailed(connection.id);
@@ -2179,7 +2209,11 @@ class BackgroundAutomationDiscovery {
               '${e.jobKey}:${e.executionId}:${e.status}',
           ]..sort()).join('|'),
           inFlight: executions.any((e) => !e.terminal),
-          signalled: executions.every((e) => _signalledProfile(e.profile)),
+          // Every listed job counts, one that has never run included:
+          // its first results come from a profile no signal covers.
+          signalled:
+              listedProfiles.every(_signalledProfile) &&
+              executions.every((e) => _signalledProfile(e.profile)),
         );
         _cronSeen[connection.id] = cronSeen;
         _noteActivity(
@@ -2188,7 +2222,10 @@ class BackgroundAutomationDiscovery {
           inFlight: cronSeen.inFlight,
         );
 
-        final groups = BackgroundCronWatch.discoveryGroups(executions);
+        final groups = BackgroundCronWatch.discoveryGroups(
+          executions,
+          listedProfiles: listedProfiles,
+        );
         final initialBaseline =
             <
               ({

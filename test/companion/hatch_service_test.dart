@@ -8,6 +8,8 @@ import 'package:hermes_android/core/companion/hatch/prompt_safety.dart';
 import 'package:hermes_android/core/companion/models/companion.dart';
 import 'package:hermes_android/core/companion/models/companion_animation_state.dart';
 
+import '../support/remove_test_dir.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -17,7 +19,7 @@ void main() {
     root = await Directory.systemTemp.createTemp('hatch_test_');
   });
   tearDown(() async {
-    if (await root.exists()) await root.delete(recursive: true);
+    await removeTestDir(root);
   });
 
   group('HatchService', () {

@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/voice/tts_engine.dart';
 import 'package:hermes_android/core/services/voice/neural_tts_worker.dart';
 
+import '../support/remove_test_dir.dart';
+
 class Worker implements NeuralTtsWorker {
   Worker(this.dir, {this.holdIndex});
   final Directory dir;
@@ -73,7 +75,7 @@ void main() {
     dir = await Directory.systemTemp.createTemp('adversarial-voice-wav-');
   });
   tearDown(() async {
-    if (dir.existsSync()) await dir.delete(recursive: true);
+    await removeTestDir(dir);
   });
   OnDeviceNeuralTtsEngine create(Worker w, Player p) => OnDeviceNeuralTtsEngine(
     modelPath: 'unused',

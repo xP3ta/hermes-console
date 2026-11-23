@@ -16,6 +16,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../session_identity_peer_test.dart' as peer;
 import '../support/in_memory_compression_restore_storage.dart';
 import '../support/test_api_client.dart';
@@ -119,7 +121,7 @@ void main() {
   tearDown(() async {
     service.dispose();
     await gateway.close();
-    await dir.delete(recursive: true);
+    await removeTestDir(dir);
   });
 
   Future<void> emit(String type, Map<String, dynamic> payload) async {

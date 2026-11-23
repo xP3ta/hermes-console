@@ -5,6 +5,7 @@ import '../models/activity_snapshot.dart'
 import '../models/deferred_tool_call.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/provider_auth_failure.dart';
+import '../models/tool_call_failure.dart';
 import '../models/turn_error_surface.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
@@ -449,9 +450,17 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
           continue;
         }
         matched = true;
+        // The result belongs to the call itself; the entries a bridge call
+        // unwraps into (`id:0`, …) share it without each having failed.
+        final failed =
+            stepId == id &&
+            toolCallFailed(
+              toolName: step['label']?.toString(),
+              result: message['content'],
+            );
         activity[i] = settleMemory({
           ...step,
-          'status': 'completed',
+          'status': failed ? 'failed' : 'completed',
           if (endedAt != null && step['completed_at'] == null)
             'completed_at': endedAt,
         }, message);
@@ -480,7 +489,10 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
         settleMemory({
           'kind': 'tool',
           'label': label,
-          'status': 'completed',
+          'status':
+              toolCallFailed(toolName: label, result: message['content'])
+              ? 'failed'
+              : 'completed',
           if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
           'timestamp': ?timestampOf(message),
         }, message),
@@ -1043,6 +1055,94 @@ class DesktopSessionReconciler {
     );
   }
 
+  /// Which of `inflight.corrections` the open turn already holds as a
+  /// durable row, by index.
+  ///
+  /// Hermes keeps an accepted correction in the live turn until it ends AND
+  /// writes it to the transcript as soon as it reaches the model: a
+  /// `session.steer` as a `display_kind=steer` row, a `session.redirect` (or
+  /// a message the Gateway redirected because the turn was busy) as a plain
+  /// user row (`conversation_loop._apply_active_turn_redirect`). The Gateway
+  /// links neither form to the live entry. Painting both showed the message
+  /// once as its own bubble and again under «Added while … was working»
+  /// until the turn ended.
+  ///
+  /// Only rows of the open turn count (after the last durable final reply,
+  /// and after its prompt), only with a row identity, and each row stands
+  /// for one correction, in order: two real identical corrections with one
+  /// row stored so far still show two. Rows that do not line up with the
+  /// live entries, or a turn that cannot be told from an earlier one, hide
+  /// nothing (fail closed).
+  static Set<int> _storedInflightCorrections(
+    List<Map<String, dynamic>> chronological,
+    DesktopInflightTurn? inflight,
+    DateTime? turnStartedAt,
+  ) {
+    if (inflight == null || inflight.corrections.isEmpty) return const {};
+    var terminalBoundary = -1;
+    for (var index = 0; index < chronological.length; index++) {
+      if (_isDurableTerminalAssistant(chronological[index])) {
+        terminalBoundary = index;
+      }
+    }
+    final stored = <Map<String, dynamic>>[];
+    var openActivity = false;
+    for (
+      var index = terminalBoundary + 1;
+      index < chronological.length;
+      index++
+    ) {
+      final message = chronological[index];
+      if (stored.isNotEmpty && _isDurableOpenTurnActivity(message)) {
+        openActivity = true;
+      }
+      if (message['role'] != 'user' ||
+          message['_optimistic'] == true ||
+          message['_desktopSnapshotKind'] == 'inflight' ||
+          message['_desktopAcceptedQueued'] == true ||
+          !(isRealUserTurn(message) || _isSteerInput(message)) ||
+          canonicalTranscriptIdentity(message) == null) {
+        continue;
+      }
+      stored.add(message);
+    }
+    if (stored.isEmpty) return const {};
+    String text(Object? value) => value?.toString().trim() ?? '';
+    // The open turn must be the one in flight: its stored prompt opens it.
+    // The prompt is not one of its corrections.
+    final prompt = text(inflight.user);
+    if (prompt.isEmpty ||
+        _isSteerInput(stored.first) ||
+        text(stored.first['content']) != prompt) {
+      return const {};
+    }
+    const from = 1;
+    // Hermes stores corrections in the order it accepted them, so the rows
+    // must be the first corrections, text by text. Anything else (another
+    // order, a row that is no correction) proves nothing: every live entry
+    // is then painted, as before.
+    final rows = stored.length - from;
+    if (rows == 0 || rows > inflight.corrections.length) return const {};
+    for (var index = 0; index < rows; index++) {
+      final wanted = text(inflight.corrections[index].text);
+      if (wanted.isEmpty || text(stored[from + index]['content']) != wanted) {
+        return const {};
+      }
+    }
+    // And those rows must belong to this turn, not to an earlier one that
+    // looks the same: the turn has durable work after its prompt, or every
+    // row was written after the turn began. With neither (rows tied with the
+    // start of the turn and nothing else stored), nothing is hidden.
+    if (!openActivity) {
+      if (turnStartedAt == null) return const {};
+      for (var index = 0; index < rows; index++) {
+        final at = _projectedTimestamp(stored[from + index]);
+        if (at == null || !at.isAfter(turnStartedAt)) return const {};
+      }
+    }
+    return {for (var index = 0; index < rows; index++) index};
+  }
+
   static _LiveUserProjectionPlan _liveUserProjectionPlan(
     List<Map<String, dynamic>> chronological,
     List<Map<String, dynamic>> previousNewestFirst,
@@ -1376,12 +1476,21 @@ class DesktopSessionReconciler {
     // The Gateway does not link inflight users to durable row IDs. Suppress an
     // ordinary user only from an exact prior anchor or one unambiguous durable
     // open turn; a classified durable row carries its own structural identity.
-    if (inflightUser != null &&
+    final paintsInflightPrompt =
+        inflightUser != null &&
         inflightUser.trim().isNotEmpty &&
         emitsInflightPrompt &&
         !durableStructuredInflight &&
         !(bridgeOwnedLiveUser &&
-            _lastUserRunOpensWithPrompt(chronological, inflightUser))) {
+            _lastUserRunOpensWithPrompt(chronological, inflightUser));
+    // The corrections of the turn in flight the transcript already holds as
+    // rows of their own: they are painted once, from that row.
+    final storedCorrections = _storedInflightCorrections(
+      chronological,
+      inflight,
+      snapshot.resolvedTurnStartedAt,
+    );
+    if (paintsInflightPrompt) {
       chronological.add(
         Map<String, dynamic>.unmodifiable({
           'role': 'user',
@@ -1463,7 +1572,8 @@ class DesktopSessionReconciler {
         cursor = boundary;
         publicCursor = safeBoundary;
         final liveUserIndex = (hasInflightUser ? 1 : 0) + index;
-        if (liveUserPlan.emits(liveUserIndex)) {
+        if (liveUserPlan.emits(liveUserIndex) &&
+            !storedCorrections.contains(index)) {
           chronological.add(
             correctionMessage(inflightCorrections[index], index),
           );
@@ -1492,7 +1602,8 @@ class DesktopSessionReconciler {
       }
       for (var index = 0; index < inflightCorrections.length; index++) {
         final liveUserIndex = (hasInflightUser ? 1 : 0) + index;
-        if (liveUserPlan.emits(liveUserIndex)) {
+        if (liveUserPlan.emits(liveUserIndex) &&
+            !storedCorrections.contains(index)) {
           chronological.add(
             correctionMessage(inflightCorrections[index], index),
           );

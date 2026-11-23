@@ -130,6 +130,7 @@ final class _RecordingDrafts implements RoomDraftStore {
     preparedId: storedPreparedId,
     preparedText: null,
     files: const <AttachmentDraft>[],
+    missingFiles: const <String>[],
   );
 
   @override
@@ -258,6 +259,7 @@ final class _MemoryDrafts implements RoomDraftStore {
       preparedId: preparedId,
       preparedText: preparedText,
       files: files,
+      missingFiles: const <String>[],
     );
   }
 

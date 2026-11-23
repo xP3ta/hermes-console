@@ -453,11 +453,17 @@ class _ChatFolderScreenState extends State<ChatFolderScreen> {
         title: Text(name ?? '/', maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       body: SafeArea(
-        child: ProjectFilesBrowser(
-          controller: _controller,
-          onOpenFile: (entry) => _openEntry(entry),
-          failureText: (error) =>
-              chatFileErrorText(strings, chatFileErrorKindOf(error)),
+        // The browser is a column of its own: a long folder scrolls here.
+        child: ListView(
+          key: const ValueKey('chat-folder-list'),
+          children: [
+            ProjectFilesBrowser(
+              controller: _controller,
+              onOpenFile: (entry) => _openEntry(entry),
+              failureText: (error) =>
+                  chatFileErrorText(strings, chatFileErrorKindOf(error)),
+            ),
+          ],
         ),
       ),
     );

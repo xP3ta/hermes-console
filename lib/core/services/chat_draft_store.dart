@@ -30,6 +30,11 @@ class ChatDraft {
   /// composer, y cualquier edición posterior lo retira al reescribir la clave.
   final String? submittedTurnClientTurnId;
 
+  /// Names of the stored files that could not be restored: their private
+  /// copy is gone and nothing on the server stands in for it. The surface
+  /// that restores the draft says so; it never sends as if they were there.
+  final List<String> missingAttachmentNames;
+
   const ChatDraft({
     required this.text,
     required this.attachments,
@@ -37,6 +42,7 @@ class ChatDraft {
     this.preparedTurnText,
     this.replyThreadId,
     this.submittedTurnClientTurnId,
+    this.missingAttachmentNames = const [],
   });
 }
 
@@ -380,7 +386,12 @@ class ChatDraftStore {
 
   static const Duration maxAge = Duration(days: 30);
 
-  ChatDraftEntry? _decodeEntry(String sessionId, String profile, String raw) {
+  ChatDraftEntry? _decodeEntry(
+    String sessionId,
+    String profile,
+    String raw, {
+    bool keepLostFilesOnly = false,
+  }) {
     AppLockSensitiveReadFence.current.ensureCurrent();
     try {
       final data = jsonDecode(raw) as Map<String, dynamic>;
@@ -392,6 +403,7 @@ class ChatDraftStore {
         return null;
       }
       final attachments = <AttachmentDraft>[];
+      final missing = <String>[];
       for (final item in (data['attachments'] as List? ?? const [])) {
         if (item is! Map) continue;
         final draft = AttachmentDraft.fromJson(Map<String, dynamic>.from(item));
@@ -404,6 +416,8 @@ class ChatDraftStore {
             draft.remoteSessionId?.isNotEmpty == true;
         if (hasLocalCopy || hasReusableRemote) {
           attachments.add(draft);
+        } else {
+          missing.add(draft.name);
         }
       }
       final draft = ChatDraft(
@@ -419,8 +433,14 @@ class ChatDraftStore {
         submittedTurnClientTurnId: _safeOpaqueIdentity(
           data['submittedTurnClientTurnId'],
         ),
+        missingAttachmentNames: List.unmodifiable(missing),
       );
-      if (draft.text.isEmpty && draft.attachments.isEmpty) return null;
+      // A draft of nothing but lost files is still returned to the surface
+      // that loads it by name, which reports the loss; it is not a
+      // conversation to list.
+      if (draft.text.isEmpty && draft.attachments.isEmpty) {
+        if (!keepLostFilesOnly || missing.isEmpty) return null;
+      }
       return ChatDraftEntry(
         sessionId: sessionId,
         profile: profile,
@@ -475,7 +495,12 @@ class ChatDraftStore {
     if (raw == null || raw.isEmpty) {
       return const ChatDraft(text: '', attachments: []);
     }
-    final entry = _decodeEntry(sessionId, owner, raw);
+    final entry = _decodeEntry(
+      sessionId,
+      owner,
+      raw,
+      keepLostFilesOnly: sessionId.startsWith('mob-room-'),
+    );
     if (entry == null) {
       await clear(connectionId, sessionId, profile: owner);
       return const ChatDraft(text: '', attachments: []);

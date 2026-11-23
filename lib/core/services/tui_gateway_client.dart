@@ -65,6 +65,7 @@ import 'replay_coordinator.dart';
 import 'server_restart_signal.dart';
 import 'session_authority.dart';
 import 'subagent_live_watch.dart';
+import 'traffic_counter.dart';
 import '../utils/transport_privacy.dart';
 import '../utils/server_path.dart';
 
@@ -2572,6 +2573,7 @@ class TuiGatewayClient
     late final StreamSubscription<dynamic> subscription;
     subscription = channel.stream.listen(
       (raw) {
+        TrafficCounter.instance.socketReceived(raw);
         _awaitResponses[channel]?.observe(raw);
         _handleFrame(generation, channel, raw);
       },
@@ -2597,6 +2599,7 @@ class TuiGatewayClient
       _capabilityCache.resetForReconnect();
       _connected = true;
       _connectedAt = _now();
+      TrafficCounter.instance.socketOpened(again: _hasBeenUp);
       _hasBeenUp = true;
       _channelReadyAt[channel] = _connectedAt;
       GatewaySocketMeter.instance.recordReady(
@@ -3245,7 +3248,7 @@ class TuiGatewayClient
       return false;
     }
     try {
-      channel.sink.add(jsonEncode(frame));
+      _sendCounted(channel, jsonEncode(frame));
       return true;
     } catch (error, stackTrace) {
       _handleSocketError(generation, channel, error, stackTrace);
@@ -3620,7 +3623,8 @@ class TuiGatewayClient
       _heartbeatSequence = _heartbeatSequence >= maxSafeJsonInteger
           ? 1
           : _heartbeatSequence + 1;
-      channel.sink.add(
+      _sendCounted(
+        channel,
         jsonEncode({
           'jsonrpc': '2.0',
           'id': -_heartbeatSequence,
@@ -3778,7 +3782,15 @@ class TuiGatewayClient
   /// Quarantines [runtime] and asks its owner chat to rehydrate from
   /// authoritative REST/roster state. Retiring the watchdog bounds it to one
   /// request per bind: the next resume/activate arms the runtime again.
+  /// Every frame this client writes goes through here, so its size is
+  /// tallied with the phone's own traffic counts.
+  static void _sendCounted(WebSocketChannel channel, String wire) {
+    channel.sink.add(wire);
+    TrafficCounter.instance.socketSent(wire);
+  }
+
   void _requestRuntimeRehydration(String runtime, {String? meterReason}) {
+    TrafficCounter.instance.rehydration('runtime');
     GatewaySocketMeter.instance.noteRehydration(meterReason ?? 'fanout_gap');
     _replayCoordinator.quarantine(runtime);
     _meterQuarantine(runtime);
@@ -4631,6 +4643,7 @@ class TuiGatewayClient
   /// (same signal as a withheld live subscription) to re-attach from a fresh
   /// snapshot. Nothing of the unproven frame was projected.
   void _requestCanonicalRehydration(String sessionId) {
+    TrafficCounter.instance.rehydration('canonical');
     GatewaySocketMeter.instance.noteRehydration('canonical_snapshot_required');
     if (_events.isClosed) return;
     _events.addError(
@@ -4954,7 +4967,8 @@ class TuiGatewayClient
       if (generation != _socketGeneration || !identical(_channel, channel)) {
         throw StateError('Hermes Desktop WebSocket was replaced');
       }
-      channel.sink.add(
+      _sendCounted(
+        channel,
         jsonEncode({
           'jsonrpc': '2.0',
           'id': id,

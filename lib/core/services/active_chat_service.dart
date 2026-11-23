@@ -75,6 +75,7 @@ import '../models/turn_error_surface.dart' as turn_error show providerWaitText;
 import '../models/session_activity.dart';
 import '../models/subagent_activity.dart';
 import '../../l10n/app_localizations.dart';
+import '../models/tool_call_failure.dart';
 import '../models/tool_label.dart';
 import '../models/tool_name.dart';
 import '../models/tool_output.dart';
@@ -132,6 +133,7 @@ import 'tui_gateway_client.dart';
 import 'turn_keepalive_hold.dart';
 import 'turn_outbox_store.dart';
 import 'stream_segments.dart';
+import 'traffic_counter.dart';
 
 /// Hermes Desktop espera hasta cinco segundos a que el turno interrumpido deje
 /// de estar busy antes de entregar la corrección capturada por barge-in.
@@ -1769,13 +1771,11 @@ List<Map<String, dynamic>> _associateGeneratedImagesNewestFirst(
     collectToolResult(message);
   }
 
+  // The folded tool results stay on their row: the settled turn's diff
+  // cards and its changes chip are read from them (`_toolOutputFor`).
+  // Dropping them here made every publication through this function take
+  // them away and the next read bring them back.
   final projected = List<Map<String, dynamic>>.of(messages);
-  for (var index = 0; index < projected.length; index++) {
-    if (!projected[index].containsKey(assistantToolResultEvidenceKey)) continue;
-    final sanitized = Map<String, dynamic>.from(projected[index])
-      ..remove(assistantToolResultEvidenceKey);
-    projected[index] = Map<String, dynamic>.unmodifiable(sanitized);
-  }
   if (additions.isEmpty) return projected;
   for (final entry in additions.entries) {
     final message = projected[entry.key];
@@ -4507,6 +4507,13 @@ final class _TerminalTranscriptRead {
   const _TerminalTranscriptRead.whole(List<Map<String, dynamic>> this.whole)
     : page = null,
       context = null;
+
+  /// The whole transcript, as the one page that carried it.
+  const _TerminalTranscriptRead.wholePage(
+    SessionMessagesPage this.page,
+    _SessionMessagesPageReadContext this.context,
+    List<Map<String, dynamic>> this.whole,
+  );
 
   const _TerminalTranscriptRead.tail(
     SessionMessagesPage this.page,
@@ -10221,6 +10228,12 @@ class ActiveChat with WidgetsBindingObserver {
         // step of the reconnect replay (session.events.since) is in no
         // other frame.
         break;
+      case 'moa.reference' || 'moa.progress' || 'moa.phase':
+        // Neither does the snapshot carry the mixture-of-agents blocks
+        // (`tui_gateway/session_auto_continue.py`, in-flight snapshot): a
+        // reference that arrives before the resumed runtime is adopted is
+        // in no later frame either.
+        break;
       default:
         return;
     }
@@ -12035,6 +12048,31 @@ class ActiveChat with WidgetsBindingObserver {
     _messages.isEmpty ? 0 : identityHashCode(_messages.last),
   );
 
+  Future<void>? _terminalTranscriptRead;
+
+  /// The newest-page read a turn that just ended is waiting for, while it is
+  /// on the wire; null otherwise. The screen's own read after `done` waits
+  /// for it: once that page is the visible transcript the one-row probe
+  /// proves it, and the same page is not asked for a second time (#226).
+  /// Never completes with an error.
+  Future<void>? get terminalTranscriptRead => _terminalTranscriptRead;
+
+  Future<bool> _trackTerminalTranscriptRead(Future<bool> read) {
+    final Future<void> settled = read.then<void>(
+      (_) {},
+      onError: (Object _) {},
+    );
+    _terminalTranscriptRead = settled;
+    unawaited(
+      settled.whenComplete(() {
+        if (identical(_terminalTranscriptRead, settled)) {
+          _terminalTranscriptRead = null;
+        }
+      }),
+    );
+    return read;
+  }
+
   /// Cheap check before a passive transcript refresh: reads only the newest
   /// [_passiveTailProbeRows] durable row(s). Returns null when the probe does
   /// not apply or failed; otherwise the observed tail and whether it equals
@@ -13679,6 +13717,7 @@ class ActiveChat with WidgetsBindingObserver {
         pagination: null,
       );
     }
+    TrafficCounter.instance.rehydration('stored_page');
     final gateway = _desktopGateway;
     final runtime =
         runtimeSessionId ??
@@ -17294,7 +17333,48 @@ class ActiveChat with WidgetsBindingObserver {
       ..addAll(kept);
   }
 
+  /// One live correction is one row. A correction that is not yet a row of
+  /// the transcript is known by the snapshot entry it came from
+  /// (`_desktopSnapshotKey`) or by the send that made it (`_clientTurnId`);
+  /// a second row with either identity is the same correction arriving by
+  /// another route (the optimistic row, the live snapshot, a projection
+  /// restored from disk), never a second message. The snapshot's row wins.
+  /// Rows of the transcript and corrections with different identities (two
+  /// real identical ones) are left alone.
+  void _collapseRepeatedLiveSteerRows() {
+    bool live(Map<String, dynamic> row) =>
+        row['role'] == 'user' &&
+        row['_steer'] == true &&
+        !_isDurableSteerEcho(row);
+    final keys = <String>{};
+    final sends = <String, Map<String, dynamic>>{};
+    final drop = <Map<String, dynamic>>{};
+    for (final row in _messages) {
+      if (!live(row)) continue;
+      final inflight = row['_desktopSnapshotKind'] == 'inflight';
+      final key = inflight ? row['_desktopSnapshotKey']?.toString() : null;
+      if (key != null && key.isNotEmpty && !keys.add(key)) {
+        drop.add(row);
+        continue;
+      }
+      final send = row['_clientTurnId']?.toString();
+      if (send == null || send.isEmpty) continue;
+      final kept = sends[send];
+      if (kept == null) {
+        sends[send] = row;
+      } else if (inflight && kept['_desktopSnapshotKind'] != 'inflight') {
+        drop.add(kept);
+        sends[send] = row;
+      } else {
+        drop.add(row);
+      }
+    }
+    if (drop.isEmpty) return;
+    _messages.removeWhere((row) => drop.any((gone) => identical(gone, row)));
+  }
+
   void _mergeSteerRecords() {
+    _collapseRepeatedLiveSteerRows();
     if (_messages.isEmpty ||
         (_steerRecords.isEmpty && _steerEchoClientIds.isEmpty)) {
       return;
@@ -17330,9 +17410,12 @@ class ActiveChat with WidgetsBindingObserver {
       Map<String, dynamic>? echo;
       if (record.anchorUserOrdinal == latestUserOrdinal) {
         for (final candidate in authoritativeCorrections) {
+          // A projection restored from disk lost its send id: it claims
+          // the entry of its own text whatever id that row carries.
           if (!usedCorrections.contains(candidate) &&
               candidate['content'] == record.content &&
               (candidate['_clientTurnId'] == null ||
+                  record.clientTurnId == null ||
                   candidate['_clientTurnId'] == record.clientTurnId)) {
             echo = candidate;
             break;
@@ -17402,6 +17485,7 @@ class ActiveChat with WidgetsBindingObserver {
               !_isDurableSteerEcho(existingChronological[index]) &&
               existingChronological[index]['content'] == content &&
               (existingChronological[index]['_clientTurnId'] == null ||
+                  record.clientTurnId == null ||
                   existingChronological[index]['_clientTurnId'] ==
                       record.clientTurnId)) {
             matchingIndex = index;
@@ -20260,7 +20344,12 @@ class ActiveChat with WidgetsBindingObserver {
         // Every earlier page first: the count is over the whole history.
         var guard = 0;
         while (hasEarlierMessages && guard++ < 200) {
-          if (!await loadEarlierMessages() || _disposed) {
+          final loaded = await loadEarlierMessages();
+          if (_disposed) return const BranchOutcome(BranchStatus.failed);
+          // The last page can come empty: it adds no row and only says
+          // there is nothing earlier. That is the end of the history, not
+          // a page that could not be read.
+          if (!loaded && (hasEarlierMessages || earlierMessagesLoadFailed)) {
             return const BranchOutcome(BranchStatus.failed);
           }
         }
@@ -23346,6 +23435,7 @@ class ActiveChat with WidgetsBindingObserver {
     int step,
   ) async {
     final runtime = error.data['session_id'] as String;
+    TrafficCounter.instance.rehydration('in_place');
     // QA/debug diagnostics only; never printed by a release build.
     if (!kReleaseMode) {
       debugPrint(
@@ -27285,7 +27375,7 @@ class ActiveChat with WidgetsBindingObserver {
         _upsertRunTool({
           'tool': payload['name'] ?? payload['tool'] ?? payload['tool_id'],
           'preview': payload['preview'] ?? payload['input'] ?? '',
-          'error': payload['error'] != null || payload['status'] == 'error',
+          'error': _toolCompleteFailed(payload),
         }, running: false);
         _upsertAssistantToolActivity(payload, running: false, startsNew: false);
         toolOutputs.recordComplete(payload);
@@ -29381,7 +29471,7 @@ class ActiveChat with WidgetsBindingObserver {
     }
     final status = running
         ? 'running'
-        : payload['error'] != null || payload['status'] == 'error'
+        : _toolCompleteFailed(payload)
         ? 'failed'
         : 'completed';
     // Detalle SEGURO para la pastilla/el panel (ejecutable, nombre de archivo,
@@ -31521,6 +31611,17 @@ class ActiveChat with WidgetsBindingObserver {
     await _settleEndedTurnWithoutError(turnEpoch, site: 'silent_probe');
   }
 
+  /// Whether a `tool.complete` frame reports a failed call: the envelope's
+  /// own flag, or the failure its `result` carries (as Hermes Desktop reads it).
+  static bool _toolCompleteFailed(Map<String, dynamic> payload) =>
+      payload['error'] != null ||
+      payload['status'] == 'error' ||
+      toolCallFailed(
+        toolName: (payload['name'] ?? payload['tool'])?.toString(),
+        result: payload['result'],
+        isError: payload['is_error'] == true,
+      );
+
   /// Adapta un evento tool.started/tool.completed del run a una línea de trace.
   ///
   /// [startsNew]: the tool's own start, a new invocation. [draft]: a
@@ -33198,13 +33299,15 @@ class ActiveChat with WidgetsBindingObserver {
     // with visible streamed text keep the historical non-blocking behavior.
     final transcriptReconciled =
         authoritativeTranscriptApplied ||
-        await _reconcileTerminalTranscript(
-          completingEpoch,
-          completingMessageLoadEpoch,
-          bindEpoch: invocationBindEpoch,
-          sessionEpoch: invocationSessionEpoch,
-          socketGeneration: invocationSocketGeneration,
-          producerChannel: invocationProducerChannel,
+        await _trackTerminalTranscriptRead(
+          _reconcileTerminalTranscript(
+            completingEpoch,
+            completingMessageLoadEpoch,
+            bindEpoch: invocationBindEpoch,
+            sessionEpoch: invocationSessionEpoch,
+            socketGeneration: invocationSocketGeneration,
+            producerChannel: invocationProducerChannel,
+          ),
         );
     if (!invocationStillCurrent() ||
         completingMessageLoadEpoch != _messageLoadEpoch) {
@@ -33472,7 +33575,9 @@ class ActiveChat with WidgetsBindingObserver {
     final wholeTranscript =
         !page.paginationProvided ||
         (page.offset == 0 && limit != null && page.returned < limit);
-    if (wholeTranscript) return _TerminalTranscriptRead.whole(page.messages);
+    if (wholeTranscript) {
+      return _TerminalTranscriptRead.wholePage(page, context, page.messages);
+    }
     if (!_transcriptRowsHaveUnambiguousIdentityEvidence(page.messages)) {
       return _TerminalTranscriptRead.whole(await _loadStoredMessages(profile));
     }
@@ -33510,15 +33615,26 @@ class ActiveChat with WidgetsBindingObserver {
     required int messageLoadEpoch,
   }) {
     final whole = read.whole;
+    final page = read.page;
+    final context = read.context;
     if (whole != null) {
-      return _applyAuthoritativeTerminalTranscriptOnce(
+      final gate = _terminalCommitGate;
+      final appliedBefore =
+          gate.epoch == completingEpoch && gate.transcriptApplied;
+      final applied = _applyAuthoritativeTerminalTranscriptOnce(
         whole,
         completingEpoch: completingEpoch,
         messageLoadEpoch: messageLoadEpoch,
       );
+      // A short chat's newest page is its whole transcript. When this read
+      // is the one that made it the visible transcript, its tail is
+      // confirmed like a grafted page's: the screen's probe after `done`
+      // then proves it instead of downloading the page again (#226).
+      if (applied && !appliedBefore && page != null && context != null) {
+        _recordPublishedDurableTail(page, context);
+      }
+      return applied;
     }
-    final page = read.page;
-    final context = read.context;
     if (page == null || context == null) return false;
     return _applyTerminalTailPageOnce(
       page,

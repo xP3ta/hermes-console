@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
@@ -285,6 +286,54 @@ void main() {
     expect(none.known, isTrue);
     expect(none.pet, isNull);
     controller.dispose();
+  });
+
+  testWidgets('a strip of profiles: every device copy shows together, before '
+      'any server answer, with one notification', (tester) async {
+    final ids = ProfileIdentities.instance;
+    addTearDown(ids.reset);
+    ids.connectionId = () => 'c1';
+    final names = [for (var i = 0; i < 9; i++) 'bot-$i'];
+    final server = <String, Completer<ProfileIdentityRead>>{};
+    var maxInFlight = 0;
+    ids.cacheReader = (c, p) async => (known: true, pet: _pet('nimbus'));
+    ids.loader = (c, p) {
+      final answer = server[p] = Completer<ProfileIdentityRead>();
+      final open = server.values.where((a) => !a.isCompleted).length;
+      if (open > maxInFlight) maxInFlight = open;
+      return answer.future;
+    };
+    var notified = 0;
+    ids.addListener(() => notified++);
+    for (final name in names) {
+      ids.requestAfterPaint('c1', name);
+    }
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+
+    // No server read has answered: the last face no longer waits for the
+    // other eight.
+    expect(server.values.where((a) => a.isCompleted), isEmpty);
+    for (final name in names) {
+      expect(ids.pet('c1', name)?.slug, 'nimbus', reason: name);
+      expect(ids.isKnown('c1', name), isTrue, reason: name);
+    }
+    expect(notified, 1, reason: 'one frame for the whole strip');
+    expect(maxInFlight, 2, reason: 'the server reads stay two at a time');
+
+    for (var i = 0; i < names.length; i++) {
+      final waiting = server.entries.where((e) => !e.value.isCompleted);
+      for (final entry in waiting.toList()) {
+        entry.value.complete((known: true, pet: _pet('nimbus')));
+      }
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+    }
+    expect(server.keys.toSet(), names.toSet(), reason: 'each asked once');
   });
 
   testWidgets('identities: the device copy paints first, the server answer '

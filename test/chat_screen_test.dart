@@ -10007,6 +10007,63 @@ void main() {
     },
   );
 
+  testWidgets('the newest row read again under another identity does not fade '
+      'in a second time', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final gateway = _UiRewindGateway();
+    var reads = 0;
+    List<Map<String, dynamic>> rows(String newestId) => [
+      for (var index = 0; index < 6; index++)
+        {
+          'id': index == 5 ? newestId : 'same-$index',
+          'message_id': index == 5 ? newestId : 'same-$index',
+          'role': index.isEven ? 'user' : 'assistant',
+          'content': index == 5 ? 'RESPUESTA_YA_VISTA' : 'Fila $index',
+        },
+    ];
+    await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-entrance-identity'),
+      messagesLoaded: false,
+      initialStoredSessionId: 'sess-test',
+      attachDesktopRuntimeOnLoad: false,
+      allowUnownedDesktopSnapshotForTesting: false,
+      // The same transcript; from the second read on its newest row comes
+      // under another id (as its id-less and its durable projection do).
+      storedMessageLoader: (_, _) async =>
+          rows(reads++ == 0 ? 'first-identity' : 'second-identity'),
+    );
+    await tester.pump();
+    final entrance = find.ancestor(
+      of: find.text('RESPUESTA_YA_VISTA'),
+      matching: find.byType(MotionEntrance),
+    );
+    double opacity() => tester
+        .widget<FadeTransition>(
+          find.descendant(of: entrance, matching: find.byType(FadeTransition)),
+        )
+        .opacity
+        .value;
+    expect(entrance, findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+    expect(opacity(), 1.0);
+    final first = tester.element(entrance);
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    expect(reads, greaterThan(1));
+    expect(entrance, findsOneWidget);
+    // It is another mount (the key followed the identity)…
+    expect(tester.element(entrance), isNot(same(first)));
+    // …that never painted the row transparent.
+    expect(opacity(), 1.0);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'actividad nativa mantiene shell seguro en cover pausa y reconexion',
     (tester) async {
@@ -40942,7 +40999,7 @@ void main() {
           .widget<GeneratedDocumentPreviewCard>(
             find.byType(GeneratedDocumentPreviewCard),
           )
-          .onOpen();
+          .onOpen!();
       // The 20 turns stay: an external launch keeps the time to show.
       await _pumpUntilRealWork(
         tester,
@@ -47516,6 +47573,111 @@ void main() {
       await finishTurns(tester, gateway);
     });
 
+    testWidgets('/steer <prompt> while a turn runs steers it: the task is not '
+        'cut, nothing is queued or submitted', (tester) async {
+      final (chat, gateway) = await streamingChat(tester, 'conn-tc-steer');
+      expect(chat.enqueue('después'), isTrue);
+      await tester.pump();
+
+      await submitComposer(tester, '/steer mira antes el README');
+
+      expect(gateway.steers, ['mira antes el README']);
+      expect(gateway.redirects, isEmpty);
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.submissions, ['turno vivo']);
+      expect(gateway.slashCalls, isEmpty);
+      expect(gateway.dispatchCalls, isEmpty);
+      // A normal message still waits its turn in the queue.
+      expect(chat.queuedMessages, ['después']);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        isEmpty,
+      );
+      // One row for the one instruction.
+      expect(
+        chat.messages.where(
+          (m) => m['_steer'] == true && m['content'] == 'mira antes el README',
+        ),
+        hasLength(1),
+      );
+      await finishTurns(tester, gateway);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/s is the same command', (tester) async {
+      final (_, gateway) = await streamingChat(tester, 'conn-tc-steer-alias');
+
+      await submitComposer(tester, '/s por aquí');
+
+      expect(gateway.steers, ['por aquí']);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/steer without a prompt shows the usage line, sends nothing '
+        'and keeps what was typed', (tester) async {
+      final (_, gateway) = await streamingChat(tester, 'conn-tc-steer-usage');
+
+      await submitComposer(tester, '/steer');
+
+      expect(find.text('Uso: /steer <mensaje>'), findsOneWidget);
+      expect(gateway.steers, isEmpty);
+      expect(gateway.redirects, isEmpty);
+      expect(gateway.submissions, ['turno vivo']);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        '/steer',
+      );
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/steer <prompt> with nothing running goes as the next '
+        'message, and says so (Hermes `_cmd_steer`)', (tester) async {
+      final gateway = _UiTurnSideGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-tc-steer-idle'),
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+
+      await submitComposer(tester, '/steer empieza por los tests');
+
+      expect(gateway.steers, isEmpty);
+      expect(gateway.submissions, ['empieza por los tests']);
+      expect(
+        find.text(
+          'No hay ningún agente trabajando; enviado como siguiente turno',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        isEmpty,
+      );
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('a steer Hermes refuses because the turn just ended goes as '
+        'the next message instead of being lost', (tester) async {
+      final (chat, gateway) = await streamingChat(tester, 'conn-tc-steer-late');
+      gateway.steerError = const TuiGatewayRpcError(
+        'session.steer',
+        'Hermes rejected the steering instruction',
+        code: TuiGatewayRpcError.steerRejectedCode,
+      );
+
+      await submitComposer(tester, '/steer ya de paso');
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(gateway.steers, ['ya de paso']);
+      // Still busy here: the prompt waits as any other message does.
+      expect(chat.queuedMessages, ['ya de paso']);
+      expect(chat.messages.where((m) => m['_steer'] == true), isEmpty);
+      await finishTurns(tester, gateway);
+      await finishTurns(tester, gateway);
+    });
+
     testWidgets('/bg while streaming starts one background prompt', (
       tester,
     ) async {
@@ -49326,6 +49488,94 @@ void main() {
         },
       );
     }
+  }
+
+  // #226: the session row (tens of kB with its system prompt and tool list)
+  // was read again after every reply. It is now read at most once a minute,
+  // with one read owed for the replies that fell inside the minute.
+  {
+    testWidgets(
+      'after a reply the session row is read at most once a minute, and the '
+      'last reply still gets its read',
+      (tester) async {
+        final rows = <Map<String, dynamic>>[];
+        var detailReads = 0;
+        final api = testApiClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          httpClient: MockClient((request) async {
+            final path = request.url.path;
+            if (request.method == 'GET' && path == '/api/sessions/sess-test') {
+              detailReads += 1;
+              return http.Response(
+                jsonEncode({
+                  'session': {'id': 'sess-test', 'message_count': rows.length},
+                }),
+                200,
+              );
+            }
+            if (request.method == 'GET' &&
+                path == '/api/sessions/sess-test/messages') {
+              return http.Response(
+                jsonEncode({'session_id': 'sess-test', 'messages': rows}),
+                200,
+              );
+            }
+            return http.Response('not found', 404);
+          }),
+        );
+        final gateway = _Dup9340HistoryGateway(rows)..durableReady = true;
+        const provisional = Session(
+          id: 'mob-usage-row-read',
+          title: 'Nuevo chat',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 0,
+          isActive: true,
+          preview: '',
+          profile: 'default',
+          startedAt: 1,
+        );
+        await pumpChat(
+          tester,
+          session: provisional,
+          connection: _remoteConn('conn-usage-row-read'),
+          desktopGateway: gateway,
+          api: api,
+        );
+
+        Future<void> turn(int n) async {
+          final prompt = 'PROMPT_USAGE_ROW_$n';
+          final reply = 'REPLY_USAGE_ROW_$n';
+          await tester.enterText(find.byType(TextField).first, prompt);
+          await _settleComposer(tester);
+          await tester.tap(find.byKey(const ValueKey('send')));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          gateway.emit('message.start');
+          gateway.emit('message.delta', {'text': reply});
+          await tester.pump(const Duration(milliseconds: 100));
+          rows
+            ..add({'id': 1000 + 2 * n, 'role': 'user', 'content': prompt})
+            ..add({'id': 1001 + 2 * n, 'role': 'assistant', 'content': reply});
+          gateway.emit('message.complete', {'text': reply});
+          await tester.pump();
+          await tester.pump(const Duration(seconds: 2));
+        }
+
+        await turn(1);
+        expect(detailReads, 1);
+        await turn(2);
+        await turn(3);
+        expect(detailReads, 1);
+        // The minute ends: the read the later replies left owed.
+        await tester.pump(const Duration(seconds: 61));
+        await tester.pump();
+        expect(detailReads, 2);
+        await tester.pump(const Duration(seconds: 61));
+        expect(detailReads, 2);
+        expect(tester.takeException(), isNull);
+      },
+    );
   }
 
   // Review 9341 (hallazgo MEDIA): tras la valla `compacting` espuria el

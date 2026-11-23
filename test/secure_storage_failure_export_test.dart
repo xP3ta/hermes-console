@@ -18,6 +18,8 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/widgets/diagnostic_bundle_tile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/remove_test_dir.dart';
+
 import 'support/memory_sealed_files.dart';
 
 void main() {
@@ -69,7 +71,7 @@ void main() {
     fails = (_, _) => false;
     final prefs = await SharedPreferences.getInstance();
     final support = await Directory.systemTemp.createTemp('secure-diag-');
-    addTearDown(() => support.delete(recursive: true));
+    addTearDown(() => removeTestDir(support));
     final controller = DiagnosticBundleController(
       manager: await ConnectionManager.create(prefs),
       service: DiagnosticBundleService(cacheDirectory: () async => support),

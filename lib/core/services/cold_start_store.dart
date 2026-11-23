@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show Random;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -70,6 +71,29 @@ final class SecureColdStartStorage implements ColdStartStorage {
   /// A file being written carries this suffix until it is complete; then it
   /// is renamed over the old one.
   static const partialSuffix = '.part';
+
+  static final int _writer = Random().nextInt(1 << 32);
+  static int _writes = 0;
+
+  /// The temporary file of ONE write of [file]: `<file>.<writer>.part`.
+  /// Each write has its own, so two writers of the same file (the app and
+  /// the process that answers from a notification, or two stores of one
+  /// process) never fill the same temporary file: sharing `<file>.part`
+  /// could rename a mix of both over the good file and leave it unreadable.
+  static String partialName(String file) =>
+      '$file.${_writer.toRadixString(36)}-${(_writes++).toRadixString(36)}'
+      '$partialSuffix';
+
+  /// The file an unfinished write was for, or null when [name] is not one:
+  /// `<file>.<writer>.part`, and `<file>.part` as earlier versions wrote it.
+  static String? partialTarget(String name) {
+    if (!name.endsWith(partialSuffix)) return null;
+    const sealed = ColdStartTailCipher.fileSuffix;
+    final cut = name.lastIndexOf('$sealed.');
+    return cut < 0
+        ? name.substring(0, name.length - partialSuffix.length)
+        : name.substring(0, cut + sealed.length);
+  }
 
   final FlutterSecureStorage _secure;
   final Future<Directory> Function() _directory;
@@ -149,9 +173,49 @@ final class SecureColdStartStorage implements ColdStartStorage {
   @override
   Future<void> writeFile(String name, Uint8List bytes) async {
     final path = await _path(name);
-    final partial = File('$path$partialSuffix');
-    await partial.writeAsBytes(bytes, flush: true);
-    await partial.rename(path);
+    final partial = File(await _path(partialName(name)));
+    try {
+      await partial.writeAsBytes(bytes, flush: true);
+      await partial.rename(path);
+      await _sweepPartials(name);
+    } catch (_) {
+      // Not left behind by a write that failed (a full disk): a process
+      // death is the only thing that leaves one, and those are swept.
+      try {
+        if (await partial.exists()) await partial.delete();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  /// The files whose dead writes this process has already swept.
+  final _sweptPartials = <String>{};
+
+  /// A temporary file older than this belongs to a process that died: a
+  /// write lasts milliseconds.
+  static const stalePartialAge = Duration(minutes: 1);
+
+  /// After [name] was written: the temporary files a dead process left for
+  /// it are deleted, as the write that shared `<file>.part` used to replace
+  /// them. One an earlier version named is always dead (nothing writes that
+  /// name now); one of this version only once it is old, so a write another
+  /// process has in flight is left alone. Never fails the write.
+  Future<void> _sweepPartials(String name) async {
+    try {
+      final legacy = File(await _path('$name$partialSuffix'));
+      if (await legacy.exists()) await legacy.delete();
+      if (!_sweptPartials.add(name)) return;
+      final directory = await _directory();
+      final before = DateTime.now().subtract(stalePartialAge);
+      await for (final entry in directory.list()) {
+        if (entry is! File) continue;
+        final other = entry.uri.pathSegments.last;
+        if (partialTarget(other) != name) continue;
+        if ((await entry.stat()).modified.isBefore(before)) {
+          await entry.delete();
+        }
+      }
+    } catch (_) {}
   }
 
   @override

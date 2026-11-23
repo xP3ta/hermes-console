@@ -7,6 +7,8 @@ import 'package:hermes_android/core/companion/models/companion_animation_state.d
 import 'package:hermes_android/core/models/profile_pet.dart';
 import 'package:hermes_android/core/services/profile_pet_visual_adapter.dart';
 
+import 'support/remove_test_dir.dart';
+
 const _twoRowPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgbYnAAAAEUlEQVR4nGP4z8AARAz//wMAEfgD/XUCLkgAAAAASUVORK5CYII=';
 
@@ -15,7 +17,7 @@ void main() {
     'materializa atlas validado y recorta frame 0 de la fila idle',
     () async {
       final root = await Directory.systemTemp.createTemp('pet-visual-test-');
-      addTearDown(() => root.delete(recursive: true));
+      addTearDown(() => removeTestDir(root));
       final adapter = ProfilePetVisualAdapter(
         repository: CompanionRepository(importedRootProvider: () async => root),
       );

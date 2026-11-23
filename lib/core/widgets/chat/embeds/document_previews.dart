@@ -130,11 +130,18 @@ class DocumentFilePreview extends StatelessWidget {
     final kind = _kind.name;
     Future<String?> pictureKey() async {
       try {
+        final stamp = _FileDigests.stamp(file);
         final digest = await compute(_fileDigest, path);
+        if (stamp != null) _FileDigests.remember(stamp, digest);
         return 'file:$kind:$dark:$digest';
       } catch (_) {
         return null;
       }
+    }
+
+    String? knownPictureKey() {
+      final digest = _FileDigests.recall(file);
+      return digest == null ? null : 'file:$kind:$dark:$digest';
     }
     // Read as the full viewer reads it: a stray byte that is not UTF-8 does
     // not keep the page from being drawn.
@@ -184,6 +191,7 @@ class DocumentFilePreview extends StatelessWidget {
       aspectRatio: aspect,
       fitContent: fit,
       resolveSnapshotKey: pictureKey,
+      knownSnapshotKey: knownPictureKey,
       autoLoad: auto,
       readyScript: ready,
       captureScript: capture,
@@ -195,6 +203,39 @@ class DocumentFilePreview extends StatelessWidget {
 }
 
 enum _Kind { html, svg, mermaid, model }
+
+/// Digests of files already read in this run, by path, size and time of
+/// change: reading a file to name its picture takes another isolate, so a
+/// preview built again (the chat opened a second time) would otherwise show
+/// a placeholder first although its picture is in memory.
+final class _FileDigests {
+  static const int _max = 64;
+  static final Map<String, String> _byStamp = {};
+
+  static String? stamp(File file) {
+    try {
+      final stat = file.statSync();
+      if (stat.type != FileSystemEntityType.file) return null;
+      return '${file.path}\u0000${stat.size}\u0000'
+          '${stat.modified.microsecondsSinceEpoch}';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static void remember(String stamp, String digest) {
+    _byStamp.remove(stamp);
+    _byStamp[stamp] = digest;
+    while (_byStamp.length > _max) {
+      _byStamp.remove(_byStamp.keys.first);
+    }
+  }
+
+  static String? recall(File file) {
+    final key = stamp(file);
+    return key == null ? null : _byStamp[key];
+  }
+}
 
 /// SHA-256 of the file at [path]. Top level: it runs in another isolate.
 String _fileDigest(String path) =>

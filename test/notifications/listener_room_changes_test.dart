@@ -20,6 +20,8 @@ import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/remove_test_dir.dart';
+
 import '../bots/room/room_fixtures.dart';
 import 'listener_idle_support.dart';
 
@@ -63,7 +65,7 @@ void main() {
     });
     prefs = await SharedPreferences.getInstance();
     dir = await Directory.systemTemp.createTemp('faces');
-    addTearDown(() => dir.delete(recursive: true));
+    addTearDown(() => removeTestDir(dir));
     client = gateway.client();
     pool = SharedGatewayPool.forTesting(factory: (_) => client);
     addTearDown(pool.closeAll);

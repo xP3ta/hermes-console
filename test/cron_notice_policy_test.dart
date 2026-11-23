@@ -7,6 +7,8 @@ import 'package:hermes_android/core/services/notifications/notification_mute_sto
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'support/remove_test_dir.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -108,13 +110,21 @@ void main() {
       directory = await Directory.systemTemp.createTemp('cron-quiet-');
       path = '${directory.path}/delivery.db';
       now = 1800000000000;
+      // Twelve writers on two engines take turns at one database: on a
+      // loaded host the turns outlast the three seconds the app waits. What
+      // is checked here is that the slot is shared, not how long it takes.
+      NotificationDeliveryStore.debugTransactionRetryWindow = const Duration(
+        minutes: 2,
+      );
     });
     tearDown(() async {
+      NotificationDeliveryStore.debugTransactionRetryWindow =
+          NotificationDeliveryStore.transactionRetryWindow;
       for (final store in stores) {
         await store.close();
       }
       stores.clear();
-      await directory.delete(recursive: true);
+      await removeTestDir(directory);
     });
 
     test('12 successes per hour show once; exact 60 minute boundary', () async {
